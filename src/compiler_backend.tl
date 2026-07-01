@@ -29889,7 +29889,12 @@
               rewritten-blocks
               rewritten-vars
               (compiler-reg-function-var-types splitkit-func)
-              rewrite-reg-plan)
+              rewrite-reg-plan
+              ;; M4 granular-pristine: the greedy analysed `blocks` (pre
+              ;; caller-save / loop-split), so its recorded piece point coords are
+              ;; numbered over THESE bases. Passing them lets the realization home
+              ;; a piece only in a block the two rewrites left byte-identical.
+              (compiler-reg-splitkit-bases-of-blocks blocks))
             (CompilerRegCallSaveRewrite
               rewritten-blocks
               rewritten-vars

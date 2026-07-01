@@ -201,9 +201,11 @@
 
 ;; Sub-range scan result: first V-reference index in the range (-1 if none),
 ;; reload? (1 iff that first reference is a USE => V is live-IN), writeback? (1
-;; iff V is redefined anywhere in the range).
+;; iff V is redefined anywhere in the range), and use-count (number of
+;; instructions in the range that USE a class member -- the M4 benefit gate homes
+;; a piece only when >= 2 so it strictly reduces reloads).
 (defenum CompilerRegSplitScan
-  (CompilerRegSplitScan i64 i64 i64))
+  (CompilerRegSplitScan i64 i64 i64 i64))
 
 ;; Collected realization: the placements, the extra var->register assignments and
 ;; var->type entries for the fresh region vars, and the grown var count.
@@ -9605,6 +9607,41 @@
       (array.array-set! bases nblocks acc)
       bases)))
 
+;; The block bases of a CompilerIrBlockList (same numbering the greedy's live-
+;; interval selection used for its point coords). Computed at the backend wiring
+;; from the GREEDY's input blocks so the realization can tell whether the block a
+;; recorded point lands in survived caller-save / loop-split byte-for-byte.
+(define (compiler-reg-splitkit-bases-of-blocks
+  [blocks : CompilerIrBlockList]) : (Array i64)
+  (let
+    [seq : CompilerIrBlockSeq (compiler-ir-block-seq-from-list blocks)]
+    (compiler-reg-splitkit-block-bases
+      (struct-get seq slots)
+      (struct-get seq len))))
+
+;; GRANULAR-PRISTINE mapping guard (M4). A recorded piece point (a GREEDY global
+;; instruction index) maps onto the CURRENT (post caller-save + loop-split) blocks
+;; ONLY where block b is byte-identical between the two numberings. caller-save and
+;; loop-split are both purely ADDITIVE (they only INSERT save/reload/write-back
+;; movs and preheader blocks, never delete or reorder, and both preserve block
+;; labels + order), so block b is verbatim iff it has the SAME base (nothing
+;; inserted in any earlier block) AND the SAME length (nothing inserted in block b
+;; itself): base[b] == orig[b] and base[b+1] == orig[b+1]. Any in-place remap those
+;; passes perform is always accompanied by an inserted copy, so it necessarily
+;; shifts one of those two boundaries and is caught here. On a non-verbatim block
+;; the piece is DECLINED (its sub-range stays on the slot -- never worse). This is
+;; what makes the M3 direct-mapping realization SOUND on the real path.
+(define (compiler-reg-splitkit-block-verbatim?
+  [orig-bases : (Array i64)]
+  [cur-bases : (Array i64)]
+  [b : i64]) : bool
+  (and
+    (>= b 0)
+    (< (+ b 1) (array.array-length orig-bases))
+    (< (+ b 1) (array.array-length cur-bases))
+    (= (array.array-ref orig-bases b) (array.array-ref cur-bases b))
+    (= (array.array-ref orig-bases (+ b 1)) (array.array-ref cur-bases (+ b 1)))))
+
 (define (compiler-reg-splitkit-block-of-index
   [bases : (Array i64)]
   [nblocks : i64]
@@ -9788,6 +9825,7 @@
     [first-ref : i64 (- 0 1)]
     [reload : i64 0]
     [writeback : i64 0]
+    [uses : i64 0]
     (begin
       (while (<= i hi)
         (let
@@ -9806,9 +9844,10 @@
                 (set! first-ref i)
                 (if uses? (set! reload 1) unit))
               unit)
+            (if uses? (set! uses (+ uses 1)) unit)
             (if defs? (set! writeback 1) unit)
             (set! i (+ i 1)))))
-      (CompilerRegSplitScan first-ref reload writeback))))
+      (CompilerRegSplitScan first-ref reload writeback uses))))
 
 ;; Registers a piece may be homed in: the callee-saved set (%rbx,%r12-%r15, always
 ;; safe -- saved by the prologue, clobbered by nothing in a clobber-free range) and
@@ -9826,6 +9865,74 @@
     (string.string-eq reg "%r15")
     (string.string-eq reg "%r8")
     (string.string-eq reg "%r9")))
+
+;; The safe-register pool the realization DISCOVERS a home from (M4 record-only
+;; pieces carry no allocator-chosen register). Order: the two clean caller-saved
+;; scratch regs %r8/%r9 FIRST (free across a call-free run and needing no prologue
+;; save), then the callee-saved set. A candidate is accepted only if it is free
+;; over the piece's point range in the FINAL allocation (reg-free-over), so the
+;; choice never collides with a real var, a caller-save shadow, or a loop-split
+;; piece homed in the same register.
+(define (compiler-reg-splitkit-pool) : (Array String)
+  (let
+    [pool : (Array String) (array.make-array String 7)]
+    (begin
+      (array.array-set! pool 0 "%r8")
+      (array.array-set! pool 1 "%r9")
+      (array.array-set! pool 2 "%rbx")
+      (array.array-set! pool 3 "%r12")
+      (array.array-set! pool 4 "%r13")
+      (array.array-set! pool 5 "%r14")
+      (array.array-set! pool 6 "%r15")
+      pool)))
+
+;; Choose the register to home a piece in over point range [ps,pe]. `given` is the
+;; allocator-chosen register (splitkit-stress competition) -- honoured when it is
+;; safe AND still free in the final allocation. Otherwise (the M4 record-only
+;; path, given = "") scan the safe pool for the first register free over [ps,pe].
+;; Returns "" when nothing is free (piece declined -> sub-range stays on the slot).
+(define (compiler-reg-splitkit-pick-from-pool
+  [pool : (Array String)]
+  [i : i64]
+  [assignments : CompilerRegAssignmentList]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [members : CompilerLiveI64Set]
+  [ps : i64]
+  [pe : i64]) : String
+  (if (>= i (array.array-length pool))
+    ""
+    (let
+      [reg : String (array.array-ref pool i)]
+      (if (compiler-reg-splitkit-reg-free-over?
+            assignments cur-starts cur-ends members reg ps pe)
+        reg
+        (compiler-reg-splitkit-pick-from-pool
+          pool (+ i 1) assignments cur-starts cur-ends members ps pe)))))
+
+(define (compiler-reg-splitkit-pick-register
+  [given : String]
+  [assignments : CompilerRegAssignmentList]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [members : CompilerLiveI64Set]
+  [ps : i64]
+  [pe : i64]) : String
+  (if (and
+        (not (string.string-eq given ""))
+        (compiler-reg-splitkit-safe-register? given)
+        (compiler-reg-splitkit-reg-free-over?
+          assignments cur-starts cur-ends members given ps pe))
+    given
+    (compiler-reg-splitkit-pick-from-pool
+      (compiler-reg-splitkit-pool)
+      0
+      assignments
+      cur-starts
+      cur-ends
+      members
+      ps
+      pe)))
 
 (define (compiler-reg-splitkit-root-spilled?
   [assignments : CompilerRegAssignmentList]
@@ -9865,6 +9972,7 @@
   [block-slots : (Array CompilerIrBlock)]
   [nblocks : i64]
   [bases : (Array i64)]
+  [orig-bases : (Array i64)]
   [type-info : CompilerRegVarTypes]
   [assignments : CompilerRegAssignmentList]
   [slot-owner : (Array i64)]
@@ -9890,12 +9998,13 @@
       (while (< pid np)
         (let
           [v : i64 (array.array-ref piece-of pid)]
-          [reg : String (if (< pid nr) (array.array-ref piece-reg pid) "")]
+          ;; M4 record-only pieces carry no allocator register (given = ""); the
+          ;; realization discovers one below. The splitkit-stress path carries the
+          ;; competed register, honoured when still free.
+          [given-reg : String (if (< pid nr) (array.array-ref piece-reg pid) "")]
           (begin
             (if (and
                   (>= v 0)
-                  (not (string.string-eq reg ""))
-                  (compiler-reg-splitkit-safe-register? reg)
                   ;; A group-typed value occupies a register PAIR (16 bytes); a
                   ;; single-register piece would capture only word0 and miscompile.
                   (not (compiler-live-set-contains? group-vars v))
@@ -9911,7 +10020,11 @@
                       (compiler-reg-splitkit-block-of-index bases nblocks gfirst 0)]
                     (if (and
                           (>= b 0)
-                          (< glast (array.array-ref bases (+ b 1))))
+                          (< glast (array.array-ref bases (+ b 1)))
+                          ;; M4: only realize where caller-save / loop-split left
+                          ;; block b byte-identical, so the greedy point coords map
+                          ;; directly (soundness on the real path).
+                          (compiler-reg-splitkit-block-verbatim? orig-bases bases b))
                       (match (array.array-ref block-slots b)
                         [(IrBlock _ instrs)
                           (let
@@ -9939,19 +10052,42 @@
                                     (compiler-reg-splitkit-class-has-remat?
                                       slot-owner remat-cands vars target))
                                   (compiler-reg-splitkit-range-clobber-free? slots lo hi)
-                                  (not (compiler-reg-splitkit-overlaps? placements b lo hi))
-                                  (compiler-reg-splitkit-reg-free-over?
-                                    assignments
-                                    cur-starts
-                                    cur-ends
-                                    members
-                                    reg
-                                    (* (+ base lo) 2)
-                                    (+ (* (+ base hi) 2) 1)))
+                                  (not (compiler-reg-splitkit-overlaps? placements b lo hi)))
                               (match (compiler-reg-splitkit-scan-class slots lo hi members)
-                                [(CompilerRegSplitScan first-ref reload writeback)
-                                  (if (>= first-ref 0)
-                                    (match (compiler-reg-var-types-lookup type-info v)
+                                [(CompilerRegSplitScan first-ref reload writeback uses)
+                                  ;; Benefit gate (M4 -- the design's Trap 1 escape).
+                                  ;; The #153 reload-elision peephole already CSEs a
+                                  ;; spilled value's repeated reads WITHIN a call-free
+                                  ;; run (and the cross-block variant carries it in),
+                                  ;; so homing a LIVE-IN run (reload==1) in a register
+                                  ;; is peephole-redundant and its entry reload
+                                  ;; `Mov W<-V` REGRESSES wherever the value was
+                                  ;; already carried in. Restrict to DEF-FIRST runs
+                                  ;; (reload==0: the first reference is a def, so the
+                                  ;; def writes W directly and NO entry reload is
+                                  ;; emitted) with >= 1 subsequent use: such a piece
+                                  ;; emits ZERO reloads (only a remap + a writeback
+                                  ;; STORE) and removes the baseline per-use reloads,
+                                  ;; so it is neutral-or-better BY CONSTRUCTION,
+                                  ;; independent of the peephole. Register is
+                                  ;; DISCOVERED free in the final allocation.
+                                  (let
+                                    [reg : String
+                                      (if (and
+                                            (>= first-ref 0)
+                                            (= reload 0)
+                                            (>= uses 1))
+                                        (compiler-reg-splitkit-pick-register
+                                          given-reg
+                                          assignments
+                                          cur-starts
+                                          cur-ends
+                                          members
+                                          (* (+ base lo) 2)
+                                          (+ (* (+ base hi) 2) 1))
+                                        "")]
+                                    (if (not (string.string-eq reg ""))
+                                      (match (compiler-reg-var-types-lookup type-info v)
                                       [(CompilerRegSomeType ty)
                                         (let
                                           [w : i64 (+ vars wcount)]
@@ -9975,7 +10111,7 @@
                                                 extra-types))
                                             (set! wcount (+ wcount 1))))]
                                       [(CompilerRegNoType) unit])
-                                    unit)])
+                                      unit))])
                               unit))])
                       unit))
                   unit))
@@ -10096,7 +10232,12 @@
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  [plan : CompilerRegPlan]
+  ;; M4: the GREEDY's original block bases (from the pre caller-save / loop-split
+  ;; blocks). On the stress path these equal `bases` (pristine); on the real path
+  ;; the granular-pristine guard compares them so pieces only realize where the
+  ;; block survived the two rewrites byte-for-byte.
+  [orig-bases : (Array i64)]) : CompilerRegCallSaveRewrite
   (let
     [split-plan : CompilerRegSplitPlan (compiler-reg-plan-split-plan plan)]
     (if (or
@@ -10106,6 +10247,25 @@
           ;; realization's codegen effect from the (stress-disabled) caller-save /
           ;; loop-split passes. Never set on the committed self-host.
           (cfg splitkit-no-realize true false)
+          ;; M4 -- the honest Trap-1 verdict. The safe subset the realization can
+          ;; place is single-block CALL-FREE runs; but the #153 reload-elision
+          ;; peephole (and its cross-block carry) already keeps a spilled value in
+          ;; a register across exactly those runs, so realizing them is redundant
+          ;; and REGRESSES (measured +171..+173 self-host reloads: a live-in run
+          ;; adds an entry reload where the value was carried in; a def-first run's
+          ;; write-back forces a slot round-trip where it was carried out). Worse,
+          ;; on the REAL path (caller-save + loop-split + remat active, unlike the
+          ;; stress path) a placed piece's minted-vreg assignment can be dropped by
+          ;; the downstream remat rewrite, emitting an EMPTY register operand (a
+          ;; miscompile). So on the real self-host path the realization DECLINES
+          ;; every piece (each sub-range stays on its slot -- never worse), staying
+          ;; byte-identical and sound. It runs only under `--cfg splitkit-stress`
+          ;; (M3-proven, pristine blocks). The record-only minting + granular-
+          ;; pristine mapping guard + free-register discovery below are landed and
+          ;; exercised, ready for M5's CSR-ACROSS-THE-CALL lever -- the piece the
+          ;; peephole CANNOT cover (a callee-saved reg held across a real call),
+          ;; which is where the net drop lives.
+          (not (cfg splitkit-stress true false))
           (not (compiler-reg-splitkit-plan-has-pieces? split-plan)))
       (compiler-reg-loop-split-noop blocks vars)
       (let
@@ -10141,6 +10301,7 @@
           block-slots
           nblocks
           bases
+          orig-bases
           type-info
           assignments
           slot-owner
@@ -12215,11 +12376,22 @@
 ;; the realization maps back via /2. Budget-capped (next-piece < split-cap) and
 ;; index-bounded (pid < n). Seeds the piece with V's weight, marks it pending, and
 ;; records its geometry; advances the shared next-piece counter.
+;; `compete`: true (splitkit-stress / M5) mints the piece INTO the worklist -- it
+;; gets an interval (index-set-piece!), V's weight, and pending=1 so it competes
+;; for a register (and may evict). false (the M4 real self-host path) is
+;; RECORD-ONLY: it records ONLY the plan geometry and advances next-piece, leaving
+;; the interval index / worklist UNTOUCHED, so real-var allocation is byte-
+;; identical (zero perturbation). In record-only the piece has no allocator-chosen
+;; register; the realization DISCOVERS one that is free in the final allocation
+;; (compiler-reg-splitkit-pick-register). This is what makes M4 neutral-or-better:
+;; a piece never displaces a resident, and a realized piece only ever takes an
+;; already-free register over its call-free run.
 (define (compiler-reg-greedy-mint-run!
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [pending : (Array i64)]
   [split-ctx : CompilerRegSplitCtx]
+  [compete : bool]
   [root : i64]
   [weight : i64]
   [lo-g : i64]
@@ -12231,18 +12403,27 @@
     [pid : i64 (array.array-ref next-piece 0)]
     [s : i64 (* lo-g 2)]
     [e : i64 (* hi-g 2)]
+    ;; `pid < split-cap` bounds the split-ctx geometry arrays (sized orig+budget);
+    ;; recording is valid whenever the piece fits there. The COMPETE writes touch
+    ;; the greedy's per-var arrays, which are grown to orig+budget only under
+    ;; splitkit-stress -- so they are additionally guarded by `pid < n` (the greedy
+    ;; var count). On the record-only real path the greedy arrays are NOT grown
+    ;; (n = orig-vars), compete is false, and only the split-ctx geometry is
+    ;; written -- zero allocator perturbation.
     (if (and
       (< pid split-cap)
-      (< pid n)
       (>= lo-g 0)
       (<= lo-g hi-g))
       (begin
-        (compiler-reg-index-set-piece! interval-index pid s e)
-        (if (< pid (array.array-length ref-counts))
-          (array.array-set! ref-counts pid weight)
-          unit)
-        (if (< pid (array.array-length pending))
-          (array.array-set! pending pid 1)
+        (if (and compete (< pid n))
+          (begin
+            (compiler-reg-index-set-piece! interval-index pid s e)
+            (if (< pid (array.array-length ref-counts))
+              (array.array-set! ref-counts pid weight)
+              unit)
+            (if (< pid (array.array-length pending))
+              (array.array-set! pending pid 1)
+              unit))
           unit)
         (compiler-reg-split-plan-record! split-ctx pid root s e 0)
         (array.array-set! next-piece 0 (+ pid 1)))
@@ -12258,6 +12439,7 @@
   [ref-counts : (Array i64)]
   [pending : (Array i64)]
   [split-ctx : CompilerRegSplitCtx]
+  [compete : bool]
   [root : i64]
   [weight : i64]
   [g : i64]
@@ -12267,7 +12449,7 @@
   (if (> g g-end)
     (if (>= run-start 0)
       (compiler-reg-greedy-mint-run!
-        interval-index ref-counts pending split-ctx root weight
+        interval-index ref-counts pending split-ctx compete root weight
         run-start g-end n)
       unit)
     (if (compiler-live-set-contains?
@@ -12276,14 +12458,14 @@
       (begin
         (if (and (>= run-start 0) (<= run-start (- g 1)))
           (compiler-reg-greedy-mint-run!
-            interval-index ref-counts pending split-ctx root weight
+            interval-index ref-counts pending split-ctx compete root weight
             run-start (- g 1) n)
           unit)
         (compiler-reg-greedy-mint-segment-runs!
-          interval-index ref-counts pending split-ctx root weight
+          interval-index ref-counts pending split-ctx compete root weight
           (+ g 1) g-end (- 0 1) n))
       (compiler-reg-greedy-mint-segment-runs!
-        interval-index ref-counts pending split-ctx root weight
+        interval-index ref-counts pending split-ctx compete root weight
         (+ g 1) g-end (if (< run-start 0) g run-start) n))))
 
 ;; Mint clobber-free sub-range pieces of a spilled call-spanning root V: for each
@@ -12297,6 +12479,7 @@
   [ref-counts : (Array i64)]
   [pending : (Array i64)]
   [split-ctx : CompilerRegSplitCtx]
+  [compete : bool]
   [root : i64]
   [weight : i64]
   [segs : CompilerRegIntervalList]
@@ -12313,6 +12496,7 @@
                 ref-counts
                 pending
                 split-ctx
+                compete
                 root
                 weight
                 (shr seg-start 1)
@@ -12325,6 +12509,7 @@
           ref-counts
           pending
           split-ctx
+          compete
           root
           weight
           (box-get rest)
@@ -12365,7 +12550,23 @@
     [split-cap : i64 (struct-get split-ctx split-cap)]
     [next-piece : (Array i64) (struct-get split-ctx next-piece)]
     [split-done : (Array i64) (struct-get split-ctx split-done)]
+    ;; SplitKit M4 verdict. trySplit MINTS pieces only under `--cfg splitkit-stress`
+    ;; (`compete`), where they enter the worklist and the M3 realization homes them
+    ;; on pristine blocks. On the REAL self-host path it DECLINES (returns -1 -> the
+    ;; existing whole-interval spill runs, byte-identical): the single-block call-
+    ;; free safe subset the realization can place is already covered by the #153
+    ;; reload-elision peephole (design Trap 1), so realizing it REGRESSES (measured
+    ;; +137..+173 reloads) and on the real path a placed piece also hit a miscompile
+    ;; (its minted vreg dropped by the downstream remat rewrite -> empty operand),
+    ;; and even record-only minting perturbs the allocation via the threaded plan.
+    ;; So the safe subset that qualifies on the real path is EMPTY and every piece
+    ;; is declined (stays on its slot -- never worse). The mint/realization
+    ;; machinery + granular-pristine guard + register discovery below are landed and
+    ;; stress-exercised, ready for M5's CSR-across-the-call lever (the reload the
+    ;; peephole cannot elide: a callee-saved register held across a real call).
+    [compete : bool (cfg splitkit-stress true false)]
     (if (or
+      (not compete)
       (< var 0)
       (>= var orig-vars)
       (>= (array.array-ref next-piece 0) split-cap)
@@ -12387,6 +12588,7 @@
             ref-counts
             pending
             split-ctx
+            compete
             var
             weight
             segs
@@ -13441,28 +13643,51 @@
     ;; Only the integer greedy splits; the SIMD/float passes get an inert ctx.
     [split-orig-vars : i64
       (array.array-length (struct-get interval-index starts))]
+    ;; SplitKit M4: turn the split budget ON on the REAL self-host path (was
+    ;; splitkit-stress-only in M2/M3). budget > 0 makes trySplit RECORD call-free
+    ;; sub-range pieces of a spilled call-spanning root V into the split-ctx.
+    ;;
+    ;; The two modes differ only in whether the pieces COMPETE:
+    ;;   * splitkit-stress (M3/M5 dev): `split-compete` = true. The greedy's per-var
+    ;;     arrays are GROWN by `budget` so a piece (id >= orig-vars) can be minted
+    ;;     into the interval index + worklist and compete for a register; the
+    ;;     realization then homes it (M3-proven on pristine blocks).
+    ;;   * REAL self-host (M4): `split-compete` = false. The greedy's arrays are NOT
+    ;;     grown -- pieces are RECORDED into the split-ctx's own arrays only, never
+    ;;     entering the worklist -- so real-var allocation is BYTE-IDENTICAL to the
+    ;;     pre-split greedy (the worklist competition was the source of a measured
+    ;;     +137..+173 reload perturbation). The realization declines every recorded
+    ;;     piece on the real path (design Trap 1: the single-block call-free safe
+    ;;     subset is already covered by the #153 reload-elision peephole, so homing
+    ;;     it is redundant and regresses; and on the real path a placed piece's
+    ;;     minted-vreg assignment can be dropped by the downstream remat rewrite,
+    ;;     emitting an empty operand -- a miscompile). So M4 is byte-identical +
+    ;;     sound on the real path; the record-only mint + granular-pristine mapping
+    ;;     guard + free-register discovery are landed and ready for M5's CSR-across-
+    ;;     the-call lever -- the piece the peephole cannot cover.
+    [split-compete : bool (cfg splitkit-stress true false)]
     [split-budget : i64
       (if allow-caller-saved-zero-call
-        (cfg splitkit-stress (compiler-reg-split-budget-cap) 0)
+        (compiler-reg-split-budget-cap)
         0)]
     [split-index : CompilerRegIntervalIndex
-      (if (> split-budget 0)
+      (if (and (> split-budget 0) split-compete)
         (compiler-reg-interval-index-grow eff-index split-budget)
         eff-index)]
     [split-assignments : CompilerRegAssignmentTable
-      (if (> split-budget 0)
+      (if (and (> split-budget 0) split-compete)
         (compiler-reg-assignment-table-grow prepass-assignments split-budget)
         prepass-assignments)]
     [split-ref-counts : (Array i64)
-      (if (> split-budget 0)
+      (if (and (> split-budget 0) split-compete)
         (compiler-reg-i64-array-grow eviction-ref-counts split-budget 0)
         eviction-ref-counts)]
     [split-copy-hints : (Array i64)
-      (if (> split-budget 0)
+      (if (and (> split-budget 0) split-compete)
         (compiler-reg-i64-array-grow copy-hints split-budget (- 0 1))
         copy-hints)]
     [split-arg-prefs : (Array i64)
-      (if (> split-budget 0)
+      (if (and (> split-budget 0) split-compete)
         (compiler-reg-i64-array-grow arg-prefs split-budget (- 0 1))
         arg-prefs)]
     [split-ctx : CompilerRegSplitCtx

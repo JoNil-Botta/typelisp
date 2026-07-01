@@ -2066,14 +2066,16 @@
 (define (compiler-load-decl-module-list-append
   [left : AstDeclModuleList]
   [right : AstDeclModuleList]) : AstDeclModuleList
-  (match left
-    [(AstDeclModuleList.Nil) right]
-    [(AstDeclModuleList.Cons head rest)
-      (let
-        [rest : AstDeclModuleList (box-get rest)]
-        (ast-decl-module-cons
-          head
-          (compiler-load-decl-module-list-append rest right)))]))
+  (let
+    [out : AstDeclModuleList
+      (ast-decl-module-list-with-capacity
+        (+
+          (ast-decl-module-list-len (& left))
+          (ast-decl-module-list-len (& right))))]
+    (begin
+      (ast-decl-module-list-append-from (&mut out) (& left) 0)
+      (ast-decl-module-list-append-from (&mut out) (& right) 0)
+      out)))
 
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
@@ -2096,7 +2098,7 @@
             AstDeclPathList.Nil))
         (compiler-load-decl-module-list-append
           modules
-          (ast-decl-module-cons "" AstDeclModuleList.Nil))
+          (ast-decl-module-cons "" (ast-decl-module-list-new)))
         seen)]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
@@ -2387,12 +2389,12 @@
     (ResultCompilerLoadWithPaths.Ok
       (ast-decl-cons (ast-decl-module module-id) AstDeclList.Nil)
       (ast-decl-path-cons path AstDeclPathList.Nil)
-      (ast-decl-module-cons module-id AstDeclModuleList.Nil)
+      (ast-decl-module-cons module-id (ast-decl-module-list-new))
       seen)
     (ResultCompilerLoadWithPaths.Ok
       AstDeclList.Nil
       AstDeclPathList.Nil
-      AstDeclModuleList.Nil
+      (ast-decl-module-list-new)
       seen)))
 
 (define (compiler-load-legacy-path-flat-module-import?
@@ -3526,7 +3528,7 @@
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         seen)]
     [(AstDeclList.Cons decl rest)
       (let
@@ -3662,7 +3664,7 @@
                       (ResultCompilerLoadWithPaths.Ok
                         AstDeclList.Nil
                         AstDeclPathList.Nil
-                        AstDeclModuleList.Nil
+                        (ast-decl-module-list-new)
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
                         resolved
@@ -3916,7 +3918,7 @@
         (ResultCompilerLoadWithPaths.Ok
           AstDeclList.Nil
           AstDeclPathList.Nil
-          AstDeclModuleList.Nil
+          (ast-decl-module-list-new)
           seen)
         (compiler-load-decls-with-module-and-roots-cfg
           decls
@@ -3942,7 +3944,7 @@
         (ResultCompilerLoadWithPaths.Ok
           AstDeclList.Nil
           AstDeclPathList.Nil
-          AstDeclModuleList.Nil
+          (ast-decl-module-list-new)
           seen)
         (compiler-load-decls-with-module-and-roots-cfg-with-pools
           decls
@@ -4856,7 +4858,7 @@
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         seen)
       (let
         [parse-cfgs : sym_i64_env.SymI64Env
@@ -4958,7 +4960,7 @@
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         seen)
       (let
         [parse-cfgs : sym_i64_env.SymI64Env
@@ -5575,7 +5577,7 @@
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         seen)]
     [(AstDeclList.Cons decl rest)
       (let
@@ -5758,7 +5760,7 @@
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         seen)]
     [(AstDeclList.Cons decl rest)
       (let
@@ -5838,7 +5840,7 @@
                       (ResultCompilerLoadWithPaths.Ok
                         AstDeclList.Nil
                         AstDeclPathList.Nil
-                        AstDeclModuleList.Nil
+                        (ast-decl-module-list-new)
                         seen)
                       (if package-externs
                         (compiler-load-package-externs-from-import
@@ -6564,20 +6566,10 @@
 (define (compiler-load-two-modules?
   [modules : AstDeclModuleList]
   [want : String]) : bool
-  (match modules
-    [(AstDeclModuleList.Cons first tail)
-      (let
-        [tail : AstDeclModuleList (box-get tail)]
-        (match tail
-          [(AstDeclModuleList.Cons second rest)
-            (let
-              [rest : AstDeclModuleList (box-get rest)]
-              (match rest
-                [(AstDeclModuleList.Nil)
-                  (and (string.eq first want) (string.eq second want))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (and
+    (= (ast-decl-module-list-len (& modules)) 2)
+    (string.eq (ast-decl-module-list-get (& modules) 0 "") want)
+    (string.eq (ast-decl-module-list-get (& modules) 1 "") want)))
 
 (define (compiler-load-entry-cycle-module-name? [name : String]) : bool
   (or (string.eq name "smoke.entry") (string.eq name "smoke.dep")))
@@ -6585,12 +6577,12 @@
 (define (compiler-load-entry-cycle-modules-loop
   [modules : AstDeclModuleList]
   [count : i64]) : bool
-  (match modules
-    [(AstDeclModuleList.Nil) (= count 11)]
-    [(AstDeclModuleList.Cons first tail)
-      (and
-        (compiler-load-entry-cycle-module-name? first)
-        (compiler-load-entry-cycle-modules-loop (box-get tail) (+ count 1)))]))
+  (if (>= count (ast-decl-module-list-len (& modules)))
+    (= count 11)
+    (and
+      (compiler-load-entry-cycle-module-name?
+        (ast-decl-module-list-get (& modules) count ""))
+      (compiler-load-entry-cycle-modules-loop modules (+ count 1)))))
 
 (define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
   (compiler-load-entry-cycle-modules-loop modules 0))

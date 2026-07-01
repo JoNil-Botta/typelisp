@@ -1897,9 +1897,11 @@
   (Nil)
   (Cons String (Box AstDeclPathList)))
 
-(defenum AstDeclModuleList
-  (Nil)
-  (Cons String (Box AstDeclModuleList)))
+(comptime-decl
+  (:generated vector-family AstDeclModuleList "String")
+  (defstruct AstDeclModuleList
+    (slots (Array String))
+    (len i64)))
 
 (defenum AstProgram
   (Program (Box AstDeclList)))
@@ -4831,8 +4833,112 @@
 (define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (AstDeclPathList.Cons head (box rest)))
 
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-with-capacity "String")
+  (define (ast-decl-module-list-with-capacity [capacity : i64]) : AstDeclModuleList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstDeclModuleList (array.make-array String cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-new "String")
+  (define (ast-decl-module-list-new) : AstDeclModuleList
+    (ast-decl-module-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-len "String")
+  (define (ast-decl-module-list-len [v : (& v AstDeclModuleList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-capacity "String")
+  (define (ast-decl-module-list-capacity [v : (& v AstDeclModuleList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-empty? "String")
+  (define (ast-decl-module-list-empty? [v : (& v AstDeclModuleList)]) : bool
+    (= (ast-decl-module-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-get "String")
+  (define (ast-decl-module-list-get
+    [v : (& v AstDeclModuleList)]
+    [index : i64]
+    [fallback : String]) : String
+    (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-copy-range "String")
+  (define (ast-decl-module-list-copy-range
+    [dst : (&mut dst (Array String))]
+    [src : (& src (Array String))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-decl-module-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-grow "String")
+  (define (ast-decl-module-list-grow [v : (&mut v AstDeclModuleList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array String) (array.make-array String new-cap)]
+      (begin
+        (ast-decl-module-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-decl-module-list-push "String")
+  (define (ast-decl-module-list-push
+    [v : (&mut v AstDeclModuleList)]
+    [value : String]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-decl-module-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-decl-module-list-append-from
+  [out : (&mut out AstDeclModuleList)]
+  [items : (& items AstDeclModuleList)]
+  [index : i64]) : unit
+  (if (>= index (ast-decl-module-list-len items))
+    unit
+    (begin
+      (ast-decl-module-list-push out (ast-decl-module-list-get items index ""))
+      (ast-decl-module-list-append-from out items (+ index 1)))))
+
 (define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
-  (AstDeclModuleList.Cons head (box rest)))
+  (let
+    [out : AstDeclModuleList
+      (ast-decl-module-list-with-capacity
+        (+ 1 (ast-decl-module-list-len (& rest))))]
+    (begin
+      (ast-decl-module-list-push (&mut out) head)
+      (ast-decl-module-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-program [decls : AstDeclList]) : AstProgram
   (AstProgram.Program (box decls)))

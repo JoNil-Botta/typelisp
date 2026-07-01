@@ -77,7 +77,7 @@ walkers, and any path-alignment logic change together.
 | `AstDispatchVariantList` | `src/compiler_ast_types.tl:1572` | `AstDispatchVariantNil` / `AstDispatchVariantCons` | Ordered dispatch variants. | Cold. | `keep-persistent-cons` | Revisit only if dispatch metadata grows. |
 | `AstDeclList` | `src/compiler_ast_types.tl:1604` | `AstDeclNil` / `AstDeclCons` | Ordered declarations; prefix cache, symbol, typecheck, lower passes. | Very hot. | `convert-to-generated-vector` | #3427; migrate with `AstDeclPathList`. |
 | `AstDeclPathList` | `src/compiler_ast_types.tl:1608` | `AstDeclPathNil` / `AstDeclPathCons` | Parallel ordered paths for `AstDeclList`; lockstep traversal. | Hot wherever loaded programs are checked/lowered. | `convert-to-generated-vector` | #3427; must migrate with `AstDeclList`. |
-| `AstDeclModuleList` | `src/compiler_ast_types.tl:1612` | `AstDeclModuleNil` / `AstDeclModuleCons` | Ordered module markers from loaded programs. | Moderate. | `convert-to-generated-vector` | #3427. |
+| `AstDeclModuleList` | `src/compiler_ast_types.tl:1813` | generated vector family (`ast-decl-module-list-*`) | Ordered module markers from loaded programs. | Moderate. | `converted-to-generated-vector` | #3427. |
 
 ## src/compiler_typecheck_core.tl
 

@@ -13099,47 +13099,67 @@
         [(AstDispatchIsa.Avx512) true]
         [_ false])]))
 
+(define (tc-dispatch-variant-list-contains-isa-from?
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [isa : AstDispatchIsa]) : bool
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    false
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant found-isa _)
+        (if (tc-dispatch-isa-eq? found-isa isa)
+          true
+          (tc-dispatch-variant-list-contains-isa-from? variants (+ index 1) isa))])))
+
 (define (tc-dispatch-variant-list-contains-isa?
   [variants : AstDispatchVariantList]
   [isa : AstDispatchIsa]) : bool
-  (match variants
-    [(AstDispatchVariantList.Nil) false]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant found-isa _)
-            (if (tc-dispatch-isa-eq? found-isa isa)
-              true
-              (tc-dispatch-variant-list-contains-isa? rest isa))]))]))
+  (tc-dispatch-variant-list-contains-isa-from? (& variants) 0 isa))
+
+(define (tc-dispatch-variant-list-duplicate-isa-from?
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]) : bool
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    false
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant isa _)
+        (or
+          (tc-dispatch-variant-list-contains-isa-from? variants (+ index 1) isa)
+          (tc-dispatch-variant-list-duplicate-isa-from? variants (+ index 1)))])))
 
 (define (tc-dispatch-variant-list-duplicate-isa?
   [variants : AstDispatchVariantList]) : bool
-  (match variants
-    [(AstDispatchVariantList.Nil) false]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant isa _)
-            (or
-              (tc-dispatch-variant-list-contains-isa? rest isa)
-              (tc-dispatch-variant-list-duplicate-isa? rest))]))]))
+  (tc-dispatch-variant-list-duplicate-isa-from? (& variants) 0))
+
+(define (tc-dispatch-variant-list-scalar-count-from
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    count
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant isa _)
+        (tc-dispatch-variant-list-scalar-count-from
+          variants
+          (+ index 1)
+          (+
+            count
+            (match isa
+              [(AstDispatchIsa.Scalar) 1]
+              [_ 0])))])))
 
 (define (tc-dispatch-variant-list-scalar-count
   [variants : AstDispatchVariantList]) : i64
-  (match variants
-    [(AstDispatchVariantList.Nil) 0]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant isa _)
-            (+
-              (match isa
-                [(AstDispatchIsa.Scalar) 1]
-                [_ 0])
-              (tc-dispatch-variant-list-scalar-count rest))]))]))
+  (tc-dispatch-variant-list-scalar-count-from (& variants) 0 0))
 
 (define (tc-dispatch-symbol-name [module : String] [name : String]) : String
   (if (and (> (string.string-length module) 0) (not (tc-name-qualified? name)))
@@ -13195,41 +13215,55 @@
               "typecheck: unknown defdispatch variant "
               variant-name)))))))
 
+(define (tc-dispatch-variant-signatures-from
+  [ctx : TcContext]
+  [dispatch-name : String]
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [expected : AstMaybeType]) : ResultTcType
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    (match expected
+      [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
+      [(AstMaybeType.No)
+        (ResultTcType.Err "typecheck: defdispatch has no variants")])
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant _ variant-name)
+        (match (tc-dispatch-variant-type ctx dispatch-name variant-name)
+          [(ResultTcType.Ok ty)
+            (match expected
+              [(AstMaybeType.No)
+                (tc-dispatch-variant-signatures-from
+                  ctx
+                  dispatch-name
+                  variants
+                  (+ index 1)
+                  (AstMaybeType.Some ty))]
+              [(AstMaybeType.Some want)
+                (if (tc-type-eq ty want)
+                  (tc-dispatch-variant-signatures-from
+                    ctx
+                    dispatch-name
+                    variants
+                    (+ index 1)
+                    expected)
+                  (ResultTcType.Err
+                    "typecheck: defdispatch variant signatures must match"))])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+
 (define (tc-dispatch-variant-signatures
   [ctx : TcContext]
   [dispatch-name : String]
   [variants : AstDispatchVariantList]
   [expected : AstMaybeType]) : ResultTcType
-  (match variants
-    [(AstDispatchVariantList.Nil)
-      (match expected
-        [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
-        [(AstMaybeType.No)
-          (ResultTcType.Err "typecheck: defdispatch has no variants")])]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant _ variant-name)
-            (match (tc-dispatch-variant-type ctx dispatch-name variant-name)
-              [(ResultTcType.Ok ty)
-                (match expected
-                  [(AstMaybeType.No)
-                    (tc-dispatch-variant-signatures
-                      ctx
-                      dispatch-name
-                      rest
-                      (AstMaybeType.Some ty))]
-                  [(AstMaybeType.Some want)
-                    (if (tc-type-eq ty want)
-                      (tc-dispatch-variant-signatures
-                        ctx
-                        dispatch-name
-                        rest
-                        expected)
-                      (ResultTcType.Err
-                        "typecheck: defdispatch variant signatures must match"))])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]))]))
+  (tc-dispatch-variant-signatures-from
+    ctx
+    dispatch-name
+    (& variants)
+    0
+    expected))
 
 (define (tc-dispatch-decl-type
   [ctx : TcContext]

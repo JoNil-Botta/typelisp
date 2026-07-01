@@ -6282,26 +6282,35 @@
     names
     (lower-dispatch-source-name module variant-name)))
 
+(define (lower-dispatch-variant-set-add-list-from
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [module : String]
+  [names : LowerNameCache]
+  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    out
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant _ variant-name)
+        (lower-dispatch-variant-set-add-list-from
+          variants
+          (+ index 1)
+          module
+          names
+          (hashmap.string-i64-map-put
+            out
+            (lower-dispatch-variant-logical-name module names variant-name)
+            1))])))
+
 (define (lower-dispatch-variant-set-add-list
   [variants : AstDispatchVariantList]
   [module : String]
   [names : LowerNameCache]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match variants
-    [(AstDispatchVariantList.Nil) out]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant _ variant-name)
-            (lower-dispatch-variant-set-add-list
-              rest
-              module
-              names
-              (hashmap.string-i64-map-put
-                out
-                (lower-dispatch-variant-logical-name module names variant-name)
-                1))]))]))
+  (lower-dispatch-variant-set-add-list-from (& variants) 0 module names out))
 
 (define (lower-dispatch-variant-set-add-decl
   [decl : AstDecl]
@@ -6371,28 +6380,44 @@
     names
     (hashmap.string-i64-map-with-capacity 1024)))
 
+(define (lower-reach-add-dispatch-variant-list-from
+  [all-functions : hashmap.StringI64Map]
+  [module : String]
+  [names : LowerNameCache]
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [state : LowerReachState]) : LowerReachState
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    state
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant _ variant-name)
+        (lower-reach-add-dispatch-variant-list-from
+          all-functions
+          module
+          names
+          variants
+          (+ index 1)
+          (lower-reach-add-logical
+            all-functions
+            state
+            (lower-dispatch-variant-logical-name module names variant-name)))])))
+
 (define (lower-reach-add-dispatch-variant-list
   [all-functions : hashmap.StringI64Map]
   [module : String]
   [names : LowerNameCache]
   [variants : AstDispatchVariantList]
   [state : LowerReachState]) : LowerReachState
-  (match variants
-    [(AstDispatchVariantList.Nil) state]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant _ variant-name)
-            (lower-reach-add-dispatch-variant-list
-              all-functions
-              module
-              names
-              rest
-              (lower-reach-add-logical
-                all-functions
-                state
-                (lower-dispatch-variant-logical-name module names variant-name)))]))]))
+  (lower-reach-add-dispatch-variant-list-from
+    all-functions
+    module
+    names
+    (& variants)
+    0
+    state))
 
 (define (lower-reach-add-dispatch-variant-decl
   [all-functions : hashmap.StringI64Map]
@@ -40505,34 +40530,47 @@
           (CompilerIrValue.Var idx)
           (lower-dispatch-param-values rest (+ idx 1))))]))
 
+(define (lower-dispatch-find-internal-name-from
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [module : String]
+  [names : LowerNameCache]
+  [dispatch-name : String]
+  [wanted : AstDispatchIsa]) : TcMaybeString
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    (TcMaybeString.No)
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant isa variant-name)
+        (if (tc-dispatch-isa-eq? isa wanted)
+          (TcMaybeString.Some
+            (lower-dispatch-variant-internal-name
+              dispatch-name
+              isa
+              (lower-dispatch-variant-logical-name module names variant-name)))
+          (lower-dispatch-find-internal-name-from
+            variants
+            (+ index 1)
+            module
+            names
+            dispatch-name
+            wanted))])))
+
 (define (lower-dispatch-find-internal-name
   [variants : AstDispatchVariantList]
   [module : String]
   [names : LowerNameCache]
   [dispatch-name : String]
   [wanted : AstDispatchIsa]) : TcMaybeString
-  (match variants
-    [(AstDispatchVariantList.Nil) (TcMaybeString.No)]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant isa variant-name)
-            (if (tc-dispatch-isa-eq? isa wanted)
-              (TcMaybeString.Some
-                (lower-dispatch-variant-internal-name
-                  dispatch-name
-                  isa
-                  (lower-dispatch-variant-logical-name
-                    module
-                    names
-                    variant-name)))
-              (lower-dispatch-find-internal-name
-                rest
-                module
-                names
-                dispatch-name
-                wanted))]))]))
+  (lower-dispatch-find-internal-name-from
+    (& variants)
+    0
+    module
+    names
+    dispatch-name
+    wanted))
 
 (define (lower-dispatch-call-return-instr [call-var : i64] [ret-ty : AstType]) : CompilerIrInstr
   (CompilerIrInstr.Return
@@ -41003,6 +41041,48 @@
                   "lower: unknown defdispatch variant "
                   variant-name))))))]))
 
+(define (lower-dispatch-lower-variants-from
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [dispatch-name : String]
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [module : String]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]
+  [functions : CompilerIrFunctionList]) : ResultLowerFunction
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    (OkLowerFunction functions spans)
+    (match (lower-dispatch-lower-variant
+      ctx
+      top-env
+      type-cache
+      dispatch-name
+      (ast-dispatch-variant-list-get
+        variants
+        index
+        (ast-dispatch-variant-fallback))
+      module
+      spans
+      names
+      mode)
+      [(OkLowerFunction lowered-functions function-spans)
+        (lower-dispatch-lower-variants-from
+          ctx
+          top-env
+          type-cache
+          dispatch-name
+          variants
+          (+ index 1)
+          module
+          function-spans
+          names
+          mode
+          (lower-function-list-append lowered-functions functions))]
+      [(ErrLowerFunction message) (ErrLowerFunction message)])))
+
 (define (lower-dispatch-lower-variants
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -41014,34 +41094,18 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]
   [functions : CompilerIrFunctionList]) : ResultLowerFunction
-  (match variants
-    [(AstDispatchVariantList.Nil) (OkLowerFunction functions spans)]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match (lower-dispatch-lower-variant
-          ctx
-          top-env
-          type-cache
-          dispatch-name
-          variant
-          module
-          spans
-          names
-          mode)
-          [(OkLowerFunction lowered-functions function-spans)
-            (lower-dispatch-lower-variants
-              ctx
-              top-env
-              type-cache
-              dispatch-name
-              rest
-              module
-              function-spans
-              names
-              mode
-              (lower-function-list-append lowered-functions functions))]
-          [(ErrLowerFunction message) (ErrLowerFunction message)]))]))
+  (lower-dispatch-lower-variants-from
+    ctx
+    top-env
+    type-cache
+    dispatch-name
+    (& variants)
+    0
+    module
+    spans
+    names
+    mode
+    functions))
 
 (define (lower-dispatch-decl
   [ctx : TcContext]

@@ -1762,9 +1762,11 @@
 (defenum AstDispatchVariant
   (Variant AstDispatchIsa String))
 
-(defenum AstDispatchVariantList
-  (Nil)
-  (Cons AstDispatchVariant (Box AstDispatchVariantList)))
+(comptime-decl
+  (:generated vector-family AstDispatchVariantList "AstDispatchVariant")
+  (defstruct AstDispatchVariantList
+    (slots (Array AstDispatchVariant))
+    (len i64)))
 
 (defenum AstGeneratedDeclMeta
   (No)
@@ -2830,10 +2832,97 @@
   [args : AstExprList]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.Syscall args)))
 
-(define (ast-dispatch-variant-cons
-  [head : AstDispatchVariant]
-  [rest : AstDispatchVariantList]) : AstDispatchVariantList
-  (AstDispatchVariantList.Cons head (box rest)))
+(define (ast-dispatch-variant-fallback) : AstDispatchVariant
+  (AstDispatchVariant.Variant (AstDispatchIsa.Scalar) ""))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-with-capacity "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-with-capacity [capacity : i64]) : AstDispatchVariantList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstDispatchVariantList (array.make-array AstDispatchVariant cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-new "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-new) : AstDispatchVariantList
+    (ast-dispatch-variant-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-len "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-len [v : (& v AstDispatchVariantList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-capacity "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-capacity
+    [v : (& v AstDispatchVariantList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-empty? "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-empty? [v : (& v AstDispatchVariantList)]) : bool
+    (= (ast-dispatch-variant-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-get "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-get
+    [v : (& v AstDispatchVariantList)]
+    [index : i64]
+    [fallback : AstDispatchVariant]) : AstDispatchVariant
+    (if (and (>= index 0) (< index (ast-dispatch-variant-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-copy-range "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-copy-range
+    [dst : (&mut dst (Array AstDispatchVariant))]
+    [src : (& src (Array AstDispatchVariant))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-dispatch-variant-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-grow "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-grow [v : (&mut v AstDispatchVariantList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstDispatchVariant)
+        (array.make-array AstDispatchVariant new-cap)]
+      (begin
+        (ast-dispatch-variant-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-dispatch-variant-list-push "AstDispatchVariant")
+  (define (ast-dispatch-variant-list-push
+    [v : (&mut v AstDispatchVariantList)]
+    [value : AstDispatchVariant]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-dispatch-variant-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
 
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (AstDeclList.Cons head (box rest)))
@@ -3309,12 +3398,7 @@
 
 (define (ast-compaction-remap-dispatch-variant-list
   [variants : AstDispatchVariantList]) : AstDispatchVariantList
-  (match variants
-    [(AstDispatchVariantList.Nil) AstDispatchVariantList.Nil]
-    [(AstDispatchVariantList.Cons variant rest)
-      (AstDispatchVariantList.Cons
-        (ast-compaction-remap-dispatch-variant variant)
-        (box (ast-compaction-remap-dispatch-variant-list (box-get rest))))]))
+  variants)
 
 (define (ast-compaction-remap-pattern
   [remap : AstProgramCompactionRemap]

@@ -4394,7 +4394,7 @@
     [(AstExprList.Nil) roots]
     [(AstExprList.Cons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
+        [expr : AstExpr (tc-context-expr-get ctx expr)]
         [rest : AstExprList (box-get rest)]
         (lower-clone-roots-expr-list
           ctx
@@ -4432,7 +4432,7 @@
         (match binding
           [(AstLetBinding.Binding name maybe-ty init-box)
             (let
-              [init : AstExpr (ast-node-get init-box)]
+              [init : AstExpr (tc-context-expr-get ctx init-box)]
               [next-roots : CloneNameList
                 (lower-clone-roots-expr ctx env decls able roots init)]
               [next-env : TcTypeEnv
@@ -4461,7 +4461,7 @@
         (match arm
           [(AstMatchArm.Arm pattern body-box)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (tc-context-expr-get ctx body-box)]
               [arm-env : TcTypeEnv
                 (match (tc-bind-match-pattern ctx env scrut-ty pattern)
                   [(ResultTcEnv.Ok next-env) next-env]
@@ -4490,8 +4490,8 @@
         (match binding
           [(AstResourceBinding.Binding _ acquire-box cleanup-box)
             (let
-              [acquire : AstExpr (ast-node-get acquire-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
+              [acquire : AstExpr (tc-context-expr-get ctx acquire-box)]
+              [cleanup : AstExpr (tc-context-expr-get ctx cleanup-box)]
               (lower-clone-roots-resource-bindings
                 ctx
                 env
@@ -4523,7 +4523,7 @@
         able
         (lower-clone-roots-expr ctx env decls able roots callee)
         args)]
-    (match (ast-expr-unspan callee)
+    (match (ast-expr-unspan-with-pools (tc-context-pools ctx) callee)
       [(AstExpr.Var name)
         (let
           [raw-name : String (intern-str name)]
@@ -4546,7 +4546,8 @@
                       (match (tc-expr
                         ctx
                         env
-                        (ast-node-get
+                        (tc-context-expr-get
+                          ctx
                           (ast-expr-call-with-pools
                             (tc-context-pools ctx)
                             (ast-node-pool-context-expr-push
@@ -4576,14 +4577,14 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Literal _) roots]
     [(AstExpr.Var _) roots]
     [(AstExpr.Binary _ lhs-box rhs-box)
       (let
-        [lhs : AstExpr (ast-node-get lhs-box)]
-        [rhs : AstExpr (ast-node-get rhs-box)]
+        [lhs : AstExpr (tc-context-expr-get ctx lhs-box)]
+        [rhs : AstExpr (tc-context-expr-get ctx rhs-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4593,17 +4594,17 @@
           rhs))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Call callee-box args)
       (let
-        [callee : AstExpr (ast-node-get callee-box)]
+        [callee : AstExpr (tc-context-expr-get ctx callee-box)]
         (lower-clone-roots-call ctx env decls able roots callee args))]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-expr : AstExpr (ast-node-get then-box)]
-        [else-expr : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (tc-context-expr-get ctx cond-box)]
+        [then-expr : AstExpr (tc-context-expr-get ctx then-box)]
+        [else-expr : AstExpr (tc-context-expr-get ctx else-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4621,7 +4622,7 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (tc-context-expr-get ctx body-box)]
             (match (lower-clone-roots-let-bindings
               ctx
               env
@@ -4641,7 +4642,7 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (tc-context-expr-get ctx body-box)]
             (lower-clone-roots-expr
               ctx
               (tc-bind-params ctx env params)
@@ -4653,18 +4654,18 @@
       (lower-clone-roots-expr-list ctx env decls able roots values)]
     [(AstExpr.TupleRef value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.Array values)
       (lower-clone-roots-expr-list ctx env decls able roots values)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
+        [len : AstExpr (tc-context-expr-get ctx len-box)]
         (lower-clone-roots-expr ctx env decls able roots len))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (tc-context-expr-get ctx array-box)]
+        [index : AstExpr (tc-context-expr-get ctx index-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4674,9 +4675,9 @@
           index))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (tc-context-expr-get ctx array-box)]
+        [index : AstExpr (tc-context-expr-get ctx index-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4692,8 +4693,8 @@
           value))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr (tc-context-expr-get ctx receiver-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4703,8 +4704,8 @@
           value))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (tc-context-expr-get ctx array-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4714,8 +4715,8 @@
           value))]
     [(AstExpr.StringRef text-box index-box)
       (let
-        [text : AstExpr (ast-node-get text-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [text : AstExpr (tc-context-expr-get ctx text-box)]
+        [index : AstExpr (tc-context-expr-get ctx index-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4725,8 +4726,8 @@
           index))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (tc-context-expr-get ctx cond-box)]
+        [body : AstExpr (tc-context-expr-get ctx body-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4740,25 +4741,25 @@
       (lower-clone-roots-expr-list ctx env decls able roots exprs)]
     [(AstExpr.Set _ value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Borrow _ _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
           (let
-            [value : AstExpr (ast-node-get value-box)]
+            [value : AstExpr (tc-context-expr-get ctx value-box)]
             [value-roots : CloneNameList
               (lower-clone-roots-expr ctx env decls able roots value)]
             (match (tc-expr ctx env value)
@@ -4776,9 +4777,9 @@
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (tc-context-expr-get ctx start-box)]
+            [end : AstExpr (tc-context-expr-get ctx end-box)]
+            [body : AstExpr (tc-context-expr-get ctx body-box)]
             [body-env : TcTypeEnv
               (tc-bind-id env index (tc-resolve-type ctx index-ty))]
             (lower-clone-roots-expr
@@ -4805,10 +4806,10 @@
             init-box
             value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (tc-context-expr-get ctx start-box)]
+            [end : AstExpr (tc-context-expr-get ctx end-box)]
+            [init : AstExpr (tc-context-expr-get ctx init-box)]
+            [value : AstExpr (tc-context-expr-get ctx value-box)]
             [value-env : TcTypeEnv
               (tc-bind-id env index (tc-resolve-type ctx index-ty))]
             (lower-clone-roots-expr
@@ -4844,11 +4845,11 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (tc-context-expr-get ctx start-box)]
+            [end : AstExpr (tc-context-expr-get ctx end-box)]
+            [init : AstExpr (tc-context-expr-get ctx init-box)]
+            [value : AstExpr (tc-context-expr-get ctx value-box)]
+            [body : AstExpr (tc-context-expr-get ctx body-box)]
             [value-env : TcTypeEnv
               (tc-bind-id env index (tc-resolve-type ctx index-ty))]
             [body-env : TcTypeEnv
@@ -4880,8 +4881,8 @@
               body))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
+        [lane : AstExpr (tc-context-expr-get ctx lane-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4891,8 +4892,8 @@
           lane))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
+        [lane : AstExpr (tc-context-expr-get ctx lane-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4902,7 +4903,7 @@
           lane))]
     [(AstExpr.StructGet value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.WithRegion region exprs)
       (lower-clone-roots-expr-list
@@ -4914,7 +4915,7 @@
         exprs)]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (tc-context-expr-get ctx scratch-box)]
         [walked : CloneNameList
           (lower-clone-roots-expr-list
             ctx
@@ -4937,7 +4938,7 @@
           [(ResultTcType.Err _) walked]))]
     [(AstExpr.InArena arena-box exprs)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (tc-context-expr-get ctx arena-box)]
         (lower-clone-roots-expr-list
           ctx
           env
@@ -4970,20 +4971,20 @@
               body))])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -4995,44 +4996,44 @@
     [(AstExpr.Init _) roots]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Quote _) roots]
     [(AstExpr.Quasiquote _) roots]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.BracketClause items)
       (lower-clone-roots-expr-list ctx env decls able roots items)]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.Break) roots]
     [(AstExpr.Continue) roots]
     [(AstExpr.PtrNull _) roots]
     [(AstExpr.PtrNullCheck value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.PtrAddrOf _) roots]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
         (lower-clone-roots-expr ctx env decls able roots ptr))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5042,8 +5043,8 @@
           value))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
+        [offset : AstExpr (tc-context-expr-get ctx offset-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5053,24 +5054,24 @@
           offset))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
         (lower-clone-roots-expr ctx env decls able roots ptr))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
         (lower-clone-roots-expr ctx env decls able roots ptr))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
+        [len : AstExpr (tc-context-expr-get ctx len-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5080,7 +5081,7 @@
           len))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExpr.BinaryData _) roots]
     [(AstExpr.SpmdProgramIndex) roots]
@@ -5090,8 +5091,8 @@
     [(AstExpr.ProgramEnvp) roots]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5101,8 +5102,8 @@
           subleaf))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5112,8 +5113,8 @@
           subleaf))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5123,8 +5124,8 @@
           subleaf))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
         (lower-clone-roots-expr
           ctx
           env
@@ -5134,7 +5135,7 @@
           subleaf))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
+        [index : AstExpr (tc-context-expr-get ctx index-box)]
         (lower-clone-roots-expr ctx env decls able roots index))]
     [(AstExpr.Syscall args)
       (lower-clone-roots-expr-list ctx env decls able roots args)]))
@@ -5177,12 +5178,14 @@
                   (set! cur (ast-decl-cons (box-get template-box) rest))]
                 [(AstDecl.Def _ _ expr-box)
                   (let
-                    [expr : AstExpr (ast-node-get expr-box)]
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [expr : AstExpr (tc-context-expr-get decl-ctx expr-box)]
                     (begin
                       (set!
                         cur-roots
                         (lower-clone-roots-expr
-                          (tc-context-with-module ctx cur-module)
+                          decl-ctx
                           cur-local-env
                           all-decls
                           able
@@ -5193,7 +5196,7 @@
                   (let
                     [decl-ctx : TcContext
                       (tc-context-with-module ctx cur-module)]
-                    [body : AstExpr (ast-node-get body-box)]
+                    [body : AstExpr (tc-context-expr-get decl-ctx body-box)]
                     [fn-env : TcTypeEnv
                       (tc-bind-return-type
                         (tc-bind-params decl-ctx cur-local-env params)

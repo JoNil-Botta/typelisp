@@ -951,6 +951,10 @@
           (compiler-driver-state-pool-context state-b)]
         [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstType.Str))]
         [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstType.I64))]
+        [array-ty : AstType
+          (ast-ty-dyn-array-with-pools pools-a (AstType.Bool))]
+        [array-decoy-id : i64
+          (ast-node-pool-context-type-push pools-b (AstType.F64))]
         (match ref-ty
           [(AstType.Ref _ inner)
             (match (build-compiler-symbols program)
@@ -962,11 +966,32 @@
                         (TcContext program symbols registries "" pools-a)]
                       [_ : unit (ast-node-pool-context-install! pools-b)]
                       [active-len : i64 (ty-node-pool-len)]
+                      [name-id : i64 (intern "xs")]
+                      [env : sym_i64_env.SymI64Env
+                        (sym_i64_env.sym-i64-bind-id
+                          (sym_i64_env.sym-i64-empty)
+                          name-id
+                          7)]
+                      [type-env : TcTypeEnv
+                        (tc-bind-id TcTypeEnv.Nil name-id array-ty)]
+                      [dynamic-ok : bool
+                        (match (lower-dynamic-array-var
+                          ctx
+                          env
+                          type-env
+                          (AstExpr.Var name-id))
+                          [(LowerSomeArrayVar var-id elem-ty)
+                            (and
+                              (= var-id 7)
+                              (tc-type-eq elem-ty (AstType.Bool)))]
+                          [LowerNoArrayVar false])]
                       (and
                         (= inner decoy-id)
+                        (= array-decoy-id (+ decoy-id 1))
                         (= active-len (ast-node-pool-context-type-len pools-b))
                         (lower-str-ref-type? ctx ref-ty)
                         (not (lower-bytes-ref-type? ctx ref-ty))
+                        dynamic-ok
                         (= active-len (ty-node-pool-len))))]
                   [(ResultCompilerRegistries.Err _) false])]
               [(ResultCompilerSymbols.Err _) false])]

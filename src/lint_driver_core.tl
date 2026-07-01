@@ -2180,6 +2180,18 @@
             50
             0))))))")
 
+(define (selfhost-lint-guard-ladder-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  (begin
+    (if a
+      (return 1)
+      (if b
+        (return 2)
+        (if c
+          (return 3)
+          unit)))
+    42))")
+
 ;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive that
 ;; suppresses the ladder finding via its stable rule id.
 (define (selfhost-lint-suppressed-ladder-source) : String
@@ -2957,17 +2969,21 @@
       [else 42])))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
-(define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
+(define (selfhost-lint-reported-finding-ok?
+  [findings : LintFindings]
+  [depth : i64]
+  [message : String]) : bool
   (match (lint-findings-get findings 0)
     [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
-          (= (struct-get finding depth) 5)
+          (= (struct-get finding depth) depth)
           (> (struct-get fspan start-line) 0)
           (string.eq
             (struct-get finding rule-id)
-            (lint-rule-nested-if-ladder-id))))]
+            (lint-rule-nested-if-ladder-id))
+          (string.eq (struct-get finding message) message)))]
     [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-nested-let-finding-ok? [findings : LintFindings]) : bool
@@ -3057,6 +3073,11 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         (vector.string-vec-new))]
+    [guard-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-guard-ladder-source)
+        (vector.string-vec-new))]
     [return-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
@@ -3105,8 +3126,20 @@
     (cond
       [(or
           (not (= (lint-findings-count reported) 1))
-          (not (selfhost-lint-reported-finding-ok? reported)))
+          (not
+            (selfhost-lint-reported-finding-ok?
+              reported
+              5
+              (lint-rule-nested-if-ladder-value-message))))
         1]
+      [(or
+          (not (= (lint-findings-count guard-reported) 1))
+          (not
+            (selfhost-lint-reported-finding-ok?
+              guard-reported
+              3
+              (lint-rule-nested-if-ladder-guard-message))))
+        70]
       [(not (= (lint-findings-count return-reported) 1)) 9]
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
       [(not

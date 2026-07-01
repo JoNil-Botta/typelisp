@@ -8030,9 +8030,9 @@
 ;: One link scope's native inputs: ordered libraries, search paths, and raw
 ;: linker arguments. Order within each list is preserved from the manifest.
 (defstruct CompilerPkgLinkSet
-  (libraries vector.StringVec)
-  (search-paths vector.StringVec)
-  (args vector.StringVec))
+  (libraries fs.FsStringVector)
+  (search-paths fs.FsStringVector)
+  (args fs.FsStringVector))
 
 ;: Parsed `(link ...)` manifest section. `all` applies to every target; `linux`
 ;: and `windows` add per-target inputs. Empty lists mean the field was omitted.
@@ -8047,7 +8047,7 @@
 
 ;: Internal: a parsed list of `link` field string values, or a diagnostic.
 (defenum ResultPkgStrVec
-  (Ok vector.StringVec)
+  (Ok fs.FsStringVector)
   (Err String))
 
 (defstruct CompilerPkgManifest
@@ -8494,9 +8494,9 @@
 ;: An empty link scope (no libraries, search paths, or args).
 (define (compiler-pkg-link-set-empty) : CompilerPkgLinkSet
   (CompilerPkgLinkSet
-    (vector.string-vec-new)
-    (vector.string-vec-new)
-    (vector.string-vec-new)))
+    (fs.fs-string-vector-new)
+    (fs.fs-string-vector-new)
+    (fs.fs-string-vector-new)))
 
 ;: An empty `(link ...)` section (every scope empty).
 (define (compiler-pkg-link-empty) : CompilerPkgLink
@@ -8555,7 +8555,7 @@
       (CompilerPkgLink (struct-get link all) (struct-get link linux) set))))
 
 ;: The category's value list within a link scope set.
-(define (compiler-pkg-link-set-category [set : CompilerPkgLinkSet] [cat : i64]) : vector.StringVec
+(define (compiler-pkg-link-set-category [set : CompilerPkgLinkSet] [cat : i64]) : fs.FsStringVector
   (if (= cat 0)
     (struct-get set libraries)
     (if (= cat 1)
@@ -8566,7 +8566,7 @@
 (define (compiler-pkg-link-set-replace-category
   [set : CompilerPkgLinkSet]
   [cat : i64]
-  [vec : vector.StringVec]) : CompilerPkgLinkSet
+  [vec : fs.FsStringVector]) : CompilerPkgLinkSet
   (if (= cat 0)
     (CompilerPkgLinkSet vec (struct-get set search-paths) (struct-get set args))
     (if (= cat 1)
@@ -8580,7 +8580,7 @@
 (define (compiler-pkg-link-get-vec
   [link : CompilerPkgLink]
   [scope : i64]
-  [cat : i64]) : vector.StringVec
+  [cat : i64]) : fs.FsStringVector
   (compiler-pkg-link-set-category (compiler-pkg-link-scope-set link scope) cat))
 
 ;: Return `link` with the (scope, category) value list replaced.
@@ -8588,7 +8588,7 @@
   [link : CompilerPkgLink]
   [scope : i64]
   [cat : i64]
-  [vec : vector.StringVec]) : CompilerPkgLink
+  [vec : fs.FsStringVector]) : CompilerPkgLink
   (compiler-pkg-link-replace-scope
     link
     scope
@@ -8601,10 +8601,10 @@
 (define (compiler-load-manifest-link-values
   [values : Sexpr]
   [fname : String]
-  [acc : vector.StringVec]) : ResultPkgStrVec
+  [acc : fs.FsStringVector]) : ResultPkgStrVec
   (match values
     [(Sexpr.Nil)
-      (if (= (vector.string-vec-len acc) 0)
+      (if (= (fs.fs-string-vector-len (& acc)) 0)
         (ResultPkgStrVec.Err
           (string.append
             "`link` field `"
@@ -8618,10 +8618,11 @@
               (string.append
                 "`link` field `"
                 (string.append fname "` values must not be empty")))
-            (compiler-load-manifest-link-values
-              (box-get vrest)
-              fname
-              (vector.string-vec-push acc val)))]
+            (let
+              [out : fs.FsStringVector acc]
+              (begin
+                (fs.fs-string-vector-push! (&mut out) val)
+                (compiler-load-manifest-link-values (box-get vrest) fname out))))]
         [_
           (ResultPkgStrVec.Err
             (string.append
@@ -8638,20 +8639,20 @@
 (define (compiler-load-manifest-link-store
   [acc : CompilerPkgLink]
   [fname : String]
-  [values : vector.StringVec]) : ResultCompilerPkgLink
+  [values : fs.FsStringVector]) : ResultCompilerPkgLink
   (let
     [scope : i64 (compiler-load-link-field-scope fname)]
     [cat : i64 (compiler-load-link-field-category fname)]
     (if (or (< scope 0) (< cat 0))
       (ResultCompilerPkgLink.Err
         (string.append "unknown `link` field `" (string.append fname "`")))
-      (if (>
-        (vector.string-vec-len (compiler-pkg-link-get-vec acc scope cat))
-        0)
-        (ResultCompilerPkgLink.Err
-          (string.append "duplicate `link` field `" (string.append fname "`")))
-        (ResultCompilerPkgLink.Ok
-          (compiler-pkg-link-set-vec acc scope cat values))))))
+      (let
+        [existing : fs.FsStringVector (compiler-pkg-link-get-vec acc scope cat)]
+        (if (> (fs.fs-string-vector-len (& existing)) 0)
+          (ResultCompilerPkgLink.Err
+            (string.append "duplicate `link` field `" (string.append fname "`")))
+          (ResultCompilerPkgLink.Ok
+            (compiler-pkg-link-set-vec acc scope cat values)))))))
 
 ;: Walk the `(field "...")` entries of a `(link ...)` section.
 (define (compiler-load-manifest-parse-link-into
@@ -8667,7 +8668,7 @@
               (match (compiler-load-manifest-link-values
                 (box-get etail)
                 fname
-                (vector.string-vec-new))
+                (fs.fs-string-vector-new))
                 [(ResultPkgStrVec.Err m) (ResultCompilerPkgLink.Err m)]
                 [(ResultPkgStrVec.Ok values)
                   (match (compiler-load-manifest-link-store acc fname values)
@@ -9502,25 +9503,27 @@
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
       "manifest dependency `math` path must not be empty")))
 
-;: True when a vector.StringVec is empty.
-(define (compiler-load-link-vec-empty? [vec : vector.StringVec]) : bool
-  (= (vector.string-vec-len vec) 0))
+;: True when a package link string vector is empty.
+(define (compiler-load-link-vec-empty? [vec : (& vec fs.FsStringVector)]) : bool
+  (= (fs.fs-string-vector-len vec) 0))
 
-;: True when a vector.StringVec holds exactly one value equal to `a`.
-(define (compiler-load-link-vec-single? [vec : vector.StringVec] [a : String]) : bool
+;: True when a package link string vector holds exactly one value equal to `a`.
+(define (compiler-load-link-vec-single?
+  [vec : (& vec fs.FsStringVector)]
+  [a : String]) : bool
   (and
-    (= (vector.string-vec-len vec) 1)
-    (string.eq (vector.string-vec-get vec 0 "") a)))
+    (= (fs.fs-string-vector-len vec) 1)
+    (string.eq (fs.fs-string-vector-get vec 0 "") a)))
 
-;: True when a vector.StringVec holds exactly `a` then `b`, in order.
+;: True when a package link string vector holds exactly `a` then `b`, in order.
 (define (compiler-load-link-vec-pair?
-  [vec : vector.StringVec]
+  [vec : (& vec fs.FsStringVector)]
   [a : String]
   [b : String]) : bool
   (and
-    (= (vector.string-vec-len vec) 2)
-    (string.eq (vector.string-vec-get vec 0 "") a)
-    (string.eq (vector.string-vec-get vec 1 "") b)))
+    (= (fs.fs-string-vector-len vec) 2)
+    (string.eq (fs.fs-string-vector-get vec 0 "") a)
+    (string.eq (fs.fs-string-vector-get vec 1 "") b)))
 
 ;: Self-test: a `(link ...)` section parses into all-target and per-target sets
 ;: with manifest order preserved.
@@ -9534,16 +9537,20 @@
         [lin : CompilerPkgLinkSet (struct-get link linux)]
         [win : CompilerPkgLinkSet (struct-get link windows)]
         (and
-          (compiler-load-link-vec-single? (struct-get all libraries) "raylib")
           (compiler-load-link-vec-single?
-            (struct-get all search-paths)
+            (& (struct-get all libraries))
+            "raylib")
+          (compiler-load-link-vec-single?
+            (& (struct-get all search-paths))
             "vendor/lib")
-          (compiler-load-link-vec-empty? (struct-get all args))
-          (compiler-load-link-vec-pair? (struct-get lin libraries) "GL" "m")
+          (compiler-load-link-vec-empty? (& (struct-get all args)))
+          (compiler-load-link-vec-pair? (& (struct-get lin libraries)) "GL" "m")
           (compiler-load-link-vec-single?
-            (struct-get lin args)
+            (& (struct-get lin args))
             "-Wl,--as-needed")
-          (compiler-load-link-vec-single? (struct-get win libraries) "opengl32")))]
+          (compiler-load-link-vec-single?
+            (& (struct-get win libraries))
+            "opengl32")))]
     [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: a manifest with no `link` section parses with empty link sets.
@@ -9555,11 +9562,11 @@
         [link : CompilerPkgLink (struct-get m link)]
         (and
           (compiler-load-link-vec-empty?
-            (struct-get (struct-get link all) libraries))
+            (& (struct-get (struct-get link all) libraries)))
           (compiler-load-link-vec-empty?
-            (struct-get (struct-get link linux) libraries))
+            (& (struct-get (struct-get link linux) libraries)))
           (compiler-load-link-vec-empty?
-            (struct-get (struct-get link windows) libraries))))]
+            (& (struct-get (struct-get link windows) libraries)))))]
     [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: invalid `(link ...)` sections produce the expected diagnostics.

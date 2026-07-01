@@ -2484,23 +2484,23 @@
 
 (define (build-package-link-add-libs
   [inputs : SourceToolLinkInputs]
-  [vec : vector.StringVec]
+  [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (vector.string-vec-len vec))
+  (if (>= idx (fs.fs-string-vector-len vec))
     inputs
     (build-package-link-add-libs
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Lib (vector.string-vec-get vec idx "")))
+        (AstExternLinkInput.Lib (fs.fs-string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 
 (define (build-package-link-add-search-paths
   [inputs : SourceToolLinkInputs]
   [manifest-dir : String]
-  [vec : vector.StringVec]
+  [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (vector.string-vec-len vec))
+  (if (>= idx (fs.fs-string-vector-len vec))
     inputs
     (build-package-link-add-search-paths
       (source-tool-link-inputs-add-ast
@@ -2508,21 +2508,21 @@
         (AstExternLinkInput.Search
           (build-package-link-resolve-search-path
             manifest-dir
-            (vector.string-vec-get vec idx ""))))
+            (fs.fs-string-vector-get vec idx ""))))
       manifest-dir
       vec
       (+ idx 1))))
 
 (define (build-package-link-add-args
   [inputs : SourceToolLinkInputs]
-  [vec : vector.StringVec]
+  [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (vector.string-vec-len vec))
+  (if (>= idx (fs.fs-string-vector-len vec))
     inputs
     (build-package-link-add-args
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Arg (vector.string-vec-get vec idx "")))
+        (AstExternLinkInput.Arg (fs.fs-string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 
@@ -2535,11 +2535,11 @@
   [set : CompilerPkgLinkSet]) : SourceToolLinkInputs
   (build-package-link-add-args
     (build-package-link-add-search-paths
-      (build-package-link-add-libs inputs (struct-get set libraries) 0)
+      (build-package-link-add-libs inputs (& (struct-get set libraries)) 0)
       manifest-dir
-      (struct-get set search-paths)
+      (& (struct-get set search-paths))
       0)
-    (struct-get set args)
+    (& (struct-get set args))
     0))
 
 ;: Convert a manifest `(link ...)` section into link inputs for `target`:

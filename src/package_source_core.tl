@@ -241,12 +241,14 @@
   [entries : fs.FsStringVector]
   [index : i64]
   [acc : svec.Vec]) : svec.Vec
-  (if (>= index (fs.fs-string-vector-len entries))
+  (if (>= index (fs.fs-string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
       entries
       (+ index 1)
-      (package-source-vec-insert acc (fs.fs-string-vector-get entries index "")))))
+      (package-source-vec-insert
+        acc
+        (fs.fs-string-vector-get (& entries) index "")))))
 
 (define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.Vec
   (package-source-sort-entries-from entries 0 (svec.new)))

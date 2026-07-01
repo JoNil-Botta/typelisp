@@ -6,10 +6,10 @@
 ;# in place, and `render` is the single operation that materializes an
 ;# owned `String` in the active arena.
 ;#
-;# The borrowed-chunk companion surface lives in
-;# `stdlib/text_buf_borrowed.tl` while `TextBuf` keeps the owned chunk API. Both
-;# modules share the owned ordered-chunk render helper so the final materialize
-;# path stays in one place.
+;# The owned and borrowed TextBuf declaration bodies are generated from
+;# `stdlib/text_buf_family.tl`. This module keeps the flat owned compatibility
+;# namespace and the public mutable macro shims; the borrowed-chunk companion
+;# surface lives in `stdlib/text_buf_borrowed.tl`.
 ;#
 ;# Usage: `(import stdlib.text_buf)`
 ;#
@@ -29,40 +29,16 @@
 ;# one.
 (module stdlib.text_buf)
 
+;; lint-allow: unused-import
 (import stdlib.array)
 (import stdlib.comptime)
+
+;; lint-allow: unused-import
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.text_buf_family)
 
-;: Reversed chunk list. Each cons node is allocated in the active arena.
-(defenum TextBufChunkList
-  (TextBufChunkNil)
-  (TextBufChunkCons String (Box TextBufChunkList)))
-
-;: Text buffer value with reversed chunks and cached byte length.
-(defstruct TextBuf
-  (chunks TextBufChunkList)
-  (len i64))
-
-;: Printable ASCII lookup table used by `append-char`.
-(define text-buf-ascii-printable-table : String
-  " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
-
-;: Return an empty text buffer.
-(define (empty) : TextBuf
-  (TextBuf TextBufChunkNil 0))
-
-;: Return true when `buf` contains no bytes.
-(define (empty? [buf : TextBuf]) : bool
-  (= (struct-get buf len) 0))
-
-;: Return the byte length currently represented by `buf`.
-(define (length [buf : TextBuf]) : i64
-  (struct-get buf len))
-
-;: Construct a chunk-list cons node for imported macro expansions.
-(define (chunk-cons [chunk : String] [rest : TextBufChunkList]) : TextBufChunkList
-  (TextBufChunkCons chunk (box rest)))
+(text_buf_family.owned)
 
 ;: Mutably append `chunk` to the owned `buf` place without rendering its prefix.
 (defmacro (append! [buf : comptime.Expr] [chunk : String]) : unit
@@ -79,350 +55,21 @@
           (struct-get ,buf len)
           (+ (struct-get ,buf len) text-buf-append-chunk-len))))))
 
-;: Append `chunk` to `buf` without rendering the existing prefix.
-(define (append [buf : TextBuf] [chunk : String]) : TextBuf
-  (let
-    [chunk-len : i64 (string-length chunk)]
-    (if (= chunk-len 0)
-      buf
-      (TextBuf
-        (TextBufChunkCons chunk (box (struct-get buf chunks)))
-        (+ (struct-get buf len) chunk-len)))))
-
-;: Convert a supported byte-sized char to a one-byte String.
-(define (char-string [c : char]) : String
-  (let
-    [code : i64 (cast c : i64)]
-    (cond
-      [(= code 9) "\t"]
-      [(= code 10) "\n"]
-      [(= code 13) "\r"]
-      [(and (>= code 32) (<= code 126))
-        (string.substring text-buf-ascii-printable-table (- code 32) 1)]
-      [else (io.panic "text-buf: unsupported non-printable char")])))
-
-;: Append one char byte to `buf`.
-(define (append-char [buf : TextBuf] [c : char]) : TextBuf
-  (stdlib.text_buf.append buf (stdlib.text_buf.char-string c)))
-
 ;: Mutably append one char byte to `buf`.
 (defmacro (append-char! [buf : comptime.Expr] [c : char]) : unit
   `(append! ,buf (char-string ,c)))
-
-;: Append the decimal text for `value` to `buf`.
-(define (append-int [buf : TextBuf] [value : i64]) : TextBuf
-  (stdlib.text_buf.append buf (string.int->string value)))
-
-;: Wrapper used by `append-int!` macro expansions.
-(define (int-string [value : i64]) : String
-  (string.int->string value))
 
 ;: Mutably append the decimal text for `value` to `buf`.
 (defmacro (append-int! [buf : comptime.Expr] [value : i64]) : unit
   `(append! ,buf (int-string ,value)))
 
-;: Concatenate chunk lists while preserving their current order.
-(define (chunk-list-concat [front : TextBufChunkList] [back : TextBufChunkList]) : TextBufChunkList
-  (match front
-    [(TextBufChunkNil) back]
-    [(TextBufChunkCons chunk rest)
-      (TextBufChunkCons
-        chunk
-        (box (stdlib.text_buf.chunk-list-concat (box-get rest) back)))]))
-
-;: Append all chunks from `right` after `left`.
-(define (append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
-  (let
-    [left-len : i64 (struct-get left len)]
-    [right-len : i64 (struct-get right len)]
-    (if (= right-len 0)
-      left
-      (if (= left-len 0)
-        right
-        (TextBuf
-          (stdlib.text_buf.chunk-list-concat
-            (struct-get right chunks)
-            (struct-get left chunks))
-          (+ left-len right-len))))))
-
-;: Render reversed chunks into `out`.
-(define (chunks-render-rev [chunks : TextBufChunkList] [out : String]) : String
-  (match chunks
-    [(TextBufChunkNil) out]
-    [(TextBufChunkCons chunk rest)
-      (stdlib.text_buf.chunks-render-rev
-        (box-get rest)
-        (string.append chunk out))]))
-
-;: Return the number of chunk nodes in `chunks`, accumulating into `count`.
-(define (chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
-  (match chunks
-    [(TextBufChunkNil) count]
-    [(TextBufChunkCons _ rest)
-      (stdlib.text_buf.chunk-count (box-get rest) (+ count 1))]))
-
-;: Fill `items` from a reversed chunk list so array order matches render order.
-(define (chunks-fill-array-rev
-  [chunks : TextBufChunkList]
-  [items : (Array String)]
-  [index : i64]) : unit
-  (match chunks
-    [(TextBufChunkNil) unit]
-    [(TextBufChunkCons chunk rest)
-      (begin
-        (array-set! items index chunk)
-        (stdlib.text_buf.chunks-fill-array-rev (box-get rest) items (- index 1)))]))
-
-;: Render the half-open chunk array range `[lo, hi)` with balanced concatenation.
-(define (chunks-render-array-range
-  [items : (Array String)]
-  [lo : i64]
-  [hi : i64]) : String
-  (if (>= lo hi)
-    ""
-    (if (= (+ lo 1) hi)
-      (array-ref items lo)
-      (let
-        [mid : i64 (/ (+ lo hi) 2)]
-        (string.append
-          (stdlib.text_buf.chunks-render-array-range items lo mid)
-          (stdlib.text_buf.chunks-render-array-range items mid hi))))))
-
-;: Render many chunks through an array to avoid a deep left-leaning concat chain.
-(define (chunks-render-balanced [chunks : TextBufChunkList] [count : i64]) : String
-  (let
-    [items : (Array String) (array.make-array String count)]
-    (begin
-      (stdlib.text_buf.chunks-fill-array-rev chunks items (- count 1))
-      (stdlib.text_buf.chunks-render-array-range items 0 count))))
-
-;: Render `buf` to an owned String allocated in the active arena.
-;: Copy `chunk`'s bytes into `dst` starting at byte offset `start`.
-(define (copy-chunk-into
-  [chunk : (& chunk str)]
-  [dst : (MutPtr u8)]
-  [start : i64]) : unit
-  (let
-    [clen : i64 (string-length chunk)]
-    [src : (Ptr u8)
-      (unsafe
-        (string-data chunk))]
-    [words : i64 (/ clen 8)]
-    [src64 : (Ptr i64)
-      (unsafe
-        (ptr-cast src : (Ptr i64)))]
-    [dst64 : (MutPtr i64)
-      (unsafe
-        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
-    [w : i64 0]
-    [b : i64 (* words 8)]
-    ;; Copy eight bytes per step (x86 tolerates the unaligned word stores) and
-    ;; finish the partial tail byte-wise so no read passes the chunk's end.
-    (begin
-      (while (< w words)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-          (set! w (+ w 1))))
-      (while (< b clen)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst (+ start b))
-              (ptr-read (ptr-offset src b))))
-          (set! b (+ b 1))))
-      unit)))
-
-;: Small chunks are cheaper to copy inline while walking a render batch than to
-;: enter the generic word-copy helper for each individual node.
-(define (render-small-chunk-limit) : i64
-  16)
-
-;: Fill the reversed `chunks` into `dst`, ending at byte offset `pos`. The first
-;: node is the last-appended (rightmost) chunk, so it lands at the end and we walk
-;: leftward, reproducing append order.
-(define (fill-rev-into
-  [chunks : TextBufChunkList]
-  [dst : (MutPtr u8)]
-  [pos : i64]) : unit
-  (let
-    [cursor : TextBufChunkList chunks]
-    [out-pos : i64 pos]
-    [done : bool false]
-    [small-limit : i64 (stdlib.text_buf.render-small-chunk-limit)]
-    (begin
-      (while (not done)
-        (match cursor
-          [(TextBufChunkNil) (set! done true)]
-          [(TextBufChunkCons chunk rest)
-            (let
-              [clen : i64 (string-length (& chunk))]
-              (if (<= clen small-limit)
-                (let
-                  [small-run : bool true]
-                  (begin
-                    (while small-run
-                      (match cursor
-                        [(TextBufChunkNil)
-                          (begin
-                            (set! done true)
-                            (set! small-run false))]
-                        [(TextBufChunkCons small-chunk small-rest)
-                          (let
-                            [small-len : i64 (string-length (& small-chunk))]
-                            (if (<= small-len small-limit)
-                              (let
-                                [small-start : i64 (- out-pos small-len)]
-                                [src : (Ptr u8)
-                                  (unsafe
-                                    (string-data (& small-chunk)))]
-                                [b : i64 0]
-                                (begin
-                                  (while (< b small-len)
-                                    (begin
-                                      (unsafe
-                                        (ptr-write!
-                                          (ptr-offset dst (+ small-start b))
-                                          (ptr-read (ptr-offset src b))))
-                                      (set! b (+ b 1))))
-                                  (set! out-pos small-start)
-                                  (set! cursor (box-get small-rest))))
-                              (set! small-run false)))]))
-                    unit))
-                (let
-                  [start : i64 (- out-pos clen)]
-                  (begin
-                    (stdlib.text_buf.copy-chunk-into (& chunk) dst start)
-                    (set! out-pos start)
-                    (set! cursor (box-get rest))))))]))
-      unit)))
-
-;: Render reversed owned chunks in O(total length): allocate the exact byte
-;: count once and copy each chunk into place. This helper is the shared final
-;: materialization path for owned and borrowed text buffers.
-(define (render-chunks [chunks : TextBufChunkList] [len : i64]) : String
-  (if (= len 0)
-    ""
-    (let
-      [out : (Array u8) (array.make-array u8 len)]
-      [dst : (MutPtr u8)
-        (unsafe
-          (array-data out))]
-      (begin
-        (stdlib.text_buf.fill-rev-into chunks dst len)
-        (unsafe
-          (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
-
-;: Render the buffer to an owned String allocated in the active arena.
-(define (render [buf : TextBuf]) : String
-  (stdlib.text_buf.render-chunks (struct-get buf chunks) (struct-get buf len)))
-
-;: Write chunks in insertion order to an open raw file handle.
-(define (write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
-  (match chunks
-    [(TextBufChunkNil) io.io-status-ok]
-    [(TextBufChunkCons chunk rest)
-      (let
-        [status : i64 (stdlib.text_buf.write-chunks-rev raw (box-get rest))]
-        (if (= status io.io-status-ok)
-          (io.file-write-status raw chunk)
-          status))]))
-
-;: Buffers larger than this are rendered and written in bounded batches. This
-;: avoids pathological many-small-write behavior on mounted host filesystems
-;: without materializing the entire buffer in one extra String.
-(define (batched-write-threshold) : i64
-  1048576)
-
-;: Write `items` to `raw` in rendered batches no larger than `batch-limit`
-;: bytes, stopping at the first file-write error status.
-(define (write-array-batches
-  [raw : i64]
-  [items : (Array String)]
-  [count : i64]
-  [batch-limit : i64]) : i64
-  (let
-    [index : i64 0]
-    [status : i64 io.io-status-ok]
-    (begin
-      (while (and (= status io.io-status-ok) (< index count))
-        (let
-          [start : i64 index]
-          [bytes : i64 0]
-          [done : bool false]
-          (begin
-            (while (and (not done) (< index count))
-              (let
-                [chunk : String (array-ref items index)]
-                [chunk-len : i64 (string-length chunk)]
-                (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
-                  (set! done true)
-                  (begin
-                    (set! bytes (+ bytes chunk-len))
-                    (set! index (+ index 1))))))
-            (set!
-              status
-              (io.file-write-status
-                raw
-                (stdlib.text_buf.chunks-render-array-range items start index))))))
-      status)))
-
-;: Write chunked buffer contents to `raw` by first flattening chunk order into
-;: an array, then emitting bounded batches.
-(define (write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
-  (let
-    [count : i64 (stdlib.text_buf.chunk-count chunks 0)]
-    [items : (Array String) (array.make-array String count)]
-    (begin
-      (stdlib.text_buf.chunks-fill-array-rev chunks items (- count 1))
-      (stdlib.text_buf.write-array-batches
-        raw
-        items
-        count
-        (stdlib.text_buf.batched-write-threshold)))))
-
-;: Write the rendered buffer contents to `path`, replacing any existing file.
-(define (write-file [path : String] [buf : TextBuf]) : i64
-  (let
-    [chunks : TextBufChunkList (struct-get buf chunks)]
-    [len : i64 (struct-get buf len)]
-    [open-result : io.ResultIoFile
-      (io.file-open (& path) (io.OpenWriteTruncate))]
-    (if (io.result-file-ok? open-result)
-      (let
-        [handle : io.FileHandle
-          (io.result-file-value-or open-result (io.FileHandle -1))]
-        [write-status : i64
-          (if (> len (stdlib.text_buf.batched-write-threshold))
-            (stdlib.text_buf.write-chunks-batched (struct-get handle id) chunks)
-            (stdlib.text_buf.write-chunks-rev (struct-get handle id) chunks))]
-        [close-result : io.ResultIoUnit (io.file-close handle)]
-        (if (io.result-unit-ok? close-result)
-          write-status
-          1))
-      1)))
-
-;: Mutably clear `buf`, leaving it ready for reuse.
-(define (clear-ref! [buf : (&mut buf TextBuf)]) : unit
-  (begin
-    (set! (struct-get buf chunks) TextBufChunkNil)
-    (set! (struct-get buf len) 0)))
-
 ;: Mutably clear the owned `buf` place, leaving it ready for reuse.
 (defmacro (clear! [buf : comptime.Expr]) : unit
   `(clear-ref! (&mut ,buf)))
 
-;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
-(define (clear [_buf : TextBuf]) : TextBuf
-  (stdlib.text_buf.empty))
-
 ;: Mutably reset `buf`, leaving it ready for reuse.
 (defmacro (reset! [buf : comptime.Expr]) : unit
   `(clear-ref! (&mut ,buf)))
-
-;: Alias for `clear` for call sites that model builder reuse as reset.
-(define (reset [buf : TextBuf]) : TextBuf
-  (stdlib.text_buf.clear buf))
 
 (test
   text-buf-scoped-arena-render-policy

@@ -1,6 +1,7 @@
 ;; stdlib_text_buf.tl - Integration witness for stdlib/text_buf.tl.
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
+(import stdlib.io)
 (import stdlib.string)
 
 (define (text-buf-integration-ok?) : bool
@@ -29,9 +30,20 @@
     [tail : String "z"]
     (string.eq (text-buf-borrowed-integration-render seed tail) "xyxy-z")))
 
+(define (text-buf-write-file-integration-ok?) : bool
+  (let
+    [path : String "target/stdlib-text-buf-write-file.txt"]
+    [buf : text_buf.TextBuf
+      (text_buf.append (text_buf.append (text_buf.empty) "file") "-out")]
+    [status : i64 (text_buf.write-file path buf)]
+    [readback : String (io.read-file path)]
+    (if (= status io.io-status-ok)
+      (string.eq readback "file-out")
+      false)))
+
 (define (main) : i64
-  (if (text-buf-integration-ok?)
-    (if (text-buf-borrowed-integration-ok?)
-      42
-      3)
-    2))
+  (begin
+    (unless (text-buf-integration-ok?) (return 2))
+    (unless (text-buf-borrowed-integration-ok?) (return 3))
+    (unless (text-buf-write-file-integration-ok?) (return 4))
+    42))

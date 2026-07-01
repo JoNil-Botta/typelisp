@@ -6243,13 +6243,13 @@
 (define (compiler-backend-lane-id-rodata-ok?) : bool
   (and
     (compiler-backend-lane-id-rodata-shape-ok?
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (CompilerBackendMode.Avx2)
       (compiler-backend-avx2-i64-lane-id-label)
       "    .balign 32\n"
       "    vmovdqa")
     (compiler-backend-lane-id-rodata-shape-ok?
-      (CompilerLowerAvx512)
+      (CompilerLowerMode.Avx512)
       (CompilerBackendMode.Avx512)
       (compiler-backend-avx512-i64-lane-id-label)
       "    .balign 64\n"
@@ -6261,7 +6261,7 @@
   [op : String]) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
-    (CompilerLowerAvx2))
+    (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6301,7 +6301,7 @@
   [broadcast : String]) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
-    (CompilerLowerAvx2))
+    (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6330,7 +6330,7 @@
 (define (compiler-backend-avx2-uniform-zip-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
-    (CompilerLowerAvx2))
+    (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6783,7 +6783,7 @@
   [mask-shift : String]) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6810,7 +6810,7 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-source-ok? [src : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6839,7 +6839,7 @@
 (define (compiler-backend-avx512-masked-if-index-value-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-value-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6873,7 +6873,7 @@
 (define (compiler-backend-avx512-masked-if-index-mod-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-mod-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -6907,7 +6907,7 @@
 (define (compiler-backend-avx512-masked-if-value-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-value-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -7004,7 +7004,7 @@
   [broadcast : String]) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -7033,7 +7033,7 @@
 (define (compiler-backend-avx512-uniform-zip-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -7111,7 +7111,7 @@
   [extract : String]
   [horizontal : String]
   [store : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -7176,7 +7176,7 @@
   [extract : String]
   [horizontal : String]
   [store : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -7929,7 +7929,7 @@
 (define (compiler-backend-avx2-data-pointer-cse-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-data-pointer-cse-source)
-    (CompilerLowerAvx2))
+    (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program spans)
       (match (optimize-program-with-spans program spans)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)

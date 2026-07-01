@@ -1,29 +1,29 @@
 # file	scope	category	token-regex	count	reason
-src/compiler_lower.tl	enum:CompilerLowerMode	backend-mode	CompilerLower(Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes preserve host ABI while selecting scalar or SIMD lowering.
+src/compiler_lower.tl	enum:CompilerLowerMode	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes preserve host ABI while selecting scalar or SIMD lowering.
 src/compiler_lower.tl	lower-c-abi-aggregate-class-from-layout	abi	lower-mode-(linux|windows)-c-abi[?]	3	System V and Win64 C aggregate layout classes intentionally differ.
 src/compiler_lower.tl	lower-c-abi-aggregate-size-message	abi	lower-mode-windows-c-abi[?]	1	Win64 aggregate diagnostics describe the target-specific supported slice.
 src/compiler_lower.tl	lower-c-abi-register-aggregate-fields-ok?	abi	lower-mode-windows-c-abi[?]	1	Win64 scalar-field aggregate eligibility differs from System V integer-only fields.
 src/compiler_lower.tl	lower-c-abi-register-aggregate-size?	abi	lower-mode-windows-c-abi[?]	1	Win64 register aggregate sizes are limited to 1, 2, 4, or 8 bytes.
 src/compiler_lower.tl	lower-c-abi-target-name	abi	lower-mode-windows-c-abi[?]|linux-x86_64|windows-x86_64	3	C ABI diagnostics report the concrete target triple.
 src/compiler_lower.tl	lower-c-abi-two-register-return-message	abi	linux-x86_64	1	System V two-register aggregate return diagnostic is target-specific.
-src/compiler_lower.tl	lower-dispatch-lower-mode	backend-mode	CompilerLower(Linux|Windows)(Scalar|Avx2|Avx512)|lower-mode-(linux|windows)-c-abi[?]	12	Source dispatch keeps the selected target ABI while changing the ISA mode.
-src/compiler_lower.tl	lower-mode-simd?	backend-mode	CompilerLower(Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes are still SIMD-capable.
-src/compiler_lower.tl	lower-mode-avx2?	backend-mode	CompilerLower(Linux|Windows)Avx2	2	Target-aware AVX2 modes preserve the AVX2 capability bit.
-src/compiler_lower.tl	lower-mode-avx512?	backend-mode	CompilerLower(Linux|Windows)Avx512	2	Target-aware AVX-512 modes preserve the AVX-512 capability bit.
-src/compiler_lower.tl	lower-mode-inline-aggregates?	backend-mode	CompilerLower(Linux|Windows)(Scalar|Avx2|Avx512)	6	All target-aware modes use inline aggregate lowering.
-src/compiler_lower.tl	lower-mode-linux-c-abi?	abi	CompilerLowerLinux(Scalar|Avx2|Avx512)|lower-mode-linux-c-abi[?]	4	Linux-target lower modes select System V C ABI lowering.
-src/compiler_lower.tl	lower-mode-windows-c-abi?	abi	CompilerLowerWindows(Scalar|Avx2|Avx512)|lower-mode-windows-c-abi[?]	4	Windows-target lower modes select Win64 C ABI lowering.
+src/compiler_lower.tl	lower-dispatch-lower-mode	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)|lower-mode-(linux|windows)-c-abi[?]	12	Source dispatch keeps the selected target ABI while changing the ISA mode.
+src/compiler_lower.tl	lower-mode-simd?	backend-mode	CompilerLowerMode[.](Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes are still SIMD-capable.
+src/compiler_lower.tl	lower-mode-avx2?	backend-mode	CompilerLowerMode[.](Linux|Windows)Avx2	2	Target-aware AVX2 modes preserve the AVX2 capability bit.
+src/compiler_lower.tl	lower-mode-avx512?	backend-mode	CompilerLowerMode[.](Linux|Windows)Avx512	2	Target-aware AVX-512 modes preserve the AVX-512 capability bit.
+src/compiler_lower.tl	lower-mode-inline-aggregates?	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	All target-aware modes use inline aggregate lowering.
+src/compiler_lower.tl	lower-mode-linux-c-abi?	abi	CompilerLowerMode[.]Linux(Scalar|Avx2|Avx512)|lower-mode-linux-c-abi[?]	4	Linux-target lower modes select System V C ABI lowering.
+src/compiler_lower.tl	lower-mode-windows-c-abi?	abi	CompilerLowerMode[.]Windows(Scalar|Avx2|Avx512)|lower-mode-windows-c-abi[?]	4	Windows-target lower modes select Win64 C ABI lowering.
 src/compiler_lower.tl	lower-mode-c-abi?	abi	lower-mode-(linux|windows)-c-abi[?]	2	Combined C ABI helper intentionally delegates to target-specific ABI predicates.
-src/compiler_lower.tl	lower-simd-lanes-for-elem	backend-mode	CompilerLower(Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes share lane counts with the target-neutral ISA modes.
-src/compiler_lower.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerLinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerLinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
-src/compiler_lower.tl	compiler-lower-extern-value-fnptr-shape-ok?	test-only	CompilerLowerLinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
-src/compiler_lower.tl	compiler-lower-linux-error-ok?	test-only	CompilerLowerLinuxScalar	1	Inline lowerer diagnostic helper exercises Linux C ABI failures.
-src/compiler_lower.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
+src/compiler_lower.tl	lower-simd-lanes-for-elem	backend-mode	CompilerLowerMode[.](Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes share lane counts with the target-neutral ISA modes.
+src/compiler_lower.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
+src/compiler_lower.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
+src/compiler_lower.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
+src/compiler_lower.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
+src/compiler_lower.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
+src/compiler_lower.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
+src/compiler_lower.tl	compiler-lower-extern-value-fnptr-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
+src/compiler_lower.tl	compiler-lower-linux-error-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer diagnostic helper exercises Linux C ABI failures.
+src/compiler_lower.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
 src/compiler_lower.tl	compiler-lower-middle-tests-ok?	test-only	linux-x86_64|windows-x86_64	1	Inline lowerer tests check target-specific diagnostic text.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	CompilerBackendTarget[.](Linux|Windows)	2	Backend target enum names the supported native codegen targets.
 src/compiler_backend.tl	compiler-backend-regalloc-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Scalar regalloc maps backend targets onto the matching incoming argument ABI model.
@@ -89,6 +89,6 @@ src/compiler_backend.tl	compiler-backend-object-image-from-parts	object-format	c
 src/compiler_backend.tl	compiler-backend-emit-program-object-image-linux	object-format	CompilerBackendTarget[.]Linux	1	Linux-named object image emitter explicitly selects ELF object layout.
 src/compiler_backend.tl	compiler-backend-emit-source-pic-linux	object-format	CompilerBackendTarget[.]Linux	1	Linux-named PIC source helper explicitly selects ELF PIC emission.
 src/compiler_backend.tl	compiler-backend-target-cfgs	target-cfg	CompilerBackendTarget[.](Linux|Windows)|target-(linux|windows)	4	Backend target cfgs expose source-level target cfg names.
-src/compiler_backend.tl	compiler-backend-lower-mode-for-target	backend-mode	CompilerBackendTarget[.](Linux|Windows)|CompilerLower(Linux|Windows)(Scalar|Avx2|Avx512)	12	Backend target and ISA mode choose the corresponding lowerer mode.
+src/compiler_backend.tl	compiler-backend-lower-mode-for-target	backend-mode	CompilerBackendTarget[.](Linux|Windows)|CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	12	Backend target and ISA mode choose the corresponding lowerer mode.
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test-only	CompilerBackendTarget[.](Linux|Windows)	2	Inline backend test checks extern metadata symbols on both targets.
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test-only	CompilerBackendTarget[.]Windows	1	Inline backend test checks Windows runtime acceptance.

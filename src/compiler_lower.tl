@@ -25,8 +25,8 @@
   (Bind String i64 String (Box LowerNameEnv)))
 
 ;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
-;; `LowerNameParentNone` is a complete cache (a miss returns the source name
-;; unchanged). `LowerNameParentGlobal` marks a small per-module overlay that, on
+;; `LowerNameParent.None` is a complete cache (a miss returns the source name
+;; unchanged). `LowerNameParent.Global` marks a small per-module overlay that, on
 ;; a miss, falls through to the process-global lowering name cache
 ;; `lower-active-global-name-cache`. Each lowering sub-phase that builds
 ;; per-module name caches (the prune body-index reachability pass and the decl
@@ -38,8 +38,8 @@
 ;; than an owned parent because the one global cache must be shared by every
 ;; module overlay.
 (defenum LowerNameParent
-  (LowerNameParentNone)
-  (LowerNameParentGlobal))
+  (None)
+  (Global))
 
 (defstruct LowerNameCache
   (ids hashmap.I64I64Map)
@@ -53,10 +53,10 @@
   (LowerNameCache
     (hashmap.i64-i64-map-with-capacity 8)
     (make-array String 0)
-    (LowerNameParentNone)))
+    (LowerNameParent.None)))
 
-;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
-;; is a complete cache (a miss = unbound). `LowerTypeParentGlobal` marks a small
+;; #3759: LowerTypeCache.Some carries a `parent` marker. `LowerTypeParent.None`
+;; is a complete cache (a miss = unbound). `LowerTypeParent.Global` marks a small
 ;; per-module overlay that, on a miss, falls through to the process-global
 ;; decl-lowering type cache `lower-decls-global-type-cache` (set once per
 ;; lower-decls run). This lets each module's type cache be a small overlay of
@@ -67,18 +67,18 @@
 ;; every module's overlay, which move semantics forbid for an owned field; the
 ;; compiler already keeps per-file process-global caches in this style.
 (defenum LowerTypeParent
-  (LowerTypeParentNone)
-  (LowerTypeParentGlobal))
+  (None)
+  (Global))
 
 (defenum LowerTypeCache
-  (LowerNoTypeCache)
-  (LowerSomeTypeCache hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
+  (No)
+  (Some hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
 
 ;; #3759: the shared global decl-lowering type cache (built once per lower-decls
-;; from top-env). Per-module overlay caches (LowerTypeParentGlobal) fall through
+;; from top-env). Per-module overlay caches (LowerTypeParent.Global) fall through
 ;; here on a miss. Set by lower-decls before the per-module loop runs.
 (define lower-decls-global-type-cache : LowerTypeCache
-  (LowerNoTypeCache))
+  (LowerTypeCache.No))
 
 ;; #3792: call-slot RVO forwards the current function's hidden sret slot to the
 ;; callee and then returns that slot. Callees whose body can emit an early exit
@@ -108,14 +108,14 @@
 ;; output. The worklist still carries the name string so lower-reach-process can
 ;; resolve a popped function through the (string-keyed) body index unchanged.
 (defenum LowerReachState
-  (LowerReachState hashmap.I64I64Map LowerStringSet))
+  (State hashmap.I64I64Map LowerStringSet))
 
 (defenum LowerUsedTypePathSeed
-  (LowerUsedTypePathSeed hashmap.I64I64Map bool))
+  (Seed hashmap.I64I64Map bool))
 
 (defenum LowerMaybeFunctionBody
-  (LowerNoFunctionBody)
-  (LowerSomeFunctionBody AstExpr LowerNameCache String))
+  (No)
+  (Some AstExpr LowerNameCache String))
 
 ;; Reset once per prune reach walk; lower-reach-process records each reachable
 ;; function body's source path so type-decl DCE can keep local support types
@@ -126,11 +126,11 @@
   (hashmap.i64-i64-map-with-capacity 8))
 
 (defenum LowerSpmdInlineHelper
-  (LowerNoSpmdInlineHelper)
-  (LowerSomeSpmdInlineHelper String AstParamList AstExpr))
+  (No)
+  (Some String AstParamList AstExpr))
 
 (defenum LowerCloneRootEnv
-  (LowerCloneRootEnv CloneNameList TcTypeEnv))
+  (Env CloneNameList TcTypeEnv))
 
 (defstruct LowerFunctionBodyIndex
   (ids hashmap.StringI64Map)
@@ -138,36 +138,36 @@
   (next i64))
 
 (defenum LowerPrunedProgram
-  (LowerPrunedProgram AstProgram AstDeclPathList))
+  (Program AstProgram AstDeclPathList))
 
 (defenum LowerFilteredReachable
-  (LowerFilteredReachable AstDeclList AstDeclPathList))
+  (Filtered AstDeclList AstDeclPathList))
 
 (defenum LowerEntryMainScan
-  (LowerEntryMainScan i64 String bool))
+  (Scan i64 String bool))
 
 (defenum LowerMaybeEntryMainModule
-  (LowerNoEntryMainModule)
-  (LowerSomeEntryMainModule String))
+  (No)
+  (Some String))
 
 (defenum ResultLowerCloneRoots
-  (OkLowerCloneRoots CloneNameList)
-  (ErrLowerCloneRoots (Box CompilerDiagnostic)))
+  (Ok CloneNameList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerLowerMode
-  (CompilerLowerScalar)
-  (CompilerLowerLinuxScalar)
-  (CompilerLowerWindowsScalar)
-  (CompilerLowerAvx2)
-  (CompilerLowerLinuxAvx2)
-  (CompilerLowerWindowsAvx2)
-  (CompilerLowerAvx512)
-  (CompilerLowerLinuxAvx512)
-  (CompilerLowerWindowsAvx512)
-  (CompilerLowerInlineAggregates))
+  (Scalar)
+  (LinuxScalar)
+  (WindowsScalar)
+  (Avx2)
+  (LinuxAvx2)
+  (WindowsAvx2)
+  (Avx512)
+  (LinuxAvx512)
+  (WindowsAvx512)
+  (InlineAggregates))
 
 (defenum LowerState
-  (LowerState
+  (State
     i64
     i64
     i64
@@ -809,8 +809,8 @@
     (* count 2)))
 
 (defenum LowerNameCacheMaybeId
-  (LowerNameCacheNoId)
-  (LowerNameCacheSomeId i64))
+  (No)
+  (Some i64))
 
 (define (lower-name-cache-source-last-slash [source-name : String]) : i64
   (let
@@ -831,7 +831,7 @@
     [slash : i64 (lower-name-cache-source-last-slash source-name)]
     [n : i64 (string.string-length source-name)]
     (if (< slash 0)
-      (LowerNameCacheNoId)
+      (LowerNameCacheMaybeId.No)
       (let
         [base-start : i64 (+ slash 1)]
         [module : String (string.substring source-name 0 slash)]
@@ -841,21 +841,21 @@
           [(InternLookupFound module-id)
             (match (intern-lookup base)
               [(InternLookupFound base-id)
-                (LowerNameCacheSomeId
+                (LowerNameCacheMaybeId.Some
                   (compiler-symbol-module-key-id-by-id module-id base-id))]
-              [(InternLookupMissing) (LowerNameCacheNoId)])]
-          [(InternLookupMissing) (LowerNameCacheNoId)])))))
+              [(InternLookupMissing) (LowerNameCacheMaybeId.No)])]
+          [(InternLookupMissing) (LowerNameCacheMaybeId.No)])))))
 
 (define (lower-name-cache-source-id [source-name : String]) : LowerNameCacheMaybeId
   (match (intern-lookup source-name)
     [(InternLookupFound id)
-      (LowerNameCacheSomeId (compiler-symbol-name-id-key id))]
+      (LowerNameCacheMaybeId.Some (compiler-symbol-name-id-key id))]
     [(InternLookupMissing) (lower-name-cache-source-id-from-parts source-name)]))
 
 (define (lower-name-cache-source-id-value [source-name : String]) : i64
   (match (lower-name-cache-source-id source-name)
-    [(LowerNameCacheSomeId source-id) source-id]
-    [(LowerNameCacheNoId) -1]))
+    [(LowerNameCacheMaybeId.Some source-id) source-id]
+    [(LowerNameCacheMaybeId.No) -1]))
 
 (define (lower-name-env-bind
   [source-name : String]
@@ -930,7 +930,7 @@
       (LowerNameCache
         (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
         (make-array String count)
-        (LowerNameParentNone)))))
+        (LowerNameParent.None)))))
 
 ;; #3759: build a small overlay name cache from `names` (the module-local names
 ;; only). On a miss it falls through to the shared global cache
@@ -943,7 +943,7 @@
       (LowerNameCache
         (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
         (make-array String count)
-        (LowerNameParentGlobal)))))
+        (LowerNameParent.Global)))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
   (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
@@ -951,19 +951,19 @@
       (TcMaybeString.Some (array-ref (struct-get cache values) index))]
     [(hashmap.I64I64MapMissing)
       (match (struct-get cache parent)
-        [(LowerNameParentNone) (TcMaybeString.No)]
-        [(LowerNameParentGlobal)
+        [(LowerNameParent.None) (TcMaybeString.No)]
+        [(LowerNameParent.Global)
           (lower-name-cache-lookup-id lower-active-global-name-cache source-id)])]))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
   [source-name : String]) : String
   (match (lower-name-cache-source-id source-name)
-    [(LowerNameCacheSomeId source-id)
+    [(LowerNameCacheMaybeId.Some source-id)
       (match (lower-name-cache-lookup-id cache source-id)
         [(TcMaybeString.Some logical-name) logical-name]
         [(TcMaybeString.No) source-name])]
-    [(LowerNameCacheNoId) source-name]))
+    [(LowerNameCacheMaybeId.No) source-name]))
 
 (define (lower-name-cache-resolve-dotted
   [cache : LowerNameCache]
@@ -1043,14 +1043,14 @@
   [name-id : i64]
   [ty : AstType]) : LowerTypeCache
   (match cache
-    [(LowerNoTypeCache) cache]
-    [(LowerSomeTypeCache ids values next parent)
+    [(LowerTypeCache.No) cache]
+    [(LowerTypeCache.Some ids values next parent)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound _) cache]
         [(hashmap.I64I64MapMissing)
           (begin
             (array-set! values next ty)
-            (LowerSomeTypeCache
+            (LowerTypeCache.Some
               (hashmap.i64-i64-map-put ids name-id next)
               values
               (+ next 1)
@@ -1073,11 +1073,11 @@
     [count : i64 (lower-type-env-count env)]
     (lower-type-cache-from-env-into
       env
-      (LowerSomeTypeCache
+      (LowerTypeCache.Some
         (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (make-array AstType count)
         0
-        (LowerTypeParentNone)))))
+        (LowerTypeParent.None)))))
 
 ;; #3759: build a small overlay type cache from `env` (the module-local type
 ;; bindings only). On a miss it falls through to the shared global cache
@@ -1087,29 +1087,29 @@
     [count : i64 (lower-type-env-count env)]
     (lower-type-cache-from-env-into
       env
-      (LowerSomeTypeCache
+      (LowerTypeCache.Some
         (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (make-array AstType count)
         0
-        (LowerTypeParentGlobal)))))
+        (LowerTypeParent.Global)))))
 
 (define (lower-type-cache-lookup-id
   [cache : LowerTypeCache]
   [name-id : i64]
   [display-name : String]) : ResultTcType
   (match cache
-    [(LowerNoTypeCache)
+    [(LowerTypeCache.No)
       (ResultTcType.Err (string.append "typecheck: unbound name " display-name))]
-    [(LowerSomeTypeCache ids values _ parent)
+    [(LowerTypeCache.Some ids values _ parent)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
           (ResultTcType.Ok (array-ref values index))]
         [(hashmap.I64I64MapMissing)
           (match parent
-            [(LowerTypeParentNone)
+            [(LowerTypeParent.None)
               (ResultTcType.Err
                 (string.append "typecheck: unbound name " display-name))]
-            [(LowerTypeParentGlobal)
+            [(LowerTypeParent.Global)
               (lower-type-cache-lookup-id
                 lower-decls-global-type-cache
                 name-id
@@ -1689,15 +1689,15 @@
   [decl : AstDecl]
   [scan : LowerEntryMainScan]) : LowerEntryMainScan
   (match scan
-    [(LowerEntryMainScan fallback-count fallback-module preferred)
+    [(LowerEntryMainScan.Scan fallback-count fallback-module preferred)
       (if (and
         (string.eq
           (lower-normalize-path decl-path)
           (lower-normalize-path entry-path))
         (lower-entry-main-decl? decl))
         (if (or (string.eq module "") (string.eq module "main"))
-          (LowerEntryMainScan fallback-count fallback-module true)
-          (LowerEntryMainScan (+ fallback-count 1) module preferred))
+          (LowerEntryMainScan.Scan fallback-count fallback-module true)
+          (LowerEntryMainScan.Scan (+ fallback-count 1) module preferred))
         scan)]))
 
 (define (lower-entry-main-scan-decls-in-module
@@ -1740,12 +1740,12 @@
 
 (define (lower-entry-main-scan-selection [scan : LowerEntryMainScan]) : LowerMaybeEntryMainModule
   (match scan
-    [(LowerEntryMainScan fallback-count fallback-module preferred)
+    [(LowerEntryMainScan.Scan fallback-count fallback-module preferred)
       (if preferred
-        (LowerNoEntryMainModule)
+        (LowerMaybeEntryMainModule.No)
         (if (= fallback-count 1)
-          (LowerSomeEntryMainModule fallback-module)
-          (LowerNoEntryMainModule)))]))
+          (LowerMaybeEntryMainModule.Some fallback-module)
+          (LowerMaybeEntryMainModule.No)))]))
 
 (define (lower-entry-main-selection-for-program
   [entry-path : String]
@@ -1760,17 +1760,17 @@
             decls
             paths
             entry-path
-            (LowerEntryMainScan 0 "" false)
+            (LowerEntryMainScan.Scan 0 "" false)
             "")))]))
 
 (define (lower-entry-main-selection-install!
   [selection : LowerMaybeEntryMainModule]) : unit
   (match selection
-    [(LowerNoEntryMainModule)
+    [(LowerMaybeEntryMainModule.No)
       (begin
         (set! lower-entry-main-module-active false)
         (set! lower-entry-main-module ""))]
-    [(LowerSomeEntryMainModule module)
+    [(LowerMaybeEntryMainModule.Some module)
       (begin
         (set! lower-entry-main-module-active true)
         (set! lower-entry-main-module module))]))
@@ -3107,7 +3107,7 @@
     [(AstDecl.DefFn _ params _ body-box _)
       (let
         [body : AstExpr (lower-context-expr-get ctx body-box)]
-        (OkLowerSpmdInlineHelper (LowerSomeSpmdInlineHelper name params body)))]
+        (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.Some name params body)))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -3116,7 +3116,7 @@
       (let
         [template : AstDecl (box-get template-box)]
         (lower-spmd-inline-helper-from-decl ctx name template))]
-    [_ (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))]))
+    [_ (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.No))]))
 
 (define (lower-spmd-inline-helper-name
   [ctx : TcContext]
@@ -3145,7 +3145,7 @@
   (match (lower-spmd-inline-helper-name ctx env type-env shadowed func)
     [(ResultTcString.Ok name)
       (if (string.eq name "")
-        (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
+        (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.No))
         (if (lower-string-set-contains? lower-spmd-inline-helper-stack name)
           (ErrLowerSpmdInlineHelper
             (box
@@ -3166,11 +3166,11 @@
                     (lower-spmd-inline-helper-from-decl ctx name decl)]
                   [(ResultAstDecl.Err message)
                     (ErrLowerSpmdInlineHelper (box (lower-diagnostic message)))])
-                (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))
-              (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))))))]
+                (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.No)))
+              (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.No))))))]
     [(ResultTcString.Err message)
       (if (string.eq message "")
-        (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
+        (OkLowerSpmdInlineHelper (LowerSpmdInlineHelper.No))
         (ErrLowerSpmdInlineHelper (box (lower-diagnostic-at-expr func message))))]))
 
 (define (lower-spmd-inline-build-subst
@@ -3369,7 +3369,7 @@
       (match (lower-spmd-inline-helper-lookup ctx env type-env shadowed func)
         [(OkLowerSpmdInlineHelper helper)
           (match helper
-            [(LowerSomeSpmdInlineHelper name params body)
+            [(LowerSpmdInlineHelper.Some name params body)
               (lower-spmd-inline-helper-body
                 ctx
                 env
@@ -3379,7 +3379,7 @@
                 rewritten-args
                 body
                 origin)]
-            [(LowerNoSpmdInlineHelper)
+            [(LowerSpmdInlineHelper.No)
               (match (lower-spmd-inline-expr
                 ctx
                 env
@@ -4095,10 +4095,10 @@
     [(hashmap.StringI64MapMissing) state]
     [(hashmap.StringI64MapFound slot)
       (match state
-        [(LowerReachState reachable worklist)
+        [(LowerReachState.State reachable worklist)
           (if (hashmap.i64-i64-map-contains? reachable slot)
             state
-            (LowerReachState
+            (LowerReachState.State
               (hashmap.i64-i64-map-put reachable slot 1)
               (LowerStringSet.Cons logical-name (box worklist))))])]))
 
@@ -4418,7 +4418,7 @@
   [roots : CloneNameList]
   [bindings : AstLetBindingList]) : LowerCloneRootEnv
   (match bindings
-    [(AstLetBindingList.Nil) (LowerCloneRootEnv roots env)]
+    [(AstLetBindingList.Nil) (LowerCloneRootEnv.Env roots env)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -4622,7 +4622,7 @@
               able
               roots
               bindings)
-              [(LowerCloneRootEnv binding-roots body-env)
+              [(LowerCloneRootEnv.Env binding-roots body-env)
                 (lower-clone-roots-expr
                   ctx
                   body-env
@@ -5261,12 +5261,13 @@
 ;; references the rewound scratch arena.
 (define (lower-clone-roots-result-escape [result : ResultLowerCloneRoots]) : ResultLowerCloneRoots
   (match result
-    [(OkLowerCloneRoots names)
-      (OkLowerCloneRoots (lower-clone-name-list-escape names))]
-    [(ErrLowerCloneRoots diag)
+    [(ResultLowerCloneRoots.Ok names)
+      (ResultLowerCloneRoots.Ok (lower-clone-name-list-escape names))]
+    [(ResultLowerCloneRoots.Err diag)
       (let
         [message : String (compiler-diagnostic-message (box-get diag))]
-        (ErrLowerCloneRoots (box (lower-diagnostic (string.copy (& message))))))]))
+        (ResultLowerCloneRoots.Err
+          (box (lower-diagnostic (string.copy (& message))))))]))
 
 (define (lower-reachable-clone-roots
   [pools : AstNodePoolContext]
@@ -5315,13 +5316,14 @@
                                 top-env
                                 names
                                 program)]
-                            (OkLowerCloneRoots roots)))]
+                            (ResultLowerCloneRoots.Ok roots)))]
                       [(ResultTcEnv.Err message)
-                        (ErrLowerCloneRoots (box (lower-diagnostic message)))]))]
+                        (ResultLowerCloneRoots.Err
+                          (box (lower-diagnostic message)))]))]
                 [(ResultCompilerRegistries.Err message)
-                  (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
+                  (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
             [(ResultCompilerSymbols.Err message)
-              (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
+              (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           ;; Re-home the result in the persistent arena while the scratch is
@@ -6127,7 +6129,10 @@
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
-      (array-set! bodies next (LowerSomeFunctionBody body names decl-path))
+      (array-set!
+        bodies
+        next
+        (LowerMaybeFunctionBody.Some body names decl-path))
       (LowerFunctionBodyIndex
         (hashmap.string-i64-map-put ids logical-name next)
         bodies
@@ -6139,7 +6144,7 @@
   (match (hashmap.string-i64-map-get (struct-get index ids) target)
     [(hashmap.StringI64MapFound body-index)
       (array-ref (struct-get index bodies) body-index)]
-    [(hashmap.StringI64MapMissing) (LowerNoFunctionBody)]))
+    [(hashmap.StringI64MapMissing) (LowerMaybeFunctionBody.No)]))
 
 (define (lower-function-body-index-from-decls-in-module
   [decls : AstDeclList]
@@ -6316,15 +6321,15 @@
   [body-index : LowerFunctionBodyIndex]
   [state : LowerReachState]) : LowerReachState
   (match state
-    [(LowerReachState reachable worklist)
+    [(LowerReachState.State reachable worklist)
       (match worklist
         [(LowerStringSet.Nil) state]
         [(LowerStringSet.Cons name rest)
           (let
             [popped : LowerReachState
-              (LowerReachState reachable (box-get rest))]
+              (LowerReachState.State reachable (box-get rest))]
             (match (lower-function-body-index-find body-index name)
-              [(LowerSomeFunctionBody body body-names body-path)
+              [(LowerMaybeFunctionBody.Some body body-names body-path)
                 (begin
                   (set!
                     lower-reach-active-runtime-paths
@@ -6337,7 +6342,7 @@
                     names
                     body-index
                     (lower-reach-expr all-functions body-names popped body)))]
-              [(LowerNoFunctionBody)
+              [(LowerMaybeFunctionBody.No)
                 (lower-reach-process all-functions names body-index popped)]))])]))
 
 (define (lower-dispatch-variant-logical-name
@@ -7274,7 +7279,7 @@
   [used : hashmap.I64I64Map]
   [covered : bool]) : LowerUsedTypePathSeed
   (match decls
-    [(AstDeclList.Nil) (LowerUsedTypePathSeed used covered)]
+    [(AstDeclList.Nil) (LowerUsedTypePathSeed.Seed used covered)]
     [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -7607,7 +7612,7 @@
   [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
   (match decls
     [(AstDeclList.Nil)
-      (LowerFilteredReachable AstDeclList.Nil AstDeclPathList.Nil)]
+      (LowerFilteredReachable.Filtered AstDeclList.Nil AstDeclPathList.Nil)]
     [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -7633,8 +7638,8 @@
               reachable
               dispatch-variants
               used-types)
-              [(LowerFilteredReachable rest-decls rest-paths)
-                (LowerFilteredReachable
+              [(LowerFilteredReachable.Filtered rest-decls rest-paths)
+                (LowerFilteredReachable.Filtered
                   (ast-decl-cons decl rest-decls)
                   (ast-decl-path-cons decl-path rest-paths))])]
           [_
@@ -7647,7 +7652,7 @@
               reachable
               dispatch-variants
               used-types)
-              [(LowerFilteredReachable rest-decls rest-paths)
+              [(LowerFilteredReachable.Filtered rest-decls rest-paths)
                 (if (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
                   decl-path
@@ -7657,10 +7662,10 @@
                   dispatch-variants
                   used-types
                   decl)
-                  (LowerFilteredReachable
+                  (LowerFilteredReachable.Filtered
                     (ast-decl-cons decl rest-decls)
                     (ast-decl-path-cons decl-path rest-paths))
-                  (LowerFilteredReachable rest-decls rest-paths))])]))]))
+                  (LowerFilteredReachable.Filtered rest-decls rest-paths))])]))]))
 
 ;; Keep decls and paths in lockstep so pruning does not repeat the same
 ;; reachability predicate walk over the whole declaration list.
@@ -7897,12 +7902,12 @@
                               all-functions
                               (lower-reach-add-logical
                                 all-functions
-                                (LowerReachState
+                                (LowerReachState.State
                                   (hashmap.i64-i64-map-with-capacity 8192)
                                   LowerStringSet.Nil)
                                 "main")))))
                       decls))
-                    [(LowerReachState reachable _)
+                    [(LowerReachState.State reachable _)
                       (let
                         [reachable-runtime-paths : hashmap.I64I64Map
                           lower-reach-active-runtime-paths]
@@ -7917,7 +7922,7 @@
                             true)]
                         [used-types : hashmap.I64I64Map
                           (match type-path-seed
-                            [(LowerUsedTypePathSeed
+                            [(LowerUsedTypePathSeed.Seed
                                 reachable-path-type-names
                                 type-paths-covered)
                               (if type-paths-covered
@@ -7951,10 +7956,10 @@
                                 used-types)]
                             [pruned : LowerPrunedProgram
                               (match filtered
-                                [(LowerFilteredReachable
+                                [(LowerFilteredReachable.Filtered
                                     filtered-decls
                                     filtered-paths)
-                                  (LowerPrunedProgram
+                                  (LowerPrunedProgram.Program
                                     (ast-program filtered-decls)
                                     filtered-paths)])]
                             [new-prev-arena : i64 (arena.tl_arena_current)]
@@ -7971,7 +7976,7 @@
                       (arena.tl_arena_set scratch-head)
                       (arena.tl_region_reset mark)
                       (arena.tl_arena_set prev-arena))
-                    (LowerPrunedProgram program paths))))]
+                    (LowerPrunedProgram.Program program paths))))]
             (begin
               (if prev-persist
                 unit
@@ -7992,43 +7997,43 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
+    [(LowerState.State next-var _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ label _ _ _ _ _ _ _ _ _ _) label]))
+    [(LowerState.State _ _ _ label _ _ _ _ _ _ _ _ _ _) label]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ _ _ _ _ function _ _ _ _ _ _) function]))
+    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _) function]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _ _ _) (box-get spans)]))
+    [(LowerState.State _ _ _ _ _ _ _ _ spans _ _ _ _ _) (box-get spans)]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ names _ _ _ _) names]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ names _ _ _ _) names]))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ type-cache _ _ _) type-cache]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ type-cache _ _ _) type-cache]))
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _ _ _) (box-get functions)]))
+    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _) (box-get functions)]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ _ mode _ _) mode]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ mode _ _) mode]))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
 
 (define (lower-state-tail-param-end [state : LowerState]) : i64
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
 
 (define (lower-state-tail-param-range-contains?
   [state : LowerState]
@@ -8039,7 +8044,7 @@
 
 (define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8054,7 +8059,7 @@
         mode
         _
         _)
-      (LowerState
+      (LowerState.State
         next-var
         next-label
         next-lambda
@@ -8072,7 +8077,7 @@
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8088,7 +8093,7 @@
         tail-param-start
         tail-param-end)
       (LowerAlloc
-        (LowerState
+        (LowerState.State
           (+ next-var 1)
           next-label
           next-lambda
@@ -8107,7 +8112,7 @@
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8123,7 +8128,7 @@
         tail-param-start
         tail-param-end)
       (LowerLabel
-        (LowerState
+        (LowerState.State
           next-var
           (+ next-label 1)
           next-lambda
@@ -8144,7 +8149,7 @@
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8160,7 +8165,7 @@
         tail-param-start
         tail-param-end)
       (LowerLambdaName
-        (LowerState
+        (LowerState.State
           next-var
           next-label
           (+ next-lambda 1)
@@ -8181,7 +8186,7 @@
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8196,7 +8201,7 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState
+      (LowerState.State
         next-var
         next-label
         next-lambda
@@ -8217,7 +8222,7 @@
   [instr : CompilerIrInstr]
   [span : AstSourceSpan]) : LowerState
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8232,7 +8237,7 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState
+      (LowerState.State
         next-var
         next-label
         next-lambda
@@ -8264,7 +8269,7 @@
 
 (define (lower-state-finish-block [state : LowerState] [next-label : String]) : LowerState
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label-id
         next-lambda
@@ -8279,7 +8284,7 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState
+      (LowerState.State
         next-var
         next-label-id
         next-lambda
@@ -8302,7 +8307,21 @@
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _ _ _)
+    [(LowerState.State
+        _
+        _
+        _
+        current-label
+        current-instrs
+        blocks
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _)
       (let
         [current-block : CompilerIrBlock
           (CompilerIrBlock.Block
@@ -8320,7 +8339,7 @@
   [new-functions : CompilerIrFunctionList]
   [new-spans : CompilerSourceSpans]) : LowerState
   (match state
-    [(LowerState
+    [(LowerState.State
         next-var
         next-label
         next-lambda
@@ -8335,7 +8354,7 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState
+      (LowerState.State
         next-var
         next-label
         next-lambda
@@ -13746,7 +13765,7 @@
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
-        (LowerState
+        (LowerState.State
           (if sret-needed
             (+ param-count 1)
             param-count)
@@ -28653,26 +28672,26 @@
 
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerAvx2) true]
-    [(CompilerLowerLinuxAvx2) true]
-    [(CompilerLowerWindowsAvx2) true]
-    [(CompilerLowerAvx512) true]
-    [(CompilerLowerLinuxAvx512) true]
-    [(CompilerLowerWindowsAvx512) true]
+    [(CompilerLowerMode.Avx2) true]
+    [(CompilerLowerMode.LinuxAvx2) true]
+    [(CompilerLowerMode.WindowsAvx2) true]
+    [(CompilerLowerMode.Avx512) true]
+    [(CompilerLowerMode.LinuxAvx512) true]
+    [(CompilerLowerMode.WindowsAvx512) true]
     [_ false]))
 
 (define (lower-mode-avx2? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerAvx2) true]
-    [(CompilerLowerLinuxAvx2) true]
-    [(CompilerLowerWindowsAvx2) true]
+    [(CompilerLowerMode.Avx2) true]
+    [(CompilerLowerMode.LinuxAvx2) true]
+    [(CompilerLowerMode.WindowsAvx2) true]
     [_ false]))
 
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerAvx512) true]
-    [(CompilerLowerLinuxAvx512) true]
-    [(CompilerLowerWindowsAvx512) true]
+    [(CompilerLowerMode.Avx512) true]
+    [(CompilerLowerMode.LinuxAvx512) true]
+    [(CompilerLowerMode.WindowsAvx512) true]
     [_ false]))
 
 (define (lower-avx2-masked-if-diagnostic) : String
@@ -28692,30 +28711,30 @@
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerScalar) true]
-    [(CompilerLowerLinuxScalar) true]
-    [(CompilerLowerWindowsScalar) true]
-    [(CompilerLowerAvx2) true]
-    [(CompilerLowerLinuxAvx2) true]
-    [(CompilerLowerWindowsAvx2) true]
-    [(CompilerLowerAvx512) true]
-    [(CompilerLowerLinuxAvx512) true]
-    [(CompilerLowerWindowsAvx512) true]
-    [(CompilerLowerInlineAggregates) true]
+    [(CompilerLowerMode.Scalar) true]
+    [(CompilerLowerMode.LinuxScalar) true]
+    [(CompilerLowerMode.WindowsScalar) true]
+    [(CompilerLowerMode.Avx2) true]
+    [(CompilerLowerMode.LinuxAvx2) true]
+    [(CompilerLowerMode.WindowsAvx2) true]
+    [(CompilerLowerMode.Avx512) true]
+    [(CompilerLowerMode.LinuxAvx512) true]
+    [(CompilerLowerMode.WindowsAvx512) true]
+    [(CompilerLowerMode.InlineAggregates) true]
     [_ false]))
 
 (define (lower-mode-linux-c-abi? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerLinuxScalar) true]
-    [(CompilerLowerLinuxAvx2) true]
-    [(CompilerLowerLinuxAvx512) true]
+    [(CompilerLowerMode.LinuxScalar) true]
+    [(CompilerLowerMode.LinuxAvx2) true]
+    [(CompilerLowerMode.LinuxAvx512) true]
     [_ false]))
 
 (define (lower-mode-windows-c-abi? [mode : CompilerLowerMode]) : bool
   (match mode
-    [(CompilerLowerWindowsScalar) true]
-    [(CompilerLowerWindowsAvx2) true]
-    [(CompilerLowerWindowsAvx512) true]
+    [(CompilerLowerMode.WindowsScalar) true]
+    [(CompilerLowerMode.WindowsAvx2) true]
+    [(CompilerLowerMode.WindowsAvx512) true]
     [_ false]))
 
 (define (lower-mode-c-abi? [mode : CompilerLowerMode]) : bool
@@ -28738,7 +28757,7 @@
 
 (define (lower-simd-lanes-for-elem [mode : CompilerLowerMode] [ty : AstType]) : i64
   (match mode
-    [(CompilerLowerAvx2)
+    [(CompilerLowerMode.Avx2)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 4]
         [(AstType.U64) 4]
@@ -28751,7 +28770,7 @@
         [(AstType.I8) 32]
         [(AstType.U8) 32]
         [_ 0])]
-    [(CompilerLowerLinuxAvx2)
+    [(CompilerLowerMode.LinuxAvx2)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 4]
         [(AstType.U64) 4]
@@ -28764,7 +28783,7 @@
         [(AstType.I8) 32]
         [(AstType.U8) 32]
         [_ 0])]
-    [(CompilerLowerWindowsAvx2)
+    [(CompilerLowerMode.WindowsAvx2)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 4]
         [(AstType.U64) 4]
@@ -28777,7 +28796,7 @@
         [(AstType.I8) 32]
         [(AstType.U8) 32]
         [_ 0])]
-    [(CompilerLowerAvx512)
+    [(CompilerLowerMode.Avx512)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 8]
         [(AstType.U64) 8]
@@ -28790,7 +28809,7 @@
         [(AstType.I8) 64]
         [(AstType.U8) 64]
         [_ 0])]
-    [(CompilerLowerLinuxAvx512)
+    [(CompilerLowerMode.LinuxAvx512)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 8]
         [(AstType.U64) 8]
@@ -28803,7 +28822,7 @@
         [(AstType.I8) 64]
         [(AstType.U8) 64]
         [_ 0])]
-    [(CompilerLowerWindowsAvx512)
+    [(CompilerLowerMode.WindowsAvx512)
       (match (tc-type-without-regions ty)
         [(AstType.I64) 8]
         [(AstType.U64) 8]
@@ -40104,7 +40123,7 @@
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
-        (LowerState
+        (LowerState.State
           (if sret-needed
             (+ param-count 1)
             param-count)
@@ -40606,22 +40625,22 @@
   (match isa
     [(AstDispatchIsa.Scalar)
       (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerWindowsScalar)
+        (CompilerLowerMode.WindowsScalar)
         (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerLinuxScalar)
-          (CompilerLowerScalar)))]
+          (CompilerLowerMode.LinuxScalar)
+          (CompilerLowerMode.Scalar)))]
     [(AstDispatchIsa.Avx2)
       (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerWindowsAvx2)
+        (CompilerLowerMode.WindowsAvx2)
         (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerLinuxAvx2)
-          (CompilerLowerAvx2)))]
+          (CompilerLowerMode.LinuxAvx2)
+          (CompilerLowerMode.Avx2)))]
     [(AstDispatchIsa.Avx512)
       (if (lower-mode-windows-c-abi? mode)
-        (CompilerLowerWindowsAvx512)
+        (CompilerLowerMode.WindowsAvx512)
         (if (lower-mode-linux-c-abi? mode)
-          (CompilerLowerLinuxAvx512)
-          (CompilerLowerAvx512)))]))
+          (CompilerLowerMode.LinuxAvx512)
+          (CompilerLowerMode.Avx512)))]))
 
 (define (lower-dispatch-type-list-without-regions [types : AstTypeList]) : AstTypeList
   (match types
@@ -41923,7 +41942,7 @@
     top-env
     program
     names
-    (CompilerLowerScalar)))
+    (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-program-checked
   [ctx : TcContext]
@@ -41985,7 +42004,7 @@
       [(ResultGenProgram.Err diag) (ResultCompilerLower.Err diag)])))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
+  (lower-compiler-program-unlocated-mode program (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]
@@ -42000,7 +42019,10 @@
 (define (lower-compiler-program-with-path
   [path : String]
   [program : AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
+  (lower-compiler-program-with-path-mode
+    path
+    program
+    (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
   [entry-path : String]
@@ -42056,7 +42078,7 @@
                 specialized-paths
                 prune-names
                 (CloneNameList.Nil))
-                [(LowerPrunedProgram base-program base-paths)
+                [(LowerPrunedProgram.Program base-program base-paths)
                   (begin
                     (cfg
                       compile-profile
@@ -42070,7 +42092,7 @@
                         base-program
                         base-paths
                         prune-names)
-                        [(OkLowerCloneRoots clone-roots)
+                        [(ResultLowerCloneRoots.Ok clone-roots)
                           (begin
                             (cfg
                               compile-profile
@@ -42190,7 +42212,7 @@
                                         (compiler-lower-profile-finish
                                           "typecheck"))
                                       (ResultCompilerLower.Err diag))]))))]
-                        [(ErrLowerCloneRoots diag)
+                        [(ResultLowerCloneRoots.Err diag)
                           (begin
                             (cfg
                               compile-profile
@@ -42386,7 +42408,7 @@
     entry-path
     program
     paths
-    (CompilerLowerScalar)))
+    (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
@@ -42745,7 +42767,7 @@
           (box (lower-diagnostic-with-path (lower-diagnostic message) path)))])))
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
-  (lower-compiler-source-with-path-mode path src (CompilerLowerScalar)))
+  (lower-compiler-source-with-path-mode path src (CompilerLowerMode.Scalar)))
 
 (define (compiler-lower-smoke-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
@@ -43129,19 +43151,21 @@
     [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source-with-mode
+    src
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.LinuxScalar))
     [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerWindowsScalar))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
@@ -43153,7 +43177,7 @@
     [active-ok : bool false]
     (begin
       (lower-entry-main-selection-install!
-        (LowerSomeEntryMainModule "app.main"))
+        (LowerMaybeEntryMainModule.Some "app.main"))
       (set!
         active-ok
         (and
@@ -44345,13 +44369,13 @@
 (define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-aggregate-copy-source)
-    (CompilerLowerInlineAggregates))
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok pair-program _)
       (match pair-program
         [(CompilerIrProgram.Program _ pair-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-mixed16-copy-source)
-            (CompilerLowerInlineAggregates))
+            (CompilerLowerMode.InlineAggregates))
             [(ResultCompilerLower.Ok mixed-program _)
               (match mixed-program
                 [(CompilerIrProgram.Program _ mixed-functions _)
@@ -44377,13 +44401,13 @@
 (define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-sret-struct-constructor-source)
-    (CompilerLowerInlineAggregates))
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok struct-program _)
       (match struct-program
         [(CompilerIrProgram.Program _ struct-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-sret-enum-constructor-source)
-            (CompilerLowerInlineAggregates))
+            (CompilerLowerMode.InlineAggregates))
             [(ResultCompilerLower.Ok enum-program _)
               (match enum-program
                 [(CompilerIrProgram.Program _ enum-functions _)
@@ -44404,13 +44428,13 @@
 (define (compiler-lower-inline-sret-enum-match-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-sret-enum-match-constructor-source)
-    (CompilerLowerInlineAggregates))
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok constructor-program _)
       (match constructor-program
         [(CompilerIrProgram.Program _ constructor-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-sret-enum-match-generic-source)
-            (CompilerLowerInlineAggregates))
+            (CompilerLowerMode.InlineAggregates))
             [(ResultCompilerLower.Ok generic-program _)
               (match generic-program
                 [(CompilerIrProgram.Program _ generic-functions _)
@@ -44451,7 +44475,7 @@
 (define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-direct-store-source)
-    (CompilerLowerInlineAggregates))
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -47987,7 +48011,7 @@
 (define (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-unsupported-aggregate-source)
-    (CompilerLowerWindowsScalar))
+    (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48005,7 +48029,7 @@
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-nested-small-aggregate-source)
-    (CompilerLowerWindowsScalar))
+    (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48020,7 +48044,7 @@
 (define (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-small-float-aggregate-source)
-    (CompilerLowerWindowsScalar))
+    (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48094,7 +48118,7 @@
 (define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-extern-value-fnptr-source)
-    (CompilerLowerLinuxScalar))
+    (CompilerLowerMode.LinuxScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48129,7 +48153,7 @@
 (define (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-linux-tag-only-enum-source)
-    (CompilerLowerLinuxScalar))
+    (CompilerLowerMode.LinuxScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48164,7 +48188,7 @@
 (define (compiler-lower-c-abi-linux-payload-enum-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-payload-enum-source)
-    (CompilerLowerLinuxScalar))
+    (CompilerLowerMode.LinuxScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -48234,7 +48258,7 @@
 (define (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-enum-aggregate-source)
-    (CompilerLowerWindowsScalar))
+    (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -49431,7 +49455,7 @@
 (define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-make-array-register-resident-fill8-source)
-    (CompilerLowerInlineAggregates))
+    (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -50979,7 +51003,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51060,7 +51084,7 @@
   [want-loads : i64]
   [want-binops : i64]
   [want-shapes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51171,7 +51195,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51218,7 +51242,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51309,7 +51333,7 @@
   [want-pred-loads : i64]
   [want-binops : i64]
   [want-shapes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51440,7 +51464,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51530,7 +51554,7 @@
             (array-set! out i 12)))))))")
 
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51571,7 +51595,7 @@
 (define (compiler-lower-avx512-masked-if-index-value-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-index-value-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51610,7 +51634,7 @@
 (define (compiler-lower-avx512-masked-if-index-mod-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-index-mod-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51649,7 +51673,7 @@
 (define (compiler-lower-avx512-masked-if-value-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-value-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51690,7 +51714,7 @@
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-nested-source)
-    (CompilerLowerAvx512))
+    (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51728,27 +51752,27 @@
   (and
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-offset-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-index-value-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-index-mod-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-value-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-nested-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-avx2-masked-if-diagnostic))))
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
@@ -51763,11 +51787,11 @@
   (and
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx2-foreach-scalar-fallback-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-simd-foreach-fallback-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx2-foreach-scalar-fallback-source)
-      (CompilerLowerAvx512)
+      (CompilerLowerMode.Avx512)
       (lower-simd-foreach-fallback-diagnostic))))
 
 (define (compiler-lower-spmd-shuffle-lowering-ok?) : bool
@@ -51775,11 +51799,11 @@
     (compiler-lower-ok? (compiler-lower-spmd-shuffle-source))
     (compiler-lower-mode-error-ok?
       (compiler-lower-spmd-shuffle-source)
-      (CompilerLowerAvx2)
+      (CompilerLowerMode.Avx2)
       (lower-spmd-shuffle-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-spmd-shuffle-source)
-      (CompilerLowerAvx512)
+      (CompilerLowerMode.Avx512)
       (lower-spmd-shuffle-diagnostic))))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
@@ -51816,7 +51840,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51834,7 +51858,7 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-spmd-reduce-stays-scalar-ok? [src : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51845,7 +51869,7 @@
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -51914,7 +51938,9 @@
         4)
       (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
-      (compiler-lower-spmd-reduce-lane-identity-shape-ok? (CompilerLowerAvx2) 4)
+      (compiler-lower-spmd-reduce-lane-identity-shape-ok?
+        (CompilerLowerMode.Avx2)
+        4)
       true)
     true))
 
@@ -51944,7 +51970,9 @@
       "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       (AstType.I32)
       16)
-    (compiler-lower-spmd-reduce-lane-identity-shape-ok? (CompilerLowerAvx512) 8)
+    (compiler-lower-spmd-reduce-lane-identity-shape-ok?
+      (CompilerLowerMode.Avx512)
+      8)
     true))
 
 ;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
@@ -52917,7 +52945,7 @@
         AstDeclPathList.Nil
         names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53247,9 +53275,9 @@
         AstDeclPathList.Nil
         no-main-names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match no-main-pruned
-          [(LowerPrunedProgram kept-no-main _)
+          [(LowerPrunedProgram.Program kept-no-main _)
             (match kept-program
               [(AstProgram.Program kept-box)
                 (let
@@ -53279,7 +53307,7 @@
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53306,7 +53334,7 @@
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53330,7 +53358,7 @@
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53355,7 +53383,7 @@
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53379,7 +53407,7 @@
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53409,7 +53437,7 @@
         AstDeclPathList.Nil
         names)]
     (match pruned
-      [(LowerPrunedProgram kept-program _)
+      [(LowerPrunedProgram.Program kept-program _)
         (match kept-program
           [(AstProgram.Program kept-box)
             (let
@@ -53462,7 +53490,7 @@
                 AstDeclPathList.Nil
                 names)]
             (match pruned
-              [(LowerPrunedProgram kept-program _)
+              [(LowerPrunedProgram.Program kept-program _)
                 (match kept-program
                   [(AstProgram.Program kept-box)
                     (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]

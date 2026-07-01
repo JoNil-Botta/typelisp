@@ -253,6 +253,14 @@
   (Ok TcStringList)
   (Err String))
 
+(defenum TcBorrowCallReturnLifetimes
+  (Known TcStringList)
+  (Fallback))
+
+(defenum ResultTcBorrowCallInfo
+  (Ok AstTypeList TcBorrowCallReturnLifetimes)
+  (Err String))
+
 (defenum ResultTcLifetimeList
   (Ok AstLifetimeList)
   (Err String))
@@ -1400,6 +1408,28 @@
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcTypeList
         (tc-move-call-param-types-id-raw ctx env func-id)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-borrow-call-info-id
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [func-id : i64]
+    [args : AstExprList]) : ResultTcBorrowCallInfo
+    (let
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
+      [result : ResultTcBorrowCallInfo
+        (tc-borrow-call-info-id-raw ctx env func-id args)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -35063,6 +35093,103 @@
     [(AstType.EnumArgs _ _) (ResultTcTypeList.Ok AstTypeList.Nil)]
     [_ (ResultTcTypeList.Err "typecheck: call target is not a function")]))
 
+(define (tc-borrow-call-return-lifetimes-from-function
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]) : TcBorrowCallReturnLifetimes
+  (if (tc-call-lifetime-constructor-for-func? ctx func ret)
+    (TcBorrowCallReturnLifetimes.Fallback)
+    (match (tc-call-constructor-target-for-func ctx env func params ret)
+      [(AstMaybeType.Some _) (TcBorrowCallReturnLifetimes.Fallback)]
+      [(AstMaybeType.No)
+        (let
+          [lifetimes : AstLifetimeList (tc-call-function-lifetimes params ret)]
+          (match lifetimes
+            [(AstLifetimeList.Nil)
+              (TcBorrowCallReturnLifetimes.Known
+                (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret)))]
+            [_
+              (match (tc-infer-call-lifetime-subst
+                ctx
+                env
+                args
+                params
+                lifetimes
+                TcLifetimeSubst.Nil)
+                [(ResultTcLifetimeSubst.Ok subst)
+                  (TcBorrowCallReturnLifetimes.Known
+                    (tc-type-collect-reference-lifetimes
+                      (tc-resolve-type ctx (tc-lifetime-subst-type subst ret))))]
+                [(ResultTcLifetimeSubst.Err _)
+                  (TcBorrowCallReturnLifetimes.Fallback)])]))])))
+
+(define (tc-borrow-call-info-from-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [fn-ty : AstType]) : ResultTcBorrowCallInfo
+  (match (tc-type-strip-region fn-ty)
+    [(AstType.Func params ret)
+      (let
+        [params-list : AstTypeList (box-get params)]
+        [ret-ty : AstType (ty-node-get ret)]
+        (ResultTcBorrowCallInfo.Ok
+          params-list
+          (tc-borrow-call-return-lifetimes-from-function
+            ctx
+            env
+            func
+            args
+            params-list
+            ret-ty)))]
+    [(AstType.Enum _)
+      (ResultTcBorrowCallInfo.Ok
+        AstTypeList.Nil
+        (TcBorrowCallReturnLifetimes.Fallback))]
+    [(AstType.EnumArgs _ _)
+      (ResultTcBorrowCallInfo.Ok
+        AstTypeList.Nil
+        (TcBorrowCallReturnLifetimes.Fallback))]
+    [_ (ResultTcBorrowCallInfo.Err "typecheck: call target is not a function")]))
+
+(define (tc-borrow-call-info-id-raw
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : AstExprList]) : ResultTcBorrowCallInfo
+  (let
+    [func : AstExpr (ast-node-get func-id)]
+    (match (tc-expr-id ctx env func-id)
+      [(ResultTcType.Ok fn-ty)
+        (tc-borrow-call-info-from-type ctx env func args fn-ty)]
+      [(ResultTcType.Err message) (ResultTcBorrowCallInfo.Err message)])))
+
+(define (tc-borrow-call-info-id-with-facts
+  [site : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : AstExprList]) : ResultTcBorrowCallInfo
+  (let
+    [func : AstExpr (ast-node-get func-id)]
+    (match (tc-body-type-fact-lookup-profiled site func-id)
+      [(TcBodyTypeFact.Hit fn-ty)
+        (tc-borrow-call-info-from-type ctx env func args fn-ty)]
+      [(TcBodyTypeFact.Miss)
+        (cfg
+          compile-profile
+          (compiler-tc-reinfer-profile-borrow-call-info-id
+            site
+            ctx
+            env
+            func-id
+            args)
+          (tc-borrow-call-info-id-raw ctx env func-id args))])))
+
 (define (tc-move-call-param-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -37240,7 +37367,8 @@
   [borrowed : TcMovedSet]
   [call-expr : AstExpr]
   [func : AstExpr]
-  [args : AstExprList]) : TcBorrowCheckResult
+  [args : AstExprList]
+  [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
   (match (tc-borrow-check-safe-arena-call-effects
     ctx
     env
@@ -37264,7 +37392,8 @@
                   locals
                   borrowed0
                   call-expr
-                  args)]
+                  args
+                  return-lifetimes)]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)])
             (tc-borrow-check-after-returning-call
@@ -37273,7 +37402,8 @@
               locals
               borrowed0
               call-expr
-              args))]
+              args
+              return-lifetimes))]
         [(TcMaybeString.No)
           (tc-borrow-check-after-returning-call
             ctx
@@ -37281,7 +37411,8 @@
             locals
             borrowed0
             call-expr
-            args)])]
+            args
+            return-lifetimes)])]
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
@@ -37731,7 +37862,8 @@
   [call-expr : AstExpr]
   [func : AstExpr]
   [args : AstExprList]
-  [types : AstTypeList]) : TcBorrowCheckResult
+  [types : AstTypeList]
+  [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
   (if (tc-borrow-check-string-helper-intrinsic-call? ctx env func)
     (match (tc-borrow-check-read-exprs
       ctx
@@ -37747,7 +37879,8 @@
           borrowed
           call-expr
           func
-          args)]
+          args
+          return-lifetimes)]
       [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])
     (let
       [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
@@ -37788,7 +37921,8 @@
                       borrowed3
                       call-expr
                       func
-                      args)]
+                      args
+                      return-lifetimes)]
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
@@ -37809,7 +37943,8 @@
                   borrowed2
                   call-expr
                   func
-                  args)]
+                  args
+                  return-lifetimes)]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))]
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
@@ -38653,32 +38788,60 @@
               result-lifetimes)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]))
 
+(define (tc-borrow-check-after-returning-call-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (match result-lifetimes
+    [(TcStringList.Nil) (TcBorrowCheckResult.Ok borrowed)]
+    [_
+      (tc-borrow-check-add-returned-call-borrows
+        ctx
+        env
+        locals
+        borrowed
+        args
+        result-lifetimes)]))
+
 (define (tc-borrow-check-after-returning-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [call-expr : AstExpr]
-  [args : AstExprList]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-expr "borrow.return_call" ctx env call-expr)
-    (tc-expr ctx env call-expr))
-    [(ResultTcType.Ok result-ty)
-      (let
-        [result-lifetimes : TcStringList
-          (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
-        (match result-lifetimes
-          [(TcStringList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-          [_
-            (tc-borrow-check-add-returned-call-borrows
-              ctx
-              env
-              locals
-              borrowed
-              args
-              result-lifetimes)]))]
-    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))
+  [args : AstExprList]
+  [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
+  (match return-lifetimes
+    [(TcBorrowCallReturnLifetimes.Known result-lifetimes)
+      (tc-borrow-check-after-returning-call-lifetimes
+        ctx
+        env
+        locals
+        borrowed
+        args
+        result-lifetimes)]
+    [(TcBorrowCallReturnLifetimes.Fallback)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr
+          "borrow.return_call"
+          ctx
+          env
+          call-expr)
+        (tc-expr ctx env call-expr))
+        [(ResultTcType.Ok result-ty)
+          (tc-borrow-check-after-returning-call-lifetimes
+            ctx
+            env
+            locals
+            borrowed
+            args
+            (tc-type-collect-reference-lifetimes
+              (tc-resolve-type ctx result-ty)))]
+        [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]))
 
 (define (tc-borrow-check-let-bindings
   [ctx : TcContext]
@@ -38876,12 +39039,13 @@
         [func : AstExpr (ast-node-get func-box)]
         (match (tc-borrow-check-expr-id ctx env locals borrowed func-box)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-move-call-param-types-id-with-facts
+            (match (tc-borrow-call-info-id-with-facts
               "borrow.call_func"
               ctx
               env
-              func-box)
-              [(ResultTcTypeList.Ok params)
+              func-box
+              args)
+              [(ResultTcBorrowCallInfo.Ok params return-lifetimes)
                 (match (tc-call-extern-abi ctx func)
                   [(TcMaybeExternAbi.Some abi)
                     (if (tc-call-dynamic-c-varargs-abi? abi)
@@ -38900,7 +39064,8 @@
                             expr
                             func
                             args
-                            expanded-params)]
+                            expanded-params
+                            (TcBorrowCallReturnLifetimes.Fallback))]
                         [(ResultTcTypeList.Err message)
                           (TcBorrowCheckResult.Err message)])
                       (tc-borrow-check-call-args-with-types
@@ -38911,7 +39076,8 @@
                         expr
                         func
                         args
-                        params))]
+                        params
+                        return-lifetimes))]
                   [(TcMaybeExternAbi.No)
                     (tc-borrow-check-call-args-with-types
                       ctx
@@ -38921,8 +39087,9 @@
                       expr
                       func
                       args
-                      params)])]
-              [(ResultTcTypeList.Err _)
+                      params
+                      return-lifetimes)])]
+              [(ResultTcBorrowCallInfo.Err _)
                 (match (tc-borrow-check-read-exprs
                   ctx
                   env
@@ -38937,7 +39104,8 @@
                       borrowed1
                       expr
                       func
-                      args)]
+                      args
+                      (TcBorrowCallReturnLifetimes.Fallback))]
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckResult.Err message)])])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]

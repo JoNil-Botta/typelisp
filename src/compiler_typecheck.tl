@@ -257,7 +257,7 @@
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
-  (typecheck-compiler-program-with-paths program AstDeclPathList.Nil))
+  (typecheck-compiler-program-with-paths program (ast-decl-path-list-new)))
 
 (define (typecheck-compiler-source-language-cfgs) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
@@ -333,9 +333,9 @@
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
   [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (typecheck-compiler-source-decl-has-stdlib-import? decl)
         (typecheck-compiler-source-decls-have-stdlib-import? (box-get rest)))]))
@@ -636,7 +636,7 @@
 (define (compiler-typecheck-prefix-cache-paths [entry-path : String]) : AstDeclPathList
   (ast-decl-path-cons
     "stdlib/tc_prefix_shared.tl"
-    (ast-decl-path-cons entry-path AstDeclPathList.Nil)))
+    (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
 
 (define (compiler-typecheck-prefix-cache-source-a) : String
   "(define (shared-helper [x : i64]) : i64 (+ x 1))
@@ -3261,7 +3261,7 @@
         (ast-field-def-cons
           (ast-field-def "fd" (AstType.I64) (AstFieldCleanup.No))
           (ast-field-def-list-new)))
-      AstDeclList.Nil)))
+      (ast-decl-list-new))))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (ast-program
@@ -3273,7 +3273,7 @@
         (ast-field-def-cons
           (ast-field-def "fd" (AstType.I64) (ast-field-cleanup-fn "close-fd"))
           (ast-field-def-list-new)))
-      AstDeclList.Nil)))
+      (ast-decl-list-new))))
 
 (define (compiler-typecheck-cleanup-struct-tests-ok?) : bool
   (let
@@ -3379,7 +3379,7 @@
               (ast-variant-payload-cleanup-fn "close-fd")
               AstVariantPayloadCleanupList.Nil))
           AstVariantDefList.Nil))
-      AstDeclList.Nil)))
+      (ast-decl-list-new))))
 
 (define (compiler-typecheck-cleanup-enum-tests-ok?) : bool
   (let
@@ -9652,7 +9652,7 @@
     "src/main.tl"
     (ast-decl-path-cons
       "src/assets.tl"
-      (ast-decl-path-cons "src/main.tl" AstDeclPathList.Nil))))
+      (ast-decl-path-cons "src/main.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-dup-extern-source))

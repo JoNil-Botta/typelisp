@@ -2044,24 +2044,26 @@
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
   [right : AstDeclList]) : AstDeclList
-  (match left
-    [(AstDeclList.Nil) right]
-    [(AstDeclList.Cons head rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (ast-decl-cons head (compiler-load-decl-list-append rest right)))]))
+  (let
+    [out : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
+    (begin
+      (ast-decl-list-append-from (&mut out) (& left) 0)
+      (ast-decl-list-append-from (&mut out) (& right) 0)
+      out)))
 
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
-  (match left
-    [(AstDeclPathList.Nil) right]
-    [(AstDeclPathList.Cons head rest)
-      (let
-        [rest : AstDeclPathList (box-get rest)]
-        (ast-decl-path-cons
-          head
-          (compiler-load-decl-path-list-append rest right)))]))
+  (let
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
+    (begin
+      (ast-decl-path-list-append-from (&mut out) (& left) 0)
+      (ast-decl-path-list-append-from (&mut out) (& right) 0)
+      out)))
 
 (define (compiler-load-decl-module-list-append
   [left : AstDeclModuleList]
@@ -2090,12 +2092,12 @@
       (ResultCompilerLoadWithPaths.Ok
         (compiler-load-decl-list-append
           decls
-          (ast-decl-cons (ast-decl-module "") AstDeclList.Nil))
+          (ast-decl-cons (ast-decl-module "") (ast-decl-list-new)))
         (compiler-load-decl-path-list-append
           paths
           (ast-decl-path-cons
             compiler-load-core-macro-prelude-path
-            AstDeclPathList.Nil))
+            (ast-decl-path-list-new)))
         (compiler-load-decl-module-list-append
           modules
           (ast-decl-module-cons "" (ast-decl-module-list-new)))
@@ -2146,12 +2148,12 @@
   [decls : AstDeclList]
   [fallback : String]
   [found : CompilerLoadMaybeModuleId]) : ResultCompilerLoadModuleId
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (match found
         [(CompilerLoadNoModuleId) (ResultCompilerLoadModuleId.Ok fallback)]
         [(CompilerLoadSomeModuleId name) (ResultCompilerLoadModuleId.Ok name)])]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2302,9 +2304,9 @@
   (string.append "path:" (compiler-load-moduleless-context-id path module)))
 
 (define (compiler-load-decls-source-module [decls : AstDeclList]) : String
-  (match decls
-    [(AstDeclList.Nil) ""]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ""]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2314,9 +2316,9 @@
 (define (compiler-load-decls-source-module-or
   [decls : AstDeclList]
   [fallback : String]) : String
-  (match decls
-    [(AstDeclList.Nil) fallback]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) fallback]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2324,9 +2326,9 @@
           [_ (compiler-load-decls-source-module-or rest fallback)]))]))
 
 (define (compiler-load-decl-list-has-module? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2336,9 +2338,9 @@
 (define (compiler-load-decl-list-has-module-name?
   [decls : AstDeclList]
   [want : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2359,9 +2361,9 @@
 (define (compiler-load-decl-list-has-extern-symbol?
   [decls : AstDeclList]
   [want : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -2387,13 +2389,13 @@
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
     (ResultCompilerLoadWithPaths.Ok
-      (ast-decl-cons (ast-decl-module module-id) AstDeclList.Nil)
-      (ast-decl-path-cons path AstDeclPathList.Nil)
+      (ast-decl-cons (ast-decl-module module-id) (ast-decl-list-new))
+      (ast-decl-path-cons path (ast-decl-path-list-new))
       (ast-decl-module-cons module-id (ast-decl-module-list-new))
       seen)
     (ResultCompilerLoadWithPaths.Ok
-      AstDeclList.Nil
-      AstDeclPathList.Nil
+      (ast-decl-list-new)
+      (ast-decl-path-list-new)
       (ast-decl-module-list-new)
       seen)))
 
@@ -2448,9 +2450,9 @@
   [decls : AstDeclList]
   [current-module : String]
   [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeString
-  (match decls
-    [(AstDeclList.Nil) (CompilerLoadNoString)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (CompilerLoadNoString)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -3249,9 +3251,9 @@
   [module-id : String]
   [decls : AstDeclList]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
-  (match decls
-    [(AstDeclList.Nil) build]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) build]
+    [(AstDeclListStep.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
@@ -3500,14 +3502,14 @@
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -3639,8 +3641,8 @@
                         false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
-                        AstDeclList.Nil
-                        AstDeclPathList.Nil
+                        (ast-decl-list-new)
+                        (ast-decl-path-list-new)
                         (ast-decl-module-list-new)
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
@@ -3711,17 +3713,17 @@
                                         after-import-expected
                                         after-import-alias
                                         importer-source-module
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
                                         after-import-alias
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-paths)
                                       (compiler-load-modules-after-import
                                         importer-module
                                         after-import-alias
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
@@ -3893,8 +3895,8 @@
     [(ResultCompilerLoadModuleId.Ok module-id)
       (if (sym_i64_env.sym-i64-contains seen module-id)
         (ResultCompilerLoadWithPaths.Ok
-          AstDeclList.Nil
-          AstDeclPathList.Nil
+          (ast-decl-list-new)
+          (ast-decl-path-list-new)
           (ast-decl-module-list-new)
           seen)
         (compiler-load-decls-with-module-and-roots-cfg
@@ -3919,8 +3921,8 @@
     [(ResultCompilerLoadModuleId.Ok module-id)
       (if (sym_i64_env.sym-i64-contains seen module-id)
         (ResultCompilerLoadWithPaths.Ok
-          AstDeclList.Nil
-          AstDeclPathList.Nil
+          (ast-decl-list-new)
+          (ast-decl-path-list-new)
           (ast-decl-module-list-new)
           seen)
         (compiler-load-decls-with-module-and-roots-cfg-with-pools
@@ -4833,8 +4835,8 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym_i64_env.sym-i64-contains seen path-key))
       (ResultCompilerLoadWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)
       (let
@@ -4935,8 +4937,8 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym_i64_env.sym-i64-contains seen path-key))
       (ResultCompilerLoadWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)
       (let
@@ -5427,17 +5429,17 @@
 (define (compiler-load-path-list-head-or
   [paths : AstDeclPathList]
   [fallback : String]) : String
-  (match paths
-    [(AstDeclPathList.Cons path _) path]
-    [(AstDeclPathList.Nil) fallback]))
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Cons path _) path]
+    [(AstDeclPathListStep.Nil) fallback]))
 
 (define (compiler-load-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
-  (match paths
-    [(AstDeclPathList.Cons _ rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Cons _ rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         rest)]
-    [(AstDeclPathList.Nil) AstDeclPathList.Nil]))
+    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]))
 
 (define (compiler-load-package-owned-decl-path
   [package-owner : String]
@@ -5486,9 +5488,9 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [module : String]) : AstDeclPathList
-  (match decls
-    [(AstDeclList.Nil) AstDeclPathList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-path-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
@@ -5539,14 +5541,14 @@
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [module : String]) : ResultCompilerLoadWithPaths
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String
@@ -5722,14 +5724,14 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -5805,8 +5807,8 @@
                             false)))]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
-                        AstDeclList.Nil
-                        AstDeclPathList.Nil
+                        (ast-decl-list-new)
+                        (ast-decl-path-list-new)
                         (ast-decl-module-list-new)
                         seen)
                       (if package-externs
@@ -5886,17 +5888,17 @@
                                         after-import-expected
                                         after-import-alias
                                         importer-source-module
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
                                         after-import-alias
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-paths)
                                       (compiler-load-modules-after-import
                                         importer-module
                                         after-import-alias
-                                        AstDeclList.Nil
+                                        (ast-decl-list-new)
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
@@ -6385,9 +6387,9 @@
         (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons _ rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons _ rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (+ 1 (compiler-load-decl-list-count rest)))]))
@@ -6396,8 +6398,8 @@
   [decls : AstDeclList]
   [name : String]
   [want : String]) : bool
-  (match decls
-    [(AstDeclList.Cons
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
         (AstDecl.Def got (AstMaybeType.Some (AstType.String)) value-box)
         _)
       (let
@@ -6419,8 +6421,8 @@
     (= (compiler-load-char-code-at text 5) 10)))
 
 (define (compiler-load-first-bin-def? [decls : AstDeclList] [name : String]) : bool
-  (match decls
-    [(AstDeclList.Cons
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
         (AstDecl.Def
           got
           (AstMaybeType.Some (AstType.DynArray elem-id))
@@ -6457,9 +6459,9 @@
   [decls : AstDeclList]
   [target-module : String]
   [target-alias : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -6485,20 +6487,20 @@
               target-alias)]))]))
 
 (define (compiler-load-unmoduled-import-restored-decls? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Cons (AstDecl.Module imported-module) rest1)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.Module imported-module) rest1)
       (let
         [rest1 : AstDeclList (box-get rest1)]
-        (match rest1
-          [(AstDeclList.Cons (AstDecl.Def imported-name _ _) rest2)
+        (match (ast-decl-list-step rest1)
+          [(AstDeclListStep.Cons (AstDecl.Def imported-name _ _) rest2)
             (let
               [rest2 : AstDeclList (box-get rest2)]
-              (match rest2
-                [(AstDeclList.Cons (AstDecl.Module restored-module) rest3)
+              (match (ast-decl-list-step rest2)
+                [(AstDeclListStep.Cons (AstDecl.Module restored-module) rest3)
                   (let
                     [rest3 : AstDeclList (box-get rest3)]
-                    (match rest3
-                      [(AstDeclList.Cons
+                    (match (ast-decl-list-step rest3)
+                      [(AstDeclListStep.Cons
                           (AstDecl.Import
                             (AstImportSpec.Spec
                               _
@@ -6509,21 +6511,24 @@
                           rest4)
                         (let
                           [rest4 : AstDeclList (box-get rest4)]
-                          (match rest4
-                            [(AstDeclList.Cons
+                          (match (ast-decl-list-step rest4)
+                            [(AstDeclListStep.Cons
                                 (AstDecl.DefFn main-name _ _ _ _)
-                                AstDeclList.Nil)
-                              (and
-                                (string.eq
-                                  (intern-str imported-module)
-                                  "restore.dep")
-                                (string.eq
-                                  (intern-str imported-name)
-                                  "dep-value")
-                                (string.eq (intern-str restored-module) "")
-                                (string.eq alias-module "restore.dep")
-                                (string.eq alias-name "dep")
-                                (string.eq (intern-str main-name) "main"))]
+                                done-box)
+                              (let
+                                [done : AstDeclList (box-get done-box)]
+                                (and
+                                  (ast-decl-list-empty? (& done))
+                                  (string.eq
+                                    (intern-str imported-module)
+                                    "restore.dep")
+                                  (string.eq
+                                    (intern-str imported-name)
+                                    "dep-value")
+                                  (string.eq (intern-str restored-module) "")
+                                  (string.eq alias-module "restore.dep")
+                                  (string.eq alias-name "dep")
+                                  (string.eq (intern-str main-name) "main")))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -6917,29 +6922,34 @@
 (define root-value : i64 2)"
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Ok decls _)
-      (match decls
-        [(AstDeclList.Cons (AstDecl.Module nested-module) rest1)
+      (match (ast-decl-list-step decls)
+        [(AstDeclListStep.Cons (AstDecl.Module nested-module) rest1)
           (let
             [rest1 : AstDeclList (box-get rest1)]
-            (match rest1
-              [(AstDeclList.Cons (AstDecl.Def value-name _ _) rest2)
+            (match (ast-decl-list-step rest1)
+              [(AstDeclListStep.Cons (AstDecl.Def value-name _ _) rest2)
                 (let
                   [rest2 : AstDeclList (box-get rest2)]
-                  (match rest2
-                    [(AstDeclList.Cons (AstDecl.Module restored-module) rest3)
+                  (match (ast-decl-list-step rest2)
+                    [(AstDeclListStep.Cons
+                        (AstDecl.Module restored-module)
+                        rest3)
                       (let
                         [rest3 : AstDeclList (box-get rest3)]
-                        (match rest3
-                          [(AstDeclList.Cons
+                        (match (ast-decl-list-step rest3)
+                          [(AstDeclListStep.Cons
                               (AstDecl.Def root-name _ _)
-                              AstDeclList.Nil)
-                            (and
-                              (string.eq
-                                (intern-str nested-module)
-                                "local.helper")
-                              (string.eq (intern-str value-name) "value")
-                              (string.eq (intern-str restored-module) "")
-                              (string.eq (intern-str root-name) "root-value"))]
+                              done-box)
+                            (let
+                              [done : AstDeclList (box-get done-box)]
+                              (and
+                                (ast-decl-list-empty? (& done))
+                                (string.eq
+                                  (intern-str nested-module)
+                                  "local.helper")
+                                (string.eq (intern-str value-name) "value")
+                                (string.eq (intern-str restored-module) "")
+                                (string.eq (intern-str root-name) "root-value")))]
                           [_ false]))]
                     [_ false]))]
               [_ false]))]
@@ -8065,7 +8075,9 @@
 ;; a configured `--stdlib-root` (root fallback) (#1074).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
-    (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
+    (io.write-file
+      "target/cl_srf_mod.tl"
+      "(module srf.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_srf_entry.tl"
@@ -8084,7 +8096,9 @@
 ;; candidate wins, so a missing leading root is skipped (#1074).
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
-    (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
+    (io.write-file
+      "target/cl_ssr_mod.tl"
+      "(module ssr.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_ssr_entry.tl"
@@ -10075,9 +10089,9 @@
           [(CompilerLoadNoString) false])))))
 
 (define (compiler-load-test-path-at [paths : AstDeclPathList] [index : i64]) : String
-  (match paths
-    [(AstDeclPathList.Nil) ""]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) ""]
+    [(AstDeclPathListStep.Cons path rest)
       (if (= index 0)
         path
         (let
@@ -10113,13 +10127,15 @@
     [decls : AstDeclList
       (ast-decl-cons
         runtime-decl
-        (ast-decl-cons helper-decl (ast-decl-cons main-decl AstDeclList.Nil)))]
+        (ast-decl-cons
+          helper-decl
+          (ast-decl-cons main-decl (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "C:/repo/stdlib/runtime.tl"
         (ast-decl-path-cons
           "C:/pkg/src/main.tl"
-          (ast-decl-path-cons "C:/pkg/src/main.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "C:/pkg/src/main.tl" (ast-decl-path-list-new))))]
     [owned : AstDeclPathList
       (compiler-load-package-owned-paths-for-decls
         "app"

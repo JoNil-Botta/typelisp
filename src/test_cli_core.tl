@@ -484,9 +484,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (ast-decl-cons decl result))
               (set! cur (box-get rest)))]))
@@ -501,9 +501,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclPathList.Nil) (set! done true)]
-          [(AstDeclPathList.Cons path rest)
+        (match (ast-decl-path-list-step cur)
+          [(AstDeclPathListStep.Nil) (set! done true)]
+          [(AstDeclPathListStep.Cons path rest)
             (begin
               (set! result (ast-decl-path-cons path result))
               (set! cur (box-get rest)))]))
@@ -516,9 +516,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons _ rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons _ rest)
             (begin
               (set! count (+ count 1))
               (set! cur (box-get rest)))]))
@@ -560,22 +560,22 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest-decls : AstDeclList (box-get rest)]
               [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) ""])]
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
               [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (begin
                 (match decl
                   [(AstDecl.Test name body-box span)
@@ -615,8 +615,10 @@
                 (set! cur-decls rest-decls)
                 (set! cur-paths rest-paths)))]))
       (InlineCollect.Collect
-        (tltest-decl-list-reverse-onto runtime-decls-out AstDeclList.Nil)
-        (tltest-path-list-reverse-onto runtime-paths-out AstDeclPathList.Nil)
+        (tltest-decl-list-reverse-onto runtime-decls-out (ast-decl-list-new))
+        (tltest-path-list-reverse-onto
+          runtime-paths-out
+          (ast-decl-path-list-new))
         test-items))))
 
 (define (tltest-collect
@@ -627,8 +629,8 @@
     (compiler-load-normalize-path source)
     decls
     paths
-    AstDeclList.Nil
-    AstDeclPathList.Nil
+    (ast-decl-list-new)
+    (ast-decl-path-list-new)
     (make-array InlineTest 0)))
 
 (define (tltest-print-expr [text : String]) : i64
@@ -1535,9 +1537,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (tltest-reach-mark-runtime-helper-root decl result))
               (set! cur (box-get rest)))]))
@@ -1672,9 +1674,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (tltest-reach-mark-decl decl result))
               (set! cur (box-get rest)))]))
@@ -1763,15 +1765,15 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
-            (match cur-paths
-              [(AstDeclPathList.Nil)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (match (ast-decl-path-list-step cur-paths)
+              [(AstDeclPathListStep.Nil)
                 (begin
                   (set! cur-decls (box-get rest))
-                  (set! cur-paths AstDeclPathList.Nil))]
-              [(AstDeclPathList.Cons decl-path path-rest)
+                  (set! cur-paths (ast-decl-path-list-new)))]
+              [(AstDeclPathListStep.Cons decl-path path-rest)
                 (begin
                   ;; Keep imported generated helpers: macro-expanded bodies can
                   ;; reference them in ways the lightweight source reachability walk
@@ -1792,8 +1794,8 @@
                   (set! cur-decls (box-get rest))
                   (set! cur-paths (box-get path-rest)))])]))
       (InlineRuntimeDecls.Decls
-        (tltest-decl-list-reverse-onto result-decls AstDeclList.Nil)
-        (tltest-path-list-reverse-onto result-paths AstDeclPathList.Nil)))))
+        (tltest-decl-list-reverse-onto result-decls (ast-decl-list-new))
+        (tltest-path-list-reverse-onto result-paths (ast-decl-path-list-new))))))
 
 (define (tltest-prune-runtime-decls
   [source : String]
@@ -1805,8 +1807,8 @@
     paths
     (compiler-load-normalize-path source)
     (tltest-reachable-names decls tests)
-    AstDeclList.Nil
-    AstDeclPathList.Nil))
+    (ast-decl-list-new)
+    (ast-decl-path-list-new)))
 
 (define (tltest-build-harness
   [source : String]
@@ -1829,13 +1831,13 @@
                   (tltest-test-decls-onto
                     tests
                     (- count 1)
-                    (ast-decl-cons (tltest-main-decl tests) AstDeclList.Nil))))
+                    (ast-decl-cons (tltest-main-decl tests) (ast-decl-list-new)))))
               (compiler-load-decl-path-list-append
                 pruned-paths
                 (tltest-test-paths-onto
                   tests
                   (- count 1)
-                  (ast-decl-path-cons source AstDeclPathList.Nil)))
+                  (ast-decl-path-cons source (ast-decl-path-list-new))))
               count))])]))
 
 (define (tltest-inline-typecheck-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -1847,7 +1849,10 @@
   (ast-program
     (compiler-load-decl-list-append
       decls
-      (tltest-test-decls-onto tests (- (array-length tests) 1) AstDeclList.Nil))))
+      (tltest-test-decls-onto
+        tests
+        (- (array-length tests) 1)
+        (ast-decl-list-new)))))
 
 (define (tltest-inline-typecheck-paths
   [paths : AstDeclPathList]
@@ -1857,7 +1862,7 @@
     (tltest-test-paths-onto
       tests
       (- (array-length tests) 1)
-      AstDeclPathList.Nil)))
+      (ast-decl-path-list-new))))
 
 (define (tltest-inline-typecheck-loaded
   [source : String]
@@ -2093,9 +2098,9 @@
     cache-scope-prefix))
 
 (define (tltest-path-at [paths : AstDeclPathList] [index : i64]) : String
-  (match paths
-    [(AstDeclPathList.Nil) ""]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) ""]
+    [(AstDeclPathListStep.Cons path rest)
       (if (= index 0)
         path
         (tltest-path-at (box-get rest) (- index 1)))]))
@@ -2117,17 +2122,17 @@
     [_ ""]))
 
 (define (tltest-decl-name-at [decls : AstDeclList] [index : i64]) : String
-  (match decls
-    [(AstDeclList.Nil) ""]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ""]
+    [(AstDeclListStep.Cons decl rest)
       (if (= index 0)
         (tltest-decl-name decl)
         (tltest-decl-name-at (box-get rest) (- index 1)))]))
 
 (define (tltest-decl-list-has-name? [decls : AstDeclList] [name : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (if (string.eq (tltest-decl-name decl) name)
         true
         (tltest-decl-list-has-name? (box-get rest) name))]))
@@ -2162,7 +2167,7 @@
               source-import
               (ast-decl-cons
                 (ast-decl-test "owned" (tltest-call-expr "string.eq") span)
-                AstDeclList.Nil)))))]
+                (ast-decl-list-new))))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         dep-path
@@ -2172,7 +2177,7 @@
             source
             (ast-decl-path-cons
               source
-              (ast-decl-path-cons source AstDeclPathList.Nil)))))]
+              (ast-decl-path-cons source (ast-decl-path-list-new))))))]
     (match (tltest-build-harness source decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2205,13 +2210,13 @@
           (ast-decl-test "first" (tltest-call-expr helper-name) first-span)
           (ast-decl-cons
             (ast-decl-test "second" (tltest-call-expr helper-name) second-span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
@@ -2281,7 +2286,7 @@
                 "keeps-generated-runtime"
                 (tltest-call-expr "__tl_generated_runtime_helper")
                 span)
-              AstDeclList.Nil))))]
+              (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
@@ -2289,7 +2294,7 @@
           "stdlib/runtime.tl"
           (ast-decl-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil))))]
+            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2346,13 +2351,13 @@
               "keeps-generated-lambda-runtime"
               (tltest-call-expr "__tl_generated_lambda_helper")
               span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2406,13 +2411,13 @@
               "keeps-generated-substring-runtime"
               (tltest-call-expr "__tl_generated_substring_helper")
               span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2455,13 +2460,13 @@
               "imported"
               (tltest-call-expr helper-name)
               imported-span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "driver.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "imported.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "imported.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
@@ -2516,17 +2521,17 @@
             "uses-qualified-macro-alias"
             (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
             span)
-          AstDeclList.Nil))]
+          (ast-decl-list-new)))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "alias.tl"
-        (ast-decl-path-cons "alias.tl" AstDeclPathList.Nil))]
+        (ast-decl-path-cons "alias.tl" (ast-decl-path-list-new)))]
     (match (tltest-build-harness "alias.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
           [(AstProgram.Program harness-decls-box)
-            (match (box-get harness-decls-box)
-              [(AstDeclList.Cons first _)
+            (match (ast-decl-list-step (box-get harness-decls-box))
+              [(AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
               [_ false])])])))
 
@@ -2581,7 +2586,7 @@
                   "runtime-helper-not-called-by-test"
                   (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
                   span)
-                AstDeclList.Nil)))))]
+                (ast-decl-list-new))))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
@@ -2591,7 +2596,7 @@
             "stdlib/string.tl"
             (ast-decl-path-cons
               "stdlib/string.tl"
-              (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil)))))]
+              (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2658,7 +2663,7 @@
                 "uses-generated-live"
                 (tltest-call-expr live-name)
                 span)
-              AstDeclList.Nil))))]
+              (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "driver.tl"
@@ -2666,7 +2671,7 @@
           "driver.tl"
           (ast-decl-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil))))]
+            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2714,13 +2719,13 @@
               "keeps-imported-generated"
               (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
               span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "generated.tl"
         (ast-decl-path-cons
           "generated.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2765,13 +2770,13 @@
               "uses-macro-generated-helper"
               (tltest-call-expr macro-name)
               span)
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "macro-deps.tl"
         (ast-decl-path-cons
           "macro-deps.tl"
-          (ast-decl-path-cons "macro-deps.tl" AstDeclPathList.Nil)))]
+          (ast-decl-path-cons "macro-deps.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "macro-deps.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -3369,8 +3374,8 @@
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
   (tltest-run-direct
     source
-    (ast-program (ast-decl-cons (tltest-empty-main-decl) AstDeclList.Nil))
-    (ast-decl-path-cons source AstDeclPathList.Nil)
+    (ast-program (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new)))
+    (ast-decl-path-cons source (ast-decl-path-list-new))
     roots
     target
     opt-level))
@@ -3597,9 +3602,9 @@
     (io.panic "test CLI package integration filter mismatch")))
 
 (define (tltest-decls-have-main? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (if (tltest-main-decl? decl)
         true
         (tltest-decls-have-main? (box-get rest)))]))

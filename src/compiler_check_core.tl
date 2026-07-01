@@ -102,7 +102,7 @@
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
-  (compiler-check-program-with-paths path decls AstDeclPathList.Nil))
+  (compiler-check-program-with-paths path decls (ast-decl-path-list-new)))
 
 (define (compiler-check-loaded-with-prelude-cache
   [path : String]
@@ -439,7 +439,7 @@
             (compiler-check-program-with-paths-cache
               path
               (box-get decls-box)
-              AstDeclPathList.Nil
+              (ast-decl-path-list-new)
               (vector.string-vec-new)
               (compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
@@ -720,8 +720,8 @@
       "src.already_loaded"
       1))
     [(ResultCompilerLoad.Ok decls _)
-      (match decls
-        [(AstDeclList.Nil) true]
+      (match (ast-decl-list-step decls)
+        [(AstDeclListStep.Nil) true]
         [_ false])]
     [(ResultCompilerLoad.Err _) false]))
 

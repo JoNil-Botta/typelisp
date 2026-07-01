@@ -1650,9 +1650,9 @@
   [visible-root : bool]
   [reportable : bool]
   [decls : AstDeclList]) : SelfhostLintDeadScan
-  (match decls
-    [(AstDeclList.Nil) scan]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) scan]
+    [(AstDeclListStep.Cons decl rest)
       (selfhost-lint-dead-scan-decls
         (selfhost-lint-dead-scan-decl
           scan

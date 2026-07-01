@@ -74,8 +74,8 @@ walkers, and any path-alignment logic change together.
 | `AstExprList` | `src/compiler_ast_types.tl:1518` | `AstExprList.Nil` / `AstExprList.Cons` | Ordered call/body/tuple/array exprs; frequent traversal and count. | Very hot. | `convert-to-generated-vector` | #3427. |
 | `AstExprClauseList` | `src/compiler_ast_types.tl:1526` | `AstExprClauseList.Nil` / `AstExprClauseList.Cons` | Ordered macro clause pairs. | Moderate in macro-heavy code. | `convert-to-generated-vector` | #3427. |
 | `AstDispatchVariantList` | `src/compiler_ast_types.tl:1572` | `AstDispatchVariantNil` / `AstDispatchVariantCons` | Ordered dispatch variants. | Cold. | `keep-persistent-cons` | Revisit only if dispatch metadata grows. |
-| `AstDeclList` | `src/compiler_ast_types.tl:1604` | `AstDeclNil` / `AstDeclCons` | Ordered declarations; prefix cache, symbol, typecheck, lower passes. | Very hot. | `convert-to-generated-vector` | #3427; migrate with `AstDeclPathList`. |
-| `AstDeclPathList` | `src/compiler_ast_types.tl:1608` | `AstDeclPathNil` / `AstDeclPathCons` | Parallel ordered paths for `AstDeclList`; lockstep traversal. | Hot wherever loaded programs are checked/lowered. | `convert-to-generated-vector` | #3427; must migrate with `AstDeclList`. |
+| `AstDeclList` | `src/compiler_ast_types.tl:1805` | generated vector family (`ast-decl-list-*`) plus `AstDeclListStep` cursor adapter | Ordered declarations; prefix cache, symbol, typecheck, lower passes. | Very hot. | `converted-to-generated-vector` | #4179. |
+| `AstDeclPathList` | `src/compiler_ast_types.tl:1815` | generated vector family (`ast-decl-path-list-*`) plus `AstDeclPathListStep` cursor adapter | Parallel ordered paths for `AstDeclList`; lockstep traversal. | Hot wherever loaded programs are checked/lowered. | `converted-to-generated-vector` | #4179. |
 | `AstDeclModuleList` | `src/compiler_ast_types.tl:1813` | generated vector family (`ast-decl-module-list-*`) | Ordered module markers from loaded programs. | Moderate. | `converted-to-generated-vector` | #3427. |
 
 ## src/compiler_typecheck_core.tl

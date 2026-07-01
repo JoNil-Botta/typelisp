@@ -2302,9 +2302,9 @@
   [decls : AstDeclList]
   [alias : String]
   [module-name : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (if (lint-decl-uses-import? decl alias module-name)
@@ -2472,9 +2472,9 @@
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (lint-unused-imports-in-decl-list
@@ -3200,9 +3200,9 @@
 (define (lint-copy-on-update-collect-structs
   [decls : AstDeclList]
   [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
-  (match decls
-    [(AstDeclList.Nil) shapes]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) shapes]
+    [(AstDeclListStep.Cons decl rest)
       (lint-copy-on-update-collect-structs
         (box-get rest)
         (lint-copy-on-update-collect-structs-in-decl decl shapes))]))
@@ -3262,9 +3262,9 @@
   [decls : AstDeclList]
   [shapes : LintCopyOnUpdateStructList]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (lint-copy-on-update-structs-in-decl-list
         (box-get rest)
         shapes
@@ -4000,9 +4000,9 @@
 (define (lint-single-element-array-cells-in-decl-list
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (lint-single-element-array-cells-in-decl-list
         (box-get rest)
         (lint-single-element-array-cells-in-decl decl acc))]))
@@ -4544,9 +4544,9 @@
 (define (lint-unused-assignments-in-decl-list
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (lint-unused-assignments-in-decl-list
         (box-get rest)
         (lint-unused-assignments-in-decl decl acc))]))
@@ -5019,9 +5019,9 @@
 (define (lint-redundant-function-names-in-decl-list-state
   [decls : AstDeclList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (match decls
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
       (lint-redundant-function-names-in-decl-list-state
         (box-get rest)
         (lint-redundant-function-name-decl decl state))]))
@@ -6321,9 +6321,9 @@
   [source : String]
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (lint-unused-variables-in-decl-list
         source
         (box-get rest)
@@ -7468,9 +7468,9 @@
   [decls : AstDeclList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match decls
-    [(AstDeclList.Nil) acc]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))

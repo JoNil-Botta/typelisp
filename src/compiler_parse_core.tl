@@ -156,6 +156,10 @@
   (Ok AstPatternList)
   (Err String))
 
+(defenum ResultAstPatternListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstLetBinding
   (Ok AstLetBinding)
   (Err String))
@@ -182,6 +186,10 @@
 
 (defenum ResultAstMatchArmList
   (Ok AstMatchArmList)
+  (Err String))
+
+(defenum ResultAstMatchArmListBuild
+  (Ok)
   (Err String))
 
 (defenum ResultAstExpr
@@ -2752,23 +2760,32 @@
             seen-cleanup)])]
     [_ (ResultAstEnumDefParts.Err "parse: malformed variant list")]))
 
+(define (parse-ast-pattern-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [out : (&mut out AstPatternList)]) : ResultAstPatternListBuild
+  (match s
+    [(Sexpr.Nil) (ResultAstPatternListBuild.Ok)]
+    [(Sexpr.Cons head tail)
+      (match (parse-ast-pattern dispatch pools (box-get head))
+        [(ResultAstPattern.Ok parsed-head)
+          (begin
+            (ast-pattern-list-push out parsed-head)
+            (parse-ast-pattern-list-into dispatch pools (box-get tail) out))]
+        [(ResultAstPattern.Err message) (ResultAstPatternListBuild.Err message)])]
+    [_ (ResultAstPatternListBuild.Err "parse: malformed pattern list")]))
+
 (define (parse-ast-pattern-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstPatternList
-  (match s
-    [(Sexpr.Nil) (ResultAstPatternList.Ok AstPatternList.Nil)]
-    [(Sexpr.Cons head tail)
-      (match (parse-ast-pattern dispatch pools (box-get head))
-        [(ResultAstPattern.Ok parsed-head)
-          (match (parse-ast-pattern-list dispatch pools (box-get tail))
-            [(ResultAstPatternList.Ok parsed-tail)
-              (ResultAstPatternList.Ok
-                (ast-pattern-cons parsed-head parsed-tail))]
-            [(ResultAstPatternList.Err message)
-              (ResultAstPatternList.Err message)])]
-        [(ResultAstPattern.Err message) (ResultAstPatternList.Err message)])]
-    [_ (ResultAstPatternList.Err "parse: malformed pattern list")]))
+  (let
+    [out : AstPatternList (ast-pattern-list-new)]
+    (match (parse-ast-pattern-list-into dispatch pools s (&mut out))
+      [(ResultAstPatternListBuild.Ok) (ResultAstPatternList.Ok out)]
+      [(ResultAstPatternListBuild.Err message)
+        (ResultAstPatternList.Err message)])))
 
 (define (parse-ast-pattern
   [dispatch : sym_i64_env.SymI64Env]
@@ -4978,23 +4995,37 @@
         [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
     [_ (ResultAstMatchArm.Err "parse: malformed match arm")]))
 
+(define (parse-ast-match-arm-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]
+  [out : (&mut out AstMatchArmList)]) : ResultAstMatchArmListBuild
+  (match s
+    [(SpannedSexpr.Nil _) (ResultAstMatchArmListBuild.Ok)]
+    [(SpannedSexpr.Cons head tail _)
+      (match (parse-ast-match-arm dispatch pools (sp-node-get head))
+        [(ResultAstMatchArm.Ok parsed-head)
+          (begin
+            (ast-match-arm-list-push out parsed-head)
+            (parse-ast-match-arm-list-into
+              dispatch
+              pools
+              (sp-node-get tail)
+              out))]
+        [(ResultAstMatchArm.Err message)
+          (ResultAstMatchArmListBuild.Err message)])]
+    [_ (ResultAstMatchArmListBuild.Err "parse: malformed match arm list")]))
+
 (define (parse-ast-match-arm-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMatchArmList
-  (match s
-    [(SpannedSexpr.Nil _) (ResultAstMatchArmList.Ok AstMatchArmList.Nil)]
-    [(SpannedSexpr.Cons head tail _)
-      (match (parse-ast-match-arm dispatch pools (sp-node-get head))
-        [(ResultAstMatchArm.Ok parsed-head)
-          (match (parse-ast-match-arm-list dispatch pools (sp-node-get tail))
-            [(ResultAstMatchArmList.Ok parsed-tail)
-              (ResultAstMatchArmList.Ok
-                (ast-match-arm-cons parsed-head parsed-tail))]
-            [(ResultAstMatchArmList.Err message)
-              (ResultAstMatchArmList.Err message)])]
-        [(ResultAstMatchArm.Err message) (ResultAstMatchArmList.Err message)])]
-    [_ (ResultAstMatchArmList.Err "parse: malformed match arm list")]))
+  (let
+    [out : AstMatchArmList (ast-match-arm-list-new)]
+    (match (parse-ast-match-arm-list-into dispatch pools s (&mut out))
+      [(ResultAstMatchArmListBuild.Ok) (ResultAstMatchArmList.Ok out)]
+      [(ResultAstMatchArmListBuild.Err message)
+        (ResultAstMatchArmList.Err message)])))
 
 (define (parse-ast-match
   [dispatch : sym_i64_env.SymI64Env]

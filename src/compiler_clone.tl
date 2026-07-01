@@ -451,7 +451,7 @@
 ;; Pattern args (AstPattern.Binding tlc0) (AstPattern.Binding tlc1) ... for `count` fields.
 (define (clone-variant-pat-args [count : i64] [i : i64]) : AstPatternList
   (if (>= i count)
-    AstPatternList.Nil
+    (ast-pattern-list-new)
     (ast-pattern-cons
       (ast-pat-binding (clone-binder-name i))
       (clone-variant-pat-args count (+ i 1)))))
@@ -496,7 +496,7 @@
   [pools : AstNodePoolContext]
   [variants : AstVariantDefList]) : AstMatchArmList
   (match variants
-    [(AstVariantDefList.Nil) AstMatchArmList.Nil]
+    [(AstVariantDefList.Nil) (ast-match-arm-list-new)]
     [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
@@ -735,7 +735,7 @@
       cons-ctor
       (ast-pattern-cons
         (ast-pat-binding "h")
-        (ast-pattern-cons (ast-pat-binding "t") AstPatternList.Nil)))
+        (ast-pattern-cons (ast-pat-binding "t") (ast-pattern-list-new))))
     (ast-expr-call-with-pools
       pools
       (clone-expr-push pools (AstExpr.Var (intern fn-name)))
@@ -765,11 +765,11 @@
     (clone-expr-push pools (AstExpr.Var (intern "x")))
     (ast-match-arm-cons
       (ast-match-arm
-        (ast-pat-variant nil-ctor AstPatternList.Nil)
+        (ast-pat-variant nil-ctor (ast-pattern-list-new))
         (clone-expr-push pools (AstExpr.Var (intern "acc"))))
       (ast-match-arm-cons
         (clone-list-step-arm pools fn-name cons-ctor boxed-tail head-expr)
-        AstMatchArmList.Nil))))
+        (ast-match-arm-list-new)))))
 
 ;; clone$L$acc: tail-recursively clone each element into a reversed accumulator.
 (define (clone-list-acc-decl
@@ -887,12 +887,21 @@
   (define (clone-test-pattern-list-name-count
     [patterns : AstPatternList]
     [want : String]) : i64
-    (match patterns
-      [(AstPatternList.Nil) 0]
-      [(AstPatternList.Cons head rest)
-        (+
-          (clone-test-pattern-name-count (box-get head) want)
-          (clone-test-pattern-list-name-count (box-get rest) want))])))
+    (clone-test-pattern-list-name-count-at (& patterns) want 0)))
+
+(cfg
+  test
+  (define (clone-test-pattern-list-name-count-at
+    [patterns : (& patterns AstPatternList)]
+    [want : String]
+    [index : i64]) : i64
+    (if (>= index (ast-pattern-list-len patterns))
+      0
+      (+
+        (clone-test-pattern-name-count
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))
+          want)
+        (clone-test-pattern-list-name-count-at patterns want (+ index 1))))))
 
 (cfg
   test
@@ -927,16 +936,28 @@
     [pools : AstNodePoolContext]
     [arms : AstMatchArmList]
     [want : String]) : i64
-    (match arms
-      [(AstMatchArmList.Nil) 0]
-      [(AstMatchArmList.Cons arm rest)
-        (match arm
-          [(AstMatchArm.Arm pattern body)
+    (clone-test-match-arm-list-name-count-at pools (& arms) want 0)))
+
+(cfg
+  test
+  (define (clone-test-match-arm-list-name-count-at
+    [pools : AstNodePoolContext]
+    [arms : (& arms AstMatchArmList)]
+    [want : String]
+    [index : i64]) : i64
+    (if (>= index (ast-match-arm-list-len arms))
+      0
+      (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm pattern body)
+          (+
+            (clone-test-pattern-name-count pattern want)
             (+
-              (clone-test-pattern-name-count pattern want)
-              (+
-                (clone-test-expr-name-count pools body want)
-                (clone-test-match-arm-list-name-count pools (box-get rest) want)))])])))
+              (clone-test-expr-name-count pools body want)
+              (clone-test-match-arm-list-name-count-at
+                pools
+                arms
+                want
+                (+ index 1))))]))))
 
 (cfg
   test

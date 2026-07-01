@@ -1674,15 +1674,21 @@
   [patterns : AstPatternList]
   [alias : String]
   [module-name : String]) : bool
-  (match patterns
-    [(AstPatternList.Nil) false]
-    [(AstPatternList.Cons head rest)
-      (let
-        [head : AstPattern (box-get head)]
-        [rest : AstPatternList (box-get rest)]
-        (if (lint-pattern-uses-import? head alias module-name)
-          true
-          (lint-pattern-list-uses-import? rest alias module-name)))]))
+  (lint-pattern-list-uses-import-at? (& patterns) alias module-name 0))
+
+(define (lint-pattern-list-uses-import-at?
+  [patterns : (& patterns AstPatternList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-pattern-list-len patterns))
+    false
+    (if (lint-pattern-uses-import?
+      (ast-pattern-list-get patterns index (ast-pattern-fallback))
+      alias
+      module-name)
+      true
+      (lint-pattern-list-uses-import-at? patterns alias module-name (+ index 1)))))
 
 (define (lint-pattern-uses-import?
   [pattern : AstPattern]
@@ -1753,18 +1759,22 @@
   [arms : AstMatchArmList]
   [alias : String]
   [module-name : String]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body)
-            (if (lint-pattern-uses-import? pattern alias module-name)
-              true
-              (if (lint-expr-uses-import? (ast-node-get body) alias module-name)
-                true
-                (lint-match-arms-use-import? rest alias module-name)))]))]))
+  (lint-match-arms-use-import-at? (& arms) alias module-name 0))
+
+(define (lint-match-arms-use-import-at?
+  [arms : (& arms AstMatchArmList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (if (lint-pattern-uses-import? pattern alias module-name)
+          true
+          (if (lint-expr-uses-import? (ast-node-get body) alias module-name)
+            true
+            (lint-match-arms-use-import-at? arms alias module-name (+ index 1))))])))
 
 (define (lint-resource-bindings-use-import?
   [bindings : AstResourceBindingList]
@@ -2948,14 +2958,20 @@
 (define (lint-copy-on-update-match-arms
   [arms : AstMatchArmList]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body)
-          (lint-copy-on-update-match-arms
-            (box-get rest)
-            (lint-copy-on-update-expr (ast-node-get body) state (lint-no-span)))])]))
+  (lint-copy-on-update-match-arms-at (& arms) state 0))
+
+(define (lint-copy-on-update-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintCopyOnUpdateState]
+  [index : i64]) : LintCopyOnUpdateState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-copy-on-update-match-arms-at
+          arms
+          (lint-copy-on-update-expr (ast-node-get body) state (lint-no-span))
+          (+ index 1))])))
 
 (define (lint-copy-on-update-resource-bindings
   [bindings : AstResourceBindingList]
@@ -3643,14 +3659,20 @@
 (define (lint-single-element-array-match-arms
   [arms : AstMatchArmList]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body)
-          (lint-single-element-array-match-arms
-            (box-get rest)
-            (lint-single-element-array-expr (ast-node-get body) state))])]))
+  (lint-single-element-array-match-arms-at (& arms) state 0))
+
+(define (lint-single-element-array-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintSingleElementArrayState]
+  [index : i64]) : LintSingleElementArrayState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-single-element-array-match-arms-at
+          arms
+          (lint-single-element-array-expr (ast-node-get body) state)
+          (+ index 1))])))
 
 (define (lint-single-element-array-resource-bindings
   [bindings : AstResourceBindingList]
@@ -4127,14 +4149,20 @@
 (define (lint-unused-assignment-note-reads-match-arms
   [arms : AstMatchArmList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body)
-          (lint-unused-assignment-note-reads-match-arms
-            (box-get rest)
-            (lint-unused-assignment-note-reads (ast-node-get body) state))])]))
+  (lint-unused-assignment-note-reads-match-arms-at (& arms) state 0))
+
+(define (lint-unused-assignment-note-reads-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintUnusedAssignmentState]
+  [index : i64]) : LintUnusedAssignmentState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-unused-assignment-note-reads-match-arms-at
+          arms
+          (lint-unused-assignment-note-reads (ast-node-get body) state)
+          (+ index 1))])))
 
 (define (lint-unused-assignment-note-reads-resource-bindings
   [bindings : AstResourceBindingList]
@@ -4981,14 +5009,20 @@
 (define (lint-redundant-function-name-macro-match-arms
   [arms : AstMatchArmList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body)
-          (lint-redundant-function-name-macro-match-arms
-            (box-get rest)
-            (lint-redundant-function-name-macro-expr (ast-node-get body) state))])]))
+  (lint-redundant-function-name-macro-match-arms-at (& arms) state 0))
+
+(define (lint-redundant-function-name-macro-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintRedundantFunctionNameState]
+  [index : i64]) : LintRedundantFunctionNameState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-redundant-function-name-macro-match-arms-at
+          arms
+          (lint-redundant-function-name-macro-expr (ast-node-get body) state)
+          (+ index 1))])))
 
 (define (lint-redundant-function-name-decl
   [decl : AstDecl]
@@ -5294,12 +5328,20 @@
 (define (lint-unused-variable-pattern-list-bindings
   [patterns : AstPatternList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match patterns
-    [(AstPatternList.Nil) state]
-    [(AstPatternList.Cons head rest)
-      (lint-unused-variable-pattern-list-bindings
-        (box-get rest)
-        (lint-unused-variable-pattern-bindings (box-get head) state))]))
+  (lint-unused-variable-pattern-list-bindings-at (& patterns) state 0))
+
+(define (lint-unused-variable-pattern-list-bindings-at
+  [patterns : (& patterns AstPatternList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-pattern-list-len patterns))
+    state
+    (lint-unused-variable-pattern-list-bindings-at
+      patterns
+      (lint-unused-variable-pattern-bindings
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        state)
+      (+ index 1))))
 
 (define (lint-unused-variable-type-list
   [items : AstTypeList]
@@ -5455,14 +5497,20 @@
 (define (lint-unused-variable-quasiquote-match-arms
   [arms : AstMatchArmList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body)
-          (lint-unused-variable-quasiquote-match-arms
-            (box-get rest)
-            (lint-unused-variable-quasiquote-expr (ast-node-get body) state))])]))
+  (lint-unused-variable-quasiquote-match-arms-at (& arms) state 0))
+
+(define (lint-unused-variable-quasiquote-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-unused-variable-quasiquote-match-arms-at
+          arms
+          (lint-unused-variable-quasiquote-expr (ast-node-get body) state)
+          (+ index 1))])))
 
 (define (lint-unused-variable-quasiquote-resource-bindings
   [bindings : AstResourceBindingList]
@@ -5787,26 +5835,32 @@
 (define (lint-unused-variable-match-arms
   [arms : AstMatchArmList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match arms
-    [(AstMatchArmList.Nil) state]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm pattern body)
-          (let
-            [with-frame : LintUnusedVariableState
-              (lint-unused-variable-push-frame
-                state
-                LintUnusedVariableBindingList.Nil)]
-            [with-pattern : LintUnusedVariableState
-              (lint-unused-variable-pattern-bindings pattern with-frame)]
-            [with-body : LintUnusedVariableState
-              (lint-unused-variable-expr
-                (ast-node-get body)
-                with-pattern
-                (lint-no-effect-span (ast-node-get body)))]
-            (lint-unused-variable-match-arms
-              (box-get rest)
-              (lint-unused-variable-pop-frame with-body)))])]))
+  (lint-unused-variable-match-arms-at (& arms) state 0))
+
+(define (lint-unused-variable-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-match-arm-list-len arms))
+    state
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (let
+          [with-frame : LintUnusedVariableState
+            (lint-unused-variable-push-frame
+              state
+              LintUnusedVariableBindingList.Nil)]
+          [with-pattern : LintUnusedVariableState
+            (lint-unused-variable-pattern-bindings pattern with-frame)]
+          [with-body : LintUnusedVariableState
+            (lint-unused-variable-expr
+              (ast-node-get body)
+              with-pattern
+              (lint-no-effect-span (ast-node-get body)))]
+          (lint-unused-variable-match-arms-at
+            arms
+            (lint-unused-variable-pop-frame with-body)
+            (+ index 1)))])))
 
 (define (lint-unused-variable-lambda
   [params : AstParamList]
@@ -6625,19 +6679,24 @@
   [arms : AstMatchArmList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match arms
-    [(AstMatchArmList.Nil) acc]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (lint-walk-match-arms
-                rest
-                threshold
-                (lint-walk-expr body threshold acc)))]))]))
+  (lint-walk-match-arms-at (& arms) threshold acc 0))
+
+(define (lint-walk-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [threshold : i64]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-match-arm-list-len arms))
+    acc
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (lint-walk-match-arms-at
+            arms
+            threshold
+            (lint-walk-expr body threshold acc)
+            (+ index 1)))])))
 
 ;: Descend an if/else-`if` ladder whose head has already been flagged: walk
 ;: each rung's condition and then-branch as fresh sub-walks (so a ladder nested
@@ -6846,19 +6905,24 @@
   [arms : AstMatchArmList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match arms
-    [(AstMatchArmList.Nil) acc]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (lint-walk-tail-match-arms
-                rest
-                threshold
-                (lint-walk-tail-expr body threshold acc)))]))]))
+  (lint-walk-tail-match-arms-at (& arms) threshold acc 0))
+
+(define (lint-walk-tail-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [threshold : i64]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-match-arm-list-len arms))
+    acc
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (lint-walk-tail-match-arms-at
+            arms
+            threshold
+            (lint-walk-tail-expr body threshold acc)
+            (+ index 1)))])))
 
 ;;; Walk `expr` in a function/lambda/test tail context. The return-path-chain
 ;;; rule is only valid here: in non-tail value contexts, introducing

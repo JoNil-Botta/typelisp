@@ -1042,6 +1042,10 @@
   (Ok AstMatchArmList i64)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultCtfeQuoteArmsBuild
+  (Ok i64)
+  (Err (Box CompilerDiagnostic)))
+
 (define (ctfe-fuel-limit) : i64
   10000)
 
@@ -5425,7 +5429,9 @@
   [fuel : i64]) : ResultCtfe
   (match args
     [(AstExprList.Nil)
-      (ResultCtfe.Ok (CompilerCtfeValue.PatternList AstPatternList.Nil) fuel)]
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.PatternList (ast-pattern-list-new))
+        fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -5563,7 +5569,9 @@
   [fuel : i64]) : ResultCtfe
   (match args
     [(AstExprList.Nil)
-      (ResultCtfe.Ok (CompilerCtfeValue.MatchArmList AstMatchArmList.Nil) fuel)]
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.MatchArmList (ast-match-arm-list-new))
+        fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -5819,7 +5827,7 @@
       (ast-match-arm pattern body)
       (ast-match-arm-cons
         (ast-match-arm AstPattern.Wildcard fallback)
-        AstMatchArmList.Nil))))
+        (ast-match-arm-list-new)))))
 
 (define (ctfe-source-helper-match-single
   [env : CtfeEnv]
@@ -5829,10 +5837,10 @@
   (ast-expr-match-with-pools
     (ctfe-env-pools env)
     scrutinee
-    (ast-match-arm-cons (ast-match-arm pattern body) AstMatchArmList.Nil)))
+    (ast-match-arm-cons (ast-match-arm pattern body) (ast-match-arm-list-new))))
 
 (define (ctfe-source-helper-expr-bool-pattern [arg : AstPattern]) : AstPattern
-  (ast-pat-variant "ExprBool" (ast-pattern-cons arg AstPatternList.Nil)))
+  (ast-pat-variant "ExprBool" (ast-pattern-cons arg (ast-pattern-list-new))))
 
 (define (ctfe-source-helper-expr-if-pattern
   [cond : AstPattern]
@@ -5844,14 +5852,14 @@
       cond
       (ast-pattern-cons
         then-expr
-        (ast-pattern-cons else-expr AstPatternList.Nil)))))
+        (ast-pattern-cons else-expr (ast-pattern-list-new))))))
 
 (define (ctfe-source-helper-expr-clause-pattern
   [first : AstPattern]
   [second : AstPattern]) : AstPattern
   (ast-pat-variant
     "ExprClause"
-    (ast-pattern-cons first (ast-pattern-cons second AstPatternList.Nil))))
+    (ast-pattern-cons first (ast-pattern-cons second (ast-pattern-list-new)))))
 
 (define (ctfe-comptime-source-helper-nth-name? [name : String]) : bool
   (or
@@ -6305,18 +6313,10 @@
         "struct-get in compile-time evaluation requires a stdlib.comptime well-known value"))))
 
 (define (ctfe-pattern-list-length [lst : AstPatternList]) : i64
-  (match lst
-    [(AstPatternList.Nil) 0]
-    [(AstPatternList.Cons _ rest)
-      (+ 1 (ctfe-pattern-list-length (box-get rest)))]))
+  (ast-pattern-list-len (& lst)))
 
 (define (ctfe-pattern-list-nth [lst : AstPatternList] [index : i64]) : AstPattern
-  (match lst
-    [(AstPatternList.Cons head rest)
-      (if (= index 0)
-        (box-get head)
-        (ctfe-pattern-list-nth (box-get rest) (- index 1)))]
-    [_ AstPattern.Wildcard]))
+  (ast-pattern-list-get (& lst) index AstPattern.Wildcard))
 
 (define (ctfe-match-arm-empty-default [env : CtfeEnv]) : AstMatchArm
   (ast-match-arm
@@ -6324,21 +6324,13 @@
     (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))))
 
 (define (ctfe-match-arm-list-length [lst : AstMatchArmList]) : i64
-  (match lst
-    [(AstMatchArmList.Nil) 0]
-    [(AstMatchArmList.Cons _ rest)
-      (+ 1 (ctfe-match-arm-list-length (box-get rest)))]))
+  (ast-match-arm-list-len (& lst)))
 
 (define (ctfe-match-arm-list-nth
   [lst : AstMatchArmList]
   [index : i64]
   [env : CtfeEnv]) : AstMatchArm
-  (match lst
-    [(AstMatchArmList.Cons head rest)
-      (if (= index 0)
-        head
-        (ctfe-match-arm-list-nth (box-get rest) (- index 1) env))]
-    [_ (ctfe-match-arm-empty-default env)]))
+  (ast-match-arm-list-get (& lst) index (ctfe-match-arm-empty-default env)))
 
 (define (ctfe-eval-struct-get-value
   [value : CompilerCtfeValue]
@@ -6795,29 +6787,32 @@
   [patterns : AstPatternList]
   [values : CtfeValueList]
   [env : CtfeEnv]) : CtfePatternMatch
-  (match patterns
-    [(AstPatternList.Nil)
-      (match values
-        [(CtfeValueList.Nil) (CtfePatternMatch.Matched env)]
-        [_ (CtfePatternMatch.No)])]
-    [(AstPatternList.Cons pattern rest-patterns)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest-patterns : AstPatternList (box-get rest-patterns)]
-        (match values
-          [(CtfeValueList.Cons value rest-values)
-            (match (ctfe-match-pattern
-              pattern
-              value
-              (ctfe-value-default-cast-type value)
-              env)
-              [(CtfePatternMatch.Matched next-env)
-                (ctfe-match-pattern-list
-                  rest-patterns
-                  (box-get rest-values)
-                  next-env)]
-              [(CtfePatternMatch.No) (CtfePatternMatch.No)])]
-          [(CtfeValueList.Nil) (CtfePatternMatch.No)]))]))
+  (ctfe-match-pattern-list-at (& patterns) 0 values env))
+
+(define (ctfe-match-pattern-list-at
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [values : CtfeValueList]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (if (>= index (ast-pattern-list-len patterns))
+    (match values
+      [(CtfeValueList.Nil) (CtfePatternMatch.Matched env)]
+      [_ (CtfePatternMatch.No)])
+    (match values
+      [(CtfeValueList.Cons value rest-values)
+        (match (ctfe-match-pattern
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))
+          value
+          (ctfe-value-default-cast-type value)
+          env)
+          [(CtfePatternMatch.Matched next-env)
+            (ctfe-match-pattern-list-at
+              patterns
+              (+ index 1)
+              (box-get rest-values)
+              next-env)]
+          [(CtfePatternMatch.No) (CtfePatternMatch.No)])]
+      [(CtfeValueList.Nil) (CtfePatternMatch.No)])))
 
 (define (ctfe-match-expr-variant
   [variant : i64]
@@ -6969,20 +6964,33 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match arms
-    [(AstMatchArmList.Nil)
-      (ResultCtfe.Err
-        (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm")))]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (match (ctfe-match-pattern pattern value value-ty env)
-              [(CtfePatternMatch.Matched arm-env)
-                (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel)]
-              [(CtfePatternMatch.No)
-                (ctfe-eval-match-arms value value-ty rest origin env fuel)])]))]))
+  (ctfe-eval-match-arms-at value value-ty (& arms) 0 origin env fuel))
+
+(define (ctfe-eval-match-arms-at
+  [value : CompilerCtfeValue]
+  [value-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm")))
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (match (ctfe-match-pattern pattern value value-ty env)
+          [(CtfePatternMatch.Matched arm-env)
+            (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel)]
+          [(CtfePatternMatch.No)
+            (ctfe-eval-match-arms-at
+              value
+              value-ty
+              arms
+              (+ index 1)
+              origin
+              env
+              fuel)])])))
 
 (define (ctfe-eval-match
   [scrutinee : AstExpr]
@@ -7827,15 +7835,27 @@
               (ctfe-quote-param-list rest env))]))]))
 
 (define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
-  (match patterns
-    [(AstPatternList.Nil) AstPatternList.Nil]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (ast-pattern-cons
-          (ctfe-quote-pattern pattern env)
-          (ctfe-quote-pattern-list rest env)))]))
+  (let
+    [out : AstPatternList
+      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
+    (begin
+      (ctfe-quote-pattern-list-into (& patterns) 0 env (&mut out))
+      out)))
+
+(define (ctfe-quote-pattern-list-into
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [out : (&mut out AstPatternList)]) : unit
+  (if (>= index (ast-pattern-list-len patterns))
+    unit
+    (begin
+      (ast-pattern-list-push
+        out
+        (ctfe-quote-pattern
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))
+          env))
+      (ctfe-quote-pattern-list-into patterns (+ index 1) env out))))
 
 (define (ctfe-quote-pattern [pattern : AstPattern] [env : CtfeEnv]) : AstPattern
   (match pattern
@@ -7942,29 +7962,41 @@
   [env : CtfeEnv]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteArms
-  (match arms
-    [(AstMatchArmList.Nil) (ResultCtfeQuoteArms.Ok AstMatchArmList.Nil fuel)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ctfe-ast-get env body-box)]
-              (match (ctfe-quote-expr body env fuel quasiquote)
-                [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
-                  (match (ctfe-quote-arm-list rest env body-fuel quasiquote)
-                    [(ResultCtfeQuoteArms.Ok quoted-rest rest-fuel)
-                      (ResultCtfeQuoteArms.Ok
-                        (ast-match-arm-cons
-                          (ast-match-arm
-                            (ctfe-quote-pattern pattern env)
-                            quoted-body)
-                          quoted-rest)
-                        rest-fuel)]
-                    [(ResultCtfeQuoteArms.Err diag)
-                      (ResultCtfeQuoteArms.Err diag)])]
-                [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteArms.Err diag)]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (match (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out))
+      [(ResultCtfeQuoteArmsBuild.Ok out-fuel)
+        (ResultCtfeQuoteArms.Ok out out-fuel)]
+      [(ResultCtfeQuoteArmsBuild.Err diag) (ResultCtfeQuoteArms.Err diag)])))
+
+(define (ctfe-quote-arm-list-into
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]
+  [out : (&mut out AstMatchArmList)]) : ResultCtfeQuoteArmsBuild
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultCtfeQuoteArmsBuild.Ok fuel)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ctfe-ast-get env body-box)]
+          (match (ctfe-quote-expr body env fuel quasiquote)
+            [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+              (begin
+                (ast-match-arm-list-push
+                  out
+                  (ast-match-arm (ctfe-quote-pattern pattern env) quoted-body))
+                (ctfe-quote-arm-list-into
+                  arms
+                  (+ index 1)
+                  env
+                  body-fuel
+                  quasiquote
+                  out))]
+            [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteArmsBuild.Err diag)]))])))
 
 (define (ctfe-quote-expr
   [expr : AstExpr]
@@ -9184,24 +9216,23 @@
   [env : CtfeEnv]
   [a : AstPatternList]
   [b : AstPatternList]) : bool
-  (match a
-    [(AstPatternList.Nil)
-      (match b
-        [(AstPatternList.Nil) true]
-        [_ false])]
-    [(AstPatternList.Cons a-head a-tail)
-      (let
-        [a-head : AstPattern (box-get a-head)]
-        [a-tail : AstPatternList (box-get a-tail)]
-        (match b
-          [(AstPatternList.Cons b-head b-tail)
-            (let
-              [b-head : AstPattern (box-get b-head)]
-              [b-tail : AstPatternList (box-get b-tail)]
-              (and
-                (ctfe-pattern-eq-in-env env a-head b-head)
-                (ctfe-pattern-list-eq-in-env env a-tail b-tail)))]
-          [_ false]))]))
+  (and
+    (= (ast-pattern-list-len (& a)) (ast-pattern-list-len (& b)))
+    (ctfe-pattern-list-eq-in-env-at env (& a) (& b) 0)))
+
+(define (ctfe-pattern-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstPatternList)]
+  [b : (& b AstPatternList)]
+  [index : i64]) : bool
+  (if (>= index (ast-pattern-list-len a))
+    true
+    (and
+      (ctfe-pattern-eq-in-env
+        env
+        (ast-pattern-list-get a index (ast-pattern-fallback))
+        (ast-pattern-list-get b index (ast-pattern-fallback)))
+      (ctfe-pattern-list-eq-in-env-at env a b (+ index 1)))))
 
 (define (ctfe-let-binding-eq-in-env
   [env : CtfeEnv]
@@ -9304,22 +9335,23 @@
   [env : CtfeEnv]
   [a : AstMatchArmList]
   [b : AstMatchArmList]) : bool
-  (match a
-    [(AstMatchArmList.Nil)
-      (match b
-        [(AstMatchArmList.Nil) true]
-        [_ false])]
-    [(AstMatchArmList.Cons a-head a-tail)
-      (let
-        [a-tail : AstMatchArmList (box-get a-tail)]
-        (match b
-          [(AstMatchArmList.Cons b-head b-tail)
-            (let
-              [b-tail : AstMatchArmList (box-get b-tail)]
-              (and
-                (ctfe-match-arm-eq-in-env env a-head b-head)
-                (ctfe-match-arm-list-eq-in-env env a-tail b-tail)))]
-          [_ false]))]))
+  (and
+    (= (ast-match-arm-list-len (& a)) (ast-match-arm-list-len (& b)))
+    (ctfe-match-arm-list-eq-in-env-at env (& a) (& b) 0)))
+
+(define (ctfe-match-arm-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstMatchArmList)]
+  [b : (& b AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len a))
+    true
+    (and
+      (ctfe-match-arm-eq-in-env
+        env
+        (ast-match-arm-list-get a index (ast-match-arm-fallback))
+        (ast-match-arm-list-get b index (ast-match-arm-fallback)))
+      (ctfe-match-arm-list-eq-in-env-at env a b (+ index 1)))))
 
 (define (ctfe-reduce-op-eq [a : AstReduceOp] [b : AstReduceOp]) : bool
   (match a
@@ -11244,7 +11276,7 @@
           (ast-match-arm
             (ast-pat-binding "m")
             (ast-expr-cast match-u64-var (AstType.F64)))
-          AstMatchArmList.Nil))]
+          (ast-match-arm-list-new)))]
     [char-a : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Char 'A')))]
     [char-a-f64 : i64 (ast-expr-cast char-a (AstType.F64))]
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstType.F64))]
@@ -11726,7 +11758,7 @@
   [want : String]) : bool
   (match (ctfe-match-type-info-variant
     (intern "TypeInfoBuiltin")
-    (ast-pattern-cons (ast-pat-binding "kind") AstPatternList.Nil)
+    (ast-pattern-cons (ast-pat-binding "kind") (ast-pattern-list-new))
     ty
     env)
     [(CtfePatternMatch.Matched matched)
@@ -11828,7 +11860,7 @@
       (ast-match-arm
         (ast-pat-variant
           "TypeInfoBuiltin"
-          (ast-pattern-cons (ast-pat-binding "kind") AstPatternList.Nil))
+          (ast-pattern-cons (ast-pat-binding "kind") (ast-pattern-list-new)))
         true-lit)]
     [fallback-arm : AstMatchArm (ast-match-arm AstPattern.Wildcard false-lit)]
     [match-expr : i64
@@ -11837,7 +11869,7 @@
         scrutinee
         (ast-match-arm-cons
           builtin-arm
-          (ast-match-arm-cons fallback-arm AstMatchArmList.Nil)))]
+          (ast-match-arm-cons fallback-arm (ast-match-arm-list-new))))]
     (match (compiler-ctfe-eval
       (ctfe-ast-get match-env match-expr)
       match-env
@@ -11906,7 +11938,9 @@
                 (intern "TypeInfoArray")
                 (ast-pattern-cons
                   (ast-pat-binding "elem")
-                  (ast-pattern-cons (ast-pat-binding "len") AstPatternList.Nil))
+                  (ast-pattern-cons
+                    (ast-pat-binding "len")
+                    (ast-pattern-list-new)))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -11932,7 +11966,9 @@
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoDynArray")
-                (ast-pattern-cons (ast-pat-binding "elem") AstPatternList.Nil)
+                (ast-pattern-cons
+                  (ast-pat-binding "elem")
+                  (ast-pattern-list-new))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -11954,7 +11990,9 @@
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoTuple")
-                (ast-pattern-cons (ast-pat-binding "items") AstPatternList.Nil)
+                (ast-pattern-cons
+                  (ast-pat-binding "items")
+                  (ast-pattern-list-new))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -11979,7 +12017,9 @@
                 (intern "TypeInfoFunction")
                 (ast-pattern-cons
                   (ast-pat-binding "params")
-                  (ast-pattern-cons (ast-pat-binding "ret") AstPatternList.Nil))
+                  (ast-pattern-cons
+                    (ast-pat-binding "ret")
+                    (ast-pattern-list-new)))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -12013,7 +12053,7 @@
                   (ast-pat-binding "key")
                   (ast-pattern-cons
                     (ast-pat-binding "fields")
-                    AstPatternList.Nil))
+                    (ast-pattern-list-new)))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -12048,7 +12088,7 @@
                   (ast-pat-binding "key")
                   (ast-pattern-cons
                     (ast-pat-binding "variants")
-                    AstPatternList.Nil))
+                    (ast-pattern-list-new)))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
@@ -12527,7 +12567,7 @@
     [int-pattern : AstPattern
       (ast-pat-variant
         "ExprInt"
-        (ast-pattern-cons (ast-pat-binding "n") AstPatternList.Nil))]
+        (ast-pattern-cons (ast-pat-binding "n") (ast-pattern-list-new)))]
     [int-arm : AstMatchArm
       (ast-match-arm int-pattern (ctfe-ast-push env (AstExpr.Var (intern "n"))))]
     [fallback-arm : AstMatchArm
@@ -12540,7 +12580,7 @@
         scrutinee
         (ast-match-arm-cons
           int-arm
-          (ast-match-arm-cons fallback-arm AstMatchArmList.Nil)))]
+          (ast-match-arm-cons fallback-arm (ast-match-arm-list-new))))]
     (compiler-ctfe-eval-i64-ok? match-expr env 7)))
 
 (define (compiler-ctfe-expr-pattern-match-if-ok?) : bool
@@ -12564,7 +12604,7 @@
           (ast-pat-binding "c")
           (ast-pattern-cons
             (ast-pat-binding "t")
-            (ast-pattern-cons (ast-pat-binding "e") AstPatternList.Nil))))]
+            (ast-pattern-cons (ast-pat-binding "e") (ast-pattern-list-new)))))]
     [swapped : i64
       (compiler-ctfe-call3-in-env
         env
@@ -12580,7 +12620,7 @@
         scrutinee
         (ast-match-arm-cons
           if-arm
-          (ast-match-arm-cons fallback-arm AstMatchArmList.Nil)))]
+          (ast-match-arm-cons fallback-arm (ast-match-arm-list-new))))]
     [expected : i64
       (ast-expr-if-with-pools (ctfe-env-pools env) flag false-lit true-lit)]
     (match (compiler-ctfe-eval
@@ -12612,7 +12652,7 @@
         "ExprClause"
         (ast-pattern-cons
           (ast-pat-binding "first")
-          (ast-pattern-cons (ast-pat-binding "second") AstPatternList.Nil)))]
+          (ast-pattern-cons (ast-pat-binding "second") (ast-pattern-list-new))))]
     [clause-arm : AstMatchArm
       (ast-match-arm
         clause-pattern
@@ -12621,7 +12661,7 @@
       (ast-expr-match-with-pools
         (ctfe-env-pools env)
         scrutinee
-        (ast-match-arm-cons clause-arm AstMatchArmList.Nil))]
+        (ast-match-arm-cons clause-arm (ast-match-arm-list-new)))]
     (match (compiler-ctfe-eval
       (ctfe-ast-get env match-expr)
       env

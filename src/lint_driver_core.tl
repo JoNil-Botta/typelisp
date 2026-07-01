@@ -891,12 +891,20 @@
 (define (selfhost-lint-dead-pattern-list-refs
   [patterns : AstPatternList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match patterns
-    [(AstPatternList.Nil) refs]
-    [(AstPatternList.Cons head rest)
-      (selfhost-lint-dead-pattern-list-refs
-        (box-get rest)
-        (selfhost-lint-dead-pattern-refs (box-get head) refs))]))
+  (selfhost-lint-dead-pattern-list-refs-at (& patterns) refs 0))
+
+(define (selfhost-lint-dead-pattern-list-refs-at
+  [patterns : (& patterns AstPatternList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-pattern-list-len patterns))
+    refs
+    (selfhost-lint-dead-pattern-list-refs-at
+      patterns
+      (selfhost-lint-dead-pattern-refs
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        refs)
+      (+ index 1))))
 
 (define (selfhost-lint-dead-pattern-refs
   [pattern : AstPattern]
@@ -941,16 +949,22 @@
 (define (selfhost-lint-dead-match-arm-refs
   [arms : AstMatchArmList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match arms
-    [(AstMatchArmList.Nil) refs]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm pattern body)
-          (selfhost-lint-dead-match-arm-refs
-            (box-get rest)
-            (selfhost-lint-dead-expr-refs
-              (ast-node-get body)
-              (selfhost-lint-dead-pattern-refs pattern refs)))])]))
+  (selfhost-lint-dead-match-arm-refs-at (& arms) refs 0))
+
+(define (selfhost-lint-dead-match-arm-refs-at
+  [arms : (& arms AstMatchArmList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-match-arm-list-len arms))
+    refs
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (selfhost-lint-dead-match-arm-refs-at
+          arms
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get body)
+            (selfhost-lint-dead-pattern-refs pattern refs))
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-resource-binding-refs
   [bindings : AstResourceBindingList]

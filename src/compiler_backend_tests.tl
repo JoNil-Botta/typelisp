@@ -2063,7 +2063,9 @@
             asm
             (compiler-backend-alloc-generic-call-text 4 "%rcx"))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+        (or
+          (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movl %r11d, (%r10)\n"))
         (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (not
@@ -3416,6 +3418,17 @@
               (CompilerRegLocation.Register "%rbx"))
             CompilerRegAssignmentList.Nil))))))
 
+(define (compiler-backend-win64-callee-save-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rsi"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%rdi"))
+        CompilerRegAssignmentList.Nil))))
+
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -3433,6 +3446,7 @@
 
 (define (compiler-backend-callee-save-pop-epilogue-ok?) : bool
   (let
+    [_abi : unit (compiler-backend-set-current-fn-linux!)]
     [one : CompilerRegAssignmentList
       (compiler-backend-callee-save-assignments1)]
     [two : CompilerRegAssignmentList
@@ -3475,6 +3489,27 @@
         (compiler-backend-string-contains? shared "    popq %rbx\n"))
       (compiler-backend-string-contains? shared "    leave\n    ret\n")
       (not (string.eq shared "")))))
+
+(define (compiler-backend-win64-callee-save-homes-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-win64-callee-save-assignments)]
+    [save : String (compiler-backend-emit-save-callee-regs assignments 3)]
+    [restore : String (compiler-backend-emit-restore-callee-regs assignments 3)]
+    [ok : bool
+      (and
+        (compiler-backend-plan-uses-callee-regs? assignments)
+        (= (compiler-backend-frame-slots 3 assignments) 10)
+        (string.eq
+          save
+          "    movq %r12, -32(%rbp)\n    movq %rsi, -72(%rbp)\n    movq %rdi, -80(%rbp)\n")
+        (string.eq
+          restore
+          "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
+        (not (compiler-backend-string-contains? restore "popq")))]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -4530,6 +4565,65 @@
           [(ResultCompilerBackend.Err _) false])]
       [(ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-win64-bounds-index-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [length-rax : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%rax"))
+        CompilerRegAssignmentList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.Var 1)
+            "bounds_ok")
+          CompilerIrInstrList.Nil)
+        length-rax
+        2)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    xorl %r10d, %r10d\n")
+            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (not
+              (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
+(define (compiler-backend-win64-compare-rhs-rax-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [rhs-rax : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%rax"))
+        CompilerRegAssignmentList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-compare-branch
+        rhs-rax
+        "cmp"
+        (CompilerIrBinOp.Lt)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64)
+        "then"
+        "else"
+        (CompilerBackendMaybeLabel.No))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (not
+              (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
@@ -4537,6 +4631,8 @@
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
+    (compiler-backend-win64-bounds-index-scratch-ok?)
+    (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)
@@ -4669,6 +4765,20 @@
               2
               (CompilerRegLocation.RegisterPair "%r12" "%r13"))
             CompilerRegAssignmentList.Nil)))]
+    [r8-tie-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r8"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%r8"))
+            CompilerRegAssignmentList.Nil)))]
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (and
       (match (compiler-backend-emit-word
@@ -4689,6 +4799,20 @@
         (AstType.I64))
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, %r13\n    negq %r13\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-binop
+        (CompilerRegVarTypeList.Nil)
+        (CompilerBackendGlobalTypeList.Nil)
+        r8-tie-assignments
+        2
+        (CompilerIrBinOp.BitXor)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64))
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq
+            asm
+            "    movq %r8, %r10\n    movq %r12, %r8\n    xorq %r10, %r8\n")]
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-call-return-program) : CompilerIrProgram
@@ -5500,16 +5624,28 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-callee-save-source)
-    (CompilerBackendTarget.Windows))
-    [(ResultCompilerBackend.Ok asm)
-      (and
-        (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
-        ;; Runtime shims may use callee-saved registers internally; this check
-        ;; covers user-function allocation, where `%r12` must not be selected.
-        (not (compiler-backend-string-contains? asm "    movq %r12, -")))]
-    [(ResultCompilerBackend.Err _) false]))
+  (begin
+    (compiler-backend-set-scalar-registers! true)
+    (match (compiler-backend-emit-source-for-target
+      (compiler-backend-callee-save-source)
+      (CompilerBackendTarget.Windows))
+      [(ResultCompilerBackend.Ok asm)
+        (let
+          [ok : bool
+            (and
+              (compiler-backend-string-contains? asm "heavy:\n")
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %rsi"))
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %rdi")))]
+          (begin
+            (compiler-backend-set-scalar-registers! false)
+            (compiler-backend-set-current-fn-linux!)
+            ok))]
+      [(ResultCompilerBackend.Err _)
+        (begin
+          (compiler-backend-set-scalar-registers! false)
+          (compiler-backend-set-current-fn-linux!)
+          false)])))
 
 (define (compiler-backend-target-windows-runtime-ok?) : bool
   (match (compiler-backend-emit-program-for-target
@@ -8931,6 +9067,48 @@
           (compiler-backend-string-contains? asm "    movq -32(%rbp), %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-win64-gep-offset-rax-home-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rsi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rax"))
+            CompilerRegAssignmentList.Nil)))]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            2
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.U64))
+          CompilerIrInstrList.Nil)
+        assignments
+        3)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq %rsi, %r10\n")
+            (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
+            (compiler-backend-string-contains?
+              asm
+              "    leaq (%r10,%r8,8), %r10\n")
+            (compiler-backend-string-contains? asm "    movq %r10, %rax\n")
+            (not
+              (compiler-backend-string-contains? asm "    movq %rsi, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-gep-load-r10-reuse-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
@@ -9092,6 +9270,47 @@
             (not (compiler-backend-string-contains? asm "%r10")))]
         [(ResultCompilerBackend.Err _) false]))))
 
+(define (compiler-backend-win64-store-value-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rcx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          CompilerRegAssignmentList.Nil))]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-store-to-gep
+        assignments
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.U64)
+        (CompilerIrValue.Var 2)
+        (AstType.I64)
+        index)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
+            (compiler-backend-string-contains? asm "    movq -24(%rbp), %r11\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq %r11, (%rcx,%r8,8)\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq -24(%rbp), %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -9127,6 +9346,47 @@
           (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
           (not (compiler-backend-string-contains? asm "    movq %r13, %r11\n")))]
       [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-win64-copy-bytes-gp-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rax"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
+          CompilerRegAssignmentList.Nil))]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CopyBytes
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            24)
+          CompilerIrInstrList.Nil)
+        assignments
+        3)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movups (%rcx), %xmm15\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movups %xmm15, (%rax)\n")
+            (compiler-backend-string-contains? asm "    movq 16(%rcx), %r8\n")
+            (compiler-backend-string-contains? asm "    movq %r8, 16(%rax)\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 16(%rcx), %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
 
 (define (compiler-backend-widening-cast-direct-home-shape-ok?) : bool
   (let
@@ -9262,11 +9522,13 @@
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-scratch-staging-direct-home-shape-ok?) : bool
-  (backend-and4
-    (compiler-backend-copy-bytes-direct-home-shape-ok?)
-    (compiler-backend-widening-cast-direct-home-shape-ok?)
-    (compiler-backend-global-store-direct-home-shape-ok?)
-    (compiler-backend-pack-direct-home-shape-ok?)))
+  (and
+    (backend-and4
+      (compiler-backend-copy-bytes-direct-home-shape-ok?)
+      (compiler-backend-widening-cast-direct-home-shape-ok?)
+      (compiler-backend-global-store-direct-home-shape-ok?)
+      (compiler-backend-pack-direct-home-shape-ok?))
+    (compiler-backend-win64-copy-bytes-gp-scratch-ok?)))
 
 (define (compiler-backend-address-mode-fusion-ok?) : bool
   (and
@@ -9279,6 +9541,8 @@
       (compiler-backend-load-load-pointer-chase-shape-ok?)
       (compiler-backend-store-ptr-pair-shape-ok?)
       (compiler-backend-store-home-base-shape-ok?))
+    (compiler-backend-win64-store-value-scratch-ok?)
+    (compiler-backend-win64-gep-offset-rax-home-ok?)
     (compiler-backend-gep-load-compare-priority-shape-ok?)))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
@@ -12956,7 +13220,8 @@
       (and
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
-        (compiler-backend-callee-save-pop-epilogue-ok?))
+        (compiler-backend-callee-save-pop-epilogue-ok?)
+        (compiler-backend-win64-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and
         (compiler-backend-phi-parallel-copy-ok?)

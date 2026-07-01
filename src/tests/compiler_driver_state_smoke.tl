@@ -980,11 +980,11 @@
                           env
                           type-env
                           (AstExpr.Var name-id))
-                          [(LowerSomeArrayVar var-id elem-ty)
+                          [(LowerMaybeArrayVar.Some var-id elem-ty)
                             (and
                               (= var-id 7)
                               (tc-type-eq elem-ty (AstType.Bool)))]
-                          [LowerNoArrayVar false])]
+                          [(LowerMaybeArrayVar.No) false])]
                       (and
                         (= inner decoy-id)
                         (= array-decoy-id (+ decoy-id 1))
@@ -1054,7 +1054,7 @@
                     (= active-after before-b)
                     (> after-a before-a)
                     (match rewritten
-                      [(OkLowerAstExpr expr)
+                      [(ResultLowerAstExpr.Ok expr)
                         (match expr
                           [(AstExpr.Binary (AstBinOp.Add) left-id right-id)
                             (and
@@ -1071,7 +1071,7 @@
                                 right-id
                                 11))]
                           [_ false])]
-                      [(ErrLowerAstExpr _) false])))]
+                      [(ResultLowerAstExpr.Err _) false])))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 

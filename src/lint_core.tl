@@ -35,6 +35,12 @@
 (define (lint-rule-nested-if-ladder-message) : String
   "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
 
+(define (lint-rule-nested-if-ladder-value-message) : String
+  "nested if-ladder: value dispatch chain; prefer bracket-arm cond or match")
+
+(define (lint-rule-nested-if-ladder-guard-message) : String
+  "nested if-ladder: guard flow chain; prefer cond with guard arms or when/unless")
+
 (define (lint-rule-nested-if-ladder-suggestion) : String
   "prefer cond (value/guard ladders) or match (variant dispatch)")
 
@@ -544,7 +550,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-unit-expr? inner))]
-    [(AstExpr.Literal AstLiteral.Unit) true]
+    [(AstExpr.Literal lit)
+      (match lit
+        [(AstLiteral.Unit) true]
+        [_ false])]
     [_ false]))
 
 (define (lint-single-arg-call? [args : AstExprList]) : bool
@@ -633,6 +642,122 @@
           true
           (lint-expr-list-has-side-effect? rest)))]))
 
+(define (lint-expr-list-last-guard-branch? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprList.Nil) true]
+    [(AstExprList.Cons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprList.Nil) (lint-guard-ladder-branch? head)]
+          [_ (lint-expr-list-last-guard-branch? rest)]))]))
+
+(define (lint-guard-ladder-branch? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-guard-ladder-branch? inner))]
+    [(AstExpr.Literal lit)
+      (match lit
+        [(AstLiteral.Unit) true]
+        [_ false])]
+    [(AstExpr.Return _) true]
+    [(AstExpr.Break) true]
+    [(AstExpr.Continue) true]
+    [(AstExpr.Set _ _) true]
+    [(AstExpr.ArraySet _ _ _) true]
+    [(AstExpr.ArrayPush _ _) true]
+    [(AstExpr.StructSet _ _ _) true]
+    [(AstExpr.Begin exprs) (lint-expr-list-last-guard-branch? exprs)]
+    [(AstExpr.Unsafe exprs) (lint-expr-list-last-guard-branch? exprs)]
+    [_ false]))
+
+(define (lint-expr-list-last-value-branch? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprList.Nil) (lint-value-ladder-branch? head)]
+          [_ (lint-expr-list-last-value-branch? rest)]))]))
+
+(define (lint-value-ladder-branch? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-value-ladder-branch? inner))]
+    [(AstExpr.Literal literal)
+      (match literal
+        [(AstLiteral.Unit) false]
+        [_ true])]
+    [(AstExpr.Var _) true]
+    [(AstExpr.Binary _ _ _) true]
+    [(AstExpr.Unary _ _) true]
+    [(AstExpr.Tuple _) true]
+    [(AstExpr.TupleRef _ _) true]
+    [(AstExpr.Array _) true]
+    [(AstExpr.MakeArray _ _) true]
+    [(AstExpr.ArrayRef _ _) true]
+    [(AstExpr.StringRef _ _) true]
+    [(AstExpr.StructGet _ _) true]
+    [(AstExpr.Ann inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-value-ladder-branch? inner))]
+    [(AstExpr.Cast _ _) true]
+    [(AstExpr.PtrNull _) true]
+    [(AstExpr.PtrNullCheck _) true]
+    [(AstExpr.PtrRead _) true]
+    [(AstExpr.Box _) true]
+    [(AstExpr.BoxGet _) true]
+    [(AstExpr.BoxTake _) true]
+    [(AstExpr.TypeLiteral _) true]
+    [(AstExpr.Init _) true]
+    [(AstExpr.Begin exprs) (lint-expr-list-last-value-branch? exprs)]
+    [_ false]))
+
+(define (lint-if-ladder-guard? [then-branch : AstExpr] [else-branch : AstExpr]) : bool
+  (and
+    (lint-guard-ladder-branch? then-branch)
+    (match else-branch
+      [(AstExpr.Spanned inner-box _)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          (lint-if-ladder-guard? then-branch inner))]
+      [(AstExpr.If _ nested-then-box nested-else-box)
+        (let
+          [nested-then : AstExpr (ast-node-get nested-then-box)]
+          [nested-else : AstExpr (ast-node-get nested-else-box)]
+          (lint-if-ladder-guard? nested-then nested-else))]
+      [_ (lint-guard-ladder-branch? else-branch)])))
+
+(define (lint-if-ladder-value? [then-branch : AstExpr] [else-branch : AstExpr]) : bool
+  (and
+    (lint-value-ladder-branch? then-branch)
+    (match else-branch
+      [(AstExpr.Spanned inner-box _)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          (lint-if-ladder-value? then-branch inner))]
+      [(AstExpr.If _ nested-then-box nested-else-box)
+        (let
+          [nested-then : AstExpr (ast-node-get nested-then-box)]
+          [nested-else : AstExpr (ast-node-get nested-else-box)]
+          (lint-if-ladder-value? nested-then nested-else))]
+      [_ (lint-value-ladder-branch? else-branch)])))
+
+(define (lint-if-ladder-message [then-branch : AstExpr] [else-branch : AstExpr]) : String
+  (if (lint-if-ladder-guard? then-branch else-branch)
+    (lint-rule-nested-if-ladder-guard-message)
+    (if (lint-if-ladder-value? then-branch else-branch)
+      (lint-rule-nested-if-ladder-value-message)
+      (lint-rule-nested-if-ladder-message))))
+
 ;: Sentinel span for a finding whose AST node carried no source location (a
 ;: synthesized or in-memory expression). Parsed ladders carry the span from
 ;: their `AstExpr.Spanned` wrapper instead.
@@ -641,9 +766,13 @@
 
 ;: Build the nested-`if`-ladder finding for a ladder of `depth` arms whose head
 ;: is at `span`.
-(define (lint-ladder-finding [depth : i64] [span : AstSourceSpan]) : LintFinding
+(define (lint-ladder-finding
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]
+  [depth : i64]
+  [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (lint-rule-message (lint-rule-nested-if-ladder-id))
+    (lint-if-ladder-message then-branch else-branch)
     (lint-rule-nested-if-ladder-id)
     depth
     span))
@@ -6627,7 +6756,9 @@
             (ast-node-push else-branch))
           threshold
           tail-return-path
-          (lint-findings-add (lint-ladder-finding ladder span) acc))]
+          (lint-findings-add
+            (lint-ladder-finding then-branch else-branch ladder span)
+            acc))]
       [else
         (if tail-return-path
           (lint-walk-tail-expr
@@ -7423,6 +7554,13 @@
     [return-chain3 : i64
       (ast-expr-if vx (ast-expr-if vx (ast-expr-if vx one one) one) one)]
     [return-one : i64 (ast-expr-return one)]
+    [guard-ladder3 : i64
+      (ast-expr-if
+        vx
+        return-one
+        (ast-expr-if vx return-one (ast-expr-if vx return-one unit-expr)))]
+    [ambiguous-ladder3 : i64
+      (ast-expr-if vx return-one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [not-vx : i64 (ast-expr-unary (AstUnOp.Not) vx)]
     [set-ok-false : i64
       (ast-expr-set
@@ -7618,12 +7756,52 @@
             (= (struct-get finding depth) 3)
             (string.eq
               (struct-get finding rule-id)
-              (lint-rule-nested-if-ladder-id)))
+              (lint-rule-nested-if-ladder-id))
+            (string.eq
+              (struct-get finding message)
+              (lint-rule-nested-if-ladder-value-message)))
             unit
-            (io.panic
-              "lint: 3-deep ladder finding should carry rule id and depth"))]
+            (io.panic "lint: 3-deep value ladder finding metadata mismatch"))]
         [(LintMaybeFinding.No)
           (io.panic "lint: 3-deep ladder should produce a finding")])
+      (match (lint-findings-get
+        (lint-test-walk
+          guard-ladder3
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintMaybeFinding.Some finding)
+          (if (and
+            (= (struct-get finding depth) 3)
+            (string.eq
+              (struct-get finding rule-id)
+              (lint-rule-nested-if-ladder-id))
+            (string.eq
+              (struct-get finding message)
+              (lint-rule-nested-if-ladder-guard-message)))
+            unit
+            (io.panic "lint: guard ladder finding metadata mismatch"))]
+        [(LintMaybeFinding.No)
+          (io.panic "lint: guard ladder should produce a finding")])
+      (match (lint-findings-get
+        (lint-test-walk
+          ambiguous-ladder3
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintMaybeFinding.Some finding)
+          (if (and
+            (= (struct-get finding depth) 3)
+            (string.eq
+              (struct-get finding rule-id)
+              (lint-rule-nested-if-ladder-id))
+            (string.eq
+              (struct-get finding message)
+              (lint-rule-nested-if-ladder-message)))
+            unit
+            (io.panic "lint: ambiguous ladder should keep generic message"))]
+        [(LintMaybeFinding.No)
+          (io.panic "lint: ambiguous ladder should produce a finding")])
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
         (lint-findings-count

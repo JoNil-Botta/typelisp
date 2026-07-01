@@ -37,11 +37,34 @@
   (Ok CompileCliBatchEntryList)
   (Err i64))
 
+(defenum CompileCliCfgNames
+  (Nil)
+  (Cons String (Box CompileCliCfgNames)))
+
 (define (compile-cli-batch-entry-cons
   [input-path : String]
   [output-path : String]
   [rest : CompileCliBatchEntryList]) : CompileCliBatchEntryList
   (CompileCliBatchEntryList.Cons input-path output-path (box rest)))
+
+(define (compile-cli-cfg-names-empty) : CompileCliCfgNames
+  CompileCliCfgNames.Nil)
+
+(define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
+  (CompileCliCfgNames.Cons name (box names)))
+
+(define (compile-cli-cfg-names-to-env-from
+  [names : CompileCliCfgNames]
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match names
+    [(CompileCliCfgNames.Nil) env]
+    [(CompileCliCfgNames.Cons name rest)
+      (compile-cli-cfg-names-to-env-from
+        (box-get rest)
+        (compiler-cfg-enable env name))]))
+
+(define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
+  (compile-cli-cfg-names-to-env-from names (compiler-cfg-empty)))
 
 (defenum CompileCliConfig
   (Config
@@ -52,7 +75,7 @@
     bool
     CompilerBackendTarget
     vector.StringVec
-    vector.StringVec
+    CompileCliCfgNames
     CompilerBackendMode
     i64))
 
@@ -62,7 +85,7 @@
     bool
     CompilerBackendTarget
     vector.StringVec
-    vector.StringVec
+    CompileCliCfgNames
     CompilerBackendMode
     i64
     bool))
@@ -182,7 +205,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
   [has-opt-level : bool]
@@ -203,7 +226,7 @@
           has-target
           target
           stdlib-roots
-          cfg-names
+          cfgs
           backend-mode
           opt-level)))
     (let
@@ -224,7 +247,7 @@
                 has-target
                 target
                 stdlib-roots
-                cfg-names
+                cfgs
                 emit-ir
                 pic
                 has-opt-level
@@ -243,7 +266,7 @@
               has-target
               target
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
-              cfg-names
+              cfgs
               emit-ir
               pic
               has-opt-level
@@ -261,7 +284,7 @@
               has-target
               target
               stdlib-roots
-              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
+              (compile-cli-cfg-names-add cfgs (io.arg (+ idx 1)))
               emit-ir
               pic
               has-opt-level
@@ -284,7 +307,7 @@
                     true
                     parsed-target
                     stdlib-roots
-                    cfg-names
+                    cfgs
                     emit-ir
                     pic
                     has-opt-level
@@ -311,7 +334,7 @@
                       has-target
                       target
                       stdlib-roots
-                      cfg-names
+                      cfgs
                       emit-ir
                       pic
                       true
@@ -335,7 +358,7 @@
                   has-target
                   target
                   stdlib-roots
-                  cfg-names
+                  cfgs
                   emit-ir
                   pic
                   has-opt-level
@@ -353,7 +376,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             emit-ir
             true
             has-opt-level
@@ -369,7 +392,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             true
             pic
             has-opt-level
@@ -389,7 +412,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]
@@ -401,7 +424,7 @@
         has-target
         target
         stdlib-roots
-        cfg-names
+        cfgs
         backend-mode
         opt-level
         prefix-cache-stats))
@@ -428,7 +451,7 @@
               has-target
               target
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
-              cfg-names
+              cfgs
               has-opt-level
               opt-level
               backend-mode
@@ -443,7 +466,7 @@
               has-target
               target
               stdlib-roots
-              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
+              (compile-cli-cfg-names-add cfgs (io.arg (+ idx 1)))
               has-opt-level
               opt-level
               backend-mode
@@ -464,7 +487,7 @@
                     true
                     parsed-target
                     stdlib-roots
-                    cfg-names
+                    cfgs
                     has-opt-level
                     opt-level
                     backend-mode
@@ -489,7 +512,7 @@
                       has-target
                       target
                       stdlib-roots
-                      cfg-names
+                      cfgs
                       true
                       parsed-level
                       backend-mode
@@ -510,7 +533,7 @@
                   has-target
                   target
                   stdlib-roots
-                  cfg-names
+                  cfgs
                   has-opt-level
                   opt-level
                   parsed-mode
@@ -525,7 +548,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             has-opt-level
             opt-level
             backend-mode
@@ -554,7 +577,7 @@
           false
           (CompilerBackendTarget.Linux)
           (vector.string-vec-new)
-          (vector.string-vec-new)
+          (compile-cli-cfg-names-empty)
           false
           false
           false
@@ -579,7 +602,7 @@
           false
           (CompilerBackendTarget.Linux)
           (vector.string-vec-new)
-          (vector.string-vec-new)
+          (compile-cli-cfg-names-empty)
           false
           (compiler-optimize-default-level)
           (CompilerBackendMode.Scalar)
@@ -663,20 +686,6 @@
             (compile-cli-message-with-usage
               (string.append "Unknown command: " command)))]))))
 
-(define (compile-cli-cfg-names-to-env-from
-  [cfg-names : vector.StringVec]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (vector.string-vec-len cfg-names))
-    env
-    (compile-cli-cfg-names-to-env-from
-      cfg-names
-      (+ index 1)
-      (compiler-cfg-enable env (vector.string-vec-get cfg-names index "")))))
-
-(define (compile-cli-cfg-names-to-env [cfg-names : vector.StringVec]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
-
 (define (compile-cli-typecheck-doctests
   [input-path : String]
   [stdlib-roots : vector.StringVec]) : i64
@@ -702,7 +711,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
@@ -713,21 +722,20 @@
       (let
         [inline-test-status : i64
           (if inline-preflight
-            (let
-              [preflight-cfgs : sym_i64_env.SymI64Env
-                (compile-cli-cfg-names-to-env cfg-names)]
-              (tltest-inline-typecheck-file-with-cfg
-                input-path
-                stdlib-roots
-                (compiler-driver-target-cfgs target preflight-cfgs)
-                "typecheck-prefix-inline-compile"))
+            (tltest-inline-typecheck-file-with-cfg
+              input-path
+              stdlib-roots
+              (compiler-driver-target-cfgs
+                target
+                (compile-cli-cfg-names-to-env cfgs))
+              "typecheck-prefix-inline-compile")
             0)]
         (if (= inline-test-status 0)
           (begin
             (compiler-driver-state-reset-file-state! state)
             (let
-              [cfgs : sym_i64_env.SymI64Env
-                (compile-cli-cfg-names-to-env cfg-names)]
+              [emit-cfgs : sym_i64_env.SymI64Env
+                (compile-cli-cfg-names-to-env cfgs)]
               [status : i64
                 (if emit-ir
                   (compiler-driver-write-result
@@ -738,7 +746,7 @@
                       stdlib-roots
                       opt-level
                       backend-mode
-                      cfgs)
+                      emit-cfgs)
                     output-path)
                   (if pic
                     (compiler-driver-write-pic-result
@@ -750,7 +758,7 @@
                         stdlib-roots
                         opt-level
                         backend-mode
-                        cfgs)
+                        emit-cfgs)
                       output-path)
                     (compiler-driver-write-buffer-result
                       (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
@@ -761,7 +769,7 @@
                         stdlib-roots
                         opt-level
                         backend-mode
-                        cfgs)
+                        emit-cfgs)
                       output-path)))]
               (begin
                 (compiler-driver-state-capture-session-floors! state)
@@ -773,24 +781,25 @@
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]) : i64
+  [cfgs : CompileCliCfgNames]) : i64
   (match entries
     [(CompileCliBatchEntryList.Nil) 0]
     [(CompileCliBatchEntryList.Cons input-path _ rest)
       (let
-        [cfgs : sym_i64_env.SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
         [status : i64
           (tltest-inline-typecheck-file-with-cfg
             input-path
             stdlib-roots
-            (compiler-driver-target-cfgs target cfgs)
+            (compiler-driver-target-cfgs
+              target
+              (compile-cli-cfg-names-to-env cfgs))
             "typecheck-prefix-inline-compile-batch")]
         (if (= status 0)
           (compile-cli-run-batch-inline-tests
             (box-get rest)
             target
             stdlib-roots
-            cfg-names)
+            cfgs)
           (begin
             (io.print-error
               (str_cat.str-cat
@@ -900,7 +909,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match entries
@@ -922,7 +931,7 @@
               has-target
               target
               stdlib-roots
-              cfg-names
+              cfgs
               backend-mode
               opt-level
               false))]
@@ -933,7 +942,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             backend-mode
             opt-level)
           (begin
@@ -952,7 +961,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
@@ -963,11 +972,7 @@
     [(ResultCompileCliBatchEntryList.Ok entries)
       (let
         [inline-test-status : i64
-          (compile-cli-run-batch-inline-tests
-            entries
-            target
-            stdlib-roots
-            cfg-names)]
+          (compile-cli-run-batch-inline-tests entries target stdlib-roots cfgs)]
         (if (= inline-test-status 0)
           (compile-cli-run-batch-entries
             state
@@ -975,7 +980,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             backend-mode
             opt-level)
           inline-test-status))]
@@ -992,7 +997,7 @@
           has-target
           target
           stdlib-roots
-          cfg-names
+          cfgs
           backend-mode
           opt-level
           prefix-cache-stats)
@@ -1009,7 +1014,7 @@
                 has-target
                 target
                 stdlib-roots
-                cfg-names
+                cfgs
                 backend-mode
                 opt-level))]
           (begin
@@ -1032,7 +1037,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             backend-mode
             opt-level)
           (compile-cli-run-compile-file
@@ -1044,7 +1049,7 @@
             has-target
             target
             stdlib-roots
-            cfg-names
+            cfgs
             backend-mode
             opt-level
             true)])]

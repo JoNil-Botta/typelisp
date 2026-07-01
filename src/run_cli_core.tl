@@ -25,7 +25,7 @@
     CompilerBackendTarget
     CompilerBackendMode
     vector.StringVec
-    vector.StringVec
+    SourceToolCfgNames
     process.ProcessStringList
     i64
     SourceToolLinkInputs))
@@ -253,7 +253,7 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
@@ -264,7 +264,7 @@
         target
         mode
         stdlib-roots
-        cfg-names
+        cfgs
         runtime-args
         opt-level
         link-inputs))
@@ -278,7 +278,7 @@
               target
               mode
               stdlib-roots
-              cfg-names
+              cfgs
               (source-tool-args-from-argv (+ idx 1) count runtime-args)
               opt-level
               link-inputs))]
@@ -296,7 +296,7 @@
                     parsed-target
                     mode
                     stdlib-roots
-                    cfg-names
+                    cfgs
                     runtime-args
                     opt-level
                     link-inputs)]
@@ -316,7 +316,7 @@
                     target
                     parsed-mode
                     stdlib-roots
-                    cfg-names
+                    cfgs
                     runtime-args
                     opt-level
                     link-inputs)]
@@ -335,7 +335,7 @@
                   target
                   mode
                   stdlib-roots
-                  cfg-names
+                  cfgs
                   runtime-args
                   (string.>int value)
                   link-inputs)
@@ -350,7 +350,7 @@
               target
               mode
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
-              cfg-names
+              cfgs
               runtime-args
               opt-level
               link-inputs))]
@@ -364,7 +364,7 @@
               target
               mode
               stdlib-roots
-              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
+              (source-tool-cfg-names-add cfgs (io.arg (+ idx 1)))
               runtime-args
               opt-level
               link-inputs))]
@@ -378,7 +378,7 @@
               target
               mode
               stdlib-roots
-              cfg-names
+              cfgs
               runtime-args
               opt-level
               (source-tool-link-inputs-add-lib link-inputs (io.arg (+ idx 1)))))]
@@ -392,7 +392,7 @@
               target
               mode
               stdlib-roots
-              cfg-names
+              cfgs
               runtime-args
               opt-level
               (source-tool-link-inputs-add-search-dir
@@ -408,7 +408,7 @@
               target
               mode
               stdlib-roots
-              cfg-names
+              cfgs
               runtime-args
               opt-level
               (source-tool-link-inputs-add-raw-arg
@@ -421,7 +421,7 @@
               target
               mode
               stdlib-roots
-              cfg-names
+              cfgs
               (source-tool-args-from-argv idx count runtime-args)
               opt-level
               link-inputs))]))))
@@ -443,7 +443,7 @@
           (source-tool-default-target)
           (CompilerBackendMode.Scalar)
           (vector.string-vec-new)
-          (vector.string-vec-new)
+          (source-tool-cfg-names-empty)
           (process.args-empty)
           (compiler-optimize-default-level)
           (source-tool-link-inputs-empty))))))
@@ -467,7 +467,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
@@ -482,7 +482,7 @@
             stdlib-roots
             (compiler-driver-target-cfgs
               target
-              (source-tool-cfg-names-to-env cfg-names))
+              (source-tool-cfg-names-to-env cfgs))
             "typecheck-prefix-inline-run")]
         (if (= inline-test-status 0)
           (begin
@@ -491,7 +491,7 @@
               source
               target
               stdlib-roots
-              cfg-names
+              cfgs
               runtime-args
               opt-level
               mode
@@ -508,7 +508,7 @@
             target
             mode
             stdlib-roots
-            cfg-names
+            cfgs
             runtime-args
             opt-level
             link-inputs)
@@ -516,7 +516,7 @@
             source
             target
             stdlib-roots
-            cfg-names
+            cfgs
             runtime-args
             opt-level
             mode
@@ -535,7 +535,7 @@
             target
             mode
             stdlib-roots
-            cfg-names
+            cfgs
             runtime-args
             opt-level
             link-inputs)
@@ -543,7 +543,7 @@
             source
             target
             stdlib-roots
-            cfg-names
+            cfgs
             runtime-args
             opt-level
             mode

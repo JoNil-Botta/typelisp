@@ -487,7 +487,7 @@
                   source-path
                   (source-tool-default-target)
                   (vector.string-vec-new)
-                  (vector.string-vec-new)
+                  (source-tool-cfg-names-empty)
                   (process.args-empty)
                   (compiler-optimize-default-level)
                   (CompilerBackendMode.Scalar)

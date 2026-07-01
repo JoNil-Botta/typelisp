@@ -287,16 +287,21 @@
   [fields : AstFieldDefList]
   [names : CloneNameSet]
   [module : String]) : bool
-  (match fields
-    [(AstFieldDefList.Nil) true]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (if (clone-field-type-able? pools ty names module)
-              (clone-struct-fields-able? pools rest names module)
-              false)]))]))
+  (clone-struct-fields-able-at pools (& fields) names module 0))
+
+(define (clone-struct-fields-able-at
+  [pools : AstNodePoolContext]
+  [fields : (& fields AstFieldDefList)]
+  [names : CloneNameSet]
+  [module : String]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len fields))
+    true
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (if (clone-field-type-able? pools ty names module)
+          (clone-struct-fields-able-at pools fields names module (+ index 1))
+          false)])))
 
 ;; One fixpoint step: keep only names whose declaration's fields are all
 ;; clone-able under the current `names` set. Repeats until the set stops
@@ -511,21 +516,24 @@
 (define (clone-struct-ctor-args
   [pools : AstNodePoolContext]
   [fields : AstFieldDefList]) : AstExprList
-  (match fields
-    [(AstFieldDefList.Nil) AstExprList.Nil]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def fname _ _)
-            (ast-expr-cons
-              (clone-call-expr
-                pools
-                (ast-expr-struct-get-id-with-pools
-                  pools
-                  (clone-expr-push pools (AstExpr.Var (intern "x")))
-                  fname))
-              (clone-struct-ctor-args pools rest))]))]))
+  (clone-struct-ctor-args-at pools (& fields) 0))
+
+(define (clone-struct-ctor-args-at
+  [pools : AstNodePoolContext]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : AstExprList
+  (if (>= index (ast-field-def-list-len fields))
+    AstExprList.Nil
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def fname _ _)
+        (ast-expr-cons
+          (clone-call-expr
+            pools
+            (ast-expr-struct-get-id-with-pools
+              pools
+              (clone-expr-push pools (AstExpr.Var (intern "x")))
+              fname))
+          (clone-struct-ctor-args-at pools fields (+ index 1)))])))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
 (define (clone-make-helper-decl [type-name : String] [body : i64]) : AstDecl
@@ -1172,20 +1180,28 @@
   [roots : CloneNameList]
   [fields : AstFieldDefList]
   [module : String]) : CloneNameList
-  (match fields
-    [(AstFieldDefList.Nil) roots]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (clone-root-add-fields
-              pools
-              decls
-              able
-              (clone-root-add-type pools decls able roots ty module)
-              rest
-              module)]))]))
+  (clone-root-add-fields-at pools decls able roots (& fields) module 0))
+
+(define (clone-root-add-fields-at
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [fields : (& fields AstFieldDefList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-field-def-list-len fields))
+    roots
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (clone-root-add-fields-at
+          pools
+          decls
+          able
+          (clone-root-add-type pools decls able roots ty module)
+          fields
+          module
+          (+ index 1))])))
 
 (define (clone-root-add-variants
   [pools : AstNodePoolContext]

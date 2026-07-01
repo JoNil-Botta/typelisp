@@ -775,22 +775,21 @@
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
-  (match a
-    [(AstFieldDefList.Nil)
-      (match b
-        [(AstFieldDefList.Nil) true]
-        [_ false])]
-    [(AstFieldDefList.Cons a-head a-rest)
-      (let
-        [a-rest : AstFieldDefList (box-get a-rest)]
-        (match b
-          [(AstFieldDefList.Cons b-head b-rest)
-            (let
-              [b-rest : AstFieldDefList (box-get b-rest)]
-              (and
-                (gen-field-def-eq? a-head b-head)
-                (gen-field-list-eq? a-rest b-rest)))]
-          [_ false]))]))
+  (if (= (ast-field-def-list-len (& a)) (ast-field-def-list-len (& b)))
+    (gen-field-list-eq-at (& a) (& b) 0)
+    false))
+
+(define (gen-field-list-eq-at
+  [a : (& a AstFieldDefList)]
+  [b : (& b AstFieldDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len a))
+    true
+    (and
+      (gen-field-def-eq?
+        (ast-field-def-list-get a index (ast-field-def-fallback))
+        (ast-field-def-list-get b index (ast-field-def-fallback)))
+      (gen-field-list-eq-at a b (+ index 1)))))
 
 (define (gen-struct-repr-eq? [a : AstStructRepr] [b : AstStructRepr]) : bool
   (match a
@@ -5585,7 +5584,7 @@
         "RegistryBox"
         AstStructRepr.Default
         AstStructCleanup.No
-        AstFieldDefList.Nil)]
+        (ast-field-def-list-new))]
     [registry : GenRegistry
       (gen-registry-insert (gen-registry-empty) "generated-key" decl)]
     (match (gen-registry-lookup registry "generated-key")

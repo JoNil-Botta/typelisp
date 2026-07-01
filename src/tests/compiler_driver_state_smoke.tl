@@ -391,7 +391,7 @@
         name
         (AstStructRepr.Default)
         (AstStructCleanup.No)
-        (ast-field-def-cons field AstFieldDefList.Nil))]
+        (ast-field-def-cons field (ast-field-def-list-new)))]
     (ast-program (ast-decl-cons decl AstDeclList.Nil))))
 
 (define (compiler-driver-state-smoke-clone-generated-ctor?

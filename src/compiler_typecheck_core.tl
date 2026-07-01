@@ -4978,45 +4978,47 @@
   [index : i64]) : ResultTcUnit
   (match specs
     [(TcStdlibFieldSpecList.Nil)
-      (match fields
-        [(AstFieldDefList.Nil) ResultTcUnit.Ok]
-        [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra field")])]
+      (if (>= index (ast-field-def-list-len (& fields)))
+        ResultTcUnit.Ok
+        (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))]
     [(TcStdlibFieldSpecList.Cons expected-name expected-ty rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 9))
-        (match fields
-          [(AstFieldDefList.Nil)
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (str_cat.str-cat "missing field " expected-name))]
-          [(AstFieldDefList.Cons field rest-fields)
-            (let
-              [rest-fields : AstFieldDefList (box-get rest-fields)]
-              [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
-              (match field
-                [(AstFieldDef.Def actual-name actual-ty _)
-                  (if (not (string.eq (intern-str actual-name) expected-name))
+        (if (>= index (ast-field-def-list-len (& fields)))
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str_cat.str-cat "missing field " expected-name))
+          (let
+            [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
+            (match (ast-field-def-list-get
+              (& fields)
+              index
+              (ast-field-def-fallback))
+              [(AstFieldDef.Def actual-name actual-ty _)
+                (cond
+                  [(not (string.eq (intern-str actual-name) expected-name))
                     (tc-stdlib-well-known-mismatch
                       type-name
                       (str_cat.str-cat
                         "expected field "
                         expected-name
                         " at index "
-                        (string.int->string index)))
-                    (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
-                      (tc-stdlib-check-field-specs
-                        ctx
-                        type-name
-                        rest-fields
-                        rest-specs
-                        (+ index 1))
-                      (tc-stdlib-well-known-mismatch
-                        type-name
-                        (str_cat.str-cat
-                          "expected field "
-                          expected-name
-                          " type "
-                          (tc-stdlib-type-spec-render expected-ty)))))]))]))]))
+                        (string.int->string index)))]
+                  [(tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
+                    (tc-stdlib-check-field-specs
+                      ctx
+                      type-name
+                      fields
+                      rest-specs
+                      (+ index 1))]
+                  [else
+                    (tc-stdlib-well-known-mismatch
+                      type-name
+                      (str_cat.str-cat
+                        "expected field "
+                        expected-name
+                        " type "
+                        (tc-stdlib-type-spec-render expected-ty)))])]))))]))
 
 (define (tc-stdlib-check-payload-specs
   [ctx : TcContext]
@@ -10117,16 +10119,20 @@
 (define (tc-source-field-list-policy-ok
   [ctx : TcContext]
   [fields : AstFieldDefList]) : ResultTcUnit
-  (match fields
-    [(AstFieldDefList.Nil) ResultTcUnit.Ok]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (match (tc-source-type-policy-ok ctx ty)
-              [(ResultTcUnit.Ok) (tc-source-field-list-policy-ok ctx rest)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-source-field-list-policy-ok-at ctx (& fields) 0))
+
+(define (tc-source-field-list-policy-ok-at
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-field-def-list-len fields))
+    ResultTcUnit.Ok
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (match (tc-source-type-policy-ok ctx ty)
+          [(ResultTcUnit.Ok)
+            (tc-source-field-list-policy-ok-at ctx fields (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-struct-cleanup-repr-c-message [struct-name : String]) : String
   (str_cat.str-cat
@@ -10178,20 +10184,28 @@
   [ctx : TcContext]
   [params : AstLifetimeList]
   [fields : AstFieldDefList]) : ResultTcUnit
-  (match fields
-    [(AstFieldDefList.Nil) ResultTcUnit.Ok]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (match (tc-source-type-policy-ok ctx ty)
+  (tc-source-field-list-lifetimes-policy-ok-at ctx params (& fields) 0))
+
+(define (tc-source-field-list-lifetimes-policy-ok-at
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-field-def-list-len fields))
+    ResultTcUnit.Ok
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (match (tc-source-type-policy-ok ctx ty)
+          [(ResultTcUnit.Ok)
+            (match (tc-source-type-decl-lifetimes-ok ctx params ty)
               [(ResultTcUnit.Ok)
-                (match (tc-source-type-decl-lifetimes-ok ctx params ty)
-                  [(ResultTcUnit.Ok)
-                    (tc-source-field-list-lifetimes-policy-ok ctx params rest)]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+                (tc-source-field-list-lifetimes-policy-ok-at
+                  ctx
+                  params
+                  fields
+                  (+ index 1))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-source-type-list-lifetimes-policy-ok
   [ctx : TcContext]
@@ -13395,16 +13409,19 @@
     [_ (tc-top-decl-type ctx decl)]))
 
 (define (tc-field-type-list [ctx : TcContext] [fields : AstFieldDefList]) : AstTypeList
-  (match fields
-    [(AstFieldDefList.Nil) AstTypeList.Nil]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (ast-type-cons
-              (tc-resolve-type ctx ty)
-              (tc-field-type-list ctx rest))]))]))
+  (tc-field-type-list-at ctx (& fields) 0))
+
+(define (tc-field-type-list-at
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : AstTypeList
+  (if (>= index (ast-field-def-list-len fields))
+    AstTypeList.Nil
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (ast-type-cons
+          (tc-resolve-type ctx ty)
+          (tc-field-type-list-at ctx fields (+ index 1)))])))
 
 (define (tc-tag-type-list-region [region : String] [types : AstTypeList]) : AstTypeList
   (match types
@@ -17290,21 +17307,34 @@
   [fields : AstFieldDefList]
   [stack : TcStringList]
   [owner-proof : bool]) : TcThreadTransferClass
-  (match fields
-    [(AstFieldDefList.Nil) (TcThreadTransferClass.Shareable)]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (tc-thread-transfer-class-merge
-              (tc-thread-transfer-type-class ctx env ty stack owner-proof)
-              (tc-thread-transfer-field-list-class
-                ctx
-                env
-                rest
-                stack
-                owner-proof))]))]))
+  (tc-thread-transfer-field-list-class-at
+    ctx
+    env
+    (& fields)
+    stack
+    owner-proof
+    0))
+
+(define (tc-thread-transfer-field-list-class-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [fields : (& fields AstFieldDefList)]
+  [stack : TcStringList]
+  [owner-proof : bool]
+  [index : i64]) : TcThreadTransferClass
+  (if (>= index (ast-field-def-list-len fields))
+    (TcThreadTransferClass.Shareable)
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (tc-thread-transfer-class-merge
+          (tc-thread-transfer-type-class ctx env ty stack owner-proof)
+          (tc-thread-transfer-field-list-class-at
+            ctx
+            env
+            fields
+            stack
+            owner-proof
+            (+ index 1)))])))
 
 (define (tc-thread-transfer-variant-list-class
   [ctx : TcContext]
@@ -25403,17 +25433,25 @@
   [ctx : TcContext]
   [fields : AstFieldDefList]
   [stack : TcStringList]) : ResultTcUnit
-  (match fields
-    [(AstFieldDefList.Nil) ResultTcUnit.Ok]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (match (tc-inline-aggregate-type-finite-ok ctx ty stack)
-              [(ResultTcUnit.Ok)
-                (tc-inline-aggregate-fields-finite-ok ctx rest stack)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-inline-aggregate-fields-finite-ok-at ctx (& fields) stack 0))
+
+(define (tc-inline-aggregate-fields-finite-ok-at
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [stack : TcStringList]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-field-def-list-len fields))
+    ResultTcUnit.Ok
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (match (tc-inline-aggregate-type-finite-ok ctx ty stack)
+          [(ResultTcUnit.Ok)
+            (tc-inline-aggregate-fields-finite-ok-at
+              ctx
+              fields
+              stack
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-inline-aggregate-variants-finite-ok
   [ctx : TcContext]
@@ -25556,55 +25594,64 @@
   [cursor : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlineFieldsLayout
-  (match fields
-    [(AstFieldDefList.Nil)
-      (match (tc-inline-aggregate-finish-layout cursor max-align)
-        [(TcLayoutInfo size align)
-          (ResultTcInlineFieldsLayout.Ok
-            (TcInlineFieldsLayout.Fields size align TcInlineFieldLayoutList.Nil))])]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name ty _)
-            (let
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              (match (tc-inline-aggregate-type-layout-with-stack
-                ctx
-                resolved
-                stack)
-                [(ResultTcLayoutInfo.Ok info)
-                  (let
-                    [field-align : i64 (tc-layout-info-align info)]
-                    [field-size : i64 (tc-layout-info-size info)]
-                    [offset : i64 (tc-align-up cursor field-align)]
-                    [next-cursor : i64 (+ offset field-size)]
-                    [next-align : i64 (tc-max-i64 max-align field-align)]
-                    (match (tc-inline-aggregate-field-defs-layout
-                      ctx
-                      rest
-                      next-cursor
-                      next-align
-                      stack)
-                      [(ResultTcInlineFieldsLayout.Ok rest-layout)
-                        (match rest-layout
-                          [(TcInlineFieldsLayout.Fields size align rest-fields)
-                            (begin
-                              (cfg compile-profile (tc-lp-note 2))
-                              (ResultTcInlineFieldsLayout.Ok
-                                (TcInlineFieldsLayout.Fields
-                                  size
-                                  align
-                                  (TcInlineFieldLayoutList.Cons
-                                    (TcInlineFieldLayout.Field
-                                      (intern-str name)
-                                      resolved
-                                      offset)
-                                    (box rest-fields)))))])]
-                      [(ResultTcInlineFieldsLayout.Err message)
-                        (ResultTcInlineFieldsLayout.Err message)]))]
-                [(ResultTcLayoutInfo.Err message)
-                  (ResultTcInlineFieldsLayout.Err message)]))]))]))
+  (tc-inline-aggregate-field-defs-layout-at
+    ctx
+    (& fields)
+    0
+    cursor
+    max-align
+    stack))
+
+(define (tc-inline-aggregate-field-defs-layout-at
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlineFieldsLayout
+  (if (>= index (ast-field-def-list-len fields))
+    (match (tc-inline-aggregate-finish-layout cursor max-align)
+      [(TcLayoutInfo size align)
+        (ResultTcInlineFieldsLayout.Ok
+          (TcInlineFieldsLayout.Fields size align TcInlineFieldLayoutList.Nil))])
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name ty _)
+        (let
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          (match (tc-inline-aggregate-type-layout-with-stack ctx resolved stack)
+            [(ResultTcLayoutInfo.Ok info)
+              (let
+                [field-align : i64 (tc-layout-info-align info)]
+                [field-size : i64 (tc-layout-info-size info)]
+                [offset : i64 (tc-align-up cursor field-align)]
+                [next-cursor : i64 (+ offset field-size)]
+                [next-align : i64 (tc-max-i64 max-align field-align)]
+                (match (tc-inline-aggregate-field-defs-layout-at
+                  ctx
+                  fields
+                  (+ index 1)
+                  next-cursor
+                  next-align
+                  stack)
+                  [(ResultTcInlineFieldsLayout.Ok rest-layout)
+                    (match rest-layout
+                      [(TcInlineFieldsLayout.Fields size align rest-fields)
+                        (begin
+                          (cfg compile-profile (tc-lp-note 2))
+                          (ResultTcInlineFieldsLayout.Ok
+                            (TcInlineFieldsLayout.Fields
+                              size
+                              align
+                              (TcInlineFieldLayoutList.Cons
+                                (TcInlineFieldLayout.Field
+                                  (intern-str name)
+                                  resolved
+                                  offset)
+                                (box rest-fields)))))])]
+                  [(ResultTcInlineFieldsLayout.Err message)
+                    (ResultTcInlineFieldsLayout.Err message)]))]
+            [(ResultTcLayoutInfo.Err message)
+              (ResultTcInlineFieldsLayout.Err message)]))])))
 
 (define (tc-inline-aggregate-payloads-layout
   [ctx : TcContext]
@@ -26376,60 +26423,66 @@
   [cursor : i64]
   [max-align : i64]
   [seen : TcStringList]) : ResultTcReprCLayout
-  (match fields
-    [(AstFieldDefList.Nil)
-      (if (= max-align 0)
-        (ResultTcReprCLayout.Err
-          "typecheck: repr c struct needs at least one field")
-        (ResultTcReprCLayout.Ok
-          (TcReprCLayout.Layout
-            (tc-align-up cursor max-align)
-            max-align
-            TcReprCFieldLayoutList.Nil)))]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name ty _)
-            (let
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              (match (tc-repr-c-field-layout-info
-                ctx
-                owner
-                (intern-str name)
-                resolved
-                seen)
-                [(ResultTcLayoutInfo.Ok info)
-                  (let
-                    [field-align : i64 (tc-layout-info-align info)]
-                    [field-size : i64 (tc-layout-info-size info)]
-                    [offset : i64 (tc-align-up cursor field-align)]
-                    [next-cursor : i64 (+ offset field-size)]
-                    [next-align : i64 (tc-max-i64 max-align field-align)]
-                    (match (tc-repr-c-fields-layout
-                      ctx
-                      owner
-                      rest
-                      next-cursor
-                      next-align
-                      seen)
-                      [(ResultTcReprCLayout.Ok rest-layout)
-                        (begin
-                          (cfg compile-profile (tc-lp-note 0))
-                          (ResultTcReprCLayout.Ok
-                            (TcReprCLayout.Layout
-                              (tc-repr-c-layout-size rest-layout)
-                              (tc-repr-c-layout-align rest-layout)
-                              (TcReprCFieldLayoutList.Cons
-                                (TcReprCFieldLayout.Field
-                                  (intern-str name)
-                                  resolved
-                                  offset)
-                                (box (tc-repr-c-layout-fields rest-layout))))))]
-                      [(ResultTcReprCLayout.Err message)
-                        (ResultTcReprCLayout.Err message)]))]
-                [(ResultTcLayoutInfo.Err message)
-                  (ResultTcReprCLayout.Err message)]))]))]))
+  (tc-repr-c-fields-layout-at ctx owner (& fields) 0 cursor max-align seen))
+
+(define (tc-repr-c-fields-layout-at
+  [ctx : TcContext]
+  [owner : String]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]
+  [cursor : i64]
+  [max-align : i64]
+  [seen : TcStringList]) : ResultTcReprCLayout
+  (if (>= index (ast-field-def-list-len fields))
+    (if (= max-align 0)
+      (ResultTcReprCLayout.Err
+        "typecheck: repr c struct needs at least one field")
+      (ResultTcReprCLayout.Ok
+        (TcReprCLayout.Layout
+          (tc-align-up cursor max-align)
+          max-align
+          TcReprCFieldLayoutList.Nil)))
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name ty _)
+        (let
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          (match (tc-repr-c-field-layout-info
+            ctx
+            owner
+            (intern-str name)
+            resolved
+            seen)
+            [(ResultTcLayoutInfo.Ok info)
+              (let
+                [field-align : i64 (tc-layout-info-align info)]
+                [field-size : i64 (tc-layout-info-size info)]
+                [offset : i64 (tc-align-up cursor field-align)]
+                [next-cursor : i64 (+ offset field-size)]
+                [next-align : i64 (tc-max-i64 max-align field-align)]
+                (match (tc-repr-c-fields-layout-at
+                  ctx
+                  owner
+                  fields
+                  (+ index 1)
+                  next-cursor
+                  next-align
+                  seen)
+                  [(ResultTcReprCLayout.Ok rest-layout)
+                    (begin
+                      (cfg compile-profile (tc-lp-note 0))
+                      (ResultTcReprCLayout.Ok
+                        (TcReprCLayout.Layout
+                          (tc-repr-c-layout-size rest-layout)
+                          (tc-repr-c-layout-align rest-layout)
+                          (TcReprCFieldLayoutList.Cons
+                            (TcReprCFieldLayout.Field
+                              (intern-str name)
+                              resolved
+                              offset)
+                            (box (tc-repr-c-layout-fields rest-layout))))))]
+                  [(ResultTcReprCLayout.Err message)
+                    (ResultTcReprCLayout.Err message)]))]
+            [(ResultTcLayoutInfo.Err message) (ResultTcReprCLayout.Err message)]))])))
 
 (define (tc-repr-c-struct-layout-with-seen
   [ctx : TcContext]
@@ -41496,13 +41549,18 @@
         (macro-generated-fingerprint-field-cleanup cleanup))]))
 
 (define (macro-generated-fingerprint-field-list [fields : AstFieldDefList]) : String
-  (match fields
-    [(AstFieldDefList.Nil) "fields:nil"]
-    [(AstFieldDefList.Cons head rest)
-      (macro-generated-fingerprint-join
-        "fields:cons"
-        (macro-generated-fingerprint-field head)
-        (macro-generated-fingerprint-field-list (box-get rest)))]))
+  (macro-generated-fingerprint-field-list-at (& fields) 0))
+
+(define (macro-generated-fingerprint-field-list-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : String
+  (if (>= index (ast-field-def-list-len fields))
+    "fields:nil"
+    (macro-generated-fingerprint-join
+      "fields:cons"
+      (macro-generated-fingerprint-field
+        (ast-field-def-list-get fields index (ast-field-def-fallback)))
+      (macro-generated-fingerprint-field-list-at fields (+ index 1)))))
 
 (define (macro-generated-fingerprint-struct-repr [repr : AstStructRepr]) : String
   (match repr
@@ -46938,7 +46996,7 @@
       (AstStructCleanup.No)
       (ast-field-def-cons
         slots-field
-        (ast-field-def-cons len-field AstFieldDefList.Nil)))))
+        (ast-field-def-cons len-field (ast-field-def-list-new))))))
 
 (define (macro-vf-slots-decl
   [slots-name : String]
@@ -49992,6 +50050,8 @@
         aliases
         refs
         alias-qualified?)]
+    [(AstExpr.Break) refs]
+    [(AstExpr.Continue) refs]
     [(AstExpr.PtrNull ty)
       (macro-generated-surface-type-refs ty aliases refs alias-qualified?)]
     [(AstExpr.PtrNullCheck inner)
@@ -50155,24 +50215,33 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match fields
-    [(AstFieldDefList.Nil) refs]
-    [(AstFieldDefList.Cons field rest)
-      (match field
-        [(AstFieldDef.Def _ ty cleanup)
-          (macro-generated-surface-field-def-list-refs
-            (box-get rest)
+  (macro-generated-surface-field-def-list-refs-at
+    (& fields)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-field-def-list-refs-at
+  [fields : (& fields AstFieldDefList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-field-def-list-len fields))
+    refs
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty cleanup)
+        (macro-generated-surface-field-def-list-refs-at
+          fields
+          aliases
+          (macro-generated-surface-field-cleanup-refs
+            cleanup
             aliases
-            (macro-generated-surface-field-cleanup-refs
-              cleanup
-              aliases
-              (macro-generated-surface-type-refs
-                ty
-                aliases
-                refs
-                alias-qualified?)
-              alias-qualified?)
-            alias-qualified?)])]))
+            (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
+            alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-struct-cleanup-refs
   [cleanup : AstStructCleanup]
@@ -54706,15 +54775,32 @@
   [struct-name : String]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : ResultTcUnit
-  (match fields
-    [(AstFieldDefList.Nil) ResultTcUnit.Ok]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match (tc-check-cleanup-struct-field ctx env struct-name cleanup field)
-          [(ResultTcUnit.Ok)
-            (tc-check-cleanup-struct-fields ctx env struct-name cleanup rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-check-cleanup-struct-fields-at ctx env struct-name cleanup (& fields) 0))
+
+(define (tc-check-cleanup-struct-fields-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [cleanup : AstStructCleanup]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-field-def-list-len fields))
+    ResultTcUnit.Ok
+    (match (tc-check-cleanup-struct-field
+      ctx
+      env
+      struct-name
+      cleanup
+      (ast-field-def-list-get fields index (ast-field-def-fallback)))
+      [(ResultTcUnit.Ok)
+        (tc-check-cleanup-struct-fields-at
+          ctx
+          env
+          struct-name
+          cleanup
+          fields
+          (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-cleanup-struct-decl
   [ctx : TcContext]

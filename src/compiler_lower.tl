@@ -14451,7 +14451,7 @@
     [cur-env : TcTypeEnv type-env]
     [cur-state : LowerState state]
     [result : ResultLowerState
-      (ErrLowerState
+      (ResultLowerState.Err
         (box (lower-diagnostic "lower: internal active-loop-exits walk")))]
     [done : bool false]
     (begin
@@ -14459,7 +14459,7 @@
         (match cur-env
           [(TcTypeEnv.Nil)
             (begin
-              (set! result (OkLowerState cur-state))
+              (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
           [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
           [(TcTypeEnv.Bind key ty rest)
@@ -14467,7 +14467,7 @@
               ;; lint-allow: nested-if-ladder
               (if (= key loop-target-id)
                 (begin
-                  (set! result (OkLowerState cur-state))
+                  (set! result (ResultLowerState.Ok cur-state))
                   (set! done true))
                 (if (= key cleanup-marker-id)
                   (match ty
@@ -14494,13 +14494,15 @@
                                                 env
                                                 (intern-str hidden-name)
                                                 (intern-str cleanup-name))
-                                                [(OkLowerState next-state)
+                                                [(ResultLowerState.Ok
+                                                    next-state)
                                                   (set! cur-state next-state)]
-                                                [(ErrLowerState message)
+                                                [(ResultLowerState.Err message)
                                                   (begin
                                                     (set!
                                                       result
-                                                      (ErrLowerState message))
+                                                      (ResultLowerState.Err
+                                                        message))
                                                     (set! done true))])]
                                             [_ unit])]
                                         [_ unit]))]
@@ -14515,11 +14517,11 @@
                           cur-state
                           env
                           (intern-str hidden-name))
-                          [(OkLowerState next-state)
+                          [(ResultLowerState.Ok next-state)
                             (set! cur-state next-state)]
-                          [(ErrLowerState message)
+                          [(ResultLowerState.Err message)
                             (begin
-                              (set! result (ErrLowerState message))
+                              (set! result (ResultLowerState.Err message))
                               (set! done true))])]
                       [(AstType.Tuple types)
                         (match (box-get types)
@@ -14535,13 +14537,13 @@
                                         cur-state
                                         env
                                         (intern-str hidden-name))
-                                        [(OkLowerState next-state)
+                                        [(ResultLowerState.Ok next-state)
                                           (set! cur-state next-state)]
-                                        [(ErrLowerState message)
+                                        [(ResultLowerState.Err message)
                                           (begin
                                             (set!
                                               result
-                                              (ErrLowerState message))
+                                              (ResultLowerState.Err message))
                                             (set! done true))])]
                                     [_ unit])]
                                 [_ unit]))]
@@ -14576,7 +14578,7 @@
       (match target
         [(LowerLoopTarget.Target break-label continue-label)
           (match (lower-emit-active-loop-exits state env type-env)
-            [(OkLowerState exit-state)
+            [(ResultLowerState.Ok exit-state)
               (OkLowerExpr
                 (LowerExpr
                   (lower-state-emit-at-expr
@@ -14588,7 +14590,7 @@
                     origin)
                   CompilerIrValue.Unit
                   (AstType.Never)))]
-            [(ErrLowerState message) (ErrLowerExpr message)])])]
+            [(ResultLowerState.Err message) (ErrLowerExpr message)])])]
     [(ResultLowerLoopTarget.Err message) (ErrLowerExpr message)]))
 
 (define (lower-emit-active-cleanups-with

@@ -277,6 +277,14 @@
     [(AstExpr.Literal (AstLiteral.Bool value)) (= value want)]
     [_ false]))
 
+(define (compiler-driver-state-smoke-context-int-lit?
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [want : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExpr.Literal (AstLiteral.Int value _)) (= value want)]
+    [_ false]))
+
 (define (compiler-driver-state-smoke-context-if-bool-lits?
   [pools : AstNodePoolContext]
   [id : i64]) : bool
@@ -964,6 +972,84 @@
               [(ResultCompilerSymbols.Err _) false])]
           [_ false])))))
 
+(define (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program AstDeclList.Nil)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [right-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 11)))]
+        [left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [right-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 110)))]
+        [before-a : i64 (ast-node-pool-context-expr-len pools-a)]
+        [before-b : i64 (ast-node-pool-context-expr-len pools-b)]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [rewritten : ResultLowerAstExpr
+                    (lower-spmd-inline-expr
+                      ctx
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (AstExpr.Binary (AstBinOp.Add) left-a right-a)
+                      LowerSpmdInlineSubst.Nil
+                      LowerStringSet.Nil)]
+                  [after-a : i64 (ast-node-pool-context-expr-len pools-a)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= left-a left-b)
+                    (= right-a right-b)
+                    (= active-before before-b)
+                    (= active-after before-b)
+                    (> after-a before-a)
+                    (match rewritten
+                      [(OkLowerAstExpr expr)
+                        (match expr
+                          [(AstExpr.Binary (AstBinOp.Add) left-id right-id)
+                            (and
+                              (>= left-id before-a)
+                              (< left-id after-a)
+                              (>= right-id before-a)
+                              (< right-id after-a)
+                              (compiler-driver-state-smoke-context-int-lit?
+                                pools-a
+                                left-id
+                                7)
+                              (compiler-driver-state-smoke-context-int-lit?
+                                pools-a
+                                right-id
+                                11))]
+                          [_ false])]
+                      [(ErrLowerAstExpr _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
@@ -1139,6 +1225,9 @@
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)
       (return 18))
+    (unless
+      (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
+      (return 19))
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))

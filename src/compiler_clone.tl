@@ -325,7 +325,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
                     (set! current-module (intern-str next-module))
@@ -362,10 +362,6 @@
                             (intern-str name))))
                       unit)
                     (set! cur rest))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
                 [_ (set! cur rest)]))]))
       out)))
 
@@ -394,7 +390,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
                     (set! current-module (intern-str next-module))
@@ -419,10 +415,6 @@
                           current-module
                           (intern-str name))))
                     (set! cur rest))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
                 [_ (set! cur rest)]))]))
       out)))
 
@@ -858,16 +850,16 @@
           (clone-list-variant-reference-name name nil-ctor)]
         [qualified-cons : String
           (clone-list-variant-reference-name name cons-ctor)]
-        (ast-decl-cons
+        (ast-decl-list-prepend-builder
           (clone-list-entry-decl pools name qualified-nil)
-          (ast-decl-cons
+          (ast-decl-list-prepend-builder
             (clone-list-acc-decl
               pools
               name
               qualified-nil
               qualified-cons
               boxed-tail)
-            (ast-decl-cons
+            (ast-decl-list-prepend-builder
               (clone-list-rev-decl
                 pools
                 name
@@ -876,7 +868,7 @@
                 boxed-tail)
               acc))))]
     [(CloneListShape.NotList)
-      (ast-decl-cons
+      (ast-decl-list-prepend-builder
         (clone-make-helper-decl
           name
           (ast-expr-match-with-pools
@@ -1041,7 +1033,7 @@
   [acc : AstDeclList]) : AstDeclList
   (if (string.eq module "")
     (clone-decl-list-append generated acc)
-    (ast-decl-cons
+    (ast-decl-list-prepend-builder
       (ast-decl-module module)
       (clone-decl-list-append generated acc))))
 
@@ -1064,7 +1056,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
                     (set! current-module (intern-str next-module))
@@ -1101,7 +1093,7 @@
                           out
                           (clone-prepend-generated-decls-in-module
                             current-module
-                            (ast-decl-cons
+                            (ast-decl-list-prepend-builder
                               (clone-make-helper-decl
                                 name-str
                                 (ast-expr-call-with-pools
@@ -1112,10 +1104,6 @@
                             out))
                         unit)
                       (set! cur rest)))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
                 [_ (set! cur rest)]))]))
       out)))
 
@@ -1233,7 +1221,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
                     (set! current-module (intern-str next-module))
@@ -1274,10 +1262,6 @@
                           current-module))
                       (set! done true))
                     (set! cur rest))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
                 [_ (set! cur rest)]))]))
       out)))
 

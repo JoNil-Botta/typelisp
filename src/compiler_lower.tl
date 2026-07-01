@@ -5179,11 +5179,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Def _ _ expr-box)
                   (let
                     [decl-ctx : TcContext
@@ -6213,7 +6209,7 @@
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
             [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
-        (match decl
+        (match (ast-decl-unwrapped decl)
           [(AstDecl.Module next-module)
             (let
               [next-module-str : String (intern-str next-module)]
@@ -6257,71 +6253,6 @@
                   module-name-cache
                   body
                   decl-path)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (lower-function-body-index-from-decls-in-module
-                (ast-decl-cons template rest)
-                (ast-decl-path-cons decl-path rest-paths)
-                entry-path
-                module
-                all-decls
-                all-paths
-                base-names
-                base-name-cache
-                module-name-cache
-                index))]
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDecl.DefFn name _ _ body-box _)
-                  (let
-                    [body : AstExpr (ast-node-get body-box)]
-                    (lower-function-body-index-from-decls-in-module
-                      rest
-                      rest-paths
-                      entry-path
-                      module
-                      all-decls
-                      all-paths
-                      base-names
-                      base-name-cache
-                      module-name-cache
-                      (lower-function-body-index-add
-                        index
-                        (lower-decl-logical-name
-                          entry-path
-                          decl-path
-                          module
-                          (intern-str name))
-                        module-name-cache
-                        body
-                        decl-path)))]
-                [(AstDecl.ComptimeDecl _ _)
-                  (lower-function-body-index-from-decls-in-module
-                    (ast-decl-cons inner rest)
-                    (ast-decl-path-cons decl-path rest-paths)
-                    entry-path
-                    module
-                    all-decls
-                    all-paths
-                    base-names
-                    base-name-cache
-                    module-name-cache
-                    index)]
-                [_
-                  (lower-function-body-index-from-decls-in-module
-                    rest
-                    rest-paths
-                    entry-path
-                    module
-                    all-decls
-                    all-paths
-                    base-names
-                    base-name-cache
-                    module-name-cache
-                    index)]))]
           [_
             (lower-function-body-index-from-decls-in-module
               rest
@@ -7833,8 +7764,8 @@
               used-types)
               [(LowerFilteredReachable.Filtered rest-decls rest-paths)
                 (LowerFilteredReachable.Filtered
-                  (ast-decl-cons decl rest-decls)
-                  (ast-decl-path-cons decl-path rest-paths))])]
+                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (ast-decl-path-list-prepend-builder decl-path rest-paths))])]
           [_
             (match (lower-filter-reachable-in-module
               rest
@@ -7856,8 +7787,8 @@
                   used-types
                   decl)
                   (LowerFilteredReachable.Filtered
-                    (ast-decl-cons decl rest-decls)
-                    (ast-decl-path-cons decl-path rest-paths))
+                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (ast-decl-path-list-prepend-builder decl-path rest-paths))
                   (LowerFilteredReachable.Filtered rest-decls rest-paths))])]))]))
 
 ;; Keep decls and paths in lockstep so pruning does not repeat the same
@@ -41127,12 +41058,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcType
-  (match decl
-    [(AstDecl.Def name _ _)
-      (match (tc-lookup-id env name)
-        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-        [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env decl)])]
-    [_ (tc-top-decl-type-with-env ctx env decl)]))
+  (let
+    [actual : AstDecl (ast-decl-unwrapped decl)]
+    (match actual
+      [(AstDecl.Def name _ _)
+        (match (tc-lookup-id env name)
+          [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+          [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env actual)])]
+      [_ (tc-top-decl-type-with-env ctx env actual)])))
 
 ;; Record `name -> body span` into the provenance table (#605). A function whose
 ;;
@@ -42283,24 +42216,12 @@
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
+        (match (ast-decl-unwrapped decl)
           [(AstDecl.Module next-module)
             (lower-rvo-early-return-functions-from-decls-in-module
               rest
               names
               (intern-str next-module)
-              out)]
-          [(AstDecl.Unsafe inner-box)
-            (lower-rvo-early-return-functions-from-decls-in-module
-              (ast-decl-cons (box-get inner-box) rest)
-              names
-              module
-              out)]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (lower-rvo-early-return-functions-from-decls-in-module
-              (ast-decl-cons (box-get template-box) rest)
-              names
-              module
               out)]
           [(AstDecl.DefFn name _ _ body-box _)
             (let
@@ -42398,7 +42319,7 @@
               [kept-rest : AstDeclList
                 (lower-skip-runtime-until-next-module rest)]
               (if (lower-type-decl? decl)
-                (ast-decl-cons decl kept-rest)
+                (ast-decl-list-prepend-builder decl kept-rest)
                 kept-rest))]))]))
 
 (define (lower-decls-in-module
@@ -42448,11 +42369,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match decl
-                [(AstDecl.Unsafe inner-box)
-                  (let
-                    [inner : AstDecl (box-get inner-box)]
-                    (set! cur-decls (ast-decl-cons inner rest)))]
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def name _ expr-box)
                   (let
@@ -42840,10 +42757,8 @@
                         (begin
                           (set! result (ResultLowerDecls.Err message))
                           (set! done true))]))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (let
-                    [template : AstDecl (box-get template-box)]
-                    (set! cur-decls (ast-decl-cons template rest)))]))]))
+                [(AstDecl.Unsafe _) (set! cur-decls rest)]
+                [(AstDecl.ComptimeDecl _ _) (set! cur-decls rest)]))]))
       result)))
 
 (define (lower-compiler-program-checked-with-names-mode

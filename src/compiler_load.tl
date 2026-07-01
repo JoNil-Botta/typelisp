@@ -2053,6 +2053,23 @@
       (ast-decl-list-append-from (&mut out) (& right) 0)
       out)))
 
+(define (compiler-load-decl-list-append-onto
+  [left : AstDeclList]
+  [right : AstDeclList]) : AstDeclList
+  (let
+    [index : i64 (- (ast-decl-list-len (& left)) 1)]
+    [out : AstDeclList right]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (ast-decl-list-prepend-builder
+              (ast-decl-list-get (& left) index (ast-decl-fallback))
+              out))
+          (set! index (- index 1))))
+      out)))
+
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
@@ -2063,6 +2080,23 @@
     (begin
       (ast-decl-path-list-append-from (&mut out) (& left) 0)
       (ast-decl-path-list-append-from (&mut out) (& right) 0)
+      out)))
+
+(define (compiler-load-decl-path-list-append-onto
+  [left : AstDeclPathList]
+  [right : AstDeclPathList]) : AstDeclPathList
+  (let
+    [index : i64 (- (ast-decl-path-list-len (& left)) 1)]
+    [out : AstDeclPathList right]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (ast-decl-path-list-prepend-builder
+              (ast-decl-path-list-get (& left) index "")
+              out))
+          (set! index (- index 1))))
       out)))
 
 (define (compiler-load-decl-module-list-append
@@ -2077,6 +2111,23 @@
     (begin
       (ast-decl-module-list-append-from (&mut out) (& left) 0)
       (ast-decl-module-list-append-from (&mut out) (& right) 0)
+      out)))
+
+(define (compiler-load-decl-module-list-append-onto
+  [left : AstDeclModuleList]
+  [right : AstDeclModuleList]) : AstDeclModuleList
+  (let
+    [index : i64 (- (ast-decl-module-list-len (& left)) 1)]
+    [out : AstDeclModuleList right]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (ast-decl-module-list-prepend-builder
+              (ast-decl-module-list-get (& left) index "")
+              out))
+          (set! index (- index 1))))
       out)))
 
 (define compiler-load-core-macro-prelude-path : String
@@ -3365,7 +3416,7 @@
   [rest : AstDeclList]) : AstDeclList
   (match alias
     [(AstMaybeImportAlias.Some _)
-      (ast-decl-cons
+      (ast-decl-list-prepend-builder
         (AstDecl.Import
           (AstImportSpec.Spec
             kind
@@ -3381,7 +3432,8 @@
   [alias : AstMaybeImportAlias]
   [rest : AstDeclPathList]) : AstDeclPathList
   (match alias
-    [(AstMaybeImportAlias.Some _) (ast-decl-path-cons importer-path rest)]
+    [(AstMaybeImportAlias.Some _)
+      (ast-decl-path-list-prepend-builder importer-path rest)]
     [(AstMaybeImportAlias.No) rest]))
 
 (define (compiler-load-alias-module-list
@@ -3389,7 +3441,8 @@
   [alias : AstMaybeImportAlias]
   [rest : AstDeclModuleList]) : AstDeclModuleList
   (match alias
-    [(AstMaybeImportAlias.Some _) (ast-decl-module-cons importer-module rest)]
+    [(AstMaybeImportAlias.Some _)
+      (ast-decl-module-list-prepend-builder importer-module rest)]
     [(AstMaybeImportAlias.No) rest]))
 
 ;; Imported module declarations switch the flattened declaration context; restore
@@ -3411,7 +3464,9 @@
         alias
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-cons (ast-decl-module importer-source-module) after-alias)
+      (ast-decl-list-prepend-builder
+        (ast-decl-module importer-source-module)
+        after-alias)
       after-alias)))
 
 (define (compiler-load-paths-after-import
@@ -3423,7 +3478,7 @@
     [after-alias : AstDeclPathList
       (compiler-load-alias-path-list importer-path alias rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-path-cons importer-path after-alias)
+      (ast-decl-path-list-prepend-builder importer-path after-alias)
       after-alias)))
 
 (define (compiler-load-modules-after-import
@@ -3435,7 +3490,7 @@
     [after-alias : AstDeclModuleList
       (compiler-load-alias-module-list importer-module alias rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-module-cons importer-module after-alias)
+      (ast-decl-module-list-prepend-builder importer-module after-alias)
       after-alias)))
 
 (define (compiler-load-decls-with-module-and-roots
@@ -3556,23 +3611,25 @@
                           rest-modules
                           rest-seen)
                         (ResultCompilerLoadWithPaths.Ok
-                          (ast-decl-cons
+                          (ast-decl-list-prepend-builder
                             (ast-decl-module target-module)
-                            (compiler-load-decl-list-append
+                            (compiler-load-decl-list-append-onto
                               body-decls
-                              (ast-decl-cons
+                              (ast-decl-list-prepend-builder
                                 (ast-decl-module importer-source-module)
                                 rest-decls)))
-                          (ast-decl-path-cons
+                          (ast-decl-path-list-prepend-builder
                             importer-path
-                            (compiler-load-decl-path-list-append
+                            (compiler-load-decl-path-list-append-onto
                               body-paths
-                              (ast-decl-path-cons importer-path rest-paths)))
-                          (ast-decl-module-cons
+                              (ast-decl-path-list-prepend-builder
+                                importer-path
+                                rest-paths)))
+                          (ast-decl-module-list-prepend-builder
                             target-module
-                            (compiler-load-decl-module-list-append
+                            (compiler-load-decl-module-list-append-onto
                               body-modules
-                              (ast-decl-module-cons
+                              (ast-decl-module-list-prepend-builder
                                 importer-module
                                 rest-modules)))
                           rest-seen)]
@@ -3599,9 +3656,13 @@
                     rest-modules
                     rest-seen)
                   (ResultCompilerLoadWithPaths.Ok
-                    (ast-decl-cons decl rest-decls)
-                    (ast-decl-path-cons importer-path rest-paths)
-                    (ast-decl-module-cons importer-module rest-modules)
+                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (ast-decl-path-list-prepend-builder
+                      importer-path
+                      rest-paths)
+                    (ast-decl-module-list-prepend-builder
+                      importer-module
+                      rest-modules)
                     rest-seen)]
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
@@ -3727,7 +3788,7 @@
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
-                                    (compiler-load-decl-list-append
+                                    (compiler-load-decl-list-append-onto
                                       imported-decls
                                       (compiler-load-decls-after-import
                                         kind
@@ -3737,14 +3798,14 @@
                                         importer-source-module
                                         imported-decls
                                         rest-decls))
-                                    (compiler-load-decl-path-list-append
+                                    (compiler-load-decl-path-list-append-onto
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
-                                    (compiler-load-decl-module-list-append
+                                    (compiler-load-decl-module-list-append-onto
                                       imported-modules
                                       (compiler-load-modules-after-import
                                         importer-module
@@ -3783,9 +3844,13 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-cons expanded rest-decls)
-                      (ast-decl-path-cons importer-path rest-paths)
-                      (ast-decl-module-cons importer-module rest-modules)
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
@@ -3815,9 +3880,13 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-cons expanded rest-decls)
-                      (ast-decl-path-cons importer-path rest-paths)
-                      (ast-decl-module-cons importer-module rest-modules)
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
@@ -3840,9 +3909,11 @@
                   rest-modules
                   rest-seen)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-cons decl rest-decls)
-                  (ast-decl-path-cons importer-path rest-paths)
-                  (ast-decl-module-cons importer-module rest-modules)
+                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (ast-decl-path-list-prepend-builder importer-path rest-paths)
+                  (ast-decl-module-list-prepend-builder
+                    importer-module
+                    rest-modules)
                   rest-seen)]
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]))]))
@@ -5488,34 +5559,39 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [module : String]) : AstDeclPathList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (ast-decl-path-list-new)]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
-        [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
-        [next-module : String
-          (match decl
-            [(AstDecl.Module name) (intern-str name)]
-            [_ module])]
-        (ast-decl-path-cons
-          (compiler-load-package-owned-decl-path
-            package-owner
-            package-root
-            stdlib-roots
-            entry-path
-            module
-            decl-path
-            decl)
-          (compiler-load-package-owned-paths-for-decls-in-module
-            package-owner
-            package-root
-            stdlib-roots
-            entry-path
-            rest
-            rest-paths
-            next-module)))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-cursor : AstDeclList decls]
+    [path-cursor : AstDeclPathList paths]
+    [current-module : String module]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step decl-cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [decl-path : String
+                (compiler-load-path-list-head-or path-cursor entry-path)]
+              (begin
+                (ast-decl-path-list-push
+                  (&mut out)
+                  (compiler-load-package-owned-decl-path
+                    package-owner
+                    package-root
+                    stdlib-roots
+                    entry-path
+                    current-module
+                    decl-path
+                    decl))
+                (match decl
+                  [(AstDecl.Module name)
+                    (set! current-module (intern-str name))]
+                  [_ unit])
+                (set! decl-cursor (box-get rest))
+                (set! path-cursor (compiler-load-path-list-tail path-cursor))))]))
+      out)))
 
 (define (compiler-load-package-owned-paths-for-decls
   [package-owner : String]
@@ -5586,9 +5662,11 @@
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-cons transformed rest-decls)
-                  (ast-decl-path-cons owned-decl-path rest-decl-paths)
-                  (ast-decl-module-cons module rest-modules)
+                  (ast-decl-list-prepend-builder transformed rest-decls)
+                  (ast-decl-path-list-prepend-builder
+                    owned-decl-path
+                    rest-decl-paths)
+                  (ast-decl-module-list-prepend-builder module rest-modules)
                   rest-seen)]
               [(CompilerLoadNoDecl)
                 (ResultCompilerLoadWithPaths.Ok
@@ -5754,9 +5832,13 @@
                     rest-modules
                     rest-seen)
                   (ResultCompilerLoadWithPaths.Ok
-                    (ast-decl-cons decl rest-decls)
-                    (ast-decl-path-cons importer-path rest-paths)
-                    (ast-decl-module-cons importer-module rest-modules)
+                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (ast-decl-path-list-prepend-builder
+                      importer-path
+                      rest-paths)
+                    (ast-decl-module-list-prepend-builder
+                      importer-module
+                      rest-modules)
                     rest-seen)]
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
@@ -5902,7 +5984,7 @@
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
-                                    (compiler-load-decl-list-append
+                                    (compiler-load-decl-list-append-onto
                                       imported-decls
                                       (compiler-load-decls-after-import
                                         kind
@@ -5912,14 +5994,14 @@
                                         importer-source-module
                                         imported-decls
                                         rest-decls))
-                                    (compiler-load-decl-path-list-append
+                                    (compiler-load-decl-path-list-append-onto
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
-                                    (compiler-load-decl-module-list-append
+                                    (compiler-load-decl-module-list-append-onto
                                       imported-modules
                                       (compiler-load-modules-after-import
                                         importer-module
@@ -5959,9 +6041,13 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-cons expanded rest-decls)
-                      (ast-decl-path-cons importer-path rest-paths)
-                      (ast-decl-module-cons importer-module rest-modules)
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
@@ -5992,9 +6078,13 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-cons expanded rest-decls)
-                      (ast-decl-path-cons importer-path rest-paths)
-                      (ast-decl-module-cons importer-module rest-modules)
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
@@ -6017,9 +6107,11 @@
                   rest-modules
                   rest-seen)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-cons decl rest-decls)
-                  (ast-decl-path-cons importer-path rest-paths)
-                  (ast-decl-module-cons importer-module rest-modules)
+                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (ast-decl-path-list-prepend-builder importer-path rest-paths)
+                  (ast-decl-module-list-prepend-builder
+                    importer-module
+                    rest-modules)
                   rest-seen)]
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]))]))

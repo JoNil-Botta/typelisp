@@ -21,8 +21,8 @@
 (import sym_i64_env)
 
 (defenum LowerNameEnv
-  (LowerNameNil)
-  (LowerNameBind String i64 String (Box LowerNameEnv)))
+  (Nil)
+  (Bind String i64 String (Box LowerNameEnv)))
 
 ;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
 ;; `LowerNameParentNone` is a complete cache (a miss returns the source name
@@ -89,12 +89,12 @@
   (hashmap.string-i64-map-with-capacity 8))
 
 (defenum LowerStringSet
-  (LowerStringNil)
-  (LowerStringCons String (Box LowerStringSet)))
+  (Nil)
+  (Cons String (Box LowerStringSet)))
 
 (defenum LowerSpmdInlineSubst
-  (LowerSpmdInlineSubstNil)
-  (LowerSpmdInlineSubstCons String AstExpr (Box LowerSpmdInlineSubst)))
+  (Nil)
+  (Cons String AstExpr (Box LowerSpmdInlineSubst)))
 
 ;; #3792: the prune reachability `reachable` set is keyed on each function's
 ;; dense `all-functions` slot (the value `lower-function-set-from-decls` now
@@ -193,8 +193,8 @@
   (LowerSomeIrValue CompilerIrValue))
 
 (defenum LowerMaybeAstExpr
-  (LowerNoAstExpr)
-  (LowerSomeAstExpr AstExpr))
+  (No)
+  (Some AstExpr))
 
 (defenum LowerSpmdInlineLetBindings
   (LowerSpmdInlineLetBindings
@@ -777,11 +777,11 @@
       (while (and
         (not done)
         (match cur
-          [(LowerNameNil) false]
+          [(LowerNameEnv.Nil) false]
           [_ true]))
         (match cur
-          [(LowerNameNil) unit]
-          [(LowerNameBind source _ logical rest)
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Bind source _ logical rest)
             (if (string.eq source source-name)
               (begin
                 (set! result (TcMaybeString.Some logical))
@@ -800,11 +800,11 @@
     [count : i64 0]
     (begin
       (while (match cur
-        [(LowerNameNil) false]
+        [(LowerNameEnv.Nil) false]
         [_ true])
         (match cur
-          [(LowerNameNil) unit]
-          [(LowerNameBind _ _ _ rest)
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Bind _ _ _ rest)
             (begin
               (set! count (+ count 1))
               (set! cur (box-get rest)))]))
@@ -868,7 +868,7 @@
   [source-name : String]
   [logical-name : String]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (LowerNameBind
+  (LowerNameEnv.Bind
     source-name
     (lower-name-cache-source-id-value source-name)
     logical-name
@@ -879,7 +879,7 @@
   [source-id : i64]
   [logical-name : String]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (LowerNameBind source-name source-id logical-name (box rest)))
+  (LowerNameEnv.Bind source-name source-id logical-name (box rest)))
 
 (define (lower-name-cache-add-id
   [cache : LowerNameCache]
@@ -919,11 +919,11 @@
     [out : LowerNameCache cache]
     (begin
       (while (match cur
-        [(LowerNameNil) false]
+        [(LowerNameEnv.Nil) false]
         [_ true])
         (match cur
-          [(LowerNameNil) unit]
-          [(LowerNameBind _ source-id logical rest)
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Bind _ source-id logical rest)
             (begin
               (set! out (lower-name-cache-add-id out source-id logical))
               (set! cur (box-get rest)))]))
@@ -2986,7 +2986,7 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
-    (OkLowerModuleLocalEnv top-env names (TcTypeEnv.Nil) (LowerNameNil))
+    (OkLowerModuleLocalEnv top-env names (TcTypeEnv.Nil) (LowerNameEnv.Nil))
     (match (tc-context-program ctx)
       [(AstProgram.Program decls-box)
         (let
@@ -3005,7 +3005,7 @@
           [local-alias-names : LowerNameEnv
             (lower-name-env-with-import-aliases-in-module-cache
               decls
-              (LowerNameNil)
+              (LowerNameEnv.Nil)
               name-cache
               module)]
           (lower-module-local-envs-list
@@ -3022,8 +3022,8 @@
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
-    [(LowerStringNil) false]
-    [(LowerStringCons item rest)
+    [(LowerStringSet.Nil) false]
+    [(LowerStringSet.Cons item rest)
       (if (string.eq item name)
         true
         (lower-string-set-contains? (box-get rest) name))]))
@@ -3031,10 +3031,10 @@
 (define (lower-string-set-insert [items : LowerStringSet] [name : String]) : LowerStringSet
   (if (lower-string-set-contains? items name)
     items
-    (LowerStringCons name (box items))))
+    (LowerStringSet.Cons name (box items))))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerStringSet
-  LowerStringNil)
+  LowerStringSet.Nil)
 
 (define lower-spmd-inline-helper-stack : LowerStringSet
   (lower-spmd-inline-empty-helper-stack))
@@ -3069,21 +3069,21 @@
   [subs : LowerSpmdInlineSubst]
   [name : String]) : LowerMaybeAstExpr
   (match subs
-    [(LowerSpmdInlineSubstNil) (LowerNoAstExpr)]
-    [(LowerSpmdInlineSubstCons key value rest)
+    [(LowerSpmdInlineSubst.Nil) (LowerMaybeAstExpr.No)]
+    [(LowerSpmdInlineSubst.Cons key value rest)
       (if (string.eq key name)
-        (LowerSomeAstExpr value)
+        (LowerMaybeAstExpr.Some value)
         (lower-spmd-inline-subst-lookup (box-get rest) name))]))
 
 (define (lower-spmd-inline-subst-remove
   [subs : LowerSpmdInlineSubst]
   [name : String]) : LowerSpmdInlineSubst
   (match subs
-    [(LowerSpmdInlineSubstNil) LowerSpmdInlineSubstNil]
-    [(LowerSpmdInlineSubstCons key value rest)
+    [(LowerSpmdInlineSubst.Nil) LowerSpmdInlineSubst.Nil]
+    [(LowerSpmdInlineSubst.Cons key value rest)
       (if (string.eq key name)
         (lower-spmd-inline-subst-remove (box-get rest) name)
-        (LowerSpmdInlineSubstCons
+        (LowerSpmdInlineSubst.Cons
           key
           value
           (box (lower-spmd-inline-subst-remove (box-get rest) name))))]))
@@ -3092,7 +3092,7 @@
   [name : String]
   [value : AstExpr]
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
-  (LowerSpmdInlineSubstCons name value (box rest)))
+  (LowerSpmdInlineSubst.Cons name value (box rest)))
 
 (define (lower-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultLowerSpmdInlineHelper
   (match decl
@@ -3203,7 +3203,7 @@
   [params : AstParamList]
   [args : AstExprList]
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
-  (lower-spmd-inline-build-subst params args LowerSpmdInlineSubstNil origin))
+  (lower-spmd-inline-build-subst params args LowerSpmdInlineSubst.Nil origin))
 
 (define (lower-spmd-inline-expr-list
   [ctx : TcContext]
@@ -3254,7 +3254,7 @@
               [name-text : String (intern-str name)]
               [renamed : bool
                 (match subst
-                  [(LowerSpmdInlineSubstNil) false]
+                  [(LowerSpmdInlineSubst.Nil) false]
                   [_ true])]
               [bind-name : String
                 (if renamed
@@ -3332,7 +3332,7 @@
               type-env
               body
               helper-subst
-              LowerStringNil))
+              LowerStringSet.Nil))
           (set! lower-spmd-inline-helper-stack previous)
           result))]
     [(ErrLowerSpmdInlineSubst diag) (ErrLowerAstExpr diag)]))
@@ -3397,8 +3397,8 @@
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.Var name)
       (match (lower-spmd-inline-subst-lookup subst (intern-str name))
-        [(LowerSomeAstExpr value) (OkLowerAstExpr value)]
-        [(LowerNoAstExpr) (OkLowerAstExpr expr)])]
+        [(LowerMaybeAstExpr.Some value) (OkLowerAstExpr value)]
+        [(LowerMaybeAstExpr.No) (OkLowerAstExpr expr)])]
     [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -4034,7 +4034,7 @@
             state
             (LowerReachState
               (hashmap.i64-i64-map-put reachable slot 1)
-              (LowerStringCons logical-name (box worklist))))])]))
+              (LowerStringSet.Cons logical-name (box worklist))))])]))
 
 (define (lower-runtime-prelude-string-helper-name [source-name : String]) : String
   (let
@@ -6018,7 +6018,7 @@
       [alias-only-names : LowerNameEnv
         (lower-name-env-with-import-aliases-in-module-cache
           decls
-          (LowerNameNil)
+          (LowerNameEnv.Nil)
           base-cache
           module)]
       (lower-name-cache-overlay
@@ -6252,8 +6252,8 @@
   (match state
     [(LowerReachState reachable worklist)
       (match worklist
-        [(LowerStringNil) state]
-        [(LowerStringCons name rest)
+        [(LowerStringSet.Nil) state]
+        [(LowerStringSet.Cons name rest)
           (let
             [popped : LowerReachState
               (LowerReachState reachable (box-get rest))]
@@ -7833,7 +7833,7 @@
                                 all-functions
                                 (LowerReachState
                                   (hashmap.i64-i64-map-with-capacity 8192)
-                                  LowerStringNil)
+                                  LowerStringSet.Nil)
                                 "main")))))
                       decls))
                     [(LowerReachState reachable _)
@@ -10107,7 +10107,7 @@
       (lower-supported-reference-type-list-with-stack?
         ctx
         (box-get elems)
-        LowerStringNil)]
+        LowerStringSet.Nil)]
     [(AstType.Array elem-ty _)
       (not (tc-type-contains-reference? (tc-context-type-get ctx elem-ty)))]
     [(AstType.DynArray elem-ty)
@@ -10117,25 +10117,25 @@
         ctx
         (intern-str name)
         AstLifetimeList.Nil
-        LowerStringNil)]
+        LowerStringSet.Nil)]
     [(AstType.StructArgs name lifetimes)
       (lower-supported-reference-struct-args-with-stack?
         ctx
         (intern-str name)
         (box-get lifetimes)
-        LowerStringNil)]
+        LowerStringSet.Nil)]
     [(AstType.Enum name)
       (lower-supported-reference-enum-args-with-stack?
         ctx
         (intern-str name)
         AstLifetimeList.Nil
-        LowerStringNil)]
+        LowerStringSet.Nil)]
     [(AstType.EnumArgs name lifetimes)
       (lower-supported-reference-enum-args-with-stack?
         ctx
         (intern-str name)
         (box-get lifetimes)
-        LowerStringNil)]
+        LowerStringSet.Nil)]
     [_ false]))
 
 (define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
@@ -10338,7 +10338,7 @@
         [_ false]))))
 
 (define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
-  (lower-supported-reference-type-with-stack? ctx ty LowerStringNil))
+  (lower-supported-reference-type-with-stack? ctx ty LowerStringSet.Nil))
 
 (define (lower-borrowed-str-expr
   [ctx : TcContext]
@@ -30787,7 +30787,7 @@
     env
     type-env
     index
-    LowerStringNil
+    LowerStringSet.Nil
     expr))
 
 (define (lower-masked-vector-bool-array-lane?
@@ -35571,7 +35571,7 @@
     state
     (sym_i64_env.sym-i64-bind env index index-var)
     (tc-bind type-env index index-ty)
-    LowerStringNil
+    LowerStringSet.Nil
     index
     index-var
     active-mask
@@ -36351,8 +36351,8 @@
     env
     type-env
     body
-    LowerSpmdInlineSubstNil
-    (lower-string-set-insert LowerStringNil index))
+    LowerSpmdInlineSubst.Nil
+    (lower-string-set-insert LowerStringSet.Nil index))
     [(OkLowerAstExpr inlined-body)
       (lower-foreach-lowered-inlined
         ctx
@@ -41296,7 +41296,7 @@
         externs
         spans
         names
-        (lower-name-cache-overlay (LowerNameNil))
+        (lower-name-cache-overlay (LowerNameEnv.Nil))
         (lower-type-cache-overlay (TcTypeEnv.Nil))
         dispatch-variants
         mode
@@ -41817,7 +41817,11 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [program : AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-checked-with-names ctx top-env program LowerNameNil))
+  (lower-compiler-program-checked-with-names
+    ctx
+    top-env
+    program
+    LowerNameEnv.Nil))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
 ;; public `-mode` wrappers below own the expand -> specialize -> typecheck
@@ -41841,7 +41845,7 @@
                       decls
                       AstDeclPathList.Nil
                       "<source>"
-                      LowerNameNil
+                      LowerNameEnv.Nil
                       false))])]
             (lower-compiler-program-checked-with-names-mode
               ctx
@@ -41906,7 +41910,11 @@
           [(AstProgram.Program decls-box)
             (let
               [decls : AstDeclList (box-get decls-box)]
-              (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
+              (lower-name-env-from-decls
+                decls
+                paths
+                entry-path
+                LowerNameEnv.Nil))])]
       (match (if needs-specialization
         (compiler-specialize-program-with-pools program pools)
         (ResultSpecProgram.Ok program))
@@ -41926,7 +41934,7 @@
                           decls
                           specialized-paths
                           entry-path
-                          LowerNameNil))])
+                          LowerNameEnv.Nil))])
                   names)]
               (match (lower-prune-unreachable-functions-with-clone-roots
                 entry-path
@@ -41970,7 +41978,7 @@
                                         decls
                                         checked-paths
                                         entry-path
-                                        LowerNameNil))])]
+                                        LowerNameEnv.Nil))])]
                               [lower-names : LowerNameEnv
                                 (if needs-specialization
                                   (match checked-program
@@ -52785,7 +52793,7 @@
               decls
               AstDeclPathList.Nil
               "entry.tl"
-              LowerNameNil))])]
+              LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions
         "entry.tl"
@@ -53099,7 +53107,7 @@
               decls
               AstDeclPathList.Nil
               "entry.tl"
-              LowerNameNil))])]
+              LowerNameEnv.Nil))])]
     [no-main-names : LowerNameEnv
       (match no-main-program
         [(AstProgram.Program decls-box)
@@ -53109,7 +53117,7 @@
               decls
               AstDeclPathList.Nil
               "entry.tl"
-              LowerNameNil))])]
+              LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions
         "entry.tl"
@@ -53151,7 +53159,7 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
@@ -53178,7 +53186,7 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
@@ -53202,7 +53210,7 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
@@ -53227,7 +53235,7 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
@@ -53251,7 +53259,7 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
@@ -53277,7 +53285,7 @@
               decls
               AstDeclPathList.Nil
               "entry.tl"
-              LowerNameNil))])]
+              LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions
         "entry.tl"
@@ -53330,7 +53338,7 @@
                 decls
                 AstDeclPathList.Nil
                 "entry.tl"
-                LowerNameNil)]
+                LowerNameEnv.Nil)]
             [pruned : LowerPrunedProgram
               (lower-prune-unreachable-functions
                 "entry.tl"
@@ -53350,10 +53358,10 @@
       (lower-name-env-bind
         "source-a"
         "logical-a"
-        (lower-name-env-bind "source-b" "logical-b" LowerNameNil))]
+        (lower-name-env-bind "source-b" "logical-b" LowerNameEnv.Nil))]
     [strings : LowerStringSet
       (lower-string-set-insert
-        (lower-string-set-insert LowerStringNil "helper-a")
+        (lower-string-set-insert LowerStringSet.Nil "helper-a")
         "helper-b")]
     [captures : LowerCaptureList
       (lower-capture-list-add-front
@@ -53442,7 +53450,7 @@
       (lower-name-env-bind
         split-source
         split-logical
-        (lower-name-env-bind source logical LowerNameNil))]
+        (lower-name-env-bind source logical LowerNameEnv.Nil))]
     [cache : LowerNameCache (lower-name-cache-from-env names)]
     (and
       (>= source-id 0)

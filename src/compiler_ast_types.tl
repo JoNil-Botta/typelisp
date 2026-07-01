@@ -334,16 +334,20 @@
   (Fn i64)
   (Owned))
 
-(defenum AstVariantPayloadCleanupList
-  (Nil)
-  (Cons AstVariantPayloadCleanup (Box AstVariantPayloadCleanupList)))
+(comptime-decl
+  (:generated vector-family AstVariantPayloadCleanupList "AstVariantPayloadCleanup")
+  (defstruct AstVariantPayloadCleanupList
+    (slots (Array AstVariantPayloadCleanup))
+    (len i64)))
 
 (defenum AstVariantDef
   (Def i64 AstTypeList AstVariantPayloadCleanupList))
 
-(defenum AstVariantDefList
-  (Nil)
-  (Cons AstVariantDef (Box AstVariantDefList)))
+(comptime-decl
+  (:generated vector-family AstVariantDefList "AstVariantDef")
+  (defstruct AstVariantDefList
+    (slots (Array AstVariantDef))
+    (len i64)))
 
 (defenum AstPattern
   (Var i64 AstMaybeType)
@@ -2094,6 +2098,106 @@
 (define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
   (AstVariantPayloadCleanup.Fn name))
 
+(define (ast-variant-payload-cleanup-fallback) : AstVariantPayloadCleanup
+  AstVariantPayloadCleanup.No)
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-with-capacity "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-with-capacity [capacity : i64]) : AstVariantPayloadCleanupList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstVariantPayloadCleanupList
+        (array.make-array AstVariantPayloadCleanup cap)
+        0))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-new "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-new) : AstVariantPayloadCleanupList
+    (ast-variant-payload-cleanup-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-len "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-len
+    [v : (& v AstVariantPayloadCleanupList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-get "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-get
+    [v : (& v AstVariantPayloadCleanupList)]
+    [index : i64]
+    [fallback : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
+    (if (and (>= index 0) (< index (ast-variant-payload-cleanup-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-copy-range "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-copy-range
+    [dst : (&mut dst (Array AstVariantPayloadCleanup))]
+    [src : (& src (Array AstVariantPayloadCleanup))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-variant-payload-cleanup-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-grow "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-grow
+    [v : (&mut v AstVariantPayloadCleanupList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstVariantPayloadCleanup)
+        (array.make-array AstVariantPayloadCleanup new-cap)]
+      (begin
+        (ast-variant-payload-cleanup-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-payload-cleanup-list-push "AstVariantPayloadCleanup")
+  (define (ast-variant-payload-cleanup-list-push
+    [v : (&mut v AstVariantPayloadCleanupList)]
+    [value : AstVariantPayloadCleanup]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-variant-payload-cleanup-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-variant-payload-cleanup-list-append-from
+  [out : (&mut out AstVariantPayloadCleanupList)]
+  [items : (& items AstVariantPayloadCleanupList)]
+  [index : i64]) : unit
+  (if (>= index (ast-variant-payload-cleanup-list-len items))
+    unit
+    (begin
+      (ast-variant-payload-cleanup-list-push
+        out
+        (ast-variant-payload-cleanup-list-get
+          items
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (ast-variant-payload-cleanup-list-append-from out items (+ index 1)))))
+
 (define (ast-variant-def
   [name : String]
   [fields : AstTypeList]
@@ -2106,13 +2210,124 @@
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
   (AstVariantDef.Def name fields cleanups))
 
+(define (ast-variant-def-fallback) : AstVariantDef
+  (AstVariantDef.Def 0 AstTypeList.Nil (ast-variant-payload-cleanup-list-new)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-with-capacity "AstVariantDef")
+  (define (ast-variant-def-list-with-capacity [capacity : i64]) : AstVariantDefList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstVariantDefList (array.make-array AstVariantDef cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-new "AstVariantDef")
+  (define (ast-variant-def-list-new) : AstVariantDefList
+    (ast-variant-def-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-len "AstVariantDef")
+  (define (ast-variant-def-list-len [v : (& v AstVariantDefList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-empty? "AstVariantDef")
+  (define (ast-variant-def-list-empty? [v : (& v AstVariantDefList)]) : bool
+    (= (ast-variant-def-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-get "AstVariantDef")
+  (define (ast-variant-def-list-get
+    [v : (& v AstVariantDefList)]
+    [index : i64]
+    [fallback : AstVariantDef]) : AstVariantDef
+    (if (and (>= index 0) (< index (ast-variant-def-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-copy-range "AstVariantDef")
+  (define (ast-variant-def-list-copy-range
+    [dst : (&mut dst (Array AstVariantDef))]
+    [src : (& src (Array AstVariantDef))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-variant-def-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-grow "AstVariantDef")
+  (define (ast-variant-def-list-grow [v : (&mut v AstVariantDefList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstVariantDef) (array.make-array AstVariantDef new-cap)]
+      (begin
+        (ast-variant-def-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-variant-def-list-push "AstVariantDef")
+  (define (ast-variant-def-list-push
+    [v : (&mut v AstVariantDefList)]
+    [value : AstVariantDef]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-variant-def-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-variant-def-list-append-from
+  [out : (&mut out AstVariantDefList)]
+  [items : (& items AstVariantDefList)]
+  [index : i64]) : unit
+  (if (>= index (ast-variant-def-list-len items))
+    unit
+    (begin
+      (ast-variant-def-list-push
+        out
+        (ast-variant-def-list-get items index (ast-variant-def-fallback)))
+      (ast-variant-def-list-append-from out items (+ index 1)))))
+
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
-  (AstVariantDefList.Cons head (box rest)))
+  (let
+    [out : AstVariantDefList
+      (ast-variant-def-list-with-capacity
+        (+ 1 (ast-variant-def-list-len (& rest))))]
+    (begin
+      (ast-variant-def-list-push (&mut out) head)
+      (ast-variant-def-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-variant-payload-cleanup-cons
   [head : AstVariantPayloadCleanup]
   [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
-  (AstVariantPayloadCleanupList.Cons head (box rest)))
+  (let
+    [out : AstVariantPayloadCleanupList
+      (ast-variant-payload-cleanup-list-with-capacity
+        (+ 1 (ast-variant-payload-cleanup-list-len (& rest))))]
+    (begin
+      (ast-variant-payload-cleanup-list-push (&mut out) head)
+      (ast-variant-payload-cleanup-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-pattern-fallback) : AstPattern
   AstPattern.Wildcard)
@@ -3709,12 +3924,35 @@
 
 (define (ast-compaction-remap-variant-payload-cleanup-list
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
-  (match cleanups
-    [(AstVariantPayloadCleanupList.Nil) AstVariantPayloadCleanupList.Nil]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (AstVariantPayloadCleanupList.Cons
-        (ast-compaction-remap-variant-payload-cleanup cleanup)
-        (box (ast-compaction-remap-variant-payload-cleanup-list (box-get rest))))]))
+  (let
+    [out : AstVariantPayloadCleanupList
+      (ast-variant-payload-cleanup-list-with-capacity
+        (ast-variant-payload-cleanup-list-len (& cleanups)))]
+    (begin
+      (ast-compaction-remap-variant-payload-cleanup-list-into
+        (& cleanups)
+        0
+        (&mut out))
+      out)))
+
+(define (ast-compaction-remap-variant-payload-cleanup-list-into
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]
+  [out : (&mut out AstVariantPayloadCleanupList)]) : unit
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    unit
+    (begin
+      (ast-variant-payload-cleanup-list-push
+        out
+        (ast-compaction-remap-variant-payload-cleanup
+          (ast-variant-payload-cleanup-list-get
+            cleanups
+            index
+            (ast-variant-payload-cleanup-fallback))))
+      (ast-compaction-remap-variant-payload-cleanup-list-into
+        cleanups
+        (+ index 1)
+        out))))
 
 (define (ast-compaction-remap-variant-def
   [remap : AstProgramCompactionRemap]
@@ -3729,12 +3967,36 @@
 (define (ast-compaction-remap-variant-def-list
   [remap : AstProgramCompactionRemap]
   [variants : AstVariantDefList]) : AstVariantDefList
-  (match variants
-    [(AstVariantDefList.Nil) AstVariantDefList.Nil]
-    [(AstVariantDefList.Cons variant rest)
-      (AstVariantDefList.Cons
-        (ast-compaction-remap-variant-def remap variant)
-        (box (ast-compaction-remap-variant-def-list remap (box-get rest))))]))
+  (let
+    [out : AstVariantDefList
+      (ast-variant-def-list-with-capacity
+        (ast-variant-def-list-len (& variants)))]
+    (begin
+      (ast-compaction-remap-variant-def-list-into
+        remap
+        (& variants)
+        0
+        (&mut out))
+      out)))
+
+(define (ast-compaction-remap-variant-def-list-into
+  [remap : AstProgramCompactionRemap]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]
+  [out : (&mut out AstVariantDefList)]) : unit
+  (if (>= index (ast-variant-def-list-len variants))
+    unit
+    (begin
+      (ast-variant-def-list-push
+        out
+        (ast-compaction-remap-variant-def
+          remap
+          (ast-variant-def-list-get variants index (ast-variant-def-fallback))))
+      (ast-compaction-remap-variant-def-list-into
+        remap
+        variants
+        (+ index 1)
+        out))))
 
 (define (ast-compaction-remap-struct-cleanup [cleanup : AstStructCleanup]) : AstStructCleanup
   (match cleanup

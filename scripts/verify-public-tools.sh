@@ -178,6 +178,14 @@ assert_contains_any() {
     fail "$case_name missing any expected text: $*"
 }
 
+assert_not_contains_any() {
+    file=$1
+    shift
+    for text in "$@"; do
+        assert_not_contains "$file" "$text"
+    done
+}
+
 assert_not_contains() {
     file=$1
     text=$2
@@ -1743,7 +1751,13 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%r9), %r9'
+    if [ "$HOST_OS" = windows ]; then
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%rdx), %rbx'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %r9'
+    else
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%r9), %r9'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%r9), %r9'
+    fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"
@@ -1770,7 +1784,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
@@ -1778,7 +1792,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_RELEASE_ASM" ] || fail "selfhost opt package worker default build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
@@ -1787,7 +1801,7 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
     assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
@@ -1795,21 +1809,21 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
     assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-one "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 1 build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
@@ -1818,14 +1832,14 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
     assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-dev-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile --opt-level 2 build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
@@ -1833,7 +1847,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_DEV_ASM" ] || fail "selfhost opt package worker --opt-level 2 --profile dev build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"

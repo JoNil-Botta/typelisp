@@ -342,15 +342,15 @@
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
-    "%rax"
+    "%r9"
     (compiler-reg-string-cons
       "%rcx"
       (compiler-reg-string-cons
         "%rdx"
         (compiler-reg-string-cons
-          "%r8"
+          "%rax"
           (compiler-reg-string-cons
-            "%r9"
+            "%r8"
             (compiler-reg-string-cons
               "%r10"
               (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))
@@ -369,6 +369,46 @@
             (compiler-reg-string-cons
               "%r14"
               (compiler-reg-string-cons "%r15" CompilerRegStringList.Nil))))))))
+
+(define (compiler-reg-string-list-append
+  [left : CompilerRegStringList]
+  [right : CompilerRegStringList]) : CompilerRegStringList
+  (match left
+    [(CompilerRegStringList.Nil) right]
+    [(CompilerRegStringList.Cons reg rest)
+      (compiler-reg-string-cons
+        reg
+        (compiler-reg-string-list-append (box-get rest) right))]))
+
+(define (compiler-reg-caller-saved-integer-registers-for-abi
+  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-zero-call-caller-saved-integer-registers)]
+    [(CompilerRegTargetAbi.Windows)
+      (compiler-reg-win64-caller-saved-integer-registers)]))
+
+(define (compiler-reg-callee-saved-integer-registers-for-abi
+  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (match abi
+    [(CompilerRegTargetAbi.Linux) (compiler-reg-sysv-integer-registers)]
+    [(CompilerRegTargetAbi.Windows)
+      (compiler-reg-win64-callee-saved-integer-registers)]))
+
+(define (compiler-reg-callee-saved-integer-register-count-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (compiler-reg-string-list-count
+    (compiler-reg-callee-saved-integer-registers-for-abi abi)))
+
+(define (compiler-reg-greedy-integer-pool-for-abi [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (compiler-reg-string-list-append
+    (compiler-reg-caller-saved-integer-registers-for-abi abi)
+    (compiler-reg-callee-saved-integer-registers-for-abi abi)))
+
+(define (compiler-reg-greedy-caller-saved-count-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (compiler-reg-string-list-count
+    (compiler-reg-caller-saved-integer-registers-for-abi abi)))
 
 ;; Persistent float homes use XMM registers that are caller-saved on both SysV
 ;; and Windows x64, avoid %xmm0/%xmm1 arithmetic scratch, avoid %xmm15 outgoing
@@ -4696,6 +4736,55 @@
       (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
+(define (compiler-reg-backend-win64-extra-clobber-instr?
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.AddrOf _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.LaneId _ _ _) true]
+    [(CompilerIrInstr.Splat _ _ _ _) true]
+    [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorCompare _) true]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.MaskNot _ _ _) true]
+    [(CompilerIrInstr.MaskReduce _ _ _ _) true]
+    [(CompilerIrInstr.Select _) true]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [(CompilerIrInstr.PredicatedLoad _) true]
+    [(CompilerIrInstr.TailMask _ _ _ _) true]
+    [(CompilerIrInstr.EntryArgc _) true]
+    [(CompilerIrInstr.EntryArgv _) true]
+    [(CompilerIrInstr.EntryEnvp _) true]
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Return _) true]
+    [(CompilerIrInstr.Pack _ _ _) true]
+    [(CompilerIrInstr.Word _ _ _ _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-backend-caller-clobber-instr-for-abi?
+  [abi : CompilerRegTargetAbi]
+  [instr : CompilerIrInstr]) : bool
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-instr? instr)]
+    [(CompilerRegTargetAbi.Windows)
+      (or
+        (compiler-reg-backend-caller-clobber-instr? instr)
+        (compiler-reg-backend-win64-extra-clobber-instr? instr))]))
+
 (define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -4786,6 +4875,73 @@
         0
         (compiler-live-set-empty))
         [(CompilerRegCallScan.Scan _ set) set])]))
+
+(define (compiler-reg-backend-caller-clobber-points-seq-for-abi
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
+            abi
+            (array-ref slots index))
+            (set! out (compiler-live-set-insert out p))
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan.Scan p out))))
+
+(define (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (compiler-reg-backend-caller-clobber-points-seq-for-abi
+            abi
+            instrs
+            point
+            set)
+            [(CompilerRegCallScan.Scan p2 s2)
+              (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+                abi
+                (box-get rest)
+                p2
+                s2)])])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+        abi
+        (compiler-ir-block-seq-to-list seq)
+        point
+        set)]))
+
+(define (compiler-reg-backend-caller-clobber-points-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-points func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (match (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+            abi
+            blocks
+            0
+            (compiler-live-set-empty))
+            [(CompilerRegCallScan.Scan _ set) set])])]))
 
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
@@ -5114,6 +5270,66 @@
       (compiler-reg-backend-caller-clobber-vars-blocks
         blocks
         (compiler-live-set-empty))]))
+
+(define (compiler-reg-backend-caller-clobber-vars-seq-for-abi
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
+            abi
+            (array-ref slots index))
+            (set!
+              out
+              (compiler-live-set-union
+                out
+                (compiler-reg-clobber-instr-vars (array-ref slots index))))
+            unit)
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [blocks : CompilerIrBlockList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+            abi
+            (box-get rest)
+            (compiler-reg-backend-caller-clobber-vars-seq-for-abi
+              abi
+              instrs
+              set))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+        abi
+        (compiler-ir-block-seq-to-list seq)
+        set)]))
+
+(define (compiler-reg-backend-caller-clobber-vars-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-vars func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+            abi
+            blocks
+            (compiler-live-set-empty))])]))
 
 (define (compiler-reg-loop-depth-max) : i64
   8)
@@ -6543,6 +6759,7 @@
         remap)]))
 
 (define (compiler-reg-loop-split-try-var
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [region-label : String]
   [block : CompilerLiveBlock]
@@ -6599,7 +6816,8 @@
                             depth
                             copy-count))
                           (match (compiler-reg-loop-split-first-register
-                            (compiler-reg-sysv-integer-registers)
+                            (compiler-reg-callee-saved-integer-registers-for-abi
+                              abi)
                             assignments
                             intervals
                             region-intervals
@@ -6624,6 +6842,7 @@
     (CompilerRegLoopSplitCandidate.NoCandidate)))
 
 (define (compiler-reg-loop-split-select-var
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [region-label : String]
   [block : CompilerLiveBlock]
@@ -6642,6 +6861,7 @@
   (if (>= var vars)
     (CompilerRegLoopSplitCandidate.NoCandidate)
     (match (compiler-reg-loop-split-try-var
+      abi
       func
       region-label
       block
@@ -6659,6 +6879,7 @@
       merged-roots)
       [(CompilerRegLoopSplitCandidate.NoCandidate)
         (compiler-reg-loop-split-select-var
+          abi
           func
           region-label
           block
@@ -6678,6 +6899,7 @@
         (CompilerRegLoopSplitCandidate.Candidate stack-var label ty reg copies)])))
 
 (define (compiler-reg-loop-split-select-blocks
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [ids : hashmap.StringI64Map]
@@ -6714,6 +6936,7 @@
                 (compiler-reg-live-block-succs
                   (array-ref live-blocks block-index))))
               (match (compiler-reg-loop-split-select-var
+                abi
                 func
                 label
                 (array-ref live-blocks block-index)
@@ -6731,6 +6954,7 @@
                 merged-roots)
                 [(CompilerRegLoopSplitCandidate.NoCandidate)
                   (compiler-reg-loop-split-select-blocks
+                    abi
                     func
                     (box-get rest)
                     ids
@@ -6758,6 +6982,7 @@
                     reg
                     copies)])
               (compiler-reg-loop-split-select-blocks
+                abi
                 func
                 (box-get rest)
                 ids
@@ -6774,6 +6999,7 @@
                 merged-roots)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-select-blocks
+        abi
         func
         (compiler-ir-block-seq-to-list seq)
         ids
@@ -6835,6 +7061,7 @@
 ;; count) bounds it. With a single candidate this is bit-identical to the old
 ;; one-shot behaviour (merging additions with the empty tail is the identity).
 (define (compiler-reg-loop-split-rewrite-one
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -6843,14 +7070,16 @@
   (if (not (compiler-reg-scalar-full-intervals? func))
     (compiler-reg-loop-split-noop blocks vars)
     (compiler-reg-loop-split-rewrite-fueled
+      abi
       func
       blocks
       vars
       type-info
       plan
-      (compiler-reg-sysv-integer-register-count))))
+      (compiler-reg-callee-saved-integer-register-count-for-abi abi))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -6887,6 +7116,7 @@
             (match liveness
               [(CompilerFunctionLiveness.Liveness ids live-blocks)
                 (match (compiler-reg-loop-split-select-blocks
+                  abi
                   func
                   blocks
                   ids
@@ -6947,6 +7177,7 @@
                                     applied)]
                                 [rest : CompilerRegCallSaveRewrite
                                   (compiler-reg-loop-split-rewrite-fueled
+                                    abi
                                     new-func
                                     new-blocks
                                     new-vars
@@ -6972,9 +7203,15 @@
                                         rest-types))]))])]))])]))]))))
 
 (define (compiler-reg-loop-split-max-rounds) : i64
-  (compiler-reg-sysv-integer-register-count))
+  (compiler-reg-callee-saved-integer-register-count-for-abi
+    CompilerRegTargetAbi.Linux))
+
+(define (compiler-reg-loop-split-max-rounds-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (compiler-reg-callee-saved-integer-register-count-for-abi abi))
 
 (define (compiler-reg-loop-split-rewrite-rounds
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [in-vars : i64]
@@ -7003,6 +7240,7 @@
       [round-type-info : CompilerRegVarTypes
         (compiler-reg-function-var-types func)]
       (match (compiler-reg-loop-split-rewrite-one
+        abi
         func
         blocks
         current-vars
@@ -7038,6 +7276,7 @@
                       next-vars
                       next-blocks)]
                   (compiler-reg-loop-split-rewrite-rounds
+                    abi
                     next-func
                     next-blocks
                     in-vars
@@ -7053,7 +7292,23 @@
   [vars : i64]
   [_type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (compiler-reg-loop-split-rewrite-blocks-for-abi
+    CompilerRegTargetAbi.Linux
+    func
+    blocks
+    vars
+    _type-info
+    plan))
+
+(define (compiler-reg-loop-split-rewrite-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [_type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (compiler-reg-loop-split-rewrite-rounds
+    abi
     func
     blocks
     vars
@@ -7061,7 +7316,7 @@
     plan
     CompilerRegAssignmentList.Nil
     CompilerRegVarTypeList.Nil
-    (compiler-reg-loop-split-max-rounds)))
+    (compiler-reg-loop-split-max-rounds-for-abi abi)))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]
@@ -7201,6 +7456,7 @@
       (= (compiler-ir-block-list-count blocks) 1)]))
 
 (define (compiler-reg-assign-caller-saved-call-spanning
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [candidates : CompilerRegIntervalList]
   [assignments : CompilerRegAssignmentTable]
@@ -7221,8 +7477,8 @@
           (compiler-live-set-empty)
           (compiler-reg-call-split-boundary-vars func))
         (compiler-reg-direct-call-points func)
-        (compiler-reg-backend-caller-clobber-points func)
-        (compiler-reg-backend-caller-clobber-vars func)
+        (compiler-reg-backend-caller-clobber-points-for-abi abi func)
+        (compiler-reg-backend-caller-clobber-vars-for-abi abi func)
         (not single-block)
         (compiler-live-set-empty))
         [(CompilerRegCallSaveAssignState.State reserved split-vars)
@@ -8171,9 +8427,10 @@
 
 ;; ============================================================================
 ;; LLVM-style per-vreg Greedy register allocator (RAGreedy). The single allocation
-;; algorithm across the whole compiler: integer (all 8 registers, caller/callee-
-;; saved with call-clobber as interference), SIMD/AVX integer (the 5 callee-saved),
-;; and float->XMM (all caller-saved). For each register class one selectOrSplit
+;; algorithm across the whole compiler: scalar integer (ABI-specific
+;; caller/callee-saved pools with call-clobber as interference), SIMD/AVX integer
+;; (the Linux callee-saved pool), and float->XMM (all caller-saved). For each
+;; register class one selectOrSplit
 ;; pass over the coalesced ROOTS:
 ;;   * spill-weight PRIORITY ORDER (remat-discounted ref-counts desc, var asc) --
 ;;     the LLVM enqueue priority;
@@ -8719,24 +8976,19 @@
           callee-regs
           caller-saved-count)))))
 
-;; Unified Greedy integer register pool: caller-saved zero-call scratch
-;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no
-;; prologue/epilogue save/restore, the LLVM CSR-cost try-order -- then the
-;; callee-saved pool. The first `caller-saved-count` entries are caller-saved: a
-;; value whose live range spans a backend clobber-point (call site / op that
-;; clobbers caller-saved regs) may NOT use them (it would be clobbered across the
-;; clobber), exactly the regmask-as-interference rule. Such values start their
-;; register search at the callee-saved offset. This folds the old
-;; prepass-partition + caller-saved-overflow into ONE allocation pass.
+;; Unified Greedy integer register pool. The Linux wrapper keeps the historical
+;; caller-saved prefix (%r9/%rcx/%rdx) followed by the Linux callee-saved pool;
+;; the ABI-aware helper swaps in the Win64 caller/callee sets. The first
+;; `caller-saved-count` entries are caller-saved: a value whose live range spans
+;; a backend clobber-point may NOT use them, exactly the regmask-as-interference
+;; rule. Such values start their register search at the callee-saved offset. This
+;; folds the old prepass-partition + caller-saved-overflow into ONE allocation
+;; pass.
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%r9"
-    (compiler-reg-string-cons
-      "%rcx"
-      (compiler-reg-string-cons "%rdx" (compiler-reg-sysv-integer-registers)))))
+  (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Linux))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  3)
+  (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegTargetAbi.Linux))
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check
@@ -8824,6 +9076,7 @@
   [assignment-table : CompilerRegAssignmentTable]
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
+  [abi : CompilerRegTargetAbi]
   [allow-caller-saved-zero-call : bool]) : CompilerRegPlan
   (let
     [moves
@@ -8844,7 +9097,7 @@
       ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
       ;; pool register callee-saved, so the clobber test never restricts there; on
       ;; the XMM path call-spanning floats are already excluded pre-allocation.
-      (compiler-reg-backend-caller-clobber-points func)]
+      (compiler-reg-backend-caller-clobber-points-for-abi abi func)]
     ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
     ;; identical value and may coalesce even when their live segments overlap.
     ;; Vars spanning a modeled caller-clobber point stay out of the same-value
@@ -8925,7 +9178,7 @@
     [integer-candidates : CompilerRegIntervalList
       (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
     [integer-registers : CompilerRegStringList
-      (compiler-reg-sysv-integer-registers)]
+      (compiler-reg-callee-saved-integer-registers-for-abi abi)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -8938,8 +9191,8 @@
         ;; order (LLVM RAGreedy always computes spill weights). The old
         ;; remat-weight-needed gate compared total candidates to the full
         ;; (8-register) pool, so a call-spanning function -- whose values may only
-        ;; use the 5 callee-saved registers and so oversubscribe even with < 8
-        ;; total candidates -- got an empty weight array and fell back to var-id
+        ;; use only the ABI callee-saved suffix and so oversubscribe even below
+        ;; the full scalar pool size -- got an empty weight array and fell back to var-id
         ;; order, keeping the rematerialisable constant in a register and spilling
         ;; a more expensive non-remat value. Always scoring fixes that (#3489 PR2:
         ;; each coalesced class scored by its hottest member). The discounted
@@ -8957,21 +9210,21 @@
             (array-length (struct-get interval-index starts))))
         (array.make-array i64 0))]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
-    ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
-    ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
-    ;; The incoming table flows straight in; integer-candidates is borrowed directly.
+    ;; non-call-spanning scratch in the ABI caller-saved prefix itself, so the old
+    ;; scalar prepass-partition + caller-saved-overflow passes are gone. The
+    ;; incoming table flows straight in; integer-candidates is borrowed directly.
     [prepass-assignments : CompilerRegAssignmentTable assignment-table]
     [integer-state
       : CompilerRegAssignState
       ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
       ;; selectOrSplit, per-physreg LiveIntervalUnion, call-clobber as interference).
-      ;; Scalar-opt2 (true) uses all 8 integer registers + coalescing; the SIMD/AVX
-      ;; branch below (false) uses the 5 callee-saved (the old SIMD pool) with no
+      ;; Scalar-opt2 (true) uses the ABI-specific integer pool + coalescing; the
+      ;; SIMD/AVX branch below (false) uses the Linux callee-saved pool with no
       ;; coalescing -- the same algorithm, a conservative config.
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
           integer-candidates
-          (compiler-reg-greedy-integer-pool)
+          (compiler-reg-greedy-integer-pool-for-abi abi)
           prepass-assignments
           eff-index
           group-vars
@@ -8979,13 +9232,13 @@
           copy-hints
           clobber-points
           integer-registers
-          (compiler-reg-greedy-caller-saved-count))
-        ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
-        ;; integer registers (= the old SIMD pool) with caller-saved-count=0 so every
-        ;; register is treated callee-saved (no caller-saved-first ordering; the SIMD
-        ;; path never partitioned). ref-counts/copy-hints are empty here -> the
-        ;; greedy's bounds-guarded spill-weight/hint accesses fall back to var-id
-        ;; order / no-hint, matching the old linear-scan's defaults.
+          (compiler-reg-greedy-caller-saved-count-for-abi abi))
+        ;; SIMD/AVX integer allocation: same unified greedy, over the Linux
+        ;; callee-saved integer registers (= the old SIMD pool) with
+        ;; caller-saved-count=0 so every register is treated callee-saved. The
+        ;; SIMD path never partitioned; ref-counts/copy-hints are empty here ->
+        ;; the greedy's bounds-guarded spill-weight/hint accesses fall back to
+        ;; var-id order / no-hint, matching the old linear-scan's defaults.
         (compiler-reg-greedy-state
           integer-candidates
           integer-registers
@@ -9001,15 +9254,16 @@
       (match integer-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
     ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
-    ;; allocates the caller-saved zero-call pool (%r9/%rcx/%rdx) itself, so retrying
-    ;; the same registers here was redundant. The call-spanning save/restore rescue
-    ;; (a real spill-avoidance, not a register-allocation pass) is kept and fed the
+    ;; allocates the caller-saved zero-call prefix itself, so retrying the same
+    ;; registers here was redundant. The call-spanning save/restore rescue (a
+    ;; real spill-avoidance, not a register-allocation pass) is kept and fed the
     ;; greedy's assignments directly.
     [integer-with-call-save-state : CompilerRegCallSaveAssignState
       (if (and
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
+          abi
           func
           integer-candidates
           integer-assignments
@@ -9127,6 +9381,7 @@
       (compiler-reg-assignment-table-make vars)
       ineligible
       ineligible
+      CompilerRegTargetAbi.Linux
       false)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
@@ -9194,6 +9449,7 @@
                 preassignments
                 ineligible
                 blocked
+                abi
                 true)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
@@ -17080,6 +17336,10 @@
   (let
     [zero-call-callers : CompilerRegStringList
       (compiler-reg-zero-call-caller-saved-integer-registers)]
+    [linux-pool : CompilerRegStringList
+      (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Linux)]
+    [win-pool : CompilerRegStringList
+      (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)]
     [sysv-callers : CompilerRegStringList
       (compiler-reg-sysv-caller-saved-integer-registers)]
     [sysv-callees : CompilerRegStringList
@@ -17088,6 +17348,18 @@
       (compiler-reg-win64-caller-saved-integer-registers)]
     [win-callees : CompilerRegStringList
       (compiler-reg-win64-callee-saved-integer-registers)]
+    [copy-instr : CompilerIrInstr
+      (CompilerIrInstr.CopyBytes
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        24)]
+    [add-instr : CompilerIrInstr
+      (CompilerIrInstr.BinOp
+        2
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64))]
     (and
       (compiler-reg-string-list-contains? sysv-callers "%rdi")
       (not (compiler-reg-string-list-contains? sysv-callees "%rdi"))
@@ -17111,6 +17383,35 @@
       (compiler-reg-string-list-contains? zero-call-callers "%r9")
       (compiler-reg-string-list-contains? zero-call-callers "%rcx")
       (compiler-reg-string-list-contains? zero-call-callers "%rdx")
+      (= (compiler-reg-string-list-count linux-pool) 8)
+      (=
+        (compiler-reg-greedy-caller-saved-count-for-abi
+          CompilerRegTargetAbi.Linux)
+        3)
+      (= (compiler-reg-string-list-count win-pool) 14)
+      (=
+        (compiler-reg-greedy-caller-saved-count-for-abi
+          CompilerRegTargetAbi.Windows)
+        7)
+      (compiler-reg-string-list-contains? win-pool "%rax")
+      (compiler-reg-string-list-contains? win-pool "%r8")
+      (compiler-reg-string-list-contains? win-pool "%r11")
+      (compiler-reg-string-list-contains? win-pool "%rsi")
+      (compiler-reg-string-list-contains? win-pool "%rdi")
+      (not
+        (compiler-reg-backend-caller-clobber-instr-for-abi?
+          CompilerRegTargetAbi.Linux
+          copy-instr))
+      (compiler-reg-backend-caller-clobber-instr-for-abi?
+        CompilerRegTargetAbi.Windows
+        copy-instr)
+      (not
+        (compiler-reg-backend-caller-clobber-instr-for-abi?
+          CompilerRegTargetAbi.Linux
+          add-instr))
+      (compiler-reg-backend-caller-clobber-instr-for-abi?
+        CompilerRegTargetAbi.Windows
+        add-instr)
       (compiler-reg-string-list-contains? sysv-callers "%rcx")
       (compiler-reg-string-list-contains? sysv-callers "%rdx")
       (compiler-reg-string-list-contains? sysv-callers "%r9")

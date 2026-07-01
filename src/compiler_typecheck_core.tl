@@ -50148,6 +50148,26 @@
               alias-qualified?)
             alias-qualified?)])]))
 
+(define (macro-generated-surface-dispatch-variant-list-refs
+  [variants : AstDispatchVariantList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match variants
+    [(AstDispatchVariantList.Nil) refs]
+    [(AstDispatchVariantList.Cons variant rest)
+      (match variant
+        [(AstDispatchVariant.Variant _ name)
+          (macro-generated-surface-dispatch-variant-list-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-name-ref
+              aliases
+              refs
+              name
+              alias-qualified?)
+            alias-qualified?)])]))
+
 (define (macro-generated-surface-extern-abi-refs
   [abi : AstExternAbi]
   [aliases : MacroGeneratedSurfaceNameSet]
@@ -50304,7 +50324,12 @@
         [_ refs])]
     [(AstDecl.IncludeStr _ _) refs]
     [(AstDecl.IncludeBin _ _) refs]
-    [(AstDecl.DefDispatch _ _) refs]
+    [(AstDecl.DefDispatch _ variants)
+      (macro-generated-surface-dispatch-variant-list-refs
+        variants
+        aliases
+        refs
+        alias-qualified?)]
     [(AstDecl.Test _ body _)
       (macro-generated-surface-expr-refs
         (ast-node-get body)

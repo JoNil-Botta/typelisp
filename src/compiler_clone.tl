@@ -14,6 +14,7 @@
 ;; least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
 (import stdlib.hashmap)
+(import (hashmap String i64) as clone_name_map)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 
@@ -172,6 +173,11 @@
 (define (clone-name-set-capacity [names : CloneNameSet]) : i64
   (hashmap.string-i64-map-capacity (clone-name-set-map names)))
 
+(define (clone-name-map-generated-import-smoke) : bool
+  (let
+    [map : clone_name_map.Map (clone_name_map.with-capacity 4)]
+    (clone_name_map.is-empty? (& map))))
+
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)
     names
@@ -193,7 +199,8 @@
       (clone-name-set-contains? one "Alpha")
       (= (clone-name-set-len dupe) 1)
       (= (clone-name-set-len grown) 11)
-      (> (clone-name-set-capacity grown) seed-capacity))))
+      (> (clone-name-set-capacity grown) seed-capacity)
+      (clone-name-map-generated-import-smoke))))
 
 (define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-node-pool-context-type-get pools id))

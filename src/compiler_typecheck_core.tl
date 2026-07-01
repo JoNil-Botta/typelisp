@@ -49034,6 +49034,1475 @@
     [(ResultMacroDeclExpansion.Ok collapsed _) collapsed]
     [(ResultMacroDeclExpansion.Err _) decls]))
 
+;; Alias-qualified hashmap imports only need declarations reachable from the
+;; members the importer names; keep generated imports and a local dependency
+;; closure so the module body remains replay-stable.
+(defstruct MacroGeneratedSurfaceNameSet
+  (map hashmap.StringI64Map))
+
+(define (macro-generated-surface-name-set-empty) : MacroGeneratedSurfaceNameSet
+  (MacroGeneratedSurfaceNameSet (hashmap.string-i64-map-with-capacity 16)))
+
+(define (macro-generated-surface-name-set-map
+  [set : MacroGeneratedSurfaceNameSet]) : hashmap.StringI64Map
+  (struct-get set map))
+
+(define (macro-generated-surface-name-set-len
+  [set : MacroGeneratedSurfaceNameSet]) : i64
+  (hashmap.string-i64-map-len (macro-generated-surface-name-set-map set)))
+
+(define (macro-generated-surface-name-set-contains?
+  [set : MacroGeneratedSurfaceNameSet]
+  [name : String]) : bool
+  (hashmap.string-i64-map-contains?
+    (macro-generated-surface-name-set-map set)
+    name))
+
+(define (macro-generated-surface-name-set-add
+  [set : MacroGeneratedSurfaceNameSet]
+  [name : String]) : MacroGeneratedSurfaceNameSet
+  (if (or
+    (string.eq name "")
+    (macro-generated-surface-name-set-contains? set name))
+    set
+    (MacroGeneratedSurfaceNameSet
+      (hashmap.string-i64-map-put
+        (macro-generated-surface-name-set-map set)
+        name
+        1))))
+
+(define (macro-generated-surface-name-set-add-id
+  [set : MacroGeneratedSurfaceNameSet]
+  [name : i64]) : MacroGeneratedSurfaceNameSet
+  (macro-generated-surface-name-set-add set (intern-str name)))
+
+(define (macro-generated-surface-alias-add
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [alias : AstMaybeImportAlias]) : MacroGeneratedSurfaceNameSet
+  (match alias
+    [(AstMaybeImportAlias.Some alias-name)
+      (macro-generated-surface-name-set-add aliases alias-name)]
+    [(AstMaybeImportAlias.No) aliases]))
+
+(define (macro-generated-surface-aliases-decl
+  [decl : AstDecl]
+  [target-module : String]
+  [aliases : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
+  (match decl
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-generated-surface-aliases-decls
+        (box-get body-box)
+        target-module
+        aliases)]
+    [(AstDecl.Import (AstImportSpec.Spec kind _ expected alias _))
+      (match kind
+        [(AstImportKind.Macro _ _)
+          (macro-generated-surface-alias-add aliases alias)]
+        [(AstImportKind.Module)
+          (match expected
+            [(AstMaybeModuleName.Some expected-module)
+              (if (string.eq expected-module target-module)
+                (macro-generated-surface-alias-add aliases alias)
+                aliases)]
+            [(AstMaybeModuleName.No) aliases])]
+        [_ aliases])]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-surface-aliases-decl
+        (box-get inner-box)
+        target-module
+        aliases)]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-generated-surface-aliases-decl
+        (box-get template-box)
+        target-module
+        aliases)]
+    [_ aliases]))
+
+(define (macro-generated-surface-aliases-decls
+  [decls : AstDeclList]
+  [target-module : String]
+  [aliases : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
+  (match decls
+    [(AstDeclList.Nil) aliases]
+    [(AstDeclList.Cons decl rest)
+      (macro-generated-surface-aliases-decls
+        (box-get rest)
+        target-module
+        (macro-generated-surface-aliases-decl decl target-module aliases))]))
+
+(define (macro-generated-surface-aliases
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]) : MacroGeneratedSurfaceNameSet
+  (macro-generated-surface-aliases-decls
+    orig-decls
+    target-module
+    (macro-generated-surface-alias-add
+      (macro-generated-surface-name-set-empty)
+      alias)))
+
+(define (macro-generated-surface-name-ref
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [name : String]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (if alias-qualified?
+    (let
+      [first-dot : i64 (tc-name-first-dot name)]
+      (if (> first-dot 0)
+        (let
+          [base-start : i64 (+ first-dot 1)]
+          [qualifier : String (string.substring name 0 first-dot)]
+          [base : String
+            (string.substring
+              name
+              base-start
+              (- (string.string-length name) base-start))]
+          (if (macro-generated-surface-name-set-contains? aliases qualifier)
+            (macro-generated-surface-name-set-add refs base)
+            refs))
+        (if (tc-name-qualified? name)
+          (let
+            [qualifier : String (tc-qualified-name-module name)]
+            (if (macro-generated-surface-name-set-contains? aliases qualifier)
+              (macro-generated-surface-name-set-add
+                refs
+                (tc-qualified-name-base name))
+              refs))
+          refs)))
+    (if (or (tc-name-qualified? name) (>= (tc-name-first-dot name) 0))
+      refs
+      (macro-generated-surface-name-set-add refs name))))
+
+(define (macro-generated-surface-name-id-ref
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [name : i64]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (macro-generated-surface-name-ref
+    aliases
+    refs
+    (intern-str name)
+    alias-qualified?))
+
+(define (macro-generated-surface-maybe-type-refs
+  [maybe-ty : AstMaybeType]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match maybe-ty
+    [(AstMaybeType.No) refs]
+    [(AstMaybeType.Some ty)
+      (macro-generated-surface-type-refs ty aliases refs alias-qualified?)]))
+
+(define (macro-generated-surface-type-list-refs
+  [types : AstTypeList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match types
+    [(AstTypeList.Nil) refs]
+    [(AstTypeList.Cons head rest)
+      (macro-generated-surface-type-list-refs
+        (box-get rest)
+        aliases
+        (macro-generated-surface-type-refs
+          (ty-node-get head)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-type-id-refs
+  [ty : i64]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (macro-generated-surface-type-refs
+    (ty-node-get ty)
+    aliases
+    refs
+    alias-qualified?))
+
+(define (macro-generated-surface-type-refs
+  [ty : AstType]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match ty
+    [(AstType.I64) refs]
+    [(AstType.I32) refs]
+    [(AstType.I16) refs]
+    [(AstType.I8) refs]
+    [(AstType.U64) refs]
+    [(AstType.U32) refs]
+    [(AstType.U16) refs]
+    [(AstType.U8) refs]
+    [(AstType.F64) refs]
+    [(AstType.F32) refs]
+    [(AstType.Bool) refs]
+    [(AstType.Char) refs]
+    [(AstType.String) refs]
+    [(AstType.Str) refs]
+    [(AstType.Bytes) refs]
+    [(AstType.Unit) refs]
+    [(AstType.Never) refs]
+    [(AstType.Expr) refs]
+    [(AstType.ExprList) refs]
+    [(AstType.Func args ret)
+      (macro-generated-surface-type-id-refs
+        ret
+        aliases
+        (macro-generated-surface-type-list-refs
+          (box-get args)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstType.Tuple items)
+      (macro-generated-surface-type-list-refs
+        (box-get items)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstType.Array elem _)
+      (macro-generated-surface-type-id-refs elem aliases refs alias-qualified?)]
+    [(AstType.DynArray elem)
+      (macro-generated-surface-type-id-refs elem aliases refs alias-qualified?)]
+    [(AstType.Box elem)
+      (macro-generated-surface-type-id-refs elem aliases refs alias-qualified?)]
+    [(AstType.Region _ inner)
+      (macro-generated-surface-type-id-refs inner aliases refs alias-qualified?)]
+    [(AstType.Ref _ inner)
+      (macro-generated-surface-type-id-refs inner aliases refs alias-qualified?)]
+    [(AstType.MutRef _ inner)
+      (macro-generated-surface-type-id-refs inner aliases refs alias-qualified?)]
+    [(AstType.Enum name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.EnumArgs name _)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.Struct name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.StructArgs name _)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.Var name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.VarArgs name _)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstType.Ptr inner)
+      (macro-generated-surface-type-id-refs inner aliases refs alias-qualified?)]
+    [(AstType.MutPtr inner)
+      (macro-generated-surface-type-id-refs inner aliases refs alias-qualified?)]))
+
+(define (macro-generated-surface-param-list-refs
+  [params : AstParamList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match params
+    [(AstParamList.Nil) refs]
+    [(AstParamList.Cons param rest)
+      (match param
+        [(AstParam.Param _ ty _)
+          (macro-generated-surface-param-list-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-macro-param-list-refs
+  [params : AstMacroParamList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match params
+    [(AstMacroParamList.Nil) refs]
+    [(AstMacroParamList.Cons param rest)
+      (match param
+        [(AstMacroParam.Param _ ty _)
+          (macro-generated-surface-macro-param-list-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-pattern-list-refs
+  [patterns : AstPatternList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match patterns
+    [(AstPatternList.Nil) refs]
+    [(AstPatternList.Cons head rest)
+      (macro-generated-surface-pattern-list-refs
+        (box-get rest)
+        aliases
+        (macro-generated-surface-pattern-refs
+          (box-get head)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-pattern-refs
+  [pattern : AstPattern]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match pattern
+    [(AstPattern.Var _ maybe-ty)
+      (macro-generated-surface-maybe-type-refs
+        maybe-ty
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstPattern.Tuple items)
+      (macro-generated-surface-pattern-list-refs
+        (box-get items)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstPattern.Wildcard) refs]
+    [(AstPattern.Binding _) refs]
+    [(AstPattern.Variant name items)
+      (macro-generated-surface-pattern-list-refs
+        (box-get items)
+        aliases
+        (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)
+        alias-qualified?)]
+    [(AstPattern.Literal _) refs]))
+
+(define (macro-generated-surface-expr-list-refs
+  [exprs : AstExprList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match exprs
+    [(AstExprList.Nil) refs]
+    [(AstExprList.Cons head rest)
+      (macro-generated-surface-expr-list-refs
+        (box-get rest)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get head)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-let-binding-refs
+  [bindings : AstLetBindingList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match bindings
+    [(AstLetBindingList.Nil) refs]
+    [(AstLetBindingList.Cons binding rest)
+      (match binding
+        [(AstLetBinding.Binding _ maybe-ty init)
+          (macro-generated-surface-let-binding-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get init)
+              aliases
+              (macro-generated-surface-maybe-type-refs
+                maybe-ty
+                aliases
+                refs
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-match-arm-refs
+  [arms : AstMatchArmList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match arms
+    [(AstMatchArmList.Nil) refs]
+    [(AstMatchArmList.Cons arm rest)
+      (match arm
+        [(AstMatchArm.Arm pattern body)
+          (macro-generated-surface-match-arm-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get body)
+              aliases
+              (macro-generated-surface-pattern-refs
+                pattern
+                aliases
+                refs
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-resource-binding-refs
+  [bindings : AstResourceBindingList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match bindings
+    [(AstResourceBindingList.Nil) refs]
+    [(AstResourceBindingList.Cons binding rest)
+      (match binding
+        [(AstResourceBinding.Binding _ init cleanup)
+          (macro-generated-surface-resource-binding-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get cleanup)
+              aliases
+              (macro-generated-surface-expr-refs
+                (ast-node-get init)
+                aliases
+                refs
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-expr-refs
+  [expr : AstExpr]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner-box)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Literal _) refs]
+    [(AstExpr.Var name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstExpr.Binary _ left right)
+      (macro-generated-surface-expr-refs
+        (ast-node-get right)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get left)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Unary _ inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Call func args)
+      (macro-generated-surface-expr-list-refs
+        args
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get func)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.If cond then-branch else-branch)
+      (macro-generated-surface-expr-refs
+        (ast-node-get else-branch)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get then-branch)
+          aliases
+          (macro-generated-surface-expr-refs
+            (ast-node-get cond)
+            aliases
+            refs
+            alias-qualified?)
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (macro-generated-surface-expr-refs
+            (ast-node-get body)
+            aliases
+            (macro-generated-surface-let-binding-refs
+              bindings
+              aliases
+              refs
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params ret body)
+          (macro-generated-surface-expr-refs
+            (ast-node-get body)
+            aliases
+            (macro-generated-surface-maybe-type-refs
+              ret
+              aliases
+              (macro-generated-surface-param-list-refs
+                params
+                aliases
+                refs
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.Tuple exprs)
+      (macro-generated-surface-expr-list-refs
+        exprs
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.TupleRef tuple _)
+      (macro-generated-surface-expr-refs
+        (ast-node-get tuple)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Array exprs)
+      (macro-generated-surface-expr-list-refs
+        exprs
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.MakeArray elem len)
+      (macro-generated-surface-expr-refs
+        (ast-node-get len)
+        aliases
+        (macro-generated-surface-type-refs elem aliases refs alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.ArrayRef array index)
+      (macro-generated-surface-expr-refs
+        (ast-node-get index)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get array)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.ArraySet array index value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get index)
+          aliases
+          (macro-generated-surface-expr-refs
+            (ast-node-get array)
+            aliases
+            refs
+            alias-qualified?)
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.ArrayPush array value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get array)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.StringRef text index)
+      (macro-generated-surface-expr-refs
+        (ast-node-get index)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get text)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.While cond body)
+      (macro-generated-surface-expr-refs
+        (ast-node-get body)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get cond)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Begin exprs)
+      (macro-generated-surface-expr-list-refs
+        exprs
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Unsafe exprs)
+      (macro-generated-surface-expr-list-refs
+        exprs
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Set target value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-name-id-ref
+          aliases
+          refs
+          target
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Ann inner ty)
+      (macro-generated-surface-type-refs
+        ty
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get inner)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Cast inner ty)
+      (macro-generated-surface-type-refs
+        ty
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get inner)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Borrow _ _ place)
+      (macro-generated-surface-expr-refs
+        (ast-node-get place)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (macro-generated-surface-match-arm-refs
+            arms
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get scrutinee)
+              aliases
+              refs
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach _ index-ty start end body)
+          (macro-generated-surface-expr-refs
+            (ast-node-get body)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get end)
+              aliases
+              (macro-generated-surface-expr-refs
+                (ast-node-get start)
+                aliases
+                (macro-generated-surface-type-refs
+                  index-ty
+                  aliases
+                  refs
+                  alias-qualified?)
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ _ index-ty start end init value)
+          (macro-generated-surface-expr-refs
+            (ast-node-get value)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get init)
+              aliases
+              (macro-generated-surface-expr-refs
+                (ast-node-get end)
+                aliases
+                (macro-generated-surface-expr-refs
+                  (ast-node-get start)
+                  aliases
+                  (macro-generated-surface-type-refs
+                    index-ty
+                    aliases
+                    refs
+                    alias-qualified?)
+                  alias-qualified?)
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ _ index-ty start end _ prefix-ty init value body)
+          (macro-generated-surface-expr-refs
+            (ast-node-get body)
+            aliases
+            (macro-generated-surface-expr-refs
+              (ast-node-get value)
+              aliases
+              (macro-generated-surface-expr-refs
+                (ast-node-get init)
+                aliases
+                (macro-generated-surface-expr-refs
+                  (ast-node-get end)
+                  aliases
+                  (macro-generated-surface-expr-refs
+                    (ast-node-get start)
+                    aliases
+                    (macro-generated-surface-type-refs
+                      prefix-ty
+                      aliases
+                      (macro-generated-surface-type-refs
+                        index-ty
+                        aliases
+                        refs
+                        alias-qualified?)
+                      alias-qualified?)
+                    alias-qualified?)
+                  alias-qualified?)
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (macro-generated-surface-expr-refs
+        (ast-node-get lane)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get value)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.SpmdShuffle value lane)
+      (macro-generated-surface-expr-refs
+        (ast-node-get lane)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get value)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.StructGet receiver _)
+      (macro-generated-surface-expr-refs
+        (ast-node-get receiver)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.StructSet receiver _ value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get receiver)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.WithRegion _ body)
+      (macro-generated-surface-expr-list-refs
+        body
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.WithEscape scratch body)
+      (macro-generated-surface-expr-list-refs
+        body
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get scratch)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.WithScratch body)
+      (macro-generated-surface-expr-list-refs
+        body
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.InArena arena body)
+      (macro-generated-surface-expr-list-refs
+        body
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get arena)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (macro-generated-surface-expr-list-refs
+            body
+            aliases
+            (macro-generated-surface-resource-binding-refs
+              bindings
+              aliases
+              refs
+              alias-qualified?)
+            alias-qualified?)])]
+    [(AstExpr.Box inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.BoxGet inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.BoxTake inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.BoxSet inner value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get inner)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.TypeLiteral ty)
+      (macro-generated-surface-type-refs ty aliases refs alias-qualified?)]
+    [(AstExpr.Init maybe-ty)
+      (macro-generated-surface-maybe-type-refs
+        maybe-ty
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Comptime inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Quote inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Quasiquote inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Unquote inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.UnquoteSplicing inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.BracketClause items)
+      (macro-generated-surface-expr-list-refs
+        items
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Try inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Return inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.PtrNull ty)
+      (macro-generated-surface-type-refs ty aliases refs alias-qualified?)]
+    [(AstExpr.PtrNullCheck inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.PtrAddrOf place)
+      (macro-generated-surface-expr-refs
+        (ast-node-get place)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.PtrRead ptr)
+      (macro-generated-surface-expr-refs
+        (ast-node-get ptr)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.PtrWrite ptr value)
+      (macro-generated-surface-expr-refs
+        (ast-node-get value)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get ptr)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.PtrOffset ptr offset)
+      (macro-generated-surface-expr-refs
+        (ast-node-get offset)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get ptr)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.PtrCast ptr ty)
+      (macro-generated-surface-type-refs
+        ty
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get ptr)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.PtrToInt ptr)
+      (macro-generated-surface-expr-refs
+        (ast-node-get ptr)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.IntToPtr value ty)
+      (macro-generated-surface-type-refs
+        ty
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get value)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.StringData inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.StringFromBytes ptr len)
+      (macro-generated-surface-expr-refs
+        (ast-node-get len)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get ptr)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.ArrayData inner)
+      (macro-generated-surface-expr-refs
+        (ast-node-get inner)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.BinaryData _) refs]
+    [(AstExpr.SpmdProgramIndex) refs]
+    [(AstExpr.SpmdProgramCount) refs]
+    [(AstExpr.ProgramArgc) refs]
+    [(AstExpr.ProgramArgv) refs]
+    [(AstExpr.ProgramEnvp) refs]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (macro-generated-surface-expr-refs
+        (ast-node-get subleaf)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get leaf)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (macro-generated-surface-expr-refs
+        (ast-node-get subleaf)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get leaf)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (macro-generated-surface-expr-refs
+        (ast-node-get subleaf)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get leaf)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (macro-generated-surface-expr-refs
+        (ast-node-get subleaf)
+        aliases
+        (macro-generated-surface-expr-refs
+          (ast-node-get leaf)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstExpr.Xgetbv index)
+      (macro-generated-surface-expr-refs
+        (ast-node-get index)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.Syscall args)
+      (macro-generated-surface-expr-list-refs
+        args
+        aliases
+        refs
+        alias-qualified?)]))
+
+(define (macro-generated-surface-field-cleanup-refs
+  [cleanup : AstFieldCleanup]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match cleanup
+    [(AstFieldCleanup.No) refs]
+    [(AstFieldCleanup.Fn name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstFieldCleanup.Owned) refs]))
+
+(define (macro-generated-surface-field-def-list-refs
+  [fields : AstFieldDefList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match fields
+    [(AstFieldDefList.Nil) refs]
+    [(AstFieldDefList.Cons field rest)
+      (match field
+        [(AstFieldDef.Def _ ty cleanup)
+          (macro-generated-surface-field-def-list-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-field-cleanup-refs
+              cleanup
+              aliases
+              (macro-generated-surface-type-refs
+                ty
+                aliases
+                refs
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-struct-cleanup-refs
+  [cleanup : AstStructCleanup]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match cleanup
+    [(AstStructCleanup.No) refs]
+    [(AstStructCleanup.Fn name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]))
+
+(define (macro-generated-surface-enum-cleanup-refs
+  [cleanup : AstEnumCleanup]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match cleanup
+    [(AstEnumCleanup.No) refs]
+    [(AstEnumCleanup.Fn name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]))
+
+(define (macro-generated-surface-variant-cleanup-refs
+  [cleanup : AstVariantPayloadCleanup]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match cleanup
+    [(AstVariantPayloadCleanup.No) refs]
+    [(AstVariantPayloadCleanup.Fn name)
+      (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
+    [(AstVariantPayloadCleanup.Owned) refs]))
+
+(define (macro-generated-surface-variant-cleanup-list-refs
+  [items : AstVariantPayloadCleanupList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match items
+    [(AstVariantPayloadCleanupList.Nil) refs]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
+      (macro-generated-surface-variant-cleanup-list-refs
+        (box-get rest)
+        aliases
+        (macro-generated-surface-variant-cleanup-refs
+          cleanup
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-variant-def-list-refs
+  [variants : AstVariantDefList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match variants
+    [(AstVariantDefList.Nil) refs]
+    [(AstVariantDefList.Cons variant rest)
+      (match variant
+        [(AstVariantDef.Def name payloads cleanups)
+          (macro-generated-surface-variant-def-list-refs
+            (box-get rest)
+            aliases
+            (macro-generated-surface-variant-cleanup-list-refs
+              cleanups
+              aliases
+              (macro-generated-surface-type-list-refs
+                payloads
+                aliases
+                (macro-generated-surface-name-id-ref
+                  aliases
+                  refs
+                  name
+                  alias-qualified?)
+                alias-qualified?)
+              alias-qualified?)
+            alias-qualified?)])]))
+
+(define (macro-generated-surface-extern-abi-refs
+  [abi : AstExternAbi]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match abi
+    [(AstExternAbi.C) refs]
+    [(AstExternAbi.CVarargsOpen) refs]
+    [(AstExternAbi.CVarargsTyped tail-ty)
+      (macro-generated-surface-type-refs tail-ty aliases refs alias-qualified?)]))
+
+(define (macro-generated-surface-extern-metadata-refs
+  [meta : AstExternMetadata]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match meta
+    [(AstExternMetadata.Metadata abi _ _ _)
+      (macro-generated-surface-extern-abi-refs
+        abi
+        aliases
+        refs
+        alias-qualified?)]))
+
+(define (macro-generated-surface-meta-refs
+  [meta : AstGeneratedDeclMeta]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match meta
+    [(AstGeneratedDeclMeta.No) refs]
+    [(AstGeneratedDeclMeta.Some _ _ args _)
+      (macro-generated-surface-expr-list-refs
+        args
+        aliases
+        refs
+        alias-qualified?)]))
+
+(define (macro-generated-surface-decl-refs
+  [decl : AstDecl]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match decl
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-generated-surface-decls-refs
+        (box-get body-box)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstDecl.Module _) refs]
+    [(AstDecl.Def _ maybe-ty body)
+      (macro-generated-surface-expr-refs
+        (ast-node-get body)
+        aliases
+        (macro-generated-surface-maybe-type-refs
+          maybe-ty
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefFn _ params ret body _)
+      (macro-generated-surface-expr-refs
+        (ast-node-get body)
+        aliases
+        (macro-generated-surface-type-refs
+          ret
+          aliases
+          (macro-generated-surface-param-list-refs
+            params
+            aliases
+            refs
+            alias-qualified?)
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefMacro _ params ret body)
+      (macro-generated-surface-expr-refs
+        (ast-node-get body)
+        aliases
+        (macro-generated-surface-type-refs
+          ret
+          aliases
+          (macro-generated-surface-macro-param-list-refs
+            params
+            aliases
+            refs
+            alias-qualified?)
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.Extern _ _ meta ty)
+      (macro-generated-surface-type-refs
+        ty
+        aliases
+        (macro-generated-surface-extern-metadata-refs
+          meta
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefEnum _ cleanup variants)
+      (macro-generated-surface-variant-def-list-refs
+        variants
+        aliases
+        (macro-generated-surface-enum-cleanup-refs
+          cleanup
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+      (macro-generated-surface-variant-def-list-refs
+        variants
+        aliases
+        (macro-generated-surface-enum-cleanup-refs
+          cleanup
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefStruct _ _ cleanup fields)
+      (macro-generated-surface-field-def-list-refs
+        fields
+        aliases
+        (macro-generated-surface-struct-cleanup-refs
+          cleanup
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.DefStructLifetimes _ _ _ cleanup fields)
+      (macro-generated-surface-field-def-list-refs
+        fields
+        aliases
+        (macro-generated-surface-struct-cleanup-refs
+          cleanup
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Macro call-id _)
+          (macro-generated-surface-expr-refs
+            (ast-node-get call-id)
+            aliases
+            refs
+            alias-qualified?)]
+        [(AstImportKind.MacroDecls call-id _)
+          (macro-generated-surface-expr-refs
+            (ast-node-get call-id)
+            aliases
+            refs
+            alias-qualified?)]
+        [_ refs])]
+    [(AstDecl.IncludeStr _ _) refs]
+    [(AstDecl.IncludeBin _ _) refs]
+    [(AstDecl.DefDispatch _ _) refs]
+    [(AstDecl.Test _ body _)
+      (macro-generated-surface-expr-refs
+        (ast-node-get body)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-surface-decl-refs
+        (box-get inner-box)
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstDecl.ComptimeDecl meta template-box)
+      (macro-generated-surface-meta-refs
+        meta
+        aliases
+        (macro-generated-surface-decl-refs
+          (box-get template-box)
+          aliases
+          refs
+          alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-decls-refs
+  [decls : AstDeclList]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
+  (match decls
+    [(AstDeclList.Nil) refs]
+    [(AstDeclList.Cons decl rest)
+      (macro-generated-surface-decls-refs
+        (box-get rest)
+        aliases
+        (macro-generated-surface-decl-refs decl aliases refs alias-qualified?)
+        alias-qualified?)]))
+
+(define (macro-generated-surface-variant-list-needed?
+  [variants : AstVariantDefList]
+  [needed : MacroGeneratedSurfaceNameSet]) : bool
+  (match variants
+    [(AstVariantDefList.Nil) false]
+    [(AstVariantDefList.Cons variant rest)
+      (match variant
+        [(AstVariantDef.Def name _ _)
+          (or
+            (macro-generated-surface-name-set-contains?
+              needed
+              (intern-str name))
+            (macro-generated-surface-variant-list-needed? (box-get rest) needed))])]))
+
+(define (macro-generated-surface-decl-variant-needed?
+  [decl : AstDecl]
+  [needed : MacroGeneratedSurfaceNameSet]) : bool
+  (match decl
+    [(AstDecl.DefEnum _ _ variants)
+      (macro-generated-surface-variant-list-needed? variants needed)]
+    [(AstDecl.DefEnumLifetimes _ _ _ variants)
+      (macro-generated-surface-variant-list-needed? variants needed)]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-surface-decl-variant-needed? (box-get inner-box) needed)]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-generated-surface-decl-variant-needed?
+        (box-get template-box)
+        needed)]
+    [_ false]))
+
+(define (macro-generated-surface-decl-needed?
+  [decl : AstDecl]
+  [needed : MacroGeneratedSurfaceNameSet]) : bool
+  (or
+    (macro-decl-import? decl)
+    (match decl
+      [(AstDecl.Module _) true]
+      [(AstDecl.ModuleBody _ _) true]
+      [(AstDecl.IncludeStr _ _) true]
+      [(AstDecl.IncludeBin _ _) true]
+      [_ false])
+    (match (gen-decl-visible-name decl)
+      [(SpecMaybeString.Some name)
+        (macro-generated-surface-name-set-contains? needed name)]
+      [(SpecMaybeString.None) false])
+    (macro-generated-surface-decl-variant-needed? decl needed)))
+
+(define (macro-generated-surface-closure-pass
+  [decls : AstDeclList]
+  [needed : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
+  (match decls
+    [(AstDeclList.Nil) needed]
+    [(AstDeclList.Cons decl rest)
+      (let
+        [next-needed : MacroGeneratedSurfaceNameSet
+          (if (macro-generated-surface-decl-needed? decl needed)
+            (macro-generated-surface-decl-refs
+              decl
+              (macro-generated-surface-name-set-empty)
+              needed
+              false)
+            needed)]
+        (macro-generated-surface-closure-pass (box-get rest) next-needed))]))
+
+(define (macro-generated-surface-closure
+  [decls : AstDeclList]
+  [needed : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
+  (let
+    [cur : MacroGeneratedSurfaceNameSet needed]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [before : i64 (macro-generated-surface-name-set-len cur)]
+          [next : MacroGeneratedSurfaceNameSet
+            (macro-generated-surface-closure-pass decls cur)]
+          (begin
+            (set! cur next)
+            (set! done (= before (macro-generated-surface-name-set-len cur))))))
+      cur)))
+
+(define (macro-generated-surface-filter-decls
+  [decls : AstDeclList]
+  [needed : MacroGeneratedSurfaceNameSet]) : AstDeclList
+  (match decls
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
+      (let
+        [filtered-rest : AstDeclList
+          (macro-generated-surface-filter-decls (box-get rest) needed)]
+        (if (macro-generated-surface-decl-needed? decl needed)
+          (ast-decl-cons decl filtered-rest)
+          filtered-rest))]))
+
+(define (macro-generated-surface-filter
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [generated-body : AstDeclList]) : AstDeclList
+  (match alias
+    [(AstMaybeImportAlias.Some alias-name)
+      (if (string.eq alias-name "")
+        generated-body
+        (let
+          [aliases : MacroGeneratedSurfaceNameSet
+            (macro-generated-surface-aliases orig-decls target-module alias)]
+          [direct : MacroGeneratedSurfaceNameSet
+            (macro-generated-surface-decls-refs
+              orig-decls
+              aliases
+              (macro-generated-surface-name-set-empty)
+              true)]
+          [needed : MacroGeneratedSurfaceNameSet
+            (macro-generated-surface-closure generated-body direct)]
+          (macro-generated-surface-filter-decls generated-body needed)))]
+    [(AstMaybeImportAlias.No) generated-body]))
+
+(define (macro-generated-surface-hashmap?
+  [macro-name : String]
+  [identity : String]) : bool
+  (or
+    (tc-string-prefix? identity "stdlib.hashmap:hashmap(")
+    (string.eq macro-name "hashmap")
+    (if (tc-name-qualified? macro-name)
+      (string.eq (tc-qualified-name-base macro-name) "hashmap")
+      false)))
+
 (define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr
     call-expr
@@ -49075,8 +50544,16 @@
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
+    [surface-body : AstDeclList
+      (if (macro-generated-surface-hashmap? macro-name identity)
+        (macro-generated-surface-filter
+          orig-decls
+          target-module
+          alias
+          body-rest)
+        body-rest)]
     [generated-body-raw : AstDeclList
-      (macro-wrap-generated-decls body-rest macro-name identity)]
+      (macro-wrap-generated-decls surface-body macro-name identity)]
     [generated-body : AstDeclList
       (macro-collapse-existing-module-imports-or-original
         ctx

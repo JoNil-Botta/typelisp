@@ -2860,6 +2860,21 @@
     (not (compiler-reg-float-type? ty))
     (not (compiler-reg-type-register-group? ty))))
 
+;; M-A (RC1): a non-group, non-float, register-eligible param that did NOT get
+;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
+;; greedy candidate. Its greedy home is restricted to the CALLEE-SAVED pool
+;; (compiler-reg-greedy-alloc-one! `is-param`): the backend's entry copy writes
+;; the home register in the prologue (after the callee-saved saves), and a
+;; callee-saved home can neither clobber another param's incoming arg register
+;; nor be clobbered by a call. Handle types (Array/String/enum/struct -- 8-byte
+;; descriptors) qualify exactly like scalars; floats keep the XMM exclusion and
+;; two-word register groups keep the legacy stack home.
+(define (compiler-reg-param-greedy-eligible? [ty : AstType]) : bool
+  (and
+    (compiler-reg-register-eligible-type? ty)
+    (not (compiler-reg-float-type? ty))
+    (not (compiler-reg-type-register-group? ty))))
+
 (define (compiler-reg-param-int-reg
   [abi : CompilerRegTargetAbi]
   [int-idx : i64]
@@ -2962,6 +2977,37 @@
                     next-int
                     next-position
                     tail-can-pin?)
+                  ;; Pin-unsafe scalar param: reached only for integer-param
+                  ;; types, which are always greedy-eligible -- leave it out of
+                  ;; ineligible/blocked so the greedy may home it callee-saved.
+                  (compiler-reg-param-assign-walk
+                    abi
+                    (box-get rest)
+                    interval-index
+                    assignments
+                    ineligible
+                    blocked
+                    next-int
+                    next-position
+                    tail-can-pin?))]
+              [(CompilerRegNoString)
+                ;; No ABI pin available (clobber-point function, skipped arg
+                ;; register, stack-passed position, or non-scalar type). A
+                ;; greedy-eligible param stays unblocked (M-A candidate);
+                ;; group/float/otherwise-ineligible params keep the legacy
+                ;; stack home. base-ineligible members (address-taken, stack
+                ;; call args, ...) are already in both sets and stay excluded.
+                (if (compiler-reg-param-greedy-eligible? ty)
+                  (compiler-reg-param-assign-walk
+                    abi
+                    (box-get rest)
+                    interval-index
+                    assignments
+                    ineligible
+                    blocked
+                    next-int
+                    next-position
+                    tail-can-pin?)
                   (compiler-reg-param-assign-walk
                     abi
                     (box-get rest)
@@ -2971,18 +3017,7 @@
                     (compiler-live-set-insert blocked var-id)
                     next-int
                     next-position
-                    tail-can-pin?))]
-              [(CompilerRegNoString)
-                (compiler-reg-param-assign-walk
-                  abi
-                  (box-get rest)
-                  interval-index
-                  assignments
-                  (compiler-live-set-insert ineligible var-id)
-                  (compiler-live-set-insert blocked var-id)
-                  next-int
-                  next-position
-                  tail-can-pin?)]))])]))
+                    tail-can-pin?))]))])]))
 
 (define (compiler-reg-param-assign-plan
   [abi : CompilerRegTargetAbi]
@@ -3002,29 +3037,25 @@
           (let
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
-            ;; Gate on clobber-POINT (bounds-checks excluded), not the merged
-            ;; caller-clobber: a bounds check clobbers no caller-saved reg on the
-            ;; success path, so it must not strip every param's ABI register home.
-            ;; Real calls + div/mod + shift + Pack stay in the gate (sound: they
-            ;; overwrite fixed SysV arg registers).
-            (if (compiler-reg-backend-clobber-point? func)
-              (let
-                [fallback-ineligible : CompilerLiveI64Set
-                  (compiler-reg-ineligible-params params base-ineligible)]
-                (CompilerRegParamAssignPlan
-                  assignments
-                  fallback-ineligible
-                  fallback-ineligible))
-              (compiler-reg-param-assign-walk
-                abi
-                params
-                interval-index
-                assignments
-                base-ineligible
-                base-ineligible
-                0
-                0
-                true)))])]))
+            ;; M-A (RC1): the walk always runs. Pinning a param to its incoming
+            ;; ABI register is still gated on clobber-POINT-free functions
+            ;; (bounds-checks excluded -- a bounds check clobbers no caller-saved
+            ;; reg on the success path; real calls + div/mod + shift + Pack
+            ;; overwrite fixed SysV arg registers, so a pin there is unsound).
+            ;; Non-pinned greedy-eligible params are NO LONGER stack-homed: the
+            ;; walk leaves them out of ineligible/blocked in ALL functions, so
+            ;; they compete in the greedy for a callee-saved home instead of
+            ;; being reloaded from the stack at every use.
+            (compiler-reg-param-assign-walk
+              abi
+              params
+              interval-index
+              assignments
+              base-ineligible
+              base-ineligible
+              0
+              0
+              (not (compiler-reg-backend-clobber-point? func))))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -4028,7 +4059,18 @@
     [(CompilerRegInterval _ left-start left-end)
       (match right
         [(CompilerRegInterval _ right-start right-end)
-          (not (or (<= left-end right-start) (<= right-end left-start)))])]))
+          ;; Half-open boundary touch (X.end == Y.start): X's last read happens
+          ;; before Y's same-point def writes, so the pair may share a register
+          ;; -- EXCEPT when the touch point is 0 (M-A RC1). A value live at
+          ;; point 0 without a def there (a parameter) had its home register
+          ;; written in the PROLOGUE, before point 0, which the point model
+          ;; cannot represent: two params used only near entry would otherwise
+          ;; look disjoint ([0,0] vs [0,e]) and share a home whose second entry
+          ;; copy destroys the first param's value. A 0-touch therefore counts
+          ;; as overlap; touches at any later point keep the half-open rule.
+          (not (or
+            (and (<= left-end right-start) (not (= right-start 0)))
+            (and (<= right-end left-start) (not (= left-start 0)))))])]))
 
 (define (compiler-reg-interval-list-overlaps-one?
   [segments : CompilerRegIntervalList]
@@ -12851,6 +12893,7 @@
   [copy-hints : (Array i64)]
   [arg-prefs : (Array i64)]
   [group-vars : CompilerLiveI64Set]
+  [param-roots : CompilerLiveI64Set]
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
   [rcount : i64]
@@ -12881,21 +12924,31 @@
         (compiler-reg-greedy-var-spans-clobber? interval-index div-points var)]
       [spans-shift : bool
         (compiler-reg-greedy-var-spans-clobber? interval-index shift-points var)]
+      ;; M-A (RC1) v1: a param (or a coalesce class containing one) is restricted
+      ;; to CALLEE-SAVED homes regardless of call-spanning. The entry copy writes
+      ;; the home in the prologue; a caller-saved home could be clobbered by a
+      ;; later param's entry-copy scratch or an early scavenge, and the incoming
+      ;; SysV arg registers are all caller-saved, so CSR homes are the copy-safe
+      ;; set (the prologue saves CSRs BEFORE the param copies run).
+      [is-param : bool (compiler-live-set-contains? param-roots var)]
+      [csr-only : bool (or spans-call is-param)]
       [start-idx : i64
-        (if spans-call
+        (if csr-only
           caller-saved-count
           0)]
       [hint-regs : CompilerRegStringList
-        (if spans-call
+        (if csr-only
           callee-regs
           regs)]
       [forbidden : CompilerRegStringList
-        (if spans-call
+        (if csr-only
           CompilerRegStringNil
           (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
       ;; Highest-priority bias: if this var is an outgoing call argument, try its
       ;; ABI arg register first (free-only, never evicting). Falls through to the
       ;; copy-hint / first-free / evict pick when the arg register is unavailable.
+      ;; csr-only (call-spanning OR param) declines: arg registers are all
+      ;; caller-saved.
       [pref : String
         (compiler-reg-greedy-arg-pref-reg
           assignments
@@ -12908,7 +12961,7 @@
           var
           n
           forbidden
-          spans-call)]
+          csr-only)]
       [hint : String
         (compiler-reg-greedy-hint-free-reg
           assignments
@@ -13193,6 +13246,7 @@
   [copy-hints : (Array i64)]
   [arg-prefs : (Array i64)]
   [group-vars : CompilerLiveI64Set]
+  [param-roots : CompilerLiveI64Set]
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
   [rcount : i64]
@@ -13228,6 +13282,7 @@
               copy-hints
               arg-prefs
               group-vars
+              param-roots
               regs
               reg-arr
               rcount
@@ -13253,6 +13308,7 @@
           copy-hints
           arg-prefs
           group-vars
+          param-roots
           regs
           reg-arr
           rcount
@@ -13285,6 +13341,7 @@
   [copy-hints : (Array i64)]
   [arg-prefs : (Array i64)]
   [group-vars : CompilerLiveI64Set]
+  [param-roots : CompilerLiveI64Set]
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
   [rcount : i64]
@@ -13313,6 +13370,7 @@
         copy-hints
         arg-prefs
         group-vars
+        param-roots
         regs
         reg-arr
         rcount
@@ -13622,6 +13680,7 @@
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
+  [param-roots : CompilerLiveI64Set]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
   [arg-prefs : (Array i64)]
@@ -13670,6 +13729,7 @@
             copy-hints
             arg-prefs
             group-vars
+            param-roots
             regs
             reg-arr
             rcount
@@ -13828,6 +13888,23 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-root-set-from-vars coalesce blocked)
         blocked)]
+    ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- the greedy
+    ;; allocates class roots, and a class containing a param must be restricted
+    ;; to callee-saved homes (alloc-one! `is-param`; the entry copy writes the
+    ;; home in the prologue). Reuses the ineligible-params walk as a plain
+    ;; param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
+    ;; param (ineligible-vars-simd) and floats are excluded pre-allocation, so
+    ;; those greedy calls get an empty set (byte-identical behavior there).
+    [param-roots : CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (compiler-reg-coalesce-root-set-from-vars
+          coalesce
+          (match func
+            [(IrFunction _ params _ _ _)
+              (compiler-reg-ineligible-params
+                params
+                (compiler-live-set-empty))]))
+        (compiler-live-set-empty))]
     [integer-candidates : CompilerRegIntervalList
       (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
     [integer-registers : CompilerRegStringList
@@ -13956,6 +14033,7 @@
           split-assignments
           split-index
           group-vars
+          param-roots
           split-ref-counts
           split-copy-hints
           split-arg-prefs
@@ -13978,6 +14056,7 @@
           prepass-assignments
           eff-index
           group-vars
+          (compiler-live-set-empty)
           eviction-ref-counts
           copy-hints
           (array.make-array i64 0)
@@ -14031,6 +14110,7 @@
         (compiler-reg-xmm-registers)
         integer-call-assignments
         eff-index
+        (compiler-live-set-empty)
         (compiler-live-set-empty)
         (array.make-array i64 0)
         (array.make-array i64 0)
@@ -14195,6 +14275,90 @@
             (<= count (compiler-reg-scalar-full-interval-block-limit))
             (>= count (compiler-reg-scalar-full-interval-huge-floor)))))]))
 
+;; M-A (RC1) correctness requirement: a register-homed param's home register is
+;; WRITTEN by the backend's entry copy in the prologue, before the first
+;; instruction, so the param's interval must be reserved from the function's
+;; first point. The precise (segmented) builder starts a live-in-at-entry param
+;; at point 1 (live-after of instr 0 extends at point+1); a var whose interval
+;; is exactly [0,0] would then look disjoint under the coarse [start,end]
+;; fallback, share the param's home register, and its instr-0 def would
+;; overwrite the param's entry-copied value before the param's first read.
+;; Force every used param's interval (both starts[] and its earliest segment)
+;; to start at point 0. Params with no interval (never used) are left alone --
+;; they never become candidates.
+(define (compiler-reg-param-segments-extend-entry
+  [segs : CompilerRegIntervalList]
+  [min-start : i64]) : CompilerRegIntervalList
+  (match segs
+    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
+    [(CompilerRegIntervalCons seg rest)
+      (match seg
+        [(CompilerRegInterval var start end)
+          (if (= start min-start)
+            (compiler-reg-interval-cons
+              (CompilerRegInterval var 0 end)
+              (box-get rest))
+            (compiler-reg-interval-cons
+              seg
+              (compiler-reg-param-segments-extend-entry
+                (box-get rest)
+                min-start)))])]))
+
+(define (compiler-reg-param-segments-min-start
+  [segs : CompilerRegIntervalList]
+  [best : i64]) : i64
+  (match segs
+    [(CompilerRegIntervalNil) best]
+    [(CompilerRegIntervalCons seg rest)
+      (match seg
+        [(CompilerRegInterval _ start _)
+          (compiler-reg-param-segments-min-start
+            (box-get rest)
+            (if (or (< best 0) (< start best))
+              start
+              best))])]))
+
+(define (compiler-reg-param-intervals-extend-entry!
+  [params : CompilerIrParamList]
+  [interval-index : CompilerRegIntervalIndex]) : unit
+  (match params
+    [(IrParamNil) unit]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ var)
+          (let
+            [starts : (Array i64) (struct-get interval-index starts)]
+            [segments : (Array CompilerRegIntervalList)
+              (struct-get interval-index segments)]
+            (begin
+              (if (and
+                (>= var 0)
+                (< var (array.array-length starts))
+                (> (array.array-ref starts var) 0))
+                (begin
+                  (array.array-set! starts var 0)
+                  (if (< var (array.array-length segments))
+                    (let
+                      [segs : CompilerRegIntervalList
+                        (array.array-ref segments var)]
+                      [min-start : i64
+                        (compiler-reg-param-segments-min-start segs (- 0 1))]
+                      (if (> min-start 0)
+                        (begin
+                          (array.array-set!
+                            segments
+                            var
+                            (compiler-reg-param-segments-extend-entry
+                              segs
+                              min-start))
+                          unit)
+                        unit))
+                    unit))
+                unit)
+              (compiler-reg-param-intervals-extend-entry!
+                (box-get rest)
+                interval-index)))])]))
+
 (define (compiler-reg-plan-function-scalar-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerRegPlan
@@ -14216,8 +14380,24 @@
             block-intervals
             (compiler-reg-interval-index-build block-intervals vars))))]
     (match interval-selection
-      [(CompilerRegIntervalSelection intervals interval-index)
+      [(CompilerRegIntervalSelection _ interval-index)
         (let
+          ;; M-A (RC1): reserve every used param's interval from function entry
+          ;; (mutates the index arrays), then rebuild the interval LIST from the
+          ;; mutated arrays so both views agree. Content-identical to the
+          ;; builder's list when no param moved.
+          [_param-extend : unit
+            (match func
+              [(IrFunction _ params _ _ _)
+                (compiler-reg-param-intervals-extend-entry!
+                  params
+                  interval-index)])]
+          [intervals : CompilerRegIntervalList
+            (compiler-reg-interval-arrays-to-list
+              (struct-get interval-index starts)
+              (struct-get interval-index ends)
+              (- vars 1)
+              CompilerRegIntervalNil)]
           [base-ineligible : CompilerLiveI64Set
             (compiler-reg-mark-float-spanning
               intervals
@@ -18220,6 +18400,10 @@
 
 (cfg
   test
+  ;; Win64 zero-clobber pins: params 0/1 keep %rcx/%rdx. Param 2's incoming
+  ;; register (%r8) is excluded from the legacy pin set, but M-A (RC1) makes it
+  ;; a greedy candidate: it takes the first callee-saved home instead of being
+  ;; stack-homed.
   (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiWindows
@@ -18228,42 +18412,60 @@
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
-          (compiler-live-set-contains? ineligible 2)
+          (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
             "%rcx")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
             "%rdx")
-          (compiler-reg-unassigned? assignments 2))])))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%r12"))])))
 
 (cfg
   test
+  ;; M-A (RC1): a clobber-point function no longer stack-homes its params. The
+  ;; scalar param cannot keep its ABI pin (the call clobbers %rdi) but becomes
+  ;; an ordinary greedy candidate restricted to callee-saved homes: it wins the
+  ;; first callee-saved register and is copied there once at entry instead of
+  ;; being reloaded from the stack at every use.
   (define (compiler-reg-scalar-param-clobber-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-clobber-function))
       [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
-          (compiler-live-set-contains? ineligible 0)
-          (compiler-reg-unassigned? assignments 0))])))
+          (not (compiler-live-set-contains? ineligible 0))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%r12"))])))
 
 (cfg
   test
+  ;; M-A (RC1): an aggregate-HANDLE param (8-byte struct descriptor) is still
+  ;; never PINNED to its incoming ABI register (integer-param-type? demands a
+  ;; true scalar), but it is register-eligible and now becomes a greedy
+  ;; candidate with a callee-saved home instead of being stack-homed.
   (define (compiler-reg-scalar-aggregate-param-not-pinned-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-aggregate-function))
       [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
-          (compiler-live-set-contains? ineligible 0)
-          (compiler-reg-unassigned? assignments 0))])))
+          (not (compiler-live-set-contains? ineligible 0))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%r12"))])))
 
+;; M-A (RC1): a used param's interval is force-extended to the function's first
+;; point (the entry copy writes its home register in the prologue), so the
+;; live-in gap param now spans [0,4] instead of the precise builder's [1,4].
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-param-livein-gap-function))
     [(CompilerRegPlan _ _ intervals _ _ _)
-      (compiler-reg-interval-range? intervals 0 1 4)]))
+      (compiler-reg-interval-range? intervals 0 0 4)]))
 
 (define (compiler-reg-scalar-interval-guardrail-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -18457,6 +18659,12 @@
 
 (cfg
   test
+  ;; Zero-call function with six scalar params, only `f` (var 5) used. The
+  ;; unused params 0-4 have no interval, so they can be neither pinned nor
+  ;; greedy-allocated (before AND after M-A); var 5 keeps its %r9 ABI pin. The
+  ;; zero-call locals 6..12 then fill the caller-saved pool head in candidate
+  ;; order -- %rax/%rsi/%rdi with the current pool ordering -- skipping the
+  ;; pinned %r9; nothing spills.
   (define (compiler-reg-scalar-zero-call-param-conflict-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
@@ -18464,19 +18672,18 @@
       [(CompilerRegPlan assignments _ _ _ _ _)
         (and
           (= (compiler-reg-spill-count assignments) 0)
-          ;; #perf call-spanning-aware partitioning fills the caller-saved
-          ;; zero-call pool (%r9/%rcx/%rdx) in candidate order, so the first three
-          ;; zero-call values (5,6,7) take it and the rest fall to callee-saved;
-          ;; every value still gets a register past the pinned-param conflicts.
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 5)
             "%r9")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 6)
-            "%rcx")
+            "%rax")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 7)
-            "%rdx"))])))
+            "%rsi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 8)
+            "%rdi"))])))
 
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -20306,11 +20513,16 @@
                   (and
                     (= out-vars (+ vars 1))
                     (= (compiler-reg-assignment-count extra-assignments) 1)
+                    ;; The region is clobber-free (no call/syscall), so the
+                    ;; candidate list offers the caller-saved %r8/%r9/%rsi/%rdi
+                    ;; before the callee-saved set and the split var takes %r8.
+                    ;; (Stale %r12 expectation predated the clobber-free
+                    ;; caller-saved widening; only --cfg test builds run this.)
                     (compiler-reg-location-register?
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         vars)
-                      "%r12")
+                      "%r8")
                     (compiler-reg-instr-list-has-mov-var? body vars 0)
                     (compiler-reg-instr-list-has-mov-var? body 0 vars)
                     (compiler-reg-instr-list-has-store-var? body "hot0" vars)
@@ -20352,16 +20564,19 @@
                   (and
                     (= out-vars (+ vars 2))
                     (= (compiler-reg-assignment-count extra-assignments) 2)
+                    ;; Clobber-free region -> caller-saved candidates first:
+                    ;; the two split vars take %r8 and %r9 (see
+                    ;; compiler-reg-loop-split-candidate-regs).
                     (compiler-reg-location-register?
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         split0)
-                      "%r12")
+                      "%r8")
                     (compiler-reg-location-register?
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         split1)
-                      "%r13")
+                      "%r9")
                     (compiler-reg-instr-list-has-store-var? body "hot0" split0)
                     (compiler-reg-instr-list-has-store-var? body "hot1" split1)
                     (compiler-reg-instr-list-has-store-var? body "hot2" split0)
@@ -20395,9 +20610,28 @@
 
 (cfg
   test
+  ;; Historical name: this fixture's phi-header region used to be REFUSED
+  ;; (critical entry edge). The on-demand per-header preheader split
+  ;; (compiler-reg-preheader-*) now inserts a dedicated preheader for exactly
+  ;; this shape, so the hot spilled var IS homed: one split var, one extra
+  ;; assignment. (Stale noop expectation predated the preheader machinery;
+  ;; only --cfg test builds run this.)
   (define (compiler-reg-loop-split-phi-region-refusal-ok?) : bool
-    (compiler-reg-loop-split-noop-for?
-      (compiler-reg-loop-split-phi-region-function))))
+    (let
+      [func : CompilerIrFunction (compiler-reg-loop-split-phi-region-function)]
+      [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-loop-split-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite _ _ out-vars extra-assignments _)
+              (and
+                (= out-vars (+ vars 1))
+                (= (compiler-reg-assignment-count extra-assignments) 1))])]))))
 
 (cfg
   test

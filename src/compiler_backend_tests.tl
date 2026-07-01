@@ -4742,14 +4742,14 @@
         (CompilerBackendGlobalTypeList.Nil)
         r8-tie-assignments
         2
-        (CompilerIrBinOp.Add)
+        (CompilerIrBinOp.BitXor)
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
         (AstType.I64))
         [(ResultCompilerBackend.Ok asm)
           (string.eq
             asm
-            "    movq %r8, %r10\n    movq %r12, %r8\n    addq %r10, %r8\n")]
+            "    movq %r8, %r10\n    movq %r12, %r8\n    xorq %r10, %r8\n")]
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-call-return-program) : CompilerIrProgram
@@ -5571,7 +5571,9 @@
           [ok : bool
             (and
               (compiler-backend-string-contains? asm "heavy:\n")
-              (not (compiler-backend-string-contains? asm ".seh_pushreg")))]
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %rsi"))
+              (not (compiler-backend-string-contains? asm ".seh_pushreg %rdi")))]
           (begin
             (compiler-backend-set-scalar-registers! false)
             (compiler-backend-set-current-fn-linux!)

@@ -1374,17 +1374,26 @@
                 payloads
                 (selfhost-lint-dead-ref-add-id refs name))))])]))
 
+(define (selfhost-lint-dead-dispatch-variant-list-refs-from
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [refs : vector.StringVec]) : vector.StringVec
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    refs
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant _ name)
+        (selfhost-lint-dead-dispatch-variant-list-refs-from
+          variants
+          (+ index 1)
+          (selfhost-lint-dead-ref-add refs name))])))
+
 (define (selfhost-lint-dead-dispatch-variant-list-refs
   [variants : AstDispatchVariantList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match variants
-    [(AstDispatchVariantList.Nil) refs]
-    [(AstDispatchVariantList.Cons variant rest)
-      (match variant
-        [(AstDispatchVariant.Variant _ name)
-          (selfhost-lint-dead-dispatch-variant-list-refs
-            (box-get rest)
-            (selfhost-lint-dead-ref-add refs name))])]))
+  (selfhost-lint-dead-dispatch-variant-list-refs-from (& variants) 0 refs))
 
 (define (selfhost-lint-dead-extern-abi-refs
   [abi : AstExternAbi]

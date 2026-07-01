@@ -140,6 +140,10 @@
   (Ok AstDispatchVariantList)
   (Err String))
 
+(defenum ResultAstDispatchVariantListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstPattern
   (Ok AstPattern)
   (Err String))
@@ -2559,24 +2563,31 @@
           (ResultAstDispatchVariant.Err "parse: malformed defdispatch variant")])]
     [_ (ResultAstDispatchVariant.Err "parse: malformed defdispatch variant")]))
 
-(define (parse-ast-dispatch-variant-list [variants : SpannedSexpr]) : ResultAstDispatchVariantList
+(define (parse-ast-dispatch-variant-list-into
+  [variants : SpannedSexpr]
+  [out : (&mut out AstDispatchVariantList)]) : ResultAstDispatchVariantListBuild
   (match variants
-    [(SpannedSexpr.Nil _)
-      (ResultAstDispatchVariantList.Ok AstDispatchVariantList.Nil)]
+    [(SpannedSexpr.Nil _) (ResultAstDispatchVariantListBuild.Ok)]
     [(SpannedSexpr.Cons head rest _)
       (match (parse-ast-dispatch-variant (sp-node-get head))
         [(ResultAstDispatchVariant.Ok parsed)
-          (match (parse-ast-dispatch-variant-list (sp-node-get rest))
-            [(ResultAstDispatchVariantList.Ok parsed-rest)
-              (ResultAstDispatchVariantList.Ok
-                (ast-dispatch-variant-cons parsed parsed-rest))]
-            [(ResultAstDispatchVariantList.Err message)
-              (ResultAstDispatchVariantList.Err message)])]
+          (begin
+            (ast-dispatch-variant-list-push out parsed)
+            (parse-ast-dispatch-variant-list-into (sp-node-get rest) out))]
         [(ResultAstDispatchVariant.Err message)
-          (ResultAstDispatchVariantList.Err message)])]
+          (ResultAstDispatchVariantListBuild.Err message)])]
     [_
-      (ResultAstDispatchVariantList.Err
+      (ResultAstDispatchVariantListBuild.Err
         "parse: malformed defdispatch variant list")]))
+
+(define (parse-ast-dispatch-variant-list [variants : SpannedSexpr]) : ResultAstDispatchVariantList
+  (let
+    [out : AstDispatchVariantList (ast-dispatch-variant-list-new)]
+    (match (parse-ast-dispatch-variant-list-into variants (&mut out))
+      [(ResultAstDispatchVariantListBuild.Ok)
+        (ResultAstDispatchVariantList.Ok out)]
+      [(ResultAstDispatchVariantListBuild.Err message)
+        (ResultAstDispatchVariantList.Err message)])))
 
 (define (parse-ast-defenum-variant-item
   [dispatch : sym_i64_env.SymI64Env]
@@ -6525,13 +6536,10 @@
         [(SpannedSexpr.Sym name _)
           (match (parse-ast-dispatch-variant-list (sp-node-get variants))
             [(ResultAstDispatchVariantList.Ok parsed-variants)
-              (match parsed-variants
-                [(AstDispatchVariantList.Nil)
-                  (ResultAstDecl.Err
-                    "parse: defdispatch needs at least one variant")]
-                [_
-                  (ResultAstDecl.Ok
-                    (ast-decl-def-dispatch name parsed-variants))])]
+              (if (ast-dispatch-variant-list-empty? (& parsed-variants))
+                (ResultAstDecl.Err
+                  "parse: defdispatch needs at least one variant")
+                (ResultAstDecl.Ok (ast-decl-def-dispatch name parsed-variants)))]
             [(ResultAstDispatchVariantList.Err message)
               (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defdispatch")])]
@@ -7979,36 +7987,30 @@
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : AstDispatchVariantList]) : bool
-  (match variants
-    [(AstDispatchVariantList.Cons
-        (AstDispatchVariant.Variant (AstDispatchIsa.Scalar) scalar-name)
-        rest0)
-      (let
-        [rest0 : AstDispatchVariantList (box-get rest0)]
-        (match rest0
-          [(AstDispatchVariantList.Cons
-              (AstDispatchVariant.Variant (AstDispatchIsa.Avx2) avx2-name)
-              rest1)
-            (let
-              [rest1 : AstDispatchVariantList (box-get rest1)]
-              (match rest1
-                [(AstDispatchVariantList.Cons
-                    (AstDispatchVariant.Variant
-                      (AstDispatchIsa.Avx512)
-                      avx512-name)
-                    rest2)
-                  (let
-                    [rest2 : AstDispatchVariantList (box-get rest2)]
-                    (match rest2
-                      [(AstDispatchVariantList.Nil)
-                        (and
-                          (string.eq scalar-name "dot-scalar")
-                          (string.eq avx2-name "dot-avx2")
-                          (string.eq avx512-name "dot-avx512"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (if (= (ast-dispatch-variant-list-len (& variants)) 3)
+    (match (ast-dispatch-variant-list-get
+      (& variants)
+      0
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant (AstDispatchIsa.Scalar) scalar-name)
+        (match (ast-dispatch-variant-list-get
+          (& variants)
+          1
+          (ast-dispatch-variant-fallback))
+          [(AstDispatchVariant.Variant (AstDispatchIsa.Avx2) avx2-name)
+            (match (ast-dispatch-variant-list-get
+              (& variants)
+              2
+              (ast-dispatch-variant-fallback))
+              [(AstDispatchVariant.Variant (AstDispatchIsa.Avx512) avx512-name)
+                (and
+                  (string.eq scalar-name "dot-scalar")
+                  (string.eq avx2-name "dot-avx2")
+                  (string.eq avx512-name "dot-avx512"))]
+              [_ false])]
+          [_ false])]
+      [_ false])
+    false))
 
 (define (compiler-parse-defdispatch-shape-ok?) : bool
   (match (parse-ast-source
@@ -8042,19 +8044,15 @@
                 [(AstDeclList.Nil)
                   (and
                     (= name (intern "id"))
-                    (match variants
-                      [(AstDispatchVariantList.Cons
-                          (AstDispatchVariant.Variant
-                            (AstDispatchIsa.Scalar)
-                            scalar-name)
-                          variant-rest)
-                        (let
-                          [variant-rest : AstDispatchVariantList
-                            (box-get variant-rest)]
-                          (match variant-rest
-                            [(AstDispatchVariantList.Nil)
-                              (string.eq scalar-name "id-scalar")]
-                            [_ false]))]
+                    (= (ast-dispatch-variant-list-len (& variants)) 1)
+                    (match (ast-dispatch-variant-list-get
+                      (& variants)
+                      0
+                      (ast-dispatch-variant-fallback))
+                      [(AstDispatchVariant.Variant
+                          (AstDispatchIsa.Scalar)
+                          scalar-name)
+                        (string.eq scalar-name "id-scalar")]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]

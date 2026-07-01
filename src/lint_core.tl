@@ -2035,20 +2035,35 @@
                 true
                 (lint-variant-def-list-uses-import? rest alias module-name)))]))]))
 
+(define (lint-dispatch-variant-list-uses-import-from?
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [alias : String]
+  [module-name : String]) : bool
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    false
+    (match (ast-dispatch-variant-list-get
+      variants
+      index
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant _ name)
+        (if (lint-name-uses-import? name alias module-name)
+          true
+          (lint-dispatch-variant-list-uses-import-from?
+            variants
+            (+ index 1)
+            alias
+            module-name))])))
+
 (define (lint-dispatch-variant-list-uses-import?
   [variants : AstDispatchVariantList]
   [alias : String]
   [module-name : String]) : bool
-  (match variants
-    [(AstDispatchVariantList.Nil) false]
-    [(AstDispatchVariantList.Cons variant rest)
-      (let
-        [rest : AstDispatchVariantList (box-get rest)]
-        (match variant
-          [(AstDispatchVariant.Variant _ name)
-            (if (lint-name-uses-import? name alias module-name)
-              true
-              (lint-dispatch-variant-list-uses-import? rest alias module-name))]))]))
+  (lint-dispatch-variant-list-uses-import-from?
+    (& variants)
+    0
+    alias
+    module-name))
 
 (define (lint-generated-decl-meta-uses-import?
   [meta : AstGeneratedDeclMeta]

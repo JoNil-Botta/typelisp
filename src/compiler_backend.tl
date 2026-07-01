@@ -3513,8 +3513,8 @@
 
 (define (compiler-backend-param-var? [params : CompilerIrParamList] [var : i64]) : bool
   (match params
-    [(IrParamNil) false]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) false]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ param-var)
           (if (= var param-var)
@@ -5732,9 +5732,9 @@
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match words
-    [(IrValueCons w0 rest0)
+    [(CompilerIrValueList.Cons w0 rest0)
       (match (box-get rest0)
-        [(IrValueCons w1 _)
+        [(CompilerIrValueList.Cons w1 _)
           (let
             [w0-sse : bool
               (compiler-backend-group-word-sse? program-index ty 0)]
@@ -5783,13 +5783,13 @@
                   w0-sse
                   w1-sse
                   instr-diag)]))]
-        [(IrValueNil)
+        [(CompilerIrValueList.Nil)
           (ResultCompilerBackend.Err
             (box
               (compiler-diagnostic-with-message
                 instr-diag
                 "backend: CompilerIrInstr.Pack requires exactly two words (#2386)")))])]
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-with-message
@@ -10506,8 +10506,8 @@
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
-    [(IrValueNil) 0]
-    [(IrValueCons _ rest)
+    [(CompilerIrValueList.Nil) 0]
+    [(CompilerIrValueList.Cons _ rest)
       (+ 1 (compiler-backend-ir-value-list-count (box-get rest)))]))
 
 (define (compiler-backend-call-args-count [args : CompilerIrCallArgs]) : i64
@@ -10668,8 +10668,8 @@
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
   (match params
-    [(IrParamNil) AstTypeList.Nil]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) AstTypeList.Nil]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
           (ast-type-cons ty (compiler-backend-param-type-list (box-get rest)))])]))
@@ -10686,7 +10686,7 @@
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
   (match types
-    [(AstTypeList.Nil) IrParamNil]
+    [(AstTypeList.Nil) CompilerIrParamList.Nil]
     [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ast-node-pool-reader-type-get ty)]
@@ -10700,7 +10700,7 @@
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
-    IrValueNil
+    CompilerIrValueList.Nil
     (compiler-ir-value-cons
       (CompilerIrValue.Var idx)
       (compiler-backend-var-value-list count (+ idx 1)))))
@@ -10976,8 +10976,8 @@
   [index : i64]
   [mask : i64]) : i64
   (match words
-    [(IrValueNil) mask]
-    [(IrValueCons word rest)
+    [(CompilerIrValueList.Nil) mask]
+    [(CompilerIrValueList.Cons word rest)
       (compiler-backend-pack-word-class-mask
         type-info
         (box-get rest)
@@ -12300,14 +12300,14 @@
   [program-index : CompilerBackendProgramIndex]) : bool
   (if (>= arg-index (compiler-backend-call-args-count args))
     (match params
-      [(IrParamNil)
+      [(CompilerIrParamList.Nil)
         (match target-types
           [(AstTypeList.Nil) true]
           [_ false])]
       [_ false])
     (match params
-      [(IrParamNil) false]
-      [(IrParamCons param rest)
+      [(CompilerIrParamList.Nil) false]
+      [(CompilerIrParamList.Cons param rest)
         (match target-types
           [(AstTypeList.Nil) false]
           [(AstTypeList.Cons target-ty target-rest)
@@ -15652,8 +15652,8 @@
   [int-idx : i64]
   [sse-idx : i64]) : String
   (match slots
-    [(IrCAbiReturnSlotNil) ""]
-    [(IrCAbiReturnSlotCons slot rest)
+    [(CompilerIrCAbiReturnSlotList.Nil) ""]
+    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
       (match slot
         [(CompilerIrCAbiReturnSlot.Slot ty _)
           (let
@@ -15863,16 +15863,16 @@
 
 (define (compiler-backend-switch-case-count [cases : CompilerIrSwitchCaseList]) : i64
   (match cases
-    [(IrSwitchCaseNil) 0]
-    [(IrSwitchCaseCons _ rest)
+    [(CompilerIrSwitchCaseList.Nil) 0]
+    [(CompilerIrSwitchCaseList.Cons _ rest)
       (+ 1 (compiler-backend-switch-case-count (box-get rest)))]))
 
 (define (compiler-backend-switch-cases-contiguous-from?
   [cases : CompilerIrSwitchCaseList]
   [expected : i64]) : bool
   (match cases
-    [(IrSwitchCaseNil) true]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) true]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case tag _)
           (and
@@ -15884,8 +15884,8 @@
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
   (match cases
-    [(IrSwitchCaseNil) false]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) false]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (or
@@ -15917,8 +15917,8 @@
   [cases : CompilerIrSwitchCaseList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match cases
-    [(IrSwitchCaseNil) buf]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) buf]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (compiler-backend-emit-switch-table-cases-into
@@ -16890,8 +16890,8 @@
   [counts : (Array i64)]
   [values : CompilerIrValueList]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (compiler-backend-count-value-use counts value)
         (compiler-backend-count-value-list-uses counts (box-get rest)))]))
@@ -22574,8 +22574,8 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match params
-    [(IrParamNil) (ResultCompilerBackend.Ok "")]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
           (let
@@ -23357,7 +23357,7 @@
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-list-compact
@@ -23877,8 +23877,8 @@
   [collections : CompilerBackendProgramCollections]
   [values : CompilerIrValueList]) : CompilerBackendProgramCollections
   (match values
-    [(IrValueNil) collections]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) collections]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-backend-collect-value-list-collections
         (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
@@ -29090,8 +29090,8 @@ tl_memchr:
   [site : String]
   [values : CompilerIrValueList]) : CompilerBackendObjectParts
   (match values
-    [(IrValueNil) parts]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) parts]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-backend-object-value-list-ref
         (compiler-backend-object-value-ref parts site value)
         site
@@ -29576,8 +29576,8 @@ tl_memchr:
   [cases : CompilerIrSwitchCaseList]
   [index : i64]) : CompilerBackendObjectParts
   (match cases
-    [(IrSwitchCaseNil) parts]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) parts]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (let
@@ -29857,8 +29857,8 @@ tl_memchr:
   [params : CompilerIrParamList]
   [int-index : i64]) : CompilerBackendObjectParts
   (match params
-    [(IrParamNil) parts]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) parts]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
           (if (compiler-backend-float-type? ty)
@@ -32714,7 +32714,7 @@ tl_memchr:
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         4
         (compiler-ir-block-cons
@@ -32737,7 +32737,7 @@ tl_memchr:
                         (CompilerIrValue.I64 0)
                         (compiler-ir-value-cons
                           (CompilerIrValue.I64 0)
-                          IrValueNil))))
+                          CompilerIrValueList.Nil))))
                   (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
@@ -32752,7 +32752,7 @@ tl_memchr:
                             (CompilerIrValue.I64 0)
                             (compiler-ir-value-cons
                               (CompilerIrValue.I64 0)
-                              IrValueNil)))))
+                              CompilerIrValueList.Nil)))))
                     (AstType.I64))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
@@ -32941,7 +32941,7 @@ tl_memchr:
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "stdlib/runtime.tl::tl-runtime-str-view"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -32955,7 +32955,7 @@ tl_memchr:
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           0
           (compiler-ir-block-cons
@@ -33128,7 +33128,7 @@ tl_memchr:
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "tl_alloc"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -33142,7 +33142,7 @@ tl_memchr:
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           1
           (compiler-ir-block-cons
@@ -33182,7 +33182,7 @@ tl_memchr:
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "tl_alloc"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -33196,7 +33196,7 @@ tl_memchr:
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           2
           (compiler-ir-block-cons
@@ -33219,7 +33219,7 @@ tl_memchr:
                           (CompilerIrValue.I64 0)
                           (compiler-ir-value-cons
                             (CompilerIrValue.I64 0)
-                            IrValueNil))))
+                            CompilerIrValueList.Nil))))
                     (AstType.I64))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
@@ -33255,7 +33255,7 @@ tl_memchr:
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "lib.tl::helper"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -33269,7 +33269,7 @@ tl_memchr:
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           1
           (compiler-ir-block-cons

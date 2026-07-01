@@ -613,8 +613,8 @@
   [params : CompilerIrParamList]
   [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (match params
-    [(IrParamNil) types]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) types]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty id)
           (compiler-reg-param-types
@@ -698,8 +698,8 @@
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty id)
           (begin
@@ -2263,8 +2263,8 @@
   [params : CompilerIrParamList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match params
-    [(IrParamNil) set]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) set]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
           (compiler-reg-ineligible-params
@@ -2342,9 +2342,9 @@
   [position : i64]
   [can-pin? : bool]) : CompilerRegParamAssignPlan
   (match params
-    [(IrParamNil)
+    [(CompilerIrParamList.Nil)
       (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
           (let
@@ -2415,12 +2415,12 @@
   (match func
     [(CompilerIrFunction.Function _ params _ _ _)
       (match params
-        [(IrParamNil)
+        [(CompilerIrParamList.Nil)
           (CompilerRegParamAssignPlan.Plan
             (compiler-reg-assignment-table-make vars)
             base-ineligible
             base-ineligible)]
-        [(IrParamCons _ _)
+        [(CompilerIrParamList.Cons _ _)
           (let
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
@@ -3652,8 +3652,8 @@
   [params : CompilerIrParamList]
   [counts : (Array i64)]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
           (begin
@@ -9650,8 +9650,8 @@
   [values : CompilerIrValueList]
   [acc : i64]) : i64
   (match values
-    [(IrValueNil) acc]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Cons value rest)
       (let
         [next : i64
           (compiler-reg-color-merge-root
@@ -9866,8 +9866,8 @@
   [invalid : (Array bool)]
   [values : CompilerIrValueList]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid value)
         (compiler-reg-color-invalidate-value-list! roots invalid (box-get rest)))]))
@@ -10492,8 +10492,8 @@
   [slot-ends : (Array i64)]
   [highest : i64]) : i64
   (match params
-    [(IrParamNil) highest]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) highest]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var-id)
           (begin
@@ -10681,9 +10681,9 @@
   [remap : (Array i64)]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) IrValueNil]
-    [(IrValueCons head rest)
-      (IrValueCons
+    [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Cons head rest)
+      (CompilerIrValueList.Cons
         (compiler-reg-remap-value remap head)
         (box (compiler-reg-remap-value-list remap (box-get rest))))]))
 
@@ -12347,7 +12347,7 @@
 (define (compiler-reg-reuse-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "reuse"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     2
     (compiler-ir-block-cons
@@ -12374,7 +12374,7 @@
 (define (compiler-reg-f64-reuse-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "f64_reuse"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     2
     (compiler-ir-block-cons
@@ -12404,7 +12404,7 @@
 (define (compiler-reg-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "overlap"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     8
     (compiler-ir-block-cons
@@ -12486,7 +12486,7 @@
 (define (compiler-reg-f64-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "f64_overlap"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     5
     (compiler-ir-block-cons
@@ -12550,7 +12550,7 @@
 (define (compiler-reg-call-live-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "call_live"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     3
     (compiler-ir-block-cons
@@ -12578,7 +12578,7 @@
 (define (compiler-reg-f64-call-live-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "f64_call_live"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
     (compiler-ir-block-cons
@@ -12609,7 +12609,7 @@
 (define (compiler-reg-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "call_arg"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     4
     (compiler-ir-block-cons
@@ -12644,7 +12644,7 @@
 (define (compiler-reg-f64-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "f64_call_arg"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
     (compiler-ir-block-cons
@@ -12677,7 +12677,7 @@
     "ineligible"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.Unit)
     7
     (compiler-ir-block-cons
@@ -12727,7 +12727,7 @@
     "param_livein_gap"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -12755,7 +12755,7 @@
     "single_block_livein_gap"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -12780,7 +12780,7 @@
           (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
           (compiler-ir-param-cons
             (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-            IrParamNil)))
+            CompilerIrParamList.Nil)))
       (AstType.Unit)
       3
       (compiler-ir-block-cons
@@ -12951,7 +12951,7 @@
                     (CompilerIrParam.Param "e" (compiler-reg-i64-ty) 4)
                     (compiler-ir-param-cons
                       (CompilerIrParam.Param "f" (compiler-reg-i64-ty) 5)
-                      IrParamNil))))))
+                      CompilerIrParamList.Nil))))))
           (AstType.Unit)
           13
           (compiler-ir-block-cons
@@ -12965,7 +12965,7 @@
       "param_clobber"
       (compiler-ir-param-cons
         (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-        IrParamNil)
+        CompilerIrParamList.Nil)
       (AstType.I64)
       2
       (compiler-ir-block-cons
@@ -12990,7 +12990,9 @@
       [ty : AstType (AstType.Struct (intern "ParamAggregate"))]
       (CompilerIrFunction.Function
         "param_aggregate"
-        (compiler-ir-param-cons (CompilerIrParam.Param "state" ty 0) IrParamNil)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "state" ty 0)
+          CompilerIrParamList.Nil)
         (AstType.Unit)
         2
         (compiler-ir-block-cons
@@ -13006,7 +13008,7 @@
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "move_chain"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -13033,7 +13035,7 @@
 (define (compiler-reg-same-value-multi-def-census-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "same_value_multi_def_census"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -13060,7 +13062,7 @@
 (define (compiler-reg-phi-join-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "phi_join"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -13091,7 +13093,7 @@
 (define (compiler-reg-loop-backedge-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "loop_backedge"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -13145,7 +13147,7 @@
 (define (compiler-reg-same-value-clobber-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "same_value_clobber"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -13173,7 +13175,7 @@
 (define (compiler-reg-interference-blocks-coalesce-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "interference_blocks_coalesce"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -13200,7 +13202,7 @@
 (define (compiler-reg-spill-coalesce-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "spill_coalesce"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     6
     (compiler-ir-block-cons
@@ -13263,7 +13265,7 @@
 (define (compiler-reg-vector-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "vector_home"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     4
     (compiler-ir-block-cons
@@ -13314,7 +13316,7 @@
 (define (compiler-reg-vector-select-false-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "vector_select_false_home"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     5
     (compiler-ir-block-cons
@@ -13364,7 +13366,7 @@
 (define (compiler-reg-mask-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "mask_home"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     5
     (compiler-ir-block-cons
@@ -13669,7 +13671,7 @@
 (define (compiler-reg-syscall-clobber-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "syscall_clobber_overlap"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     7
     (compiler-ir-block-cons
@@ -13869,7 +13871,7 @@
           instrs))
       (CompilerIrFunction.Function
         "call_spanning_caller_saved"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.Unit)
         8
         (compiler-ir-block-cons
@@ -13934,7 +13936,7 @@
   (define (compiler-reg-remat-weight-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_weight"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       2
       (compiler-ir-block-cons
@@ -13977,7 +13979,7 @@
   (define (compiler-reg-remat-multi-def-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_multi_def"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       1
       (compiler-ir-block-cons
@@ -14257,7 +14259,7 @@
             instrs))
         (CompilerIrFunction.Function
           "remat_spill_weight_eviction"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.Unit)
           7
           (compiler-ir-block-cons
@@ -14466,7 +14468,7 @@
             instrs))
         (CompilerIrFunction.Function
           "spill_weight_eviction"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.Unit)
           7
           (compiler-ir-block-cons
@@ -14497,7 +14499,7 @@
     ;; spill-weight eviction victim despite var0/var1 sharing one static use each.
     (CompilerIrFunction.Function
       "loop_spill_weight_eviction"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       7
       (compiler-ir-block-cons
@@ -14874,7 +14876,7 @@
   (define (compiler-reg-remat-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_rewrite"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       1
       (compiler-ir-block-cons
@@ -14905,7 +14907,7 @@
   (define (compiler-reg-remat-conflict-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_conflict"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       2
       (compiler-ir-block-cons
@@ -14941,7 +14943,7 @@
   (define (compiler-reg-remat-caller-clobber-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_caller_clobber"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       2
       (compiler-ir-block-cons
@@ -14968,7 +14970,7 @@
   (define (compiler-reg-remat-global-mov-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_global_mov"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
@@ -14990,7 +14992,7 @@
   (define (compiler-reg-remat-global-load-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_global_load"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
@@ -15012,7 +15014,7 @@
   (define (compiler-reg-remat-global-gep-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_global_gep"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-addr-of-result-type)
       1
       (compiler-ir-block-cons
@@ -15035,7 +15037,7 @@
   (define (compiler-reg-remat-global-mutating-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "remat_global_mutating"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
@@ -15527,7 +15529,7 @@
             (compiler-reg-call-spanning-post-call-stores body-tail)))]
       (CompilerIrFunction.Function
         "call_spanning_multiblock_local"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.Unit)
         8
         (compiler-ir-block-cons
@@ -15564,7 +15566,7 @@
           (compiler-reg-call-spanning-post-call-stores body-tail))]
       (CompilerIrFunction.Function
         "call_spanning_multiblock_boundary"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.Unit)
         8
         (compiler-ir-block-cons
@@ -15656,7 +15658,7 @@
   (define (compiler-reg-edge-copy-linear-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "edge_copy_linear"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       1
       (compiler-ir-block-cons
@@ -15712,7 +15714,7 @@
   (define (compiler-reg-edge-copy-backedge-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "edge_copy_backedge"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       1
       (compiler-ir-block-cons
@@ -15791,7 +15793,7 @@
   (define (compiler-reg-edge-copy-critical-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "edge_copy_critical"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       1
       (compiler-ir-block-cons
@@ -15891,7 +15893,7 @@
   (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "loop_split_rewrite"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       1
       (compiler-ir-block-cons
@@ -15944,7 +15946,7 @@
   (define (compiler-reg-loop-split-two-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "loop_split_two_rewrite"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       2
       (compiler-ir-block-cons
@@ -16012,7 +16014,7 @@
   (define (compiler-reg-loop-split-low-benefit-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "loop_split_low_benefit"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       1
       (compiler-ir-block-cons
@@ -16060,7 +16062,7 @@
   (define (compiler-reg-loop-split-phi-region-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "loop_split_phi_region"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.I64)
       2
       (compiler-ir-block-cons
@@ -16252,7 +16254,7 @@
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "many_call_live"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       6
       (compiler-ir-block-cons
@@ -17179,7 +17181,7 @@
     [big : AstType (AstType.Struct (intern "BigStorage"))]
     (CompilerIrFunction.Function
       "storage_ranges"
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       6
       (compiler-ir-block-cons
@@ -17286,7 +17288,7 @@
       (compiler-reg-color-spill-sharing-types 3)
       (compiler-live-set-empty))
     (compiler-live-set-empty)
-    IrParamNil
+    CompilerIrParamList.Nil
     CompilerIrBlockList.Nil
     3)
     [(CompilerRegColoring.Remap share-remap share-slots)
@@ -17298,7 +17300,7 @@
           (compiler-reg-color-spill-sharing-types 2)
           (compiler-live-set-empty))
         (compiler-live-set-empty)
-        IrParamNil
+        CompilerIrParamList.Nil
         CompilerIrBlockList.Nil
         2)
         [(CompilerRegColoring.Remap split-remap split-slots)
@@ -17322,7 +17324,7 @@
     (compiler-live-set-empty)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "pinned" (AstType.I64) 1)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     CompilerIrBlockList.Nil
     3)
     [(CompilerRegColoring.Remap remap slots)
@@ -17374,7 +17376,7 @@
             CompilerRegVarTypeList.Nil)
           (compiler-live-set-empty))
         (compiler-live-set1 group-var)
-        IrParamNil
+        CompilerIrParamList.Nil
         CompilerIrBlockList.Nil
         (+ group-var 1))]
     (match coloring

@@ -526,8 +526,8 @@
 
 (define (compiler-live-value-list-vars [values : CompilerIrValueList]) : CompilerLiveI64Set
   (match values
-    [(IrValueNil) (compiler-live-set-empty)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (compiler-live-set-empty)]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-live-value-vars-into
         (compiler-live-value-list-vars (box-get rest))
         value)]))
@@ -582,8 +582,8 @@
   [set : CompilerLiveLabelSet]
   [cases : CompilerIrSwitchCaseList]) : CompilerLiveLabelSet
   (match cases
-    [(IrSwitchCaseNil) set]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) set]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (compiler-live-switch-case-successors
@@ -1339,7 +1339,7 @@
 (define (compiler-live-straight-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "straight"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     3
     (compiler-ir-block-cons
@@ -1363,7 +1363,7 @@
 (define (compiler-live-branch-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "branch"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     3
     (compiler-ir-block-cons
@@ -1391,7 +1391,7 @@
 (define (compiler-live-phi-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "phi"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     4
     (compiler-ir-block-cons
@@ -1662,7 +1662,7 @@
       (compiler-ir-switch-case-cons
         4
         "four"
-        (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
+        (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil))]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
     [instrs : CompilerIrInstrList

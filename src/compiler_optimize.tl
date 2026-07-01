@@ -1332,8 +1332,8 @@
   [set : hashmap.I64I64Map]
   [values : CompilerIrValueList]) : hashmap.I64I64Map
   (match values
-    [(IrValueNil) set]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) set]
+    [(CompilerIrValueList.Cons value rest)
       (opt-collect-value-list-uses
         (opt-collect-value-uses set value)
         (box-get rest))]))
@@ -1780,8 +1780,8 @@
   [items : (Array i64)]
   [values : CompilerIrValueList]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (opt-collect-value-uses-array items value)
         (opt-collect-value-list-uses-array items (box-get rest)))]))
@@ -2012,8 +2012,8 @@
   [items : (Array i64)]
   [values : CompilerIrValueList]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (opt-uncount-value-uses-array items value)
         (opt-uncount-value-list-uses-array items (box-get rest)))]))
@@ -2604,8 +2604,8 @@
   [ptrs : OptAggregatePointerList]
   [values : CompilerIrValueList]) : bool
   (match values
-    [(IrValueNil) false]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) false]
+    [(CompilerIrValueList.Cons value rest)
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
         (opt-aggregate-value-list-has-pointer? base ptrs (box-get rest)))]))
@@ -4221,13 +4221,13 @@
 
 (define (opt-value-list-eq [a : CompilerIrValueList] [b : CompilerIrValueList]) : bool
   (match a
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match b
-        [(IrValueNil) true]
+        [(CompilerIrValueList.Nil) true]
         [_ false])]
-    [(IrValueCons ah at)
+    [(CompilerIrValueList.Cons ah at)
       (match b
-        [(IrValueCons bh bt)
+        [(CompilerIrValueList.Cons bh bt)
           (and
             (opt-value-eq ah bh)
             (opt-value-list-eq (box-get at) (box-get bt)))]
@@ -4302,13 +4302,13 @@
   [a : CompilerIrSwitchCaseList]
   [b : CompilerIrSwitchCaseList]) : bool
   (match a
-    [(IrSwitchCaseNil)
+    [(CompilerIrSwitchCaseList.Nil)
       (match b
-        [(IrSwitchCaseNil) true]
+        [(CompilerIrSwitchCaseList.Nil) true]
         [_ false])]
-    [(IrSwitchCaseCons acase at)
+    [(CompilerIrSwitchCaseList.Cons acase at)
       (match b
-        [(IrSwitchCaseCons bcase bt)
+        [(CompilerIrSwitchCaseList.Cons bcase bt)
           (and
             (opt-switch-case-eq acase bcase)
             (opt-switch-case-list-eq (box-get at) (box-get bt)))]
@@ -4327,13 +4327,13 @@
   [a : CompilerIrCAbiReturnSlotList]
   [b : CompilerIrCAbiReturnSlotList]) : bool
   (match a
-    [(IrCAbiReturnSlotNil)
+    [(CompilerIrCAbiReturnSlotList.Nil)
       (match b
-        [(IrCAbiReturnSlotNil) true]
+        [(CompilerIrCAbiReturnSlotList.Nil) true]
         [_ false])]
-    [(IrCAbiReturnSlotCons aslot arest)
+    [(CompilerIrCAbiReturnSlotList.Cons aslot arest)
       (match b
-        [(IrCAbiReturnSlotCons bslot brest)
+        [(CompilerIrCAbiReturnSlotList.Cons bslot brest)
           (and
             (opt-c-abi-return-slot-eq aslot bslot)
             (opt-c-abi-return-slot-list-eq (box-get arest) (box-get brest)))]
@@ -4857,13 +4857,13 @@
 
 (define (opt-param-list-eq [a : CompilerIrParamList] [b : CompilerIrParamList]) : bool
   (match a
-    [(IrParamNil)
+    [(CompilerIrParamList.Nil)
       (match b
-        [(IrParamNil) true]
+        [(CompilerIrParamList.Nil) true]
         [_ false])]
-    [(IrParamCons ah at)
+    [(CompilerIrParamList.Cons ah at)
       (match b
-        [(IrParamCons bh bt)
+        [(CompilerIrParamList.Cons bh bt)
           (and
             (opt-param-eq ah bh)
             (opt-param-list-eq (box-get at) (box-get bt)))]
@@ -5290,13 +5290,14 @@
   (let
     [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
     (match words
-      [(IrValueNil) e1]
-      [(IrValueCons w0 rest0)
+      [(CompilerIrValueList.Nil) e1]
+      [(CompilerIrValueList.Cons w0 rest0)
         (let
           [e2 : OptCopyEnv (opt-copy-add-pack-word e1 dst 0 w0)]
           (match (box-get rest0)
-            [(IrValueNil) e2]
-            [(IrValueCons w1 _) (opt-copy-add-pack-word e2 dst 1 w1)]))])))
+            [(CompilerIrValueList.Nil) e2]
+            [(CompilerIrValueList.Cons w1 _)
+              (opt-copy-add-pack-word e2 dst 1 w1)]))])))
 
 (define (opt-copy-mask-source? [value : CompilerIrValue] [dst : i64]) : bool
   (match value
@@ -5322,8 +5323,8 @@
   [env : OptCopyEnv]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) (IrValueNil)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-copy-resolve env value)
         (opt-copy-subst-value-list env (box-get rest)))]))
@@ -7905,8 +7906,8 @@
   [params : CompilerIrParamList]
   [set : hashmap.I64I64Map]) : OptVarSetResult
   (match params
-    [(IrParamNil) (OptVarSetResult.Ok set)]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) (OptVarSetResult.Ok set)]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
           (match (opt-var-set-add-unique set var)
@@ -7974,8 +7975,8 @@
   [entry-label : String]
   [defs : OptVarDefList]) : OptVarDefList
   (match params
-    [(IrParamNil) defs]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) defs]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
           (opt-var-defs-from-params
@@ -8158,8 +8159,8 @@
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match values
-    [(IrValueNil) (ResultCompilerOptimizeVerify.Ok)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (ResultCompilerOptimizeVerify.Ok)]
+    [(CompilerIrValueList.Cons value rest)
       (match (opt-verify-value-use defs doms value use-block use-pos)
         [(ResultCompilerOptimizeVerify.Ok)
           (opt-verify-value-list-uses
@@ -8815,8 +8816,8 @@
   [params : CompilerIrParamList]
   [facts : OptSsaFacts]) : OptSsaFacts
   (match params
-    [(IrParamNil) facts]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) facts]
+    [(CompilerIrParamList.Cons param rest)
       (opt-ssa-facts-add-params
         (box-get rest)
         (opt-ssa-facts-add-param facts param))]))
@@ -9046,8 +9047,8 @@
   [defs : OptSsaVarBlocks]
   [params : CompilerIrParamList]) : OptSsaVarBlocks
   (match params
-    [(IrParamNil) defs]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) defs]
+    [(CompilerIrParamList.Cons param rest)
       (opt-ssa-def-blocks-add-params
         index
         facts
@@ -9308,8 +9309,8 @@
   [params : CompilerIrParamList]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
   (match params
-    [(IrParamNil) env]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) env]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
           (opt-ssa-env-from-params
@@ -9357,8 +9358,8 @@
   [env : OptSsaRenameEnv]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) (IrValueNil)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-ssa-rewrite-value env value)
         (opt-ssa-rewrite-value-list env (box-get rest)))]))
@@ -10799,8 +10800,8 @@
   [use-pos : i64]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) (IrValueNil)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-global-copy-resolve facts doms use-block-id use-pos value)
         (opt-global-copy-subst-value-list
@@ -11627,8 +11628,8 @@
   [set : OptLabelSet]
   [cases : CompilerIrSwitchCaseList]) : OptLabelSet
   (match cases
-    [(IrSwitchCaseNil) set]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) set]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (opt-cfg-switch-case-successors
@@ -12417,11 +12418,11 @@
   [header : String]
   [preheader : String]) : CompilerIrSwitchCaseList
   (match cases
-    [(IrSwitchCaseNil) IrSwitchCaseNil]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) CompilerIrSwitchCaseList.Nil]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case tag label)
-          (IrSwitchCaseCons
+          (CompilerIrSwitchCaseList.Cons
             (CompilerIrSwitchCase.Case
               tag
               (opt-loop-preheaders-retarget-label label header preheader))
@@ -13205,8 +13206,8 @@
   [params : CompilerIrParamList]
   [types : OptSsaVarTypes]) : OptSsaVarTypes
   (match params
-    [(IrParamNil) types]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) types]
+    [(CompilerIrParamList.Cons param rest)
       (opt-licm-type-env-add-params
         (box-get rest)
         (opt-licm-type-env-add-param types param))]))
@@ -15510,8 +15511,8 @@
 
 (define (opt-sccp-max-var-params [params : CompilerIrParamList] [acc : i64]) : i64
   (match params
-    [(IrParamNil) acc]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
           (opt-sccp-max-var-params
@@ -15728,8 +15729,8 @@
   [state : OptSccpState]
   [cases : CompilerIrSwitchCaseList]) : OptSccpState
   (match cases
-    [(IrSwitchCaseNil) state]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) state]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (opt-sccp-mark-switch-targets
@@ -15912,8 +15913,8 @@
   [params : CompilerIrParamList]
   [env : OptSccpEnv]) : OptSccpEnv
   (match params
-    [(IrParamNil) env]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) env]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
           (opt-sccp-env-from-params
@@ -16039,8 +16040,8 @@
   [env : OptSccpEnv]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) (IrValueNil)]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-sccp-rewrite-value env value)
         (opt-sccp-rewrite-value-list env (box-get rest)))]))
@@ -16641,7 +16642,11 @@
   [items : OptSwitchCandidateList]
   [min-tag : i64]
   [max-tag : i64]) : CompilerIrSwitchCaseList
-  (opt-switch-build-cases-desc items max-tag min-tag IrSwitchCaseNil))
+  (opt-switch-build-cases-desc
+    items
+    max-tag
+    min-tag
+    CompilerIrSwitchCaseList.Nil))
 
 (define (opt-switch-block-starts-with-phi?
   [blocks : CompilerIrBlockList]
@@ -17116,8 +17121,8 @@
   [params : CompilerIrParamList]
   [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
   (match params
-    [(IrParamNil) acc]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
           (opt-gvn-sources-params (box-get rest) (opt-gvn-defs-add acc id))])]))
@@ -20906,24 +20911,28 @@
 ;; the same way they handle ordinary loops built from `while`/`set!`.
 (define (opt-tailrec-param-count [params : CompilerIrParamList]) : i64
   (match params
-    [(IrParamNil) 0]
-    [(IrParamCons _ rest) (+ 1 (opt-tailrec-param-count (box-get rest)))]))
+    [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Cons _ rest)
+      (+ 1 (opt-tailrec-param-count (box-get rest)))]))
 
 (define (opt-tailrec-array-values-to-list
   [values : (Array CompilerIrValue)]
   [index : i64]) : CompilerIrValueList
   (if (>= index (array-length values))
-    IrValueNil
+    CompilerIrValueList.Nil
     (compiler-ir-value-cons
       (array-ref values index)
       (opt-tailrec-array-values-to-list values (+ index 1)))))
 
 (define (opt-tailrec-args-to-list [args : CompilerIrCallArgs]) : CompilerIrValueList
   (match args
-    [(CompilerIrCallArgs.Nil) IrValueNil]
-    [(CompilerIrCallArgs.One a) (compiler-ir-value-cons a IrValueNil)]
+    [(CompilerIrCallArgs.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrCallArgs.One a)
+      (compiler-ir-value-cons a CompilerIrValueList.Nil)]
     [(CompilerIrCallArgs.Two a b)
-      (compiler-ir-value-cons a (compiler-ir-value-cons b IrValueNil))]
+      (compiler-ir-value-cons
+        a
+        (compiler-ir-value-cons b CompilerIrValueList.Nil))]
     [(CompilerIrCallArgs.Array values)
       (opt-tailrec-array-values-to-list values 0)]))
 
@@ -20936,8 +20945,8 @@
   [index : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
   (match params
-    [(IrParamNil) tail]
-    [(IrParamCons param prest)
+    [(CompilerIrParamList.Nil) tail]
+    [(CompilerIrParamList.Cons param prest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
           (compiler-ir-instr-cons
@@ -20954,11 +20963,11 @@
   [index : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
   (match params
-    [(IrParamNil) tail]
-    [(IrParamCons param prest)
+    [(CompilerIrParamList.Nil) tail]
+    [(CompilerIrParamList.Cons param prest)
       (match args
-        [(IrValueNil) tail]
-        [(IrValueCons arg arest)
+        [(CompilerIrValueList.Nil) tail]
+        [(CompilerIrValueList.Cons arg arest)
           (match param
             [(CompilerIrParam.Param _ ty _)
               (compiler-ir-instr-cons
@@ -22383,8 +22392,8 @@
   [census : OptInlineCensus]
   [values : CompilerIrValueList]) : OptInlineCensus
   (match values
-    [(IrValueNil) census]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) census]
+    [(CompilerIrValueList.Cons value rest)
       (opt-inline-census-value-list
         index
         (opt-inline-census-value index census value)
@@ -23068,13 +23077,14 @@
 
 (define (opt-inline-param-count [params : CompilerIrParamList]) : i64
   (match params
-    [(IrParamNil) 0]
-    [(IrParamCons _ rest) (+ 1 (opt-inline-param-count (box-get rest)))]))
+    [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Cons _ rest)
+      (+ 1 (opt-inline-param-count (box-get rest)))]))
 
 (define (opt-inline-params-sequential? [params : CompilerIrParamList] [i : i64]) : bool
   (match params
-    [(IrParamNil) true]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) true]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ vid)
           (if (= vid i)
@@ -23753,8 +23763,8 @@
   [base : i64]
   [index : i64]) : CompilerIrInstrList
   (match params
-    [(IrParamNil) CompilerIrInstrList.Nil]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
           (compiler-ir-instr-cons
@@ -23831,8 +23841,8 @@
   [np : i64]
   [base : i64]) : CompilerIrValueList
   (match values
-    [(IrValueNil) IrValueNil]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-inline-remap-value value sa np base)
         (opt-inline-remap-value-list (box-get rest) sa np base))]))
@@ -26238,8 +26248,8 @@
   [state : OptReachState]
   [values : CompilerIrValueList]) : OptReachState
   (match values
-    [(IrValueNil) state]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) state]
+    [(CompilerIrValueList.Cons value rest)
       (opt-reach-value-list
         index
         (opt-reach-value index state value)
@@ -28339,7 +28349,7 @@
   [frame : i64]) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     frame
     (compiler-ir-block-cons
@@ -28535,7 +28545,7 @@
     "inline_span"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "value" (AstType.I64) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -28559,7 +28569,7 @@
 (define (opt-inline-span-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -28705,7 +28715,9 @@
         2
         (compiler-ir-value-cons
           (CompilerIrValue.Var 0)
-          (compiler-ir-value-cons (CompilerIrValue.Var 1) IrValueNil))
+          (compiler-ir-value-cons
+            (CompilerIrValue.Var 1)
+            CompilerIrValueList.Nil))
         (AstType.Struct (intern "Pair")))]
     [word : CompilerIrInstr
       (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 0 (AstType.I64))]
@@ -28981,7 +28993,7 @@
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
               "main"
-              IrParamNil
+              CompilerIrParamList.Nil
               (AstType.I64)
               4
               (opt-aggregate-phi-flowed-blocks))
@@ -29414,7 +29426,12 @@
 
 (define (opt-aggregate-sroa-test-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match (opt-aggregate-sroa-function
-    (CompilerIrFunction.Function "main" IrParamNil (AstType.I64) 4 blocks))
+    (CompilerIrFunction.Function
+      "main"
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      4
+      blocks))
     [(CompilerIrFunction.Function _ _ _ _ optimized) optimized]))
 
 (define (compiler-optimize-aggregate-sroa-self-test) : i64
@@ -30400,9 +30417,12 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           2
-          (IrValueCons
+          (CompilerIrValueList.Cons
             (CompilerIrValue.I64 7)
-            (box (IrValueCons (CompilerIrValue.I64 9) (box IrValueNil))))
+            (box
+              (CompilerIrValueList.Cons
+                (CompilerIrValue.I64 9)
+                (box CompilerIrValueList.Nil))))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
@@ -30578,7 +30598,9 @@
 (define (opt-divrem-test-params [ty : AstType]) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "lhs" ty 0)
-    (compiler-ir-param-cons (CompilerIrParam.Param "rhs" ty 1) (IrParamNil))))
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "rhs" ty 1)
+      (CompilerIrParamList.Nil))))
 
 (define (opt-divrem-branch-blocks
   [cmp-op : CompilerIrBinOp]
@@ -31239,7 +31261,7 @@
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "f"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           16
           (opt-const-divisor-test-blocks))
@@ -31326,7 +31348,7 @@
     (CompilerIrParam.Param "a" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "b" (AstType.I64) 1)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-gvn-count-binops-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -31778,7 +31800,7 @@
       (CompilerIrInstrList.Nil))))
 
 (define (opt-copy-pack-words [a : CompilerIrValue] [b : CompilerIrValue]) : CompilerIrValueList
-  (compiler-ir-value-cons a (compiler-ir-value-cons b IrValueNil)))
+  (compiler-ir-value-cons a (compiler-ir-value-cons b CompilerIrValueList.Nil)))
 
 (define (opt-copy-pack-word-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -32507,7 +32529,7 @@
       (CompilerIrParam.Param "other" (AstType.String) 20)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "unknown" (AstType.U64) 30)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (opt-loop-bce-string-test-entry [init : i64]) : CompilerIrBlock
   (compiler-ir-block
@@ -32828,7 +32850,8 @@
 (define (opt-loop-bce-test-count
   [blocks : CompilerIrBlockList]
   [summaries : OptLoopBceSummaries]) : i64
-  (opt-count-bounds-blocks (opt-loop-bce-blocks summaries (IrParamNil) blocks)))
+  (opt-count-bounds-blocks
+    (opt-loop-bce-blocks summaries (CompilerIrParamList.Nil) blocks)))
 
 (define (opt-loop-bce-string-test-count
   [blocks : CompilerIrBlockList]
@@ -33035,7 +33058,7 @@
 (define (opt-test-function-named [name : String] [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (CompilerIrFunction.Function
     name
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     5
     (compiler-ir-block-cons
@@ -33207,7 +33230,9 @@
                 (CompilerIrValue.I64 0)
                 (compiler-ir-value-cons
                   (CompilerIrValue.I64 0)
-                  (compiler-ir-value-cons (CompilerIrValue.I64 0) IrValueNil))))
+                  (compiler-ir-value-cons
+                    (CompilerIrValue.I64 0)
+                    CompilerIrValueList.Nil))))
             (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
@@ -33594,7 +33619,7 @@
     (CompilerIrParam.Param "left" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "right" (AstType.I64) 1)
-      IrParamNil)))
+      CompilerIrParamList.Nil)))
 
 (define (opt-inline-frame-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -33621,7 +33646,7 @@
 (define (opt-inline-frame-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -33655,7 +33680,7 @@
 (define (opt-inline-known-indirect-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -33698,9 +33723,12 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Pack
             2
-            (IrValueCons
+            (CompilerIrValueList.Cons
               (CompilerIrValue.Var 0)
-              (box (IrValueCons (CompilerIrValue.Var 1) (box IrValueNil))))
+              (box
+                (CompilerIrValueList.Cons
+                  (CompilerIrValue.Var 1)
+                  (box CompilerIrValueList.Nil))))
             (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 1 (AstType.I64))
@@ -33718,7 +33746,7 @@
 (define (opt-inline-pack-word-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     4
     (compiler-ir-block-cons
@@ -33757,7 +33785,7 @@
 (define (opt-inline-self-recursive) : CompilerIrFunction
   (CompilerIrFunction.Function
     "self_inline"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -33795,7 +33823,7 @@
 (define (opt-inline-large-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
     "too_large_inline"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     (+ (opt-inline-max-body) 2)
     (compiler-ir-block-cons
@@ -33809,7 +33837,7 @@
       (CompilerIrParam.Param "idx" (AstType.I64) 0)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "len" (AstType.I64) 1)
-        IrParamNil))
+        CompilerIrParamList.Nil))
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -33837,7 +33865,7 @@
 (define (opt-inline-call-large) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -33847,7 +33875,7 @@
 (define (opt-inline-call-bounds) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -33870,7 +33898,7 @@
 (define (opt-inline-call-bounds-twice) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     4
     (compiler-ir-block-cons
@@ -33901,7 +33929,7 @@
 (define (opt-inline-duplicate-bounds-label-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     0
     (compiler-ir-block-cons
@@ -33969,7 +33997,7 @@
         (CompilerIrParam.Param "idx" (AstType.I64) 0)
         (compiler-ir-param-cons
           (CompilerIrParam.Param "len" (AstType.I64) 1)
-          IrParamNil))
+          CompilerIrParamList.Nil))
       (AstType.Unit)
       (+ body 1)
       (compiler-ir-block-cons
@@ -33979,7 +34007,7 @@
 (define (opt-inline-call-bounds-leaf) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -34013,7 +34041,7 @@
 (define (opt-inline-multi-call-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     6
     (compiler-ir-block-cons
@@ -34078,7 +34106,7 @@
 (define (opt-inline-cascade-main) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -34114,7 +34142,7 @@
 (define (opt-inline-mutual-a) : CompilerIrFunction
   (CompilerIrFunction.Function
     "inline_mut_a"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34135,7 +34163,7 @@
 (define (opt-inline-mutual-b) : CompilerIrFunction
   (CompilerIrFunction.Function
     "inline_mut_b"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34161,7 +34189,7 @@
 (define (opt-devirt-dynamic-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "dynamic"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     3
     (compiler-ir-block-cons
@@ -34184,7 +34212,7 @@
 (define (opt-devirt-reach-target) : CompilerIrFunction
   (CompilerIrFunction.Function
     "kept_target"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34205,7 +34233,7 @@
 (define (opt-devirt-reach-main) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -34535,15 +34563,15 @@
 
 (define (opt-inline-pack-words-are-vars-1-2? [words : CompilerIrValueList]) : bool
   (match words
-    [(IrValueCons a arest)
+    [(CompilerIrValueList.Cons a arest)
       (match a
         [(CompilerIrValue.Var av)
           (match (box-get arest)
-            [(IrValueCons b brest)
+            [(CompilerIrValueList.Cons b brest)
               (match b
                 [(CompilerIrValue.Var bv)
                   (match (box-get brest)
-                    [(IrValueNil) (and (= av 1) (= bv 2))]
+                    [(CompilerIrValueList.Nil) (and (= av 1) (= bv 2))]
                     [_ false])]
                 [_ false])]
             [_ false])]
@@ -34605,7 +34633,7 @@
 (define (opt-inline-branch-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 0)
-    IrParamNil))
+    CompilerIrParamList.Nil))
 
 (define (opt-inline-branch-callee-mov) : CompilerIrInstr
   (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (AstType.I64)))
@@ -34650,7 +34678,7 @@
 (define (opt-inline-branch-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34676,7 +34704,7 @@
     "inline_tiny_predicate"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "value" (AstType.I64) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.Bool)
     2
     (compiler-ir-block-cons
@@ -34711,7 +34739,7 @@
 (define (opt-inline-repeated-predicate-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Bool)
     2
     (compiler-ir-block-cons
@@ -34805,7 +34833,7 @@
 (define (opt-inline-phi-predecessor-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -34857,7 +34885,7 @@
 (define (opt-inline-loop-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
     "inline_loop"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34884,7 +34912,7 @@
 (define (opt-inline-loop-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -34927,7 +34955,7 @@
 (define (opt-inline-mut-param-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "n" (AstType.I64) 0)
-    IrParamNil))
+    CompilerIrParamList.Nil))
 
 (define (opt-inline-mut-param-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -34969,7 +34997,7 @@
 (define (opt-inline-mut-param-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -35013,7 +35041,7 @@
 (define (opt-inline-caller-phi-loop-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     2
     (compiler-ir-block-cons
@@ -35085,7 +35113,7 @@
 (define (opt-inline-nonleaf-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
     "inline_nonleaf"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -35119,7 +35147,7 @@
 (define (opt-inline-nonleaf-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
@@ -35162,7 +35190,7 @@
 (define (opt-inline-repeated-nonleaf-predicate-callee) : CompilerIrFunction
   (CompilerIrFunction.Function
     "inline_tiny_nonleaf_predicate"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Bool)
     2
     (compiler-ir-block-cons
@@ -35196,7 +35224,7 @@
 (define (opt-inline-repeated-nonleaf-predicate-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Bool)
     2
     (compiler-ir-block-cons
@@ -35677,7 +35705,7 @@
     (CompilerIrParam.Param "a" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "b" (AstType.I64) 1)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-tailrec-test-function) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -36145,17 +36173,22 @@
     fallback))
 
 (define (opt-cfg-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (CompilerIrFunction.Function "cfg" (IrParamNil) (AstType.I64) 16 blocks))
+  (CompilerIrFunction.Function
+    "cfg"
+    (CompilerIrParamList.Nil)
+    (AstType.I64)
+    16
+    blocks))
 
 (define (opt-sccp-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 0)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-sccp-loop-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 4)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-gvn-scalar-params) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -36164,19 +36197,19 @@
       (CompilerIrParam.Param "lhs" (AstType.I64) 1)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "rhs" (AstType.I64) 2)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (opt-gvn-pointer-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "ptr" (AstType.I64) 1)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-gvn-pointer-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "ptr" (AstType.I64) 1)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-gvn-function
   [name : String]
@@ -37039,9 +37072,12 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           0
-          (IrValueCons
+          (CompilerIrValueList.Cons
             (CompilerIrValue.I64 1)
-            (box (IrValueCons (CompilerIrValue.I64 5) (box IrValueNil))))
+            (box
+              (CompilerIrValueList.Cons
+                (CompilerIrValue.I64 5)
+                (box CompilerIrValueList.Nil))))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Word 1 (CompilerIrValue.Var 0) 0 (AstType.I64))
@@ -37083,15 +37119,16 @@
 (define (compiler-optimize-sccp-self-test) : i64
   (let
     [cross : CompilerIrBlockList
-      (opt-sccp-blocks (IrParamNil) (opt-sccp-cross-block-blocks))]
+      (opt-sccp-blocks (CompilerIrParamList.Nil) (opt-sccp-cross-block-blocks))]
     [diamond : CompilerIrBlockList
       (opt-sccp-blocks (opt-sccp-cond-params) (opt-sccp-diamond-blocks))]
     [branch-source : CompilerIrBlockList (opt-sccp-constant-branch-blocks)]
-    [branch : CompilerIrBlockList (opt-sccp-blocks (IrParamNil) branch-source)]
+    [branch : CompilerIrBlockList
+      (opt-sccp-blocks (CompilerIrParamList.Nil) branch-source)]
     [branch-context-result : OptBlockCtxResult
       (opt-sccp-blocks-with-context-result
         (opt-cfg-context-build branch-source)
-        (IrParamNil)
+        (CompilerIrParamList.Nil)
         branch-source)]
     [branch-context : CompilerIrBlockList
       (match branch-context-result
@@ -37102,9 +37139,11 @@
     [loop : CompilerIrBlockList
       (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
     [trap : CompilerIrBlockList
-      (opt-sccp-blocks (IrParamNil) (opt-sccp-trap-blocks))]
+      (opt-sccp-blocks (CompilerIrParamList.Nil) (opt-sccp-trap-blocks))]
     [group : CompilerIrBlockList
-      (opt-sccp-blocks (IrParamNil) (opt-sccp-group-word-branch-blocks))]
+      (opt-sccp-blocks
+        (CompilerIrParamList.Nil)
+        (opt-sccp-group-word-branch-blocks))]
     (cond
       [(not (= (opt-count-arith-blocks cross) 0)) 1]
       [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42)) 2]
@@ -37297,7 +37336,7 @@
           (compiler-ir-switch-case-cons
             1
             "one"
-            (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+            (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil))
           "other")
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
@@ -37338,14 +37377,14 @@
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 0)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-ssa-loop-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "seed" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "cond" (AstType.Bool) 4)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-ssa-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -37495,7 +37534,7 @@
 (define (opt-ssa-construct-loop-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 4)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-ssa-construct-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -37547,7 +37586,7 @@
     (CompilerIrParam.Param "value" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "cond" (AstType.Bool) 1)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-ssa-construct-mutated-param-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -37606,7 +37645,7 @@
 (define (opt-ssa-construct-address-taken-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_construct_address_taken"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     3
     (opt-ssa-construct-address-taken-blocks)))
@@ -37620,7 +37659,7 @@
     (CompilerIrParam.Param "index" (AstType.I64) 0)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "count" (AstType.I64) 1)
-      (IrParamNil))))
+      (CompilerIrParamList.Nil))))
 
 (define (opt-ssa-entry-backedge-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -37972,7 +38011,7 @@
       (CompilerIrParam.Param "lhs" (AstType.I64) 1)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "rhs" (AstType.I64) 2)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (opt-licm-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function "licm" (opt-licm-params) (AstType.I64) 16 blocks))
@@ -37987,7 +38026,7 @@
       (CompilerIrParam.Param "array" (AstType.DynArray 0) 1)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "ptr" (AstType.U64) 2)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (opt-licm-array-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -38875,7 +38914,7 @@
       (CompilerIrParam.Param "seed" (AstType.I64) 1)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "ptr" (AstType.I64) 2)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (opt-induction-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -39747,7 +39786,7 @@
 (define (opt-ssa-unreachable-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_unreachable"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     0
     (opt-ssa-unreachable-blocks)))
@@ -39803,7 +39842,7 @@
 (define (opt-ssa-duplicate-label-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_duplicate_label"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     0
     (compiler-ir-block-cons
@@ -39825,7 +39864,7 @@
 (define (opt-ssa-unknown-successor-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_unknown_successor"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     0
     (compiler-ir-block-cons
@@ -39839,7 +39878,7 @@
 (define (opt-ssa-duplicate-def-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_duplicate_def"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     0
     (compiler-ir-block-cons
@@ -39858,7 +39897,7 @@
 (define (opt-ssa-use-before-def-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ssa_use_before_def"
-    (IrParamNil)
+    (CompilerIrParamList.Nil)
     (AstType.I64)
     0
     (compiler-ir-block-cons
@@ -40767,8 +40806,8 @@
   [facts : OptAliasFacts]
   [values : CompilerIrValueList]) : bool
   (match values
-    [(IrValueNil) false]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) false]
+    [(CompilerIrValueList.Cons value rest)
       (or
         (opt-scratch-value-derived? roots facts value)
         (opt-scratch-value-list-derived? roots facts (box-get rest)))]))
@@ -41892,7 +41931,7 @@
 (define (opt-scratch-reset-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
     "scratch_reset_test"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.I64)
     10
     blocks))
@@ -41959,7 +41998,7 @@
     "main"
     (compiler-ir-param-cons
       (CompilerIrParam.Param "n" (AstType.I64) 0)
-      IrParamNil)
+      CompilerIrParamList.Nil)
     (AstType.I64)
     10
     (opt-scratch-reset-level-blocks)))

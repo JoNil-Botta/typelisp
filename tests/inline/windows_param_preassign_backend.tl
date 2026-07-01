@@ -33,7 +33,7 @@
           (CompilerIrParam.Param "c" (AstType.I64) 2)
           (compiler-ir-param-cons
             (CompilerIrParam.Param "d" (AstType.I64) 3)
-            IrParamNil))))
+            CompilerIrParamList.Nil))))
     (AstType.Unit)
     4
     (compiler-ir-block-cons
@@ -76,7 +76,7 @@
       (CompilerIrParam.Param "a" (AstType.I64) 0)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "b" (AstType.I64) 1)
-        IrParamNil))
+        CompilerIrParamList.Nil))
     (AstType.I64)
     3
     (compiler-ir-block-cons

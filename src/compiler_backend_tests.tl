@@ -3263,7 +3263,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "side_effect"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.Unit)
         0
         (compiler-ir-block-cons
@@ -3276,7 +3276,7 @@
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           8
           (compiler-ir-block-cons
@@ -3611,7 +3611,7 @@
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           3
           (compiler-ir-block-cons
@@ -3622,7 +3622,9 @@
                   2
                   (compiler-ir-value-cons
                     (CompilerIrValue.I64 1)
-                    (compiler-ir-value-cons (CompilerIrValue.I64 2) IrValueNil))
+                    (compiler-ir-value-cons
+                      (CompilerIrValue.I64 2)
+                      CompilerIrValueList.Nil))
                   ty)
                 CompilerIrInstrList.Nil))
             CompilerIrBlockList.Nil))
@@ -3748,7 +3750,7 @@
           (CompilerIrValue.String "walked-string")
           (compiler-ir-value-cons
             (CompilerIrValue.F64 (compiler-backend-test-f64-bits "2.5"))
-            IrValueNil)))]
+            CompilerIrValueList.Nil)))]
     [packed : CompilerBackendProgramCollections
       (compiler-backend-collect-instr-collections
         (compiler-backend-program-collections-new)
@@ -3823,7 +3825,7 @@
               (compiler-ir-function-cons
                 (CompilerIrFunction.Function
                   "main"
-                  IrParamNil
+                  CompilerIrParamList.Nil
                   (AstType.I64)
                   3
                   blocks)
@@ -3877,7 +3879,7 @@
         (CompilerIrValue.I64 1)
         (compiler-ir-value-cons
           (CompilerIrValue.F64 (compiler-backend-test-f64-bits "3.5"))
-          IrValueNil))]
+          CompilerIrValueList.Nil))]
     [instrs : CompilerIrInstrSeq
       (compiler-ir-instr-seq-from-list
         (compiler-ir-instr-cons
@@ -3895,7 +3897,7 @@
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
               "main"
-              IrParamNil
+              CompilerIrParamList.Nil
               (AstType.I64)
               1
               blocks)
@@ -3929,7 +3931,7 @@
         (CompilerIrValue.String "object-walked")
         (compiler-ir-value-cons
           (CompilerIrValue.F64 (compiler-backend-test-f64-bits "6.25"))
-          IrValueNil))]
+          CompilerIrValueList.Nil))]
     [packed : CompilerBackendObjectParts
       (compiler-backend-object-instr
         (compiler-backend-object-parts-empty)
@@ -4553,7 +4555,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -4695,7 +4697,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "callee"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -4709,7 +4711,7 @@
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "main"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           1
           (compiler-ir-block-cons
@@ -5749,7 +5751,7 @@
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
             "main"
-            IrParamNil
+            CompilerIrParamList.Nil
             (AstType.I64)
             4
             (compiler-ir-block-cons
@@ -5777,7 +5779,7 @@
       (compiler-ir-switch-case-cons
         1
         "one"
-        (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil)))
+        (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil)))
     "other"))
 
 (define (compiler-backend-switch-test-program) : CompilerIrProgram
@@ -5786,7 +5788,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         1
         (compiler-ir-block-cons
@@ -5854,7 +5856,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         1
         (compiler-ir-block-cons
@@ -5867,7 +5869,10 @@
                 (compiler-ir-switch-case-cons
                   4
                   "four"
-                  (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))
+                  (compiler-ir-switch-case-cons
+                    5
+                    "five"
+                    CompilerIrSwitchCaseList.Nil))
                 "other")
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
@@ -5914,7 +5919,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         1
         (compiler-ir-block-cons
@@ -5927,7 +5932,10 @@
                 (compiler-ir-switch-case-cons
                   0
                   "zero"
-                  (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+                  (compiler-ir-switch-case-cons
+                    2
+                    "two"
+                    CompilerIrSwitchCaseList.Nil))
                 "other")
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil))
@@ -5949,7 +5957,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         2
         (compiler-ir-block-cons
@@ -5959,7 +5967,10 @@
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
                 0
-                (compiler-ir-switch-case-cons 0 "join" IrSwitchCaseNil)
+                (compiler-ir-switch-case-cons
+                  0
+                  "join"
+                  CompilerIrSwitchCaseList.Nil)
                 "other")
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
@@ -7346,7 +7357,7 @@
 (define (compiler-backend-vector-call-lifetime-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "vector_call_lifetime"
-    IrParamNil
+    CompilerIrParamList.Nil
     (AstType.Unit)
     3
     (compiler-ir-block-cons
@@ -7646,7 +7657,7 @@
         (CompilerIrValue.Var 1))]
     (CompilerIrFunction.Function
       name
-      IrParamNil
+      CompilerIrParamList.Nil
       (AstType.Unit)
       3
       (compiler-ir-block-cons
@@ -7993,7 +8004,7 @@
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
             "main"
-            IrParamNil
+            CompilerIrParamList.Nil
             (AstType.I64)
             4
             (compiler-ir-block-cons
@@ -9197,7 +9208,7 @@
     [words : CompilerIrValueList
       (compiler-ir-value-cons
         (CompilerIrValue.Var 0)
-        (compiler-ir-value-cons (CompilerIrValue.Var 1) IrValueNil))]
+        (compiler-ir-value-cons (CompilerIrValue.Var 1) CompilerIrValueList.Nil))]
     [direct-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
@@ -9286,7 +9297,9 @@
                 (CompilerIrValue.I64 4)
                 (compiler-ir-value-cons
                   (CompilerIrValue.I64 5)
-                  (compiler-ir-value-cons (CompilerIrValue.I64 6) IrValueNil))))))))))
+                  (compiler-ir-value-cons
+                    (CompilerIrValue.I64 6)
+                    CompilerIrValueList.Nil))))))))))
 
 (define (compiler-backend-full-syscall-registers-ok?) : bool
   (let
@@ -11042,7 +11055,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         8
         (compiler-backend-checked-trap-blocks))
@@ -11271,7 +11284,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "main"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         1
         (compiler-ir-block-cons
@@ -11613,7 +11626,9 @@
                 (CompilerIrValue.I64 6)
                 (compiler-ir-value-cons
                   (CompilerIrValue.I64 7)
-                  (compiler-ir-value-cons (CompilerIrValue.I64 8) IrValueNil))))))))))
+                  (compiler-ir-value-cons
+                    (CompilerIrValue.I64 8)
+                    CompilerIrValueList.Nil))))))))))
 
 (define (compiler-backend-immediate-stack-call-args-ok?) : bool
   (match (compiler-backend-emit-call-args
@@ -11999,7 +12014,7 @@
           (CompilerIrValue.I64 0)
           (compiler-ir-value-cons
             (CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.5"))
-            IrValueNil))))))
+            CompilerIrValueList.Nil))))))
 
 (define (compiler-backend-non-direct-tail-call-varargs-emit
   [target : CompilerBackendTarget]) : ResultCompilerBackend
@@ -12112,7 +12127,7 @@
       "known_target"
       (compiler-ir-param-cons
         (CompilerIrParam.Param "x" (AstType.I64) 0)
-        IrParamNil)
+        CompilerIrParamList.Nil)
       (AstType.I64)
       1
       CompilerIrBlockList.Nil)
@@ -12336,7 +12351,7 @@
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "pkg/a.tl::helper"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.I64)
         0
         (compiler-ir-block-cons
@@ -12350,7 +12365,7 @@
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           "pkg_a.tl::helper"
-          IrParamNil
+          CompilerIrParamList.Nil
           (AstType.I64)
           0
           (compiler-ir-block-cons
@@ -12683,14 +12698,14 @@
       "pkg/really-long-backend-index-function"
       (compiler-ir-param-cons
         (CompilerIrParam.Param "x" (AstType.I64) 0)
-        IrParamNil)
+        CompilerIrParamList.Nil)
       (AstType.I64)
       1
       CompilerIrBlockList.Nil)
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
         "short_fn"
-        IrParamNil
+        CompilerIrParamList.Nil
         (AstType.Unit)
         0
         CompilerIrBlockList.Nil)
@@ -12830,7 +12845,7 @@
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
               fn-name
-              IrParamNil
+              CompilerIrParamList.Nil
               (AstType.Unit)
               0
               CompilerIrBlockList.Nil)

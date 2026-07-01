@@ -34,9 +34,19 @@
           (compiler-ir-block "entry" entry-instrs)
           CompilerIrBlockList.Nil))]
     [first : CompilerIrFunction
-      (CompilerIrFunction.Function "first" IrParamNil (AstType.I64) 2 blocks)]
+      (CompilerIrFunction.Function
+        "first"
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        blocks)]
     [second : CompilerIrFunction
-      (CompilerIrFunction.Function "second" IrParamNil (AstType.I64) 2 blocks)]
+      (CompilerIrFunction.Function
+        "second"
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        blocks)]
     [functions : CompilerIrFunctionList
       (compiler-ir-function-cons
         first

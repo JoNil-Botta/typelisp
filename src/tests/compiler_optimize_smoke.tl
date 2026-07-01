@@ -56,8 +56,8 @@
 
 (define (opt-switch-case-list-count [cases : CompilerIrSwitchCaseList]) : i64
   (match cases
-    [(IrSwitchCaseNil) 0]
-    [(IrSwitchCaseCons _ rest)
+    [(CompilerIrSwitchCaseList.Nil) 0]
+    [(CompilerIrSwitchCaseList.Cons _ rest)
       (+ 1 (opt-switch-case-list-count (box-get rest)))]))
 
 (define (opt-switch-entry-base [blocks : CompilerIrBlockList]) : i64
@@ -100,7 +100,7 @@
 (define (opt-switch-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "tag" (AstType.I64) 0)
-    (IrParamNil)))
+    (CompilerIrParamList.Nil)))
 
 (define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -655,7 +655,7 @@
       (CompilerIrParam.Param "other" (AstType.String) 20)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "start" (AstType.I64) 30)
-        (IrParamNil)))))
+        (CompilerIrParamList.Nil)))))
 
 (define (smoke-ssa-iv-bce-entry) : CompilerIrBlock
   (compiler-ir-block

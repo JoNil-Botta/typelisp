@@ -17,7 +17,7 @@
           (CompilerIrParam.Param "index" (AstType.I64) 0)
           (compiler-ir-param-cons
             (CompilerIrParam.Param "length" (AstType.I64) 1)
-            IrParamNil))
+            CompilerIrParamList.Nil))
         (AstType.I64)
         4
         (compiler-ir-block-cons

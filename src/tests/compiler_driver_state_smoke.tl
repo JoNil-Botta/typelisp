@@ -1018,8 +1018,8 @@
                       (sym_i64_env.sym-i64-empty)
                       (TcTypeEnv.Nil)
                       (AstExpr.Binary (AstBinOp.Add) left-a right-a)
-                      LowerSpmdInlineSubstNil
-                      LowerStringNil)]
+                      LowerSpmdInlineSubst.Nil
+                      LowerStringSet.Nil)]
                   [after-a : i64 (ast-node-pool-context-expr-len pools-a)]
                   [active-after : i64 (ast-node-pool-len)]
                   (and

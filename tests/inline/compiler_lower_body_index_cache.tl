@@ -9,7 +9,7 @@
     (begin
       (set!
         lower-active-global-name-cache
-        (lower-name-cache-from-env LowerNameNil))
+        (lower-name-cache-from-env LowerNameEnv.Nil))
       (match (lower-compiler-source
         "(define (helper) : i64 42)
 (module main)

@@ -3051,6 +3051,12 @@
     (set! lower-spmd-inline-next-temp 0)
     (set! lower-no-main-entry-prune-active false)))
 
+(define (lower-context-expr-get [ctx : TcContext] [id : i64]) : AstExpr
+  (tc-context-expr-get ctx id))
+
+(define (lower-context-expr-push [ctx : TcContext] [expr : AstExpr]) : i64
+  (ast-node-pool-context-expr-push (tc-context-pools ctx) expr))
+
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
 
@@ -3094,20 +3100,23 @@
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
   (LowerSpmdInlineSubstCons name value (box rest)))
 
-(define (lower-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultLowerSpmdInlineHelper
+(define (lower-spmd-inline-helper-from-decl
+  [ctx : TcContext]
+  [name : String]
+  [decl : AstDecl]) : ResultLowerSpmdInlineHelper
   (match decl
     [(AstDecl.DefFn _ params _ body-box _)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (lower-context-expr-get ctx body-box)]
         (OkLowerSpmdInlineHelper (LowerSomeSpmdInlineHelper name params body)))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-spmd-inline-helper-from-decl name inner))]
+        (lower-spmd-inline-helper-from-decl ctx name inner))]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (lower-spmd-inline-helper-from-decl name template))]
+        (lower-spmd-inline-helper-from-decl ctx name template))]
     [_ (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))]))
 
 (define (lower-spmd-inline-helper-name
@@ -3116,7 +3125,7 @@
   [type-env : TcTypeEnv]
   [shadowed : LowerStringSet]
   [func : AstExpr]) : ResultTcString
-  (match (ast-expr-unspan func)
+  (match (ast-expr-unspan-with-pools (tc-context-pools ctx) func)
     [(AstExpr.Var raw-name)
       (let
         [raw-text : String (intern-str raw-name)]
@@ -3155,7 +3164,7 @@
                   (tc-context-symbols ctx)
                   (compiler-symbol-handle-index handle))
                   [(ResultAstDecl.Ok decl)
-                    (lower-spmd-inline-helper-from-decl name decl)]
+                    (lower-spmd-inline-helper-from-decl ctx name decl)]
                   [(ResultAstDecl.Err message)
                     (ErrLowerSpmdInlineHelper (box (lower-diagnostic message)))])
                 (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))
@@ -3166,6 +3175,7 @@
         (ErrLowerSpmdInlineHelper (box (lower-diagnostic-at-expr func message))))]))
 
 (define (lower-spmd-inline-build-subst
+  [ctx : TcContext]
   [params : AstParamList]
   [args : AstExprList]
   [subst : LowerSpmdInlineSubst]
@@ -3183,11 +3193,12 @@
         (match args
           [(AstExprList.Cons arg rest-args)
             (let
-              [arg : AstExpr (ast-node-get arg)]
+              [arg : AstExpr (lower-context-expr-get ctx arg)]
               [rest-args : AstExprList (box-get rest-args)]
               (match param
                 [(AstParam.Param param-name _ _)
                   (lower-spmd-inline-build-subst
+                    ctx
                     rest-params
                     rest-args
                     (lower-spmd-inline-subst-cons
@@ -3200,10 +3211,11 @@
               (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))]))]))
 
 (define (lower-spmd-inline-arg-subst
+  [ctx : TcContext]
   [params : AstParamList]
   [args : AstExprList]
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
-  (lower-spmd-inline-build-subst params args LowerSpmdInlineSubstNil origin))
+  (lower-spmd-inline-build-subst ctx params args LowerSpmdInlineSubstNil origin))
 
 (define (lower-spmd-inline-expr-list
   [ctx : TcContext]
@@ -3216,7 +3228,7 @@
     [(AstExprList.Nil) (OkLowerAstExprList AstExprList.Nil)]
     [(AstExprList.Cons head rest)
       (let
-        [head : AstExpr (ast-node-get head)]
+        [head : AstExpr (lower-context-expr-get ctx head)]
         [rest : AstExprList (box-get rest)]
         (match (lower-spmd-inline-expr ctx env type-env head subst shadowed)
           [(OkLowerAstExpr rewritten-head)
@@ -3229,7 +3241,9 @@
               shadowed)
               [(OkLowerAstExprList rewritten-rest)
                 (OkLowerAstExprList
-                  (ast-expr-cons (ast-node-push rewritten-head) rewritten-rest))]
+                  (ast-expr-cons
+                    (lower-context-expr-push ctx rewritten-head)
+                    rewritten-rest))]
               [(ErrLowerAstExprList diag) (ErrLowerAstExprList diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExprList diag)]))]))
 
@@ -3250,7 +3264,7 @@
         (match binding
           [(AstLetBinding.Binding name maybe-ty init-box)
             (let
-              [init : AstExpr (ast-node-get init-box)]
+              [init : AstExpr (lower-context-expr-get ctx init-box)]
               [name-text : String (intern-str name)]
               [renamed : bool
                 (match subst
@@ -3293,7 +3307,7 @@
                                 (ast-let-binding-id
                                   bind-id
                                   maybe-ty
-                                  (ast-node-push rewritten-init))
+                                  (lower-context-expr-push ctx rewritten-init))
                                 rewritten-rest)
                               body-subst
                               body-shadowed))])]
@@ -3310,7 +3324,7 @@
   [args : AstExprList]
   [body : AstExpr]
   [origin : AstExpr]) : ResultLowerAstExpr
-  (match (lower-spmd-inline-arg-subst params args origin)
+  (match (lower-spmd-inline-arg-subst ctx params args origin)
     [(OkLowerSpmdInlineSubst helper-subst)
       (let
         [previous : LowerStringSet lower-spmd-inline-helper-stack]
@@ -3371,9 +3385,11 @@
                 shadowed)
                 [(OkLowerAstExpr rewritten-func)
                   (OkLowerAstExpr
-                    (ast-node-get
-                      (ast-expr-call
-                        (ast-node-push rewritten-func)
+                    (lower-context-expr-get
+                      ctx
+                      (ast-expr-call-with-pools
+                        (tc-context-pools ctx)
+                        (lower-context-expr-push ctx rewritten-func)
                         rewritten-args)))]
                 [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])])]
         [(ErrLowerSpmdInlineHelper diag) (ErrLowerAstExpr diag)])]
@@ -3389,11 +3405,16 @@
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
           [(OkLowerAstExpr rewritten)
             (OkLowerAstExpr
-              (ast-node-get (ast-expr-spanned (ast-node-push rewritten) span)))]
+              (lower-context-expr-get
+                ctx
+                (ast-expr-spanned-with-pools
+                  (tc-context-pools ctx)
+                  (lower-context-expr-push ctx rewritten)
+                  span)))]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.Var name)
       (match (lower-spmd-inline-subst-lookup subst (intern-str name))
@@ -3401,8 +3422,8 @@
         [(LowerNoAstExpr) (OkLowerAstExpr expr)])]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (lower-context-expr-get ctx left-box)]
+        [right : AstExpr (lower-context-expr-get ctx right-box)]
         (match (lower-spmd-inline-expr ctx env type-env left subst shadowed)
           [(OkLowerAstExpr rewritten-left)
             (match (lower-spmd-inline-expr
@@ -3414,30 +3435,37 @@
               shadowed)
               [(OkLowerAstExpr rewritten-right)
                 (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-binary
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-binary-with-pools
+                      (tc-context-pools ctx)
                       op
-                      (ast-node-push rewritten-left)
-                      (ast-node-push rewritten-right))))]
+                      (lower-context-expr-push ctx rewritten-left)
+                      (lower-context-expr-push ctx rewritten-right))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.Unary op inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
           [(OkLowerAstExpr rewritten)
             (OkLowerAstExpr
-              (ast-node-get (ast-expr-unary op (ast-node-push rewritten))))]
+              (lower-context-expr-get
+                ctx
+                (ast-expr-unary-with-pools
+                  (tc-context-pools ctx)
+                  op
+                  (lower-context-expr-push ctx rewritten))))]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (lower-context-expr-get ctx func-box)]
         (lower-spmd-inline-call ctx env type-env func args subst shadowed expr))]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (lower-context-expr-get ctx cond-box)]
+        [then-branch : AstExpr (lower-context-expr-get ctx then-box)]
+        [else-branch : AstExpr (lower-context-expr-get ctx else-box)]
         (match (lower-spmd-inline-expr ctx env type-env cond subst shadowed)
           [(OkLowerAstExpr rewritten-cond)
             (match (lower-spmd-inline-expr
@@ -3457,11 +3485,13 @@
                   shadowed)
                   [(OkLowerAstExpr rewritten-else)
                     (OkLowerAstExpr
-                      (ast-node-get
-                        (ast-expr-if
-                          (ast-node-push rewritten-cond)
-                          (ast-node-push rewritten-then)
-                          (ast-node-push rewritten-else))))]
+                      (lower-context-expr-get
+                        ctx
+                        (ast-expr-if-with-pools
+                          (tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-cond)
+                          (lower-context-expr-push ctx rewritten-then)
+                          (lower-context-expr-push ctx rewritten-else))))]
                   [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
@@ -3469,7 +3499,7 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (match (lower-spmd-inline-let-bindings
               ctx
               env
@@ -3492,10 +3522,12 @@
                       body-shadowed)
                       [(OkLowerAstExpr rewritten-body)
                         (OkLowerAstExpr
-                          (ast-node-get
-                            (ast-expr-let
+                          (lower-context-expr-get
+                            ctx
+                            (ast-expr-let-with-pools
+                              (tc-context-pools ctx)
                               rewritten-bindings
-                              (ast-node-push rewritten-body))))]
+                              (lower-context-expr-push ctx rewritten-body))))]
                       [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])])]
               [(ErrLowerSpmdInlineLetBindings diag) (ErrLowerAstExpr diag)]))])]
     [(AstExpr.Begin exprs)
@@ -3505,24 +3537,34 @@
         [(ErrLowerAstExprList diag) (ErrLowerAstExpr diag)])]
     [(AstExpr.Ann inner-box ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
           [(OkLowerAstExpr rewritten)
             (OkLowerAstExpr
-              (ast-node-get (ast-expr-ann (ast-node-push rewritten) ty)))]
+              (lower-context-expr-get
+                ctx
+                (ast-expr-ann-with-pools
+                  (tc-context-pools ctx)
+                  (lower-context-expr-push ctx rewritten)
+                  ty)))]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.Cast inner-box ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
           [(OkLowerAstExpr rewritten)
             (OkLowerAstExpr
-              (ast-node-get (ast-expr-cast (ast-node-push rewritten) ty)))]
+              (lower-context-expr-get
+                ctx
+                (ast-expr-cast-with-pools
+                  (tc-context-pools ctx)
+                  (lower-context-expr-push ctx rewritten)
+                  ty)))]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (lower-context-expr-get ctx array-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
         (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
           [(OkLowerAstExpr rewritten-array)
             (match (lower-spmd-inline-expr
@@ -3534,17 +3576,19 @@
               shadowed)
               [(OkLowerAstExpr rewritten-index)
                 (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-array-ref
-                      (ast-node-push rewritten-array)
-                      (ast-node-push rewritten-index))))]
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-array-ref-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-array)
+                      (lower-context-expr-push ctx rewritten-index))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (lower-context-expr-get ctx array-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
         (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
           [(OkLowerAstExpr rewritten-array)
             (match (lower-spmd-inline-expr
@@ -3564,18 +3608,20 @@
                   shadowed)
                   [(OkLowerAstExpr rewritten-value)
                     (OkLowerAstExpr
-                      (ast-node-get
-                        (ast-expr-array-set
-                          (ast-node-push rewritten-array)
-                          (ast-node-push rewritten-index)
-                          (ast-node-push rewritten-value))))]
+                      (lower-context-expr-get
+                        ctx
+                        (ast-expr-array-set-with-pools
+                          (tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-array)
+                          (lower-context-expr-push ctx rewritten-index)
+                          (lower-context-expr-push ctx rewritten-value))))]
                   [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
         (match (lower-spmd-inline-expr ctx env type-env receiver subst shadowed)
           [(OkLowerAstExpr rewritten-receiver)
             (match (lower-spmd-inline-expr
@@ -3587,11 +3633,13 @@
               shadowed)
               [(OkLowerAstExpr rewritten-value)
                 (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-struct-set-id
-                      (ast-node-push rewritten-receiver)
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-struct-set-id-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-receiver)
                       field
-                      (ast-node-push rewritten-value))))]
+                      (lower-context-expr-push ctx rewritten-value))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.SpmdScan scan-box)
@@ -3608,11 +3656,11 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (lower-context-expr-get ctx start-box)]
+            [end : AstExpr (lower-context-expr-get ctx end-box)]
+            [init : AstExpr (lower-context-expr-get ctx init-box)]
+            [value : AstExpr (lower-context-expr-get ctx value-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (match (lower-spmd-inline-expr
               ctx
               env
@@ -3660,13 +3708,23 @@
                                         op
                                         index
                                         index-ty
-                                        (ast-node-push rewritten-start)
-                                        (ast-node-push rewritten-end)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-start)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-end)
                                         prefix
                                         prefix-ty
-                                        (ast-node-push rewritten-init)
-                                        (ast-node-push rewritten-value)
-                                        (ast-node-push rewritten-body)))))]
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-init)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-value)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-body)))))]
                               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
                           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
                       [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
@@ -3674,32 +3732,36 @@
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : AstExpr (lower-context-expr-get ctx lane-box)]
         (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
           [(OkLowerAstExpr rewritten-value)
             (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
               [(OkLowerAstExpr rewritten-lane)
                 (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-spmd-broadcast
-                      (ast-node-push rewritten-value)
-                      (ast-node-push rewritten-lane))))]
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-spmd-broadcast-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-value)
+                      (lower-context-expr-push ctx rewritten-lane))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : AstExpr (lower-context-expr-get ctx lane-box)]
         (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
           [(OkLowerAstExpr rewritten-value)
             (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
               [(OkLowerAstExpr rewritten-lane)
                 (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-spmd-shuffle
-                      (ast-node-push rewritten-value)
-                      (ast-node-push rewritten-lane))))]
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-spmd-shuffle-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-value)
+                      (lower-context-expr-push ctx rewritten-lane))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [_ (OkLowerAstExpr expr)]))

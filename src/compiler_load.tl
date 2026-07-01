@@ -8167,9 +8167,7 @@
 ;; a configured `--stdlib-root` (root fallback) (#1074).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
-    (io.write-file
-      "target/cl_srf_mod.tl"
-      "(module srf.mod)
+    (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_srf_entry.tl"
@@ -8188,9 +8186,7 @@
 ;; candidate wins, so a missing leading root is skipped (#1074).
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
-    (io.write-file
-      "target/cl_ssr_mod.tl"
-      "(module ssr.mod)
+    (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_ssr_entry.tl"

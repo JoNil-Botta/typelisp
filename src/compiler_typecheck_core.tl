@@ -8608,12 +8608,27 @@
   -1)
 (define tc-source-dotted-full-path-key-cache-ready : bool
   false)
+(define tc-source-qualified-variant-key-cache-capacity : i64
+  8192)
+(define tc-source-qualified-variant-key-cache-module-keys : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-qualified-variant-key-cache-name-keys : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-qualified-variant-key-cache-values : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-qualified-variant-key-cache-generation : i64
+  -1)
+(define tc-source-qualified-variant-key-cache-ready : bool
+  false)
 
 (define (tc-source-dotted-alias-key-cache-reset!) : unit
   (set! tc-source-dotted-alias-key-cache-ready false))
 
 (define (tc-source-dotted-full-path-key-cache-reset!) : unit
   (set! tc-source-dotted-full-path-key-cache-ready false))
+
+(define (tc-source-qualified-variant-key-cache-reset!) : unit
+  (set! tc-source-qualified-variant-key-cache-ready false))
 
 (define (tc-source-dotted-alias-key-cache-ensure!) : unit
   (if (if tc-source-dotted-alias-key-cache-ready
@@ -8647,6 +8662,23 @@
           (intern-generation))
         (set! tc-source-dotted-full-path-key-cache-ready true)))))
 
+(define (tc-source-qualified-variant-key-cache-ensure!) : unit
+  (if (if tc-source-qualified-variant-key-cache-ready
+    (= tc-source-qualified-variant-key-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-source-qualified-variant-key-cache-capacity)
+          (begin
+            (array-set! tc-source-qualified-variant-key-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set!
+          tc-source-qualified-variant-key-cache-generation
+          (intern-generation))
+        (set! tc-source-qualified-variant-key-cache-ready true)))))
+
 (define (tc-source-dotted-alias-key-cache-bucket
   [module-id : i64]
   [name-id : i64]) : i64
@@ -8660,6 +8692,13 @@
   (bit-and
     (+ (* module-id 2246822519) (* name-id 3266489917))
     (- tc-source-dotted-full-path-key-cache-capacity 1)))
+
+(define (tc-source-qualified-variant-key-cache-bucket
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 668265263) (* name-id 374761393))
+    (- tc-source-qualified-variant-key-cache-capacity 1)))
 
 ;; Returns the cached lookup-name id, -1 for no alias import, or -2 when absent.
 (define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
@@ -8698,6 +8737,27 @@
           (array-ref tc-source-dotted-full-path-key-cache-name-keys cursor)
           name-key))
         (array-ref tc-source-dotted-full-path-key-cache-values cursor)
+        -2))))
+
+;; Returns the cached lookup-name id, -1 for no variant, or -2 when absent.
+(define (tc-source-qualified-variant-key-cache-get
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+          module-key)
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+          name-key))
+        (array-ref tc-source-qualified-variant-key-cache-values cursor)
         -2))))
 
 (define (tc-source-dotted-alias-key-cache-put!
@@ -8739,6 +8799,26 @@
           (+ name-id 1))
         (array-set! tc-source-dotted-full-path-key-cache-values cursor value)))))
 
+(define (tc-source-qualified-variant-key-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      (begin
+        (array-set!
+          tc-source-qualified-variant-key-cache-module-keys
+          cursor
+          (+ module-id 1))
+        (array-set!
+          tc-source-qualified-variant-key-cache-name-keys
+          cursor
+          (+ name-id 1))
+        (array-set! tc-source-qualified-variant-key-cache-values cursor value)))))
+
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (TcLazyImportStubList.Nil))
 (define tc-lazy-import-stub-record-count : i64
@@ -8754,7 +8834,8 @@
     (set! tc-lazy-import-stub-record-count 0)
     (set! tc-lazy-import-summary-backed-count 0)
     (tc-source-dotted-alias-key-cache-reset!)
-    (tc-source-dotted-full-path-key-cache-reset!)))
+    (tc-source-dotted-full-path-key-cache-reset!)
+    (tc-source-qualified-variant-key-cache-reset!)))
 
 (define (tc-lazy-import-stub-count) : i64
   tc-lazy-import-stub-record-count)
@@ -8793,7 +8874,8 @@
         (+ tc-lazy-import-summary-backed-count 1))
       unit)
     (tc-source-dotted-alias-key-cache-reset!)
-    (tc-source-dotted-full-path-key-cache-reset!)))
+    (tc-source-dotted-full-path-key-cache-reset!)
+    (tc-source-qualified-variant-key-cache-reset!)))
 
 (define (tc-lazy-import-stub-target-in
   [stubs : TcLazyImportStubList]
@@ -9200,26 +9282,66 @@
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
       [(TcContext _ _ registries module _)
-        (if (and
-          (> (string.string-length module) 0)
-          (not (tc-name-qualified? name)))
-          (let
-            [module-key-id : i64
-              (compiler-symbol-module-key-id-by-name-id module name-id)]
-            (match (compiler-registries-lookup-variant-key-id
-              registries
-              module-key-id)
-              [(option_i64.Some _)
-                (ResultTcString.Ok (compiler-symbol-module-key module name))]
-              [(option_i64.None)
-                (match (compiler-registries-lookup-variant-id
+        (let
+          [module-id : i64 (intern module)]
+          [cached : i64
+            (tc-source-qualified-variant-key-cache-get module-id name-id)]
+          (if (= cached -2)
+            (if (and
+              (> (string.string-length module) 0)
+              (not (tc-name-qualified? name)))
+              (let
+                [module-key-id : i64
+                  (compiler-symbol-module-key-id-by-name-id module name-id)]
+                (match (compiler-registries-lookup-variant-key-id
                   registries
-                  name-id)
-                  [(option_i64.Some _) (ResultTcString.Ok name)]
-                  [(option_i64.None) (ResultTcString.Err "")])]))
-          (match (compiler-registries-lookup-variant-id registries name-id)
-            [(option_i64.Some _) (ResultTcString.Ok name)]
-            [(option_i64.None) (ResultTcString.Err "")]))])
+                  module-key-id)
+                  [(option_i64.Some _)
+                    (let
+                      [lookup-name : String
+                        (compiler-symbol-module-key module name)]
+                      (begin
+                        (tc-source-qualified-variant-key-cache-put!
+                          module-id
+                          name-id
+                          (intern lookup-name))
+                        (ResultTcString.Ok lookup-name)))]
+                  [(option_i64.None)
+                    (match (compiler-registries-lookup-variant-id
+                      registries
+                      name-id)
+                      [(option_i64.Some _)
+                        (begin
+                          (tc-source-qualified-variant-key-cache-put!
+                            module-id
+                            name-id
+                            name-id)
+                          (ResultTcString.Ok name))]
+                      [(option_i64.None)
+                        (begin
+                          (tc-source-qualified-variant-key-cache-put!
+                            module-id
+                            name-id
+                            -1)
+                          (ResultTcString.Err ""))])]))
+              (match (compiler-registries-lookup-variant-id registries name-id)
+                [(option_i64.Some _)
+                  (begin
+                    (tc-source-qualified-variant-key-cache-put!
+                      module-id
+                      name-id
+                      name-id)
+                    (ResultTcString.Ok name))]
+                [(option_i64.None)
+                  (begin
+                    (tc-source-qualified-variant-key-cache-put!
+                      module-id
+                      name-id
+                      -1)
+                    (ResultTcString.Err ""))]))
+            (if (< cached 0)
+              (ResultTcString.Err "")
+              (ResultTcString.Ok (intern-str cached)))))])
     (ResultTcString.Err "")))
 
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
@@ -44780,6 +44902,7 @@
     (macro-generated-fingerprint-cache-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)
+    (tc-source-qualified-variant-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
 (define (macro-alias-cache-reset!) : unit
@@ -53448,6 +53571,31 @@
       (test.assert-false
         (macro-followup-work-list-empty? work)
         "generated imports with macro placeholders still request follow-up"))))
+
+(cfg
+  test
+  (test
+    macro-generated-surface-loop-control-leaves
+    (let
+      [aliases : MacroGeneratedSurfaceNameSet
+        (macro-generated-surface-name-set-empty)]
+      [break-refs : MacroGeneratedSurfaceNameSet
+        (macro-generated-surface-expr-refs
+          (AstExpr.Break)
+          aliases
+          (macro-generated-surface-name-set-empty)
+          false)]
+      [continue-refs : MacroGeneratedSurfaceNameSet
+        (macro-generated-surface-expr-refs
+          (AstExpr.Continue)
+          aliases
+          (macro-generated-surface-name-set-empty)
+          false)]
+      (test.assert-true
+        (and
+          (= (macro-generated-surface-name-set-len break-refs) 0)
+          (= (macro-generated-surface-name-set-len continue-refs) 0))
+        "loop control expressions should not collect generated surface refs"))))
 
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without

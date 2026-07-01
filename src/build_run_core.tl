@@ -1418,14 +1418,14 @@
     (let
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "link.exe"]
-      (match (msvc.msvc-find-tool (& target) (& tool))
+      (match (msvc.find-tool (& target) (& tool))
         [(msvc.OkMsvcTool resolved-tool)
           (ResultSourceToolCommand.Ok
             (process.command-with-env-list
               (process.command
-                (msvc.msvc-tool-executable resolved-tool)
+                (msvc.tool-executable resolved-tool)
                 (source-tool-windows-linker-args obj-path bin-path link-inputs))
-              (msvc.msvc-tool-process-env resolved-tool)))]
+              (msvc.tool-process-env resolved-tool)))]
         [(msvc.ErrMsvcTool _)
           (ResultSourceToolCommand.Ok
             (source-tool-windows-linker-fallback-command
@@ -1471,14 +1471,14 @@
     (let
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "lib.exe"]
-      (match (msvc.msvc-find-tool (& target) (& tool))
+      (match (msvc.find-tool (& target) (& tool))
         [(msvc.OkMsvcTool resolved-tool)
           (ResultSourceToolCommand.Ok
             (process.command-with-env-list
               (process.command
-                (msvc.msvc-tool-executable resolved-tool)
+                (msvc.tool-executable resolved-tool)
                 (source-tool-windows-archiver-args obj-path archive-path))
-              (msvc.msvc-tool-process-env resolved-tool)))]
+              (msvc.tool-process-env resolved-tool)))]
         [(msvc.ErrMsvcTool _)
           (ResultSourceToolCommand.Ok
             (source-tool-windows-archiver-fallback-command

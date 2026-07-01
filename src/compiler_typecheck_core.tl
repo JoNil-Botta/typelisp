@@ -49542,6 +49542,8 @@
         refs
         alias-qualified?)]
     [(AstExpr.Literal _) refs]
+    [(AstExpr.Break) refs]
+    [(AstExpr.Continue) refs]
     [(AstExpr.Var name)
       (macro-generated-surface-name-id-ref aliases refs name alias-qualified?)]
     [(AstExpr.Binary _ left right)

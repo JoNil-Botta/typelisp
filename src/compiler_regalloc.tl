@@ -15660,6 +15660,209 @@
               slot-ends
               (compiler-reg-max highest (+ var-id 1))))])]))
 
+;; --- M-B: stack-homed register-group Mov coalescing -------------------------
+;; A group-typed `IrInstrMov dst <- src` between two slot-resident group vars
+;; round-trips both 8-byte words through the group-return register pair into a
+;; SECOND slot pair (4 movs per enum/struct copy, e.g. every match-scrutinee
+;; binding). When src's live range ends exactly where dst's begins -- at the
+;; mov itself: src's last read is the copy that first defines dst -- the two
+;; vars can share one slot pair. The coloring remap aliases dst's id onto
+;; src's id, so the emitted IR carries ONE var (word0 + word1 formula slots
+;; follow the id) and the mov becomes a same-home no-op the backend elides.
+;;
+;; Guards (all required):
+;;   * dst != src, both group vars (fn-group-vars) of ast-type-eq? types --
+;;     same word count and SSE word classes, and the rebuilt per-id type
+;;     table entry stays exact for the merged id;
+;;   * both slot-resident (CompilerRegNoLocation): never register/pair (their
+;;     homes differ), never Spill (a spilled group uses the adjacent
+;;     [offset, offset-8] layout, not the two-region formula slots), never
+;;     Remat;
+;;   * neither in `ineligible`: excludes AddrOf'd vars, whose intervals
+;;     understate pointer-mediated reads, and group params, whose formula
+;;     slots are the prologue's ABI hand-off contract;
+;;   * neither already remapped (parameter identity pins, storage ranges);
+;;   * hull(src).end == hull(dst).start, both hulls present. Interval points
+;;     are unique per instruction (2 coords each), so this equality proves
+;;     the same instruction carries src's LAST liveness event (a read; src is
+;;     not in its live-after) and dst's FIRST (its def) -- and that
+;;     instruction is this mov. Vars minted by the caller-save/loop-split/
+;;     remat/splitkit rewrites have no plan interval and fail the hull check;
+;;     those rewrites only insert reads where a value is genuinely live and
+;;     only redefine register-homed values, so the plan hulls remain valid
+;;     order witnesses for the NoLocation vars admitted here.
+(define (compiler-reg-color-hull-bounds
+  [intervals : CompilerRegIntervalList]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : unit
+  (match intervals
+    [(CompilerRegIntervalNil) unit]
+    [(CompilerRegIntervalCons head rest)
+      (begin
+        (match head
+          [(CompilerRegInterval var start end)
+            (if (and (>= var 0) (< var (array.array-length starts)))
+              (begin
+                (if (or
+                  (< (array.array-ref starts var) 0)
+                  (< start (array.array-ref starts var)))
+                  (array.array-set! starts var start)
+                  unit)
+                (if (> end (array.array-ref ends var))
+                  (array.array-set! ends var end)
+                  unit))
+              unit)])
+        (compiler-reg-color-hull-bounds (box-get rest) starts ends))]))
+
+(define (compiler-reg-color-group-mov-alias-instr!
+  [instr : CompilerIrInstr]
+  [alias : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var-tys : (Array AstType)]
+  [remap : (Array i64)]
+  [hull-starts : (Array i64)]
+  [hull-ends : (Array i64)]) : unit
+  (match instr
+    [(IrInstrMov dst src _)
+      (match src
+        [(IrValueVar src-var)
+          (if (and
+            (>= dst 0)
+            (< dst (array.array-length alias))
+            (>= src-var 0)
+            (< src-var (array.array-length alias))
+            (not (= dst src-var))
+            (compiler-live-set-contains? group-vars dst)
+            (compiler-live-set-contains? group-vars src-var)
+            (not (compiler-live-set-contains? ineligible dst))
+            (not (compiler-live-set-contains? ineligible src-var))
+            (< (array.array-ref remap dst) 0)
+            (< (array.array-ref remap src-var) 0)
+            (>= (array.array-ref hull-starts dst) 0)
+            (>= (array.array-ref hull-starts src-var) 0)
+            (= (array.array-ref hull-ends src-var)
+              (array.array-ref hull-starts dst))
+            (ast-type-eq?
+              (array.array-ref var-tys dst)
+              (array.array-ref var-tys src-var))
+            (match (compiler-reg-assignment-index-lookup assignment-index dst)
+              [(CompilerRegSomeLocation _) false]
+              [(CompilerRegNoLocation) true])
+            (match (compiler-reg-assignment-index-lookup
+              assignment-index
+              src-var)
+              [(CompilerRegSomeLocation _) false]
+              [(CompilerRegNoLocation) true]))
+            (array.array-set! alias dst src-var)
+            unit)]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-reg-color-group-mov-alias-seq!
+  [instrs : CompilerIrInstrSeq]
+  [alias : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var-tys : (Array AstType)]
+  [remap : (Array i64)]
+  [hull-starts : (Array i64)]
+  [hull-ends : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i len)
+      (begin
+        (compiler-reg-color-group-mov-alias-instr!
+          (array.array-ref slots i)
+          alias
+          group-vars
+          ineligible
+          assignment-index
+          var-tys
+          remap
+          hull-starts
+          hull-ends)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-group-mov-alias-blocks!
+  [blocks : CompilerIrBlockList]
+  [alias : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var-tys : (Array AstType)]
+  [remap : (Array i64)]
+  [hull-starts : (Array i64)]
+  [hull-ends : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-color-group-mov-alias-seq!
+              instrs
+              alias
+              group-vars
+              ineligible
+              assignment-index
+              var-tys
+              remap
+              hull-starts
+              hull-ends)])
+        (compiler-reg-color-group-mov-alias-blocks!
+          (box-get rest)
+          alias
+          group-vars
+          ineligible
+          assignment-index
+          var-tys
+          remap
+          hull-starts
+          hull-ends))]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        (while (< i (compiler-ir-block-seq-count seq))
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(IrBlock _ instrs)
+                (compiler-reg-color-group-mov-alias-seq!
+                  instrs
+                  alias
+                  group-vars
+                  ineligible
+                  assignment-index
+                  var-tys
+                  remap
+                  hull-starts
+                  hull-ends)])
+            (set! i (+ i 1)))))]))
+
+;; Follow an alias chain (C=B after B=A) to its root. Chains are acyclic by
+;; construction -- each link strictly advances the hull touch point -- but a
+;; step cap keeps this total on any malformed input.
+(define (compiler-reg-color-group-alias-root
+  [alias : (Array i64)]
+  [var : i64]) : i64
+  (let
+    [root : i64 var]
+    [steps : i64 0]
+    (begin
+      (while (and
+        (< steps 64)
+        (>= root 0)
+        (< root (array.array-length alias))
+        (>= (array.array-ref alias root) 0))
+        (begin
+          (set! root (array.array-ref alias root))
+          (set! steps (+ steps 1))))
+      root)))
+
 ;; Total frame renumbering: colorable stack scalars share slots when their
 ;; intervals are disjoint, colorable inline-storage ranges are shared above
 ;; that scalar prefix, every remaining slot-resident variable gets a private
@@ -15735,12 +15938,46 @@
               remap
               vars
               stack-prefix)]
+          [group-alias
+            : (Array i64)
+            ;; M-B: dst -> src alias links for coalescable group-typed Movs
+            ;; (see compiler-reg-color-group-mov-alias-instr!). Applied in the
+            ;; private-slot loop below: an aliased dst shares its root's slot
+            ;; pair instead of taking a fresh one.
+            (let
+              [alias : (Array i64) (array.make-array i64 vars)]
+              [hull-starts : (Array i64) (array.make-array i64 vars)]
+              [hull-ends : (Array i64) (array.make-array i64 vars)]
+              [i : i64 0]
+              (begin
+                (while (< i vars)
+                  (begin
+                    (array.array-set! alias i (- 0 1))
+                    (array.array-set! hull-starts i (- 0 1))
+                    (array.array-set! hull-ends i (- 0 1))
+                    (set! i (+ i 1))))
+                (compiler-reg-color-hull-bounds
+                  intervals
+                  hull-starts
+                  hull-ends)
+                (compiler-reg-color-group-mov-alias-blocks!
+                  blocks
+                  alias
+                  group-vars
+                  ineligible
+                  assignment-index
+                  var-tys
+                  remap
+                  hull-starts
+                  hull-ends)
+                alias))]
           [slot-count
             : i64
             ;; Private dense slots for everything slot-resident that the scalar
             ;; and inline-storage walks skipped, one slot each. Fresh ids skip
             ;; param pins, so the slot region is the dense prefix [0,
-            ;; watermark) with params in place.
+            ;; watermark) with params in place. Group-mov-aliased dsts share
+            ;; their root's slot pair (word1 formula slots follow the id).
             (let
               [next : i64 storage-prefix]
               [i : i64 0]
@@ -15749,12 +15986,41 @@
                   (begin
                     (if (>= (array.array-ref remap i) 0)
                       unit
-                      (match (compiler-reg-assignment-index-lookup
-                        assignment-index
-                        i)
-                        [(CompilerRegSomeLocation location)
-                          (match location
-                            [(CompilerRegSpill _)
+                      (let
+                        [root : i64
+                          (compiler-reg-color-group-alias-root group-alias i)]
+                        (if (not (= root i))
+                          (begin
+                            (if (< (array.array-ref remap root) 0)
+                              (let
+                                [slot : i64
+                                  (compiler-reg-color-next-free-slot
+                                    slot-ends
+                                    next)]
+                                (begin
+                                  (array.array-set! remap root slot)
+                                  (set! next (+ slot 1))))
+                              unit)
+                            (array.array-set!
+                              remap
+                              i
+                              (array.array-ref remap root)))
+                          (match (compiler-reg-assignment-index-lookup
+                            assignment-index
+                            i)
+                            [(CompilerRegSomeLocation location)
+                              (match location
+                                [(CompilerRegSpill _)
+                                  (let
+                                    [slot : i64
+                                      (compiler-reg-color-next-free-slot
+                                        slot-ends
+                                        next)]
+                                    (begin
+                                      (array.array-set! remap i slot)
+                                      (set! next (+ slot 1))))]
+                                [_ unit])]
+                            [(CompilerRegNoLocation)
                               (let
                                 [slot : i64
                                   (compiler-reg-color-next-free-slot
@@ -15762,15 +16028,7 @@
                                     next)]
                                 (begin
                                   (array.array-set! remap i slot)
-                                  (set! next (+ slot 1))))]
-                            [_ unit])]
-                        [(CompilerRegNoLocation)
-                          (let
-                            [slot : i64
-                              (compiler-reg-color-next-free-slot slot-ends next)]
-                            (begin
-                              (array.array-set! remap i slot)
-                              (set! next (+ slot 1))))]))
+                                  (set! next (+ slot 1))))]))))
                     (set! i (+ i 1))))
                 next))]
           [_renumbered

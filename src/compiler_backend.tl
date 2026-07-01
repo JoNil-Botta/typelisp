@@ -19761,6 +19761,15 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (cond
+    ;; M-B: a group mov whose src and dst share a home (the coloring's
+    ;; group-mov slot aliasing merges their ids, so both formula word slots
+    ;; coincide; a register-pair dst can also equal its src's pair) copies a
+    ;; value onto itself -- emit nothing instead of round-tripping both words
+    ;; through the group-return register pair.
+    [(and
+      (compiler-backend-group-type? program-index ty)
+      (compiler-backend-value-same-home? assignments dst src))
+      (OkCompilerBackend "")]
     [(compiler-backend-group-type? program-index ty)
       (match (compiler-backend-emit-group-load
         assignments
@@ -19881,7 +19890,53 @@
                           ty)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])]))
 
+;; Dead result-store elision (M-B): a call must be emitted for its effects, but
+;; when its dst var is slot-homed (no register/pair home) AND never read in the
+;; final IR (compiler-backend-var-never-used?), the store of the return
+;; register(s) into the frame slot(s) is dead -- nothing reloads the slot, no
+;; AddrOf aliases it, and no runtime walk observes frames. Register-homed dsts
+;; keep their store: the scavenge occupancy model may treat the home register
+;; as holding the value across its (empty) interval, so leave those untouched.
+(define (compiler-backend-call-result-store-dead?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]) : bool
+  (and
+    (compiler-backend-var-never-used? dst)
+    (match (compiler-reg-assignment-lookup assignments dst)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegSpill _) true]
+          [_ false])]
+      [(CompilerRegNoLocation) true])))
+
+;; Scalar/float call-result store through the dead-elision gate: the syscall
+;; and C-ABI indirect-call paths store %rax/%xmm0 inline rather than via
+;; emit-call-result-store; route their stores through the same deadness check.
+(define (compiler-backend-emit-call-result-store-reg
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (if (compiler-backend-call-result-store-dead? assignments dst)
+    ""
+    (compiler-backend-emit-store-typed-var-with-plan assignments dst reg ty)))
+
 (define (compiler-backend-emit-call-result-store
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (if (compiler-backend-call-result-store-dead? assignments dst)
+    (OkCompilerBackend "")
+    (compiler-backend-emit-call-result-store-live
+      assignments
+      dst
+      ty
+      vars
+      program-index)))
+
+(define (compiler-backend-emit-call-result-store-live
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
@@ -20751,7 +20806,7 @@
               setup-asm
               (string.string-append
                 "    syscall\n"
-                (compiler-backend-emit-store-typed-var-with-plan
+                (compiler-backend-emit-call-result-store-reg
                   assignments
                   dst
                   "%rax"
@@ -22020,6 +22075,23 @@
     (if (>= var (array.array-length counts))
       false
       (= (array.array-ref counts var) 1))))
+
+;; Dead result-store elision: true when `var` is read by NO instruction in the
+;; final emitted IR (use count 0 over emit-blocks-list, the post-rewrite
+;; post-coloring blocks the emitter walks). Every operand read counts as a use,
+;; including IrInstrAddrOf's raw var id (compiler-backend-count-instr-uses), so
+;; a never-used var's frame slot is unobservable: no reload, no address-taken
+;; alias, no Pack/Word read. The runtime has no GC/stack-root walk and the
+;; backend emits no per-slot unwind metadata, so skipping the slot store of such
+;; a var (a call result whose value is ignored -- DCE cannot drop the call) is
+;; behavior-preserving. Reads the per-function array installed by
+;; compiler-backend-fuse-need-enable!; conservatively false when unset.
+(define (compiler-backend-var-never-used? [var : i64]) : bool
+  (cond
+    [(not compiler-backend-fuse-need-ready) false]
+    [(< var 0) false]
+    [(>= var (array.array-length compiler-backend-fuse-use-counts)) false]
+    [else (= (array.array-ref compiler-backend-fuse-use-counts var) 0)]))
 
 ;; True when every use of `var` is a branch fed by its own adjacent compare, so
 ;; the boolean is never needed as a materialized value and a compare->branch on
@@ -24471,7 +24543,7 @@
                           call-reg
                           "\n"
                           (compiler-backend-emit-call-space-add call-space)
-                          (compiler-backend-emit-store-typed-var-with-plan
+                          (compiler-backend-emit-call-result-store-reg
                             assignments
                             dst
                             (if (compiler-backend-float-type? ty)
@@ -24496,7 +24568,7 @@
                   direct-home
                   "\n"
                   (compiler-backend-emit-call-space-add call-space)
-                  (compiler-backend-emit-store-typed-var-with-plan
+                  (compiler-backend-emit-call-result-store-reg
                     assignments
                     dst
                     (if (compiler-backend-float-type? ty)

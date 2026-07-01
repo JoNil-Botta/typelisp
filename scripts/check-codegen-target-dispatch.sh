@@ -15,7 +15,7 @@ fi
 
 mkdir -p "$WORKDIR"
 
-TOKEN_RE='CompilerLower(Linux|Windows)[[:alnum:]_]*|lower-mode-(linux|windows)-[[:alnum:]_?-]+|CompilerBackendTarget[.](Linux|Windows)|BackendTarget(Linux|Windows)|compiler-backend-target-(linux|windows)[?]|target-(linux|windows)|(linux|windows)-x86_64'
+TOKEN_RE='CompilerLowerMode[.](Linux|Windows)[[:alnum:]_]*|CompilerLower(Linux|Windows)[[:alnum:]_]*|lower-mode-(linux|windows)-[[:alnum:]_?-]+|CompilerBackendTarget[.](Linux|Windows)|BackendTarget(Linux|Windows)|compiler-backend-target-(linux|windows)[?]|target-(linux|windows)|(linux|windows)-x86_64'
 
 awk -v token_re="$TOKEN_RE" '
 function scope_name(text) {
@@ -60,6 +60,20 @@ FNR == 1 {
             printf "%s\t%s\tCompilerBackendTarget.Linux\t%d\n", FILENAME, scope, FNR
         } else if (line ~ /^[[:space:]]*\(Windows\)/) {
             printf "%s\t%s\tCompilerBackendTarget.Windows\t%d\n", FILENAME, scope, FNR
+        }
+    }
+
+    if (scope == "enum:CompilerLowerMode") {
+        if (line ~ /^[[:space:]]*\(Linux(Scalar|Avx2|Avx512)\)/) {
+            token = line
+            sub(/^[[:space:]]*\(/, "", token)
+            sub(/\).*/, "", token)
+            printf "%s\t%s\tCompilerLowerMode.%s\t%d\n", FILENAME, scope, token, FNR
+        } else if (line ~ /^[[:space:]]*\(Windows(Scalar|Avx2|Avx512)\)/) {
+            token = line
+            sub(/^[[:space:]]*\(/, "", token)
+            sub(/\).*/, "", token)
+            printf "%s\t%s\tCompilerLowerMode.%s\t%d\n", FILENAME, scope, token, FNR
         }
     }
 

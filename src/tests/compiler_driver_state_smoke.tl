@@ -1075,6 +1075,84 @@
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 
+(define (compiler-driver-state-smoke-lower-clone-roots-source-a) : String
+  "(defstruct CloneRootA (text String))
+(define (use-clone [x : CloneRootA]) : CloneRootA (not-clone x))")
+
+(define (compiler-driver-state-smoke-lower-clone-roots-source-b) : String
+  "(defstruct CloneRootA (text String))
+(define (use-clone [x : CloneRootA]) : CloneRootA (clone x))")
+
+(define (compiler-driver-state-smoke-lower-clone-roots-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (compiler-driver-state-install-builtins! state-a)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [paths : AstDeclPathList AstDeclPathList.Nil]
+        (match (parse-ast-source-diagnostic-with-cfg-and-pools
+          "clone-state-a.tl"
+          (compiler-driver-state-smoke-lower-clone-roots-source-a)
+          (compiler-cfg-empty)
+          pools-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              "clone-state-b.tl"
+              (compiler-driver-state-smoke-lower-clone-roots-source-b)
+              (compiler-cfg-empty)
+              pools-b)
+              [(ResultAstProgramDiagnostic.Ok _)
+                (match (build-compiler-symbols program-a)
+                  [(ResultCompilerSymbols.Ok symbols)
+                    (match (build-compiler-registries-with-symbols
+                      program-a
+                      symbols)
+                      [(ResultCompilerRegistries.Ok registries)
+                        (let
+                          [ctx : TcContext
+                            (TcContext program-a symbols registries "" pools-a)]
+                          [names : LowerNameEnv
+                            (match program-a
+                              [(AstProgram.Program decls-box)
+                                (lower-name-env-from-decls
+                                  (box-get decls-box)
+                                  paths
+                                  "clone-state-a.tl"
+                                  LowerNameEnv.Nil)])]
+                          (match (tc-build-top-env ctx program-a)
+                            [(ResultTcEnv.Ok top-env)
+                              (let
+                                [_ : unit
+                                  (ast-node-pool-context-install! pools-b)]
+                                [active-before : i64 (ast-node-pool-len)]
+                                [roots : CloneNameList
+                                  (lower-clone-roots-program
+                                    ctx
+                                    top-env
+                                    names
+                                    program-a)]
+                                [active-after : i64 (ast-node-pool-len)]
+                                (and
+                                  (=
+                                    active-before
+                                    (ast-node-pool-context-expr-len pools-b))
+                                  (= active-after active-before)
+                                  (match roots
+                                    [(CloneNameList.Nil) true]
+                                    [_ false])))]
+                            [(ResultTcEnv.Err _) false]))]
+                      [(ResultCompilerRegistries.Err _) false])]
+                  [(ResultCompilerSymbols.Err _) false])]
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
@@ -1253,6 +1331,9 @@
     (unless
       (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
       (return 19))
+    (unless
+      (compiler-driver-state-smoke-lower-clone-roots-use-context?)
+      (return 20))
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))

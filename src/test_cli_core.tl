@@ -2880,7 +2880,7 @@
     source
     (tltest-program-with-print-runtime program target)
     (tltest-paths-with-print-runtime target harness-paths)
-    (CompilerLowerScalar)
+    (CompilerLowerMode.Scalar)
     roots
     (tltest-typecheck-cache-scope roots target))
     [(ResultCompilerLower.Ok lowered _)
@@ -3028,7 +3028,7 @@
                 source
                 (ast-program decls)
                 paths
-                (CompilerLowerScalar)
+                (CompilerLowerMode.Scalar)
                 roots
                 (tltest-typecheck-cache-scope roots target))
                 [(ResultCompilerLower.Ok _ _) true]
@@ -3225,7 +3225,7 @@
       entry-path
       program
       paths
-      (CompilerLowerScalar)
+      (CompilerLowerMode.Scalar)
       roots
       (tltest-typecheck-cache-scope roots target))
       [(ResultCompilerLower.Ok ir spans)

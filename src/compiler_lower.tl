@@ -352,39 +352,39 @@
   (Unsupported String))
 
 (defenum ResultLowerState
-  (OkLowerState LowerState)
-  (ErrLowerState (Box CompilerDiagnostic)))
+  (Ok LowerState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum LowerMaybeDirectStore
-  (LowerNoDirectStore)
-  (LowerDirectStore LowerState)
-  (LowerDirectStoreErr (Box CompilerDiagnostic)))
+  (No)
+  (Store LowerState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultLowerEnv
-  (OkLowerEnv LowerState sym_i64_env.SymI64Env TcTypeEnv)
-  (ErrLowerEnv (Box CompilerDiagnostic)))
+  (Ok LowerState sym_i64_env.SymI64Env TcTypeEnv)
+  (Err (Box CompilerDiagnostic)))
 
-;; #3759: OkLowerModuleLocalEnv carries, in order, the full module-local type
+;; #3759: The Ok variant carries, in order, the full module-local type
 ;; env (top-env + module-local type decls), the full module-local name env, the
 ;; module-local-ONLY type env, and the module-local-ONLY name env (just the
 ;; module's own type/name bindings, on empty bases). The last two build small
 ;; per-module type/name cache overlays over the shared global caches instead of
 ;; re-walking the global env at every module boundary.
 (defenum ResultLowerModuleLocalEnv
-  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv TcTypeEnv LowerNameEnv)
-  (ErrLowerModuleLocalEnv String))
+  (Ok TcTypeEnv LowerNameEnv TcTypeEnv LowerNameEnv)
+  (Err String))
 
 (defenum ResultLowerValue
-  (OkLowerValue CompilerIrValue)
-  (ErrLowerValue (Box CompilerDiagnostic)))
+  (Ok CompilerIrValue)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultLowerSize
-  (OkLowerSize i64)
-  (ErrLowerSize String))
+  (Ok i64)
+  (Err String))
 
 (defenum ResultLowerFunction
-  (OkLowerFunction CompilerIrFunctionList CompilerSourceSpans)
-  (ErrLowerFunction (Box CompilerDiagnostic)))
+  (Ok CompilerIrFunctionList CompilerSourceSpans)
+  (Err (Box CompilerDiagnostic)))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
 ;;
@@ -396,18 +396,15 @@
   (spans CompilerSourceSpans))
 
 (defenum ResultLowerDecls
-  (OkLowerDecls (Box LowerDeclsSuccess))
-  (ErrLowerDecls (Box CompilerDiagnostic)))
+  (Ok (Box LowerDeclsSuccess))
+  (Err (Box CompilerDiagnostic)))
 
 (defenum LowerDispatchDecl
-  (LowerDispatchDecl
-    CompilerIrGlobal
-    CompilerIrFunctionList
-    CompilerSourceSpans))
+  (Decl CompilerIrGlobal CompilerIrFunctionList CompilerSourceSpans))
 
 (defenum ResultLowerDispatchDecl
-  (OkLowerDispatchDecl (Box LowerDispatchDecl))
-  (ErrLowerDispatchDecl (Box CompilerDiagnostic)))
+  (Ok (Box LowerDispatchDecl))
+  (Err (Box CompilerDiagnostic)))
 
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
 ;;
@@ -419,26 +416,26 @@
 ;;
 ;; optimizer and liveness data model stay unchanged.
 (defenum ResultCompilerLower
-  (OkCompilerLower CompilerIrProgram CompilerSourceSpans)
-  (ErrCompilerLower (Box CompilerDiagnostic)))
+  (Ok CompilerIrProgram CompilerSourceSpans)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum LowerFieldInfo
-  (LowerFieldInfo i64 AstType))
+  (Info i64 AstType))
 
 (defenum ResultLowerFieldInfo
-  (OkLowerFieldInfo LowerFieldInfo)
-  (ErrLowerFieldInfo (Box CompilerDiagnostic)))
+  (Ok LowerFieldInfo)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum LowerStringFields
-  (LowerStringFields LowerState CompilerIrValue CompilerIrValue))
+  (Fields LowerState CompilerIrValue CompilerIrValue))
 
 (defenum LowerMaybeStringConcatCall
-  (LowerNoStringConcatCall)
-  (LowerSomeStringConcatCall AstExpr AstExpr))
+  (No)
+  (Some AstExpr AstExpr))
 
 (defenum ResultLowerStringValues
-  (OkLowerStringValues LowerState CompilerIrValueList i64)
-  (ErrLowerStringValues (Box CompilerDiagnostic)))
+  (Ok LowerState CompilerIrValueList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defstruct LowerCleanupStack
   (hidden-names (Array String))
@@ -446,15 +443,11 @@
   (count i64))
 
 (defenum LowerResourceBindings
-  (LowerResourceBindings
-    LowerState
-    sym_i64_env.SymI64Env
-    TcTypeEnv
-    LowerCleanupStack))
+  (Bindings LowerState sym_i64_env.SymI64Env TcTypeEnv LowerCleanupStack))
 
 (defenum ResultLowerResourceBindings
-  (OkLowerResourceBindings LowerResourceBindings)
-  (ErrLowerResourceBindings (Box CompilerDiagnostic)))
+  (Ok LowerResourceBindings)
+  (Err (Box CompilerDiagnostic)))
 
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
@@ -2905,7 +2898,7 @@
   [module-id : i64]) : ResultLowerModuleLocalEnv
   (match decls
     [(AstDeclList.Nil)
-      (OkLowerModuleLocalEnv type-env names local-type-env local-names)]
+      (ResultLowerModuleLocalEnv.Ok type-env names local-type-env local-names)]
     [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -2965,8 +2958,10 @@
                         target-module
                         target-module-id
                         module-id)]
-                    [(ResultTcEnv.Err message) (ErrLowerModuleLocalEnv message)])]
-                [(ResultTcEnv.Err message) (ErrLowerModuleLocalEnv message)])
+                    [(ResultTcEnv.Err message)
+                      (ResultLowerModuleLocalEnv.Err message)])]
+                [(ResultTcEnv.Err message)
+                  (ResultLowerModuleLocalEnv.Err message)])
               (lower-module-local-envs-list
                 top-env
                 rest
@@ -2986,7 +2981,11 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
-    (OkLowerModuleLocalEnv top-env names (TcTypeEnv.Nil) (LowerNameEnv.Nil))
+    (ResultLowerModuleLocalEnv.Ok
+      top-env
+      names
+      (TcTypeEnv.Nil)
+      (LowerNameEnv.Nil))
     (match (tc-context-program ctx)
       [(AstProgram.Program decls-box)
         (let
@@ -5144,9 +5143,9 @@
                         names
                         name-cache
                         next-module-str)
-                        [(OkLowerModuleLocalEnv next-local-env _ _ _)
+                        [(ResultLowerModuleLocalEnv.Ok next-local-env _ _ _)
                           (set! cur-local-env next-local-env)]
-                        [(ErrLowerModuleLocalEnv _) unit])
+                        [(ResultLowerModuleLocalEnv.Err _) unit])
                       (set! cur-module next-module-str)
                       (set! cur rest)))]
                 [_ (set! cur rest)]))]))
@@ -9755,8 +9754,8 @@
   (match (tc-inline-aggregate-type-layout ctx ty)
     [(ResultTcLayoutInfo.Ok info)
       (match info
-        [(TcLayoutInfo size _) (OkLowerSize size)])]
-    [(ResultTcLayoutInfo.Err message) (ErrLowerSize message)]))
+        [(TcLayoutInfo size _) (ResultLowerSize.Ok size)])]
+    [(ResultTcLayoutInfo.Err message) (ResultLowerSize.Err message)]))
 
 (define (lower-copy-inline-aggregate-to-inline
   [ctx : TcContext]
@@ -9764,7 +9763,7 @@
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size ctx ty)
-    [(OkLowerSize size)
+    [(ResultLowerSize.Ok size)
       (match (lower-reserve-inline-storage state size ty)
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
@@ -9784,7 +9783,8 @@
                 (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               ty))])]
-    [(ErrLowerSize message) (ErrLowerExpr (box (lower-diagnostic message)))]))
+    [(ResultLowerSize.Err message)
+      (ErrLowerExpr (box (lower-diagnostic message)))]))
 
 (define (lower-copy-inline-aggregate-to-heap-as
   [ctx : TcContext]
@@ -9793,7 +9793,7 @@
   [ty : AstType]
   [storage-ty : AstType]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size ctx ty)
-    [(OkLowerSize size)
+    [(ResultLowerSize.Ok size)
       (match (lower-reserve-heap-storage state size storage-ty)
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
@@ -9813,7 +9813,8 @@
                 (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               storage-ty))])]
-    [(ErrLowerSize message) (ErrLowerExpr (box (lower-diagnostic message)))]))
+    [(ResultLowerSize.Err message)
+      (ErrLowerExpr (box (lower-diagnostic message)))]))
 
 (define (lower-copy-inline-aggregate-to-heap
   [ctx : TcContext]
@@ -9910,7 +9911,8 @@
   (match (lower-load-at-offset state value 0 (AstType.U64))
     [(LowerExpr ptr-state ptr _)
       (match (lower-load-at-offset ptr-state value 8 (AstType.I64))
-        [(LowerExpr len-state len _) (LowerStringFields len-state ptr len)])]))
+        [(LowerExpr len-state len _)
+          (LowerStringFields.Fields len-state ptr len)])]))
 
 (define (lower-str-ref-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -9974,13 +9976,13 @@
                         [rest : AstExprList (box-get rest)]
                         (match rest
                           [(AstExprList.Nil)
-                            (LowerSomeStringConcatCall left right)]
-                          [_ (LowerNoStringConcatCall)]))]
-                    [_ (LowerNoStringConcatCall)]))]
-              [_ (LowerNoStringConcatCall)])
-            (LowerNoStringConcatCall))]
-        [_ (LowerNoStringConcatCall)])]
-    [_ (LowerNoStringConcatCall)]))
+                            (LowerMaybeStringConcatCall.Some left right)]
+                          [_ (LowerMaybeStringConcatCall.No)]))]
+                    [_ (LowerMaybeStringConcatCall.No)]))]
+              [_ (LowerMaybeStringConcatCall.No)])
+            (LowerMaybeStringConcatCall.No))]
+        [_ (LowerMaybeStringConcatCall.No)])]
+    [_ (LowerMaybeStringConcatCall.No)]))
 
 (define (lower-string-concat-exprs-right
   [ctx : TcContext]
@@ -9993,7 +9995,7 @@
       (ast-node-push left)
       (ast-expr-cons (ast-node-push right) AstExprList.Nil))
     (match (lower-string-concat-call-parts ctx env right)
-      [(LowerSomeStringConcatCall nested-left nested-right)
+      [(LowerMaybeStringConcatCall.Some nested-left nested-right)
         (ast-expr-cons
           (ast-node-push left)
           (lower-string-concat-exprs-right
@@ -10002,7 +10004,7 @@
             nested-left
             nested-right
             (- remaining 1)))]
-      [(LowerNoStringConcatCall)
+      [(LowerMaybeStringConcatCall.No)
         (ast-expr-cons
           (ast-node-push left)
           (ast-expr-cons (ast-node-push right) AstExprList.Nil))])))
@@ -10023,7 +10025,7 @@
   [acc : CompilerIrValueList]
   [count : i64]) : ResultLowerStringValues
   (match exprs
-    [(AstExprList.Nil) (OkLowerStringValues state acc count)]
+    [(AstExprList.Nil) (ResultLowerStringValues.Ok state acc count)]
     [(AstExprList.Cons expr rest)
       (let
         [expr : AstExpr (tc-context-expr-get ctx expr)]
@@ -10034,7 +10036,7 @@
               [(LowerExpr expr-state value expr-ty)
                 (if (lower-string-handle-type? ctx expr-ty)
                   (match (lower-string-fields expr-state value)
-                    [(LowerStringFields field-state ptr len)
+                    [(LowerStringFields.Fields field-state ptr len)
                       (lower-string-concat-values-rev
                         ctx
                         field-state
@@ -10045,12 +10047,12 @@
                           len
                           (compiler-ir-value-cons ptr acc))
                         (+ count 1))])
-                  (ErrLowerStringValues
+                  (ResultLowerStringValues.Err
                     (box
                       (lower-diagnostic-at-expr
                         expr
                         "lower: string-concat requires String"))))])]
-          [(ErrLowerExpr message) (ErrLowerStringValues message)]))]))
+          [(ErrLowerExpr message) (ResultLowerStringValues.Err message)]))]))
 
 (define (lower-string-concat-exprs
   [ctx : TcContext]
@@ -10066,7 +10068,7 @@
     exprs
     CompilerIrValueList.Nil
     0)
-    [(OkLowerStringValues values-state values-rev count)
+    [(ResultLowerStringValues.Ok values-state values-rev count)
       (match (lower-state-alloc-var values-state)
         [(LowerAlloc allocated var-id)
           (OkLowerExpr
@@ -10083,7 +10085,7 @@
                   (AstType.String)))
               (CompilerIrValue.Var var-id)
               (AstType.String)))])]
-    [(ErrLowerStringValues message) (ErrLowerExpr message)]))
+    [(ResultLowerStringValues.Err message) (ErrLowerExpr message)]))
 
 (define (lower-supported-reference-referent-type?
   [ctx : TcContext]
@@ -10538,9 +10540,9 @@
   [_origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (match (lower-struct-field-info ctx struct-name field)
-    [(OkLowerFieldInfo info)
+    [(ResultLowerFieldInfo.Ok info)
       (match info
-        [(LowerFieldInfo offset field-ty)
+        [(LowerFieldInfo.Info offset field-ty)
           (let
             [load-value-reference : bool
               (not
@@ -10562,7 +10564,7 @@
                     field-ty
                     result-ty
                     load-value-reference))]))])]
-    [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
+    [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)]))
 
 (define (lower-borrow-struct-field-address-named
   [ctx : TcContext]
@@ -10710,13 +10712,13 @@
           (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
             [(AstType.Tuple elem-tys)
               (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
-                [(OkLowerFieldInfo info)
+                [(ResultLowerFieldInfo.Ok info)
                   (match info
-                    [(LowerFieldInfo offset _)
+                    [(LowerFieldInfo.Info offset _)
                       (match (lower-gep-byte tuple-state tuple-value offset)
                         [(LowerExpr ptr-state ptr _)
                           (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
-                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
             [(AstType.Ref _ referent-ty)
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
@@ -10727,13 +10729,13 @@
                     index
                     0
                     0)
-                    [(OkLowerFieldInfo info)
+                    [(ResultLowerFieldInfo.Ok info)
                       (match info
-                        [(LowerFieldInfo offset _)
+                        [(LowerFieldInfo.Info offset _)
                           (match (lower-gep-byte tuple-state tuple-value offset)
                             [(LowerExpr ptr-state ptr _)
                               (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
-                    [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                    [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
                 [_
                   (ErrLowerExpr
                     (box
@@ -10750,13 +10752,13 @@
                     index
                     0
                     0)
-                    [(OkLowerFieldInfo info)
+                    [(ResultLowerFieldInfo.Ok info)
                       (match info
-                        [(LowerFieldInfo offset _)
+                        [(LowerFieldInfo.Info offset _)
                           (match (lower-gep-byte tuple-state tuple-value offset)
                             [(LowerExpr ptr-state ptr _)
                               (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
-                    [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                    [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
                 [_
                   (ErrLowerExpr
                     (box
@@ -11025,9 +11027,9 @@
   (match values
     [(CompilerIrValueList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerState state)]
+        [(AstTypeList.Nil) (ResultLowerState.Ok state)]
         [_
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
     [(CompilerIrValueList.Cons value rest-values)
       (match types
@@ -11046,7 +11048,7 @@
               rest-types
               (+ offset (lower-type-size ctx resolved))))]
         [(AstTypeList.Nil)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
 
 (define (lower-store-repr-c-values
@@ -11058,9 +11060,9 @@
   (match values
     [(CompilerIrValueList.Nil)
       (match fields
-        [(TcReprCFieldLayoutList.Nil) (OkLowerState state)]
+        [(TcReprCFieldLayoutList.Nil) (ResultLowerState.Ok state)]
         [_
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
     [(CompilerIrValueList.Cons value rest-values)
       (match fields
@@ -11085,7 +11087,7 @@
                   (box-get rest-values)
                   (box-get rest-fields)))])]
         [(TcReprCFieldLayoutList.Nil)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
 
 (define (lower-store-inline-struct-values
@@ -11098,9 +11100,9 @@
   (match values
     [(CompilerIrValueList.Nil)
       (match fields
-        [(AstFieldDefList.Nil) (OkLowerState state)]
+        [(AstFieldDefList.Nil) (ResultLowerState.Ok state)]
         [_
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
     [(CompilerIrValueList.Cons value rest-values)
       (match fields
@@ -11115,7 +11117,7 @@
                   [offset : i64
                     (tc-inline-aggregate-layout-field-offset layout name-str)]
                   (if (< offset 0)
-                    (ErrLowerState
+                    (ResultLowerState.Err
                       (box
                         (lower-diagnostic
                           (string.append
@@ -11143,9 +11145,9 @@
                             rest-fields
                             layout))]
                       [(ResultTcLayoutInfo.Err message)
-                        (ErrLowerState (box (lower-diagnostic message)))])))]))]
+                        (ResultLowerState.Err (box (lower-diagnostic message)))])))]))]
         [(AstFieldDefList.Nil)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
 
 (define (lower-store-inline-payload-values
@@ -11160,9 +11162,9 @@
   (match values
     [(CompilerIrValueList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerState state)]
+        [(AstTypeList.Nil) (ResultLowerState.Ok state)]
         [_
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
     [(CompilerIrValueList.Cons value rest-values)
       (match types
@@ -11177,7 +11179,7 @@
                 variant-name
                 index)]
             (if (< offset 0)
-              (ErrLowerState
+              (ResultLowerState.Err
                 (box
                   (lower-diagnostic
                     (string.append
@@ -11204,9 +11206,9 @@
                     variant-name
                     (+ index 1))]
                 [(ResultTcLayoutInfo.Err message)
-                  (ErrLowerState (box (lower-diagnostic message)))])))]
+                  (ResultLowerState.Err (box (lower-diagnostic message)))])))]
         [(AstTypeList.Nil)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
 
 (define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
@@ -11321,9 +11323,9 @@
   [field-value : CompilerIrValue]
   [lit-value : CompilerIrValue]) : ResultLowerExpr
   (match (lower-string-fields state field-value)
-    [(LowerStringFields field-state field-ptr field-len)
+    [(LowerStringFields.Fields field-state field-ptr field-len)
       (match (lower-string-fields field-state lit-value)
-        [(LowerStringFields done-state lit-ptr lit-len)
+        [(LowerStringFields.Fields done-state lit-ptr lit-len)
           (OkLowerExpr
             (lower-inline-string-eq-fields
               done-state
@@ -11378,16 +11380,16 @@
   [pattern : AstPattern]
   [inner-ty : AstType]) : ResultLowerEnv
   (match pattern
-    [(AstPattern.Wildcard) (OkLowerEnv state env type-env)]
+    [(AstPattern.Wildcard) (ResultLowerEnv.Ok state env type-env)]
     [(AstPattern.Binding name)
       (match value
         [(CompilerIrValue.Var value-var)
-          (OkLowerEnv
+          (ResultLowerEnv.Ok
             state
             (sym_i64_env.sym-i64-bind-id env name value-var)
             (tc-bind-id type-env name inner-ty))]
         [_
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box (lower-diagnostic "lower: internal box pattern load failed")))])]
     [(AstPattern.Variant name args-box)
       (if (lower-box-pattern-name? name)
@@ -11399,10 +11401,10 @@
           value
           inner-ty
           (box-get args-box))
-        (ErrLowerEnv
+        (ResultLowerEnv.Err
           (box (lower-diagnostic "lower: unsupported refutable box pattern"))))]
     [_
-      (ErrLowerEnv
+      (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: unsupported refutable box pattern")))]))
 
 (define (lower-bind-box-pattern
@@ -11440,17 +11442,17 @@
                       inner
                       inner-ty)])]
               [_
-                (ErrLowerEnv
+                (ResultLowerEnv.Err
                   (box
                     (lower-diagnostic
                       "lower: box pattern expects exactly one inner pattern")))]))]
         [_
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box
               (lower-diagnostic
                 "lower: box pattern expects exactly one inner pattern")))])]
     [_
-      (ErrLowerEnv
+      (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: box pattern requires Box type")))]))
 
 (define (lower-bind-box-variant-payload
@@ -11491,7 +11493,7 @@
             field-value
             resolved
             nested-args)
-            [(OkLowerEnv box-state box-env box-type-env)
+            [(ResultLowerEnv.Ok box-state box-env box-type-env)
               (lower-bind-variant-payloads
                 ctx
                 box-state
@@ -11507,9 +11509,9 @@
                 next-cursor
                 fail-label
                 scrut-reg-group?)]
-            [(ErrLowerEnv message) (ErrLowerEnv message)])])]
+            [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])])]
     [_
-      (ErrLowerEnv
+      (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: box pattern requires Box payload")))]))
 
 (define (lower-bind-struct-variant-payload
@@ -11550,7 +11552,7 @@
         (lower-struct-type-name-or-empty
           (tc-type-strip-region (tc-resolve-type ctx resolved)))
         nested-args)
-        [(OkLowerEnv struct-state struct-env struct-type-env)
+        [(ResultLowerEnv.Ok struct-state struct-env struct-type-env)
           (lower-bind-variant-payloads
             ctx
             struct-state
@@ -11566,7 +11568,7 @@
             next-cursor
             fail-label
             scrut-reg-group?)]
-        [(ErrLowerEnv message) (ErrLowerEnv message)])]))
+        [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))
 
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
 ;; binding) just load/bind; a refutable literal subpattern (#651) loads the
@@ -11597,9 +11599,9 @@
   (match patterns
     [(AstPatternList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerEnv state env type-env)]
+        [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
         [_
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box
               (lower-diagnostic "lower: enum payload pattern arity mismatch")))])]
     [(AstPatternList.Cons pattern rest-patterns)
@@ -11627,7 +11629,7 @@
                 (+ default-offset (lower-type-size ctx resolved))]
               [next-index : i64 (+ index 1)]
               (if (< offset 0)
-                (ErrLowerEnv
+                (ResultLowerEnv.Err
                   (box
                     (lower-diagnostic
                       (string.append
@@ -11685,7 +11687,7 @@
                               fail-label
                               scrut-reg-group?)]
                           [_
-                            (ErrLowerEnv
+                            (ResultLowerEnv.Err
                               (box
                                 (lower-diagnostic
                                   "lower: internal enum payload load failed")))])])]
@@ -11736,8 +11738,9 @@
                                         next-cursor
                                         fail-label
                                         scrut-reg-group?)])])]
-                            [(ErrLowerExpr message) (ErrLowerEnv message)])])
-                      (ErrLowerEnv
+                            [(ErrLowerExpr message)
+                              (ResultLowerEnv.Err message)])])
+                      (ResultLowerEnv.Err
                         (box
                           (lower-diagnostic
                             "lower: unsupported enum payload literal pattern type"))))]
@@ -11800,7 +11803,7 @@
                                     (compiler-symbols-missing-handle))]
                                 (if (not
                                   (compiler-symbols-handle-found? handle))
-                                  (ErrLowerEnv
+                                  (ResultLowerEnv.Err
                                     (box
                                       (lower-diagnostic
                                         (string.append
@@ -11810,7 +11813,7 @@
                                     symbols
                                     handle)
                                     [(ResultAstTypeList.Err message)
-                                      (ErrLowerEnv
+                                      (ResultLowerEnv.Err
                                         (box (lower-diagnostic message)))]
                                     [(ResultAstTypeList.Ok nested-fields)
                                       (match (lower-load-inline-value-at-offset
@@ -11888,7 +11891,7 @@
                                                         (lower-type-register-group?
                                                           ctx
                                                           resolved))
-                                                        [(OkLowerEnv
+                                                        [(ResultLowerEnv.Ok
                                                             nested-state
                                                             nested-env
                                                             nested-type-env)
@@ -11907,15 +11910,17 @@
                                                             next-cursor
                                                             fail-label
                                                             scrut-reg-group?)]
-                                                        [(ErrLowerEnv message)
-                                                          (ErrLowerEnv message)])])])])])])))]))))]
+                                                        [(ResultLowerEnv.Err
+                                                            message)
+                                                          (ResultLowerEnv.Err
+                                                            message)])])])])])])))]))))]
                   [_
-                    (ErrLowerEnv
+                    (ResultLowerEnv.Err
                       (box
                         (lower-diagnostic
                           "lower: unsupported enum payload pattern")))])))]
           [(AstTypeList.Nil)
-            (ErrLowerEnv
+            (ResultLowerEnv.Err
               (box
                 (lower-diagnostic "lower: enum payload pattern arity mismatch")))]))]))
 
@@ -11957,9 +11962,9 @@
   (match patterns
     [(AstPatternList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerEnv state env type-env)]
+        [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
         [_
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box
               (lower-diagnostic "lower: enum payload pattern arity mismatch")))])]
     [(AstPatternList.Cons pattern rest-patterns)
@@ -11987,7 +11992,7 @@
                 (+ default-offset (lower-type-size ctx resolved))]
               [next-index : i64 (+ index 1)]
               (if (< offset 0)
-                (ErrLowerEnv
+                (ResultLowerEnv.Err
                   (box
                     (lower-diagnostic
                       (string.append
@@ -12042,7 +12047,7 @@
                                 next-cursor
                                 fail-label)]
                             [_
-                              (ErrLowerEnv
+                              (ResultLowerEnv.Err
                                 (box
                                   (lower-diagnostic
                                     "lower: internal borrowed enum payload reference failed")))])]))]
@@ -12085,8 +12090,9 @@
                                         next-index
                                         next-cursor
                                         fail-label)])])]
-                            [(ErrLowerExpr message) (ErrLowerEnv message)])])
-                      (ErrLowerEnv
+                            [(ErrLowerExpr message)
+                              (ResultLowerEnv.Err message)])])
+                      (ResultLowerEnv.Err
                         (box
                           (lower-diagnostic
                             "lower: unsupported enum payload literal pattern type"))))]
@@ -12103,7 +12109,7 @@
                                 nested-name
                                 (compiler-symbols-missing-handle))]
                             (if (not (compiler-symbols-handle-found? handle))
-                              (ErrLowerEnv
+                              (ResultLowerEnv.Err
                                 (box
                                   (lower-diagnostic
                                     (string.append
@@ -12113,7 +12119,8 @@
                                 symbols
                                 handle)
                                 [(ResultAstTypeList.Err message)
-                                  (ErrLowerEnv (box (lower-diagnostic message)))]
+                                  (ResultLowerEnv.Err
+                                    (box (lower-diagnostic message)))]
                                 [(ResultAstTypeList.Ok nested-fields)
                                   (match (lower-load-at-offset
                                     state
@@ -12167,7 +12174,7 @@
                                                     0
                                                     8
                                                     fail-label)
-                                                    [(OkLowerEnv
+                                                    [(ResultLowerEnv.Ok
                                                         nested-state
                                                         nested-env
                                                         nested-type-env)
@@ -12186,15 +12193,17 @@
                                                         next-index
                                                         next-cursor
                                                         fail-label)]
-                                                    [(ErrLowerEnv message)
-                                                      (ErrLowerEnv message)])])])])])])))]))]
+                                                    [(ResultLowerEnv.Err
+                                                        message)
+                                                      (ResultLowerEnv.Err
+                                                        message)])])])])])])))]))]
                   [_
-                    (ErrLowerEnv
+                    (ResultLowerEnv.Err
                       (box
                         (lower-diagnostic
                           "lower: unsupported enum payload pattern")))])))]
           [(AstTypeList.Nil)
-            (ErrLowerEnv
+            (ResultLowerEnv.Err
               (box
                 (lower-diagnostic "lower: enum payload pattern arity mismatch")))]))]))
 
@@ -12338,7 +12347,7 @@
   [cursor : i64]) : ResultLowerFieldInfo
   (match fields
     [(AstFieldDefList.Nil)
-      (ErrLowerFieldInfo
+      (ResultLowerFieldInfo.Err
         (box
           (lower-diagnostic
             (string.append "lower: unknown struct field " field-name))))]
@@ -12352,7 +12361,7 @@
               [offset : i64
                 (lower-align-up cursor (lower-type-align ctx resolved))]
               (if (string.eq (intern-str name) field-name)
-                (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+                (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
                 (lower-field-info-from-list
                   ctx
                   rest
@@ -12364,7 +12373,7 @@
   [field-name : String]) : ResultLowerFieldInfo
   (match fields
     [(TcReprCFieldLayoutList.Nil)
-      (ErrLowerFieldInfo
+      (ResultLowerFieldInfo.Err
         (box
           (lower-diagnostic
             (string.append "lower: unknown struct field " field-name))))]
@@ -12372,7 +12381,7 @@
       (match field
         [(TcReprCFieldLayout.Field name ty offset)
           (if (string.eq name field-name)
-            (OkLowerFieldInfo (LowerFieldInfo offset ty))
+            (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
             (lower-field-info-from-repr-c-list (box-get rest) field-name))])]))
 
 (define (lower-struct-field-info
@@ -12389,12 +12398,12 @@
             (tc-repr-c-layout-fields layout)
             field-name)]
         [(ResultTcReprCLayout.Err message)
-          (ErrLowerFieldInfo (box (lower-diagnostic message)))])
+          (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])
       (match (lower-struct-fields field-ctx struct-name)
         [(ResultAstFieldDefList.Ok fields)
           (lower-field-info-from-list field-ctx fields field-name 0)]
         [(ResultAstFieldDefList.Err message)
-          (ErrLowerFieldInfo (box (lower-diagnostic message)))]))))
+          (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))]))))
 
 (define (lower-struct-field-info-for-mode
   [ctx : TcContext]
@@ -12406,9 +12415,9 @@
       (lower-context-with-nominal-owner-module ctx struct-name)]
     (if (lower-mode-inline-aggregates? mode)
       (match (lower-struct-field-info field-ctx struct-name field-name)
-        [(OkLowerFieldInfo info)
+        [(ResultLowerFieldInfo.Ok info)
           (match info
-            [(LowerFieldInfo _ field-ty)
+            [(LowerFieldInfo.Info _ field-ty)
               (match (tc-inline-aggregate-layout-for field-ctx struct-name)
                 [(ResultTcInlineAggregateLayout.Ok layout)
                   (let
@@ -12417,16 +12426,17 @@
                         layout
                         field-name)]
                     (if (< offset 0)
-                      (ErrLowerFieldInfo
+                      (ResultLowerFieldInfo.Err
                         (box
                           (lower-diagnostic
                             (string.append
                               "lower: inline struct layout missing field "
                               field-name))))
-                      (OkLowerFieldInfo (LowerFieldInfo offset field-ty))))]
+                      (ResultLowerFieldInfo.Ok
+                        (LowerFieldInfo.Info offset field-ty))))]
                 [(ResultTcInlineAggregateLayout.Err message)
-                  (ErrLowerFieldInfo (box (lower-diagnostic message)))])])]
-        [(ErrLowerFieldInfo message) (ErrLowerFieldInfo message)])
+                  (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])])]
+        [(ResultLowerFieldInfo.Err message) (ResultLowerFieldInfo.Err message)])
       (lower-struct-field-info field-ctx struct-name field-name))))
 
 (define (lower-var
@@ -12941,7 +12951,7 @@
   [state : LowerState]
   [value : CompilerIrValue]) : ResultLowerExpr
   (match (lower-string-fields state value)
-    [(LowerStringFields fields-state ptr len)
+    [(LowerStringFields.Fields fields-state ptr len)
       (lower-substring-call-runtime
         fields-state
         ptr
@@ -13046,7 +13056,7 @@
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
   (match types
-    [(AstTypeList.Nil) (OkLowerState state)]
+    [(AstTypeList.Nil) (ResultLowerState.Ok state)]
     [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ty-node-get ty)]
@@ -13089,7 +13099,7 @@
                         dst
                         rest
                         (+ offset size))])]
-                [(ErrLowerExpr message) (ErrLowerState message)])])
+                [(ErrLowerExpr message) (ResultLowerState.Err message)])])
           (lower-capture-snapshot-type-list
             ctx
             state
@@ -13122,9 +13132,9 @@
         dst
         elem-tys
         0)
-        [(OkLowerState done-state)
+        [(ResultLowerState.Ok done-state)
           (OkLowerExpr (LowerExpr done-state dst result-ty))]
-        [(ErrLowerState message) (ErrLowerExpr message)])]))
+        [(ResultLowerState.Err message) (ErrLowerExpr message)])]))
 
 (define (lower-capture-snapshot-fixed-array-elems
   [ctx : TcContext]
@@ -13138,7 +13148,7 @@
   [index : i64]
   [count : i64]) : ResultLowerState
   (if (>= index count)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
@@ -13178,7 +13188,7 @@
                       elem-size
                       (+ index 1)
                       count)])]
-              [(ErrLowerExpr message) (ErrLowerState message)])])
+              [(ErrLowerExpr message) (ResultLowerState.Err message)])])
         (lower-capture-snapshot-fixed-array-elems
           ctx
           state
@@ -13218,9 +13228,9 @@
           elem-size
           0
           count)
-          [(OkLowerState done-state)
+          [(ResultLowerState.Ok done-state)
             (OkLowerExpr (LowerExpr done-state dst result-ty))]
-          [(ErrLowerState message) (ErrLowerExpr message)])])))
+          [(ResultLowerState.Err message) (ErrLowerExpr message)])])))
 
 (define (lower-capture-snapshot-struct-value
   [ctx : TcContext]
@@ -13253,9 +13263,9 @@
                 dst
                 field-types
                 0)
-                [(OkLowerState done-state)
+                [(ResultLowerState.Ok done-state)
                   (OkLowerExpr (LowerExpr done-state dst result-ty))]
-                [(ErrLowerState message) (ErrLowerExpr message)])]))]
+                [(ResultLowerState.Err message) (ErrLowerExpr message)])]))]
       [(ResultAstFieldDefList.Err message)
         (ErrLowerExpr (box (lower-diagnostic message)))])))
 
@@ -13272,7 +13282,7 @@
   [done-label : String]) : ResultLowerState
   (match variants
     [(AstVariantDefList.Nil)
-      (OkLowerState
+      (ResultLowerState.Ok
         (lower-state-finish-block
           (lower-state-emit state (CompilerIrInstr.Jump done-label))
           done-label))]
@@ -13315,7 +13325,7 @@
                             dst
                             fields
                             8)
-                            [(OkLowerState copied-state)
+                            [(ResultLowerState.Ok copied-state)
                               (lower-capture-snapshot-enum-variants
                                 ctx
                                 (lower-state-finish-block
@@ -13331,7 +13341,8 @@
                                 rest
                                 (+ index 1)
                                 done-label)]
-                            [(ErrLowerState message) (ErrLowerState message)])]))])])]))]))
+                            [(ResultLowerState.Err message)
+                              (ResultLowerState.Err message)])]))])])]))]))
 
 (define (lower-capture-snapshot-enum-value
   [ctx : TcContext]
@@ -13370,9 +13381,9 @@
                         variants
                         0
                         done-label)
-                        [(OkLowerState final-state)
+                        [(ResultLowerState.Ok final-state)
                           (OkLowerExpr (LowerExpr final-state dst result-ty))]
-                        [(ErrLowerState message) (ErrLowerExpr message)])])])])]
+                        [(ResultLowerState.Err message) (ErrLowerExpr message)])])])])]
         [(ResultAstVariantDefList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))])]))
 
@@ -13466,7 +13477,7 @@
   [items : (Array LowerCapture)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (let
       [capture : LowerCapture (array-ref items index)]
       (match capture
@@ -13504,7 +13515,7 @@
                     env-value
                     items
                     (- index 1))])]
-            [(ErrLowerExpr message) (ErrLowerState message)])]))))
+            [(ErrLowerExpr message) (ResultLowerState.Err message)])]))))
 
 (define (lower-store-captures
   [ctx : TcContext]
@@ -13562,7 +13573,7 @@
         type-env
         env-value
         captures)
-        [(OkLowerState captured-state)
+        [(ResultLowerState.Ok captured-state)
           (match (lower-store-capturing-lambda-descriptor
             captured-state
             lambda-name
@@ -13570,7 +13581,7 @@
             expr-ty)
             [(LowerExpr desc-state desc-value desc-ty)
               (OkLowerExpr (LowerExpr desc-state desc-value desc-ty))])]
-        [(ErrLowerState message) (ErrLowerExpr message)])]))
+        [(ResultLowerState.Err message) (ErrLowerExpr message)])]))
 
 (define (lower-load-captures-from-index
   [ctx : TcContext]
@@ -13581,7 +13592,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerEnv
   (if (< index 0)
-    (OkLowerEnv state env type-env)
+    (ResultLowerEnv.Ok state env type-env)
     (let
       [capture : LowerCapture (array-ref items index)]
       (match capture
@@ -13608,7 +13619,7 @@
                     (sym_i64_env.sym-i64-bind env name loaded-var)
                     (tc-bind type-env name capture-ty))]
                 [_
-                  (ErrLowerEnv
+                  (ResultLowerEnv.Err
                     (box
                       (lower-diagnostic
                         "lower: capture load did not materialize a variable")))])])]))))
@@ -13649,7 +13660,7 @@
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
     (not (lower-supported-reference-type? ctx ret)))
-    (ErrLowerFunction
+    (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
       [param-count : i64 (+ 1 (lower-param-count params))]
@@ -13692,7 +13703,7 @@
         captures
         (sym_i64_env.sym-i64-empty)
         (tc-bind-return-type top-env ret-ty))
-        [(OkLowerEnv captured-state captured-env captured-type-env)
+        [(ResultLowerEnv.Ok captured-state captured-env captured-type-env)
           (let
             [env : sym_i64_env.SymI64Env
               (lower-bind-params params 1 captured-env)]
@@ -13705,8 +13716,8 @@
               body
               ret-ty
               sret-var)
-              [(OkLowerState final-state)
-                (OkLowerFunction
+              [(ResultLowerState.Ok final-state)
+                (ResultLowerFunction.Ok
                   (compiler-ir-function-cons
                     (CompilerIrFunction.Function
                       logical-name
@@ -13720,8 +13731,8 @@
                       (lower-state-build-function-blocks final-state))
                     (lower-state-functions final-state))
                   (lower-state-spans final-state))]
-              [(ErrLowerState message) (ErrLowerFunction message)]))]
-        [(ErrLowerEnv message) (ErrLowerFunction message)]))))
+              [(ResultLowerState.Err message) (ResultLowerFunction.Err message)]))]
+        [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))))
 
 (define (lower-lambda-noncapturing
   [ctx : TcContext]
@@ -13749,7 +13760,7 @@
             (lower-state-spans named-state)
             (lower-state-names named-state)
             (lower-state-mode named-state))
-            [(OkLowerFunction lambda-functions lambda-spans)
+            [(ResultLowerFunction.Ok lambda-functions lambda-spans)
               (OkLowerExpr
                 (LowerExpr
                   (lower-state-add-functions
@@ -13758,7 +13769,7 @@
                     lambda-spans)
                   (CompilerIrValue.Function lambda-name)
                   expr-ty))]
-            [(ErrLowerFunction message) (ErrLowerExpr message)])])]))
+            [(ResultLowerFunction.Err message) (ErrLowerExpr message)])])]))
 
 (define (lower-lambda-capturing
   [ctx : TcContext]
@@ -13793,7 +13804,7 @@
                     (lower-state-spans named-state)
                     (lower-state-names named-state)
                     (lower-state-mode named-state))
-                    [(OkLowerFunction lambda-functions lambda-spans)
+                    [(ResultLowerFunction.Ok lambda-functions lambda-spans)
                       (match (lower-capturing-lambda-value
                         ctx
                         (lower-state-add-functions
@@ -13812,7 +13823,7 @@
                               (OkLowerExpr
                                 (LowerExpr value-state value value-ty))])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrLowerFunction message) (ErrLowerExpr message)])])])])]))
+                    [(ResultLowerFunction.Err message) (ErrLowerExpr message)])])])])]))
 
 (define (lower-lambda
   [ctx : TcContext]
@@ -14023,7 +14034,7 @@
     (if (compiler-symbols-handle-found? resource-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated var-id)
-          (OkLowerState
+          (ResultLowerState.Ok
             (lower-state-emit
               allocated
               (CompilerIrInstr.Call
@@ -14031,7 +14042,7 @@
                 (lower-resolve-call-name allocated env cleanup-name)
                 (CompilerIrCallArgs.One (CompilerIrValue.Var resource-id))
                 (AstType.Unit))))])
-      (ErrLowerState
+      (ResultLowerState.Err
         (box (lower-diagnostic "lower: missing resource cleanup binding"))))))
 
 (define (lower-emit-region-reset
@@ -14047,7 +14058,7 @@
     (if (compiler-symbols-handle-found? mark-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated reset-var)
-          (OkLowerState
+          (ResultLowerState.Ok
             (lower-state-emit
               allocated
               (CompilerIrInstr.Call
@@ -14055,7 +14066,7 @@
                 "tl_region_reset"
                 (CompilerIrCallArgs.One (CompilerIrValue.Var mark-var))
                 (AstType.Unit))))])
-      (ErrLowerState
+      (ResultLowerState.Err
         (box (lower-diagnostic "lower: missing region reset binding"))))))
 
 (define (lower-emit-arena-restore
@@ -14071,7 +14082,7 @@
     (if (compiler-symbols-handle-found? arena-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated restore-var)
-          (OkLowerState
+          (ResultLowerState.Ok
             (lower-state-emit
               allocated
               (CompilerIrInstr.Call
@@ -14079,7 +14090,7 @@
                 "tl_arena_set"
                 (CompilerIrCallArgs.One (CompilerIrValue.Var arena-var))
                 (AstType.Unit))))])
-      (ErrLowerState
+      (ResultLowerState.Err
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
@@ -14123,20 +14134,20 @@
   [cleanup-names : (Array String)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (match (lower-emit-cleanup-call
       state
       env
       (array-ref hidden-names index)
       (array-ref cleanup-names index))
-      [(OkLowerState next-state)
+      [(ResultLowerState.Ok next-state)
         (lower-emit-cleanup-stack-at
           next-state
           env
           hidden-names
           cleanup-names
           (- index 1))]
-      [(ErrLowerState message) (ErrLowerState message)])))
+      [(ResultLowerState.Err message) (ResultLowerState.Err message)])))
 
 (define (lower-emit-cleanup-stack
   [state : LowerState]
@@ -14164,7 +14175,7 @@
     [cur-env : TcTypeEnv type-env]
     [cur-state : LowerState state]
     [result : ResultLowerState
-      (ErrLowerState
+      (ResultLowerState.Err
         (box (lower-diagnostic "lower: internal active-exits walk")))]
     [done : bool false]
     (begin
@@ -14172,7 +14183,7 @@
         (match cur-env
           [(TcTypeEnv.Nil)
             (begin
-              (set! result (OkLowerState cur-state))
+              (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
           [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
           [(TcTypeEnv.Bind key ty rest)
@@ -14202,13 +14213,14 @@
                                               env
                                               (intern-str hidden-name)
                                               (intern-str cleanup-name))
-                                              [(OkLowerState next-state)
+                                              [(ResultLowerState.Ok next-state)
                                                 (set! cur-state next-state)]
-                                              [(ErrLowerState message)
+                                              [(ResultLowerState.Err message)
                                                 (begin
                                                   (set!
                                                     result
-                                                    (ErrLowerState message))
+                                                    (ResultLowerState.Err
+                                                      message))
                                                   (set! done true))])]
                                           [_ unit])]
                                       [_ unit]))]
@@ -14223,10 +14235,11 @@
                         cur-state
                         env
                         (intern-str hidden-name))
-                        [(OkLowerState next-state) (set! cur-state next-state)]
-                        [(ErrLowerState message)
+                        [(ResultLowerState.Ok next-state)
+                          (set! cur-state next-state)]
+                        [(ResultLowerState.Err message)
                           (begin
-                            (set! result (ErrLowerState message))
+                            (set! result (ResultLowerState.Err message))
                             (set! done true))])]
                     [(AstType.Tuple types)
                       (match (box-get types)
@@ -14242,11 +14255,13 @@
                                       cur-state
                                       env
                                       (intern-str hidden-name))
-                                      [(OkLowerState next-state)
+                                      [(ResultLowerState.Ok next-state)
                                         (set! cur-state next-state)]
-                                      [(ErrLowerState message)
+                                      [(ResultLowerState.Err message)
                                         (begin
-                                          (set! result (ErrLowerState message))
+                                          (set!
+                                            result
+                                            (ResultLowerState.Err message))
                                           (set! done true))])]
                                   [_ unit])]
                               [_ unit]))]
@@ -14275,7 +14290,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
-    [(TcTypeEnv.Nil) (OkLowerState state)]
+    [(TcTypeEnv.Nil) (ResultLowerState.Ok state)]
     [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
       (lower-emit-active-cleanups-with
         cleanup-marker-id
@@ -14307,14 +14322,14 @@
                                       env
                                       (intern-str hidden-name)
                                       (intern-str cleanup-name))
-                                      [(OkLowerState next-state)
+                                      [(ResultLowerState.Ok next-state)
                                         (lower-emit-active-cleanups-with
                                           cleanup-marker-id
                                           next-state
                                           env
                                           (box-get rest))]
-                                      [(ErrLowerState message)
-                                        (ErrLowerState message)])]
+                                      [(ResultLowerState.Err message)
+                                        (ResultLowerState.Err message)])]
                                   [_
                                     (lower-emit-active-cleanups-with
                                       cleanup-marker-id
@@ -14381,7 +14396,7 @@
                   (match return-copy
                     [(LowerExpr return-state return-value _)
                       (match (lower-emit-active-exits return-state env type-env)
-                        [(OkLowerState cleanup-state)
+                        [(ResultLowerState.Ok cleanup-state)
                           (OkLowerExpr
                             (LowerExpr
                               (lower-state-emit-at-expr
@@ -14391,7 +14406,7 @@
                                 origin)
                               CompilerIrValue.Unit
                               (AstType.Never)))]
-                        [(ErrLowerState message) (ErrLowerExpr message)])])]
+                        [(ResultLowerState.Err message) (ErrLowerExpr message)])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ResultTcType.Err _)
@@ -14481,16 +14496,16 @@
                     ret-ty
                     (lower-state-mode payload-state))
                     [(LowerExpr loaded-state loaded _)
-                      (OkLowerState
+                      (ResultLowerState.Ok
                         (lower-state-emit
                           loaded-state
                           (CompilerIrInstr.Return
                             (lower-return-maybe loaded ret-ty))))])
-                  (OkLowerState
+                  (ResultLowerState.Ok
                     (lower-state-emit
                       payload-state
                       (CompilerIrInstr.Return (lower-return-maybe base ret-ty))))))])
-          (ErrLowerState
+          (ResultLowerState.Err
             (box
               (lower-diagnostic
                 (string.append "lower: unknown variant " err-name))))))]))
@@ -14535,13 +14550,13 @@
       (tc-result-info-err-type operand-info))
       [(LowerExpr err-payload-state err-payload _)
         (match (lower-emit-active-exits err-payload-state env type-env)
-          [(OkLowerState cleanup-state)
+          [(ResultLowerState.Ok cleanup-state)
             (match (lower-return-result-err
               ctx
               cleanup-state
               return-info
               err-payload)
-              [(OkLowerState returned-state)
+              [(ResultLowerState.Ok returned-state)
                 (let
                   [ok-start : LowerState
                     (lower-state-finish-block returned-state ok-label)]
@@ -14552,8 +14567,8 @@
                     (tc-result-info-ok-type operand-info))
                     [(LowerExpr ok-state ok-payload ok-ty)
                       (OkLowerExpr (LowerExpr ok-state ok-payload ok-ty))]))]
-              [(ErrLowerState message) (ErrLowerExpr message)])]
-          [(ErrLowerState message) (ErrLowerExpr message)])])))
+              [(ResultLowerState.Err message) (ErrLowerExpr message)])]
+          [(ResultLowerState.Err message) (ErrLowerExpr message)])])))
 
 (define (lower-try-with-info
   [ctx : TcContext]
@@ -14927,7 +14942,7 @@
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
   (match types
-    [(AstTypeList.Nil) (OkLowerState state)]
+    [(AstTypeList.Nil) (ResultLowerState.Ok state)]
     [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ty-node-get ty)]
@@ -14970,7 +14985,7 @@
                         dst
                         rest
                         (+ offset size))])]
-                [(ErrLowerExpr message) (ErrLowerState message)])])
+                [(ErrLowerExpr message) (ResultLowerState.Err message)])])
           (lower-clone-type-list
             ctx
             state
@@ -15003,9 +15018,9 @@
         dst
         elem-tys
         0)
-        [(OkLowerState done-state)
+        [(ResultLowerState.Ok done-state)
           (OkLowerExpr (LowerExpr done-state dst result-ty))]
-        [(ErrLowerState message) (ErrLowerExpr message)])]))
+        [(ResultLowerState.Err message) (ErrLowerExpr message)])]))
 
 (define (lower-clone-fixed-array-elems
   [ctx : TcContext]
@@ -15019,7 +15034,7 @@
   [index : i64]
   [count : i64]) : ResultLowerState
   (if (>= index count)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
@@ -15059,7 +15074,7 @@
                       elem-size
                       (+ index 1)
                       count)])]
-              [(ErrLowerExpr message) (ErrLowerState message)])])
+              [(ErrLowerExpr message) (ResultLowerState.Err message)])])
         (lower-clone-fixed-array-elems
           ctx
           state
@@ -15099,9 +15114,9 @@
           elem-size
           0
           count)
-          [(OkLowerState done-state)
+          [(ResultLowerState.Ok done-state)
             (OkLowerExpr (LowerExpr done-state dst result-ty))]
-          [(ErrLowerState message) (ErrLowerExpr message)])])))
+          [(ResultLowerState.Err message) (ErrLowerExpr message)])])))
 
 (define (lower-clone-dynarray-advance
   [state : LowerState]
@@ -15110,7 +15125,7 @@
   [exit-label : String]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc inc-alloc inc-var)
-      (OkLowerState
+      (ResultLowerState.Ok
         (lower-state-finish-block
           (lower-state-emit
             (lower-state-emit
@@ -15201,7 +15216,7 @@
                     exit-label
                     clone-value
                     elem-ty)])]
-            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+            [(ErrLowerExpr message) (ResultLowerState.Err message)])])]))
 
 (define (lower-clone-dynarray-copy-nonempty
   [ctx : TcContext]
@@ -15275,9 +15290,9 @@
   [elem-size : i64]
   [byte-count : CompilerIrValue]) : ResultLowerState
   (if (= elem-size 0)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (if (lower-clone-bulk-copy-type? ctx elem-ty)
-      (OkLowerState
+      (ResultLowerState.Ok
         (lower-emit-memcpy-value state new-buf 0 old-buf 0 byte-count))
       (lower-clone-dynarray-copy-nonempty
         ctx
@@ -15314,7 +15329,7 @@
         elem-ty
         elem-size
         byte-count)
-        [(OkLowerState copied-state)
+        [(ResultLowerState.Ok copied-state)
           (OkLowerExpr
             (LowerExpr
               (lower-store-at-offset
@@ -15330,7 +15345,7 @@
                 (AstType.I64))
               arr-value
               result-ty))]
-        [(ErrLowerState message) (ErrLowerExpr message)])]))
+        [(ResultLowerState.Err message) (ErrLowerExpr message)])]))
 
 (define (lower-clone-dynarray-value
   [ctx : TcContext]
@@ -15927,9 +15942,9 @@
                   values
                   fields
                   layout)
-                  [(OkLowerState done-state)
+                  [(ResultLowerState.Ok done-state)
                     (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                  [(ErrLowerState message) (ErrLowerExpr message)])]))]
+                  [(ResultLowerState.Err message) (ErrLowerExpr message)])]))]
         [(TcInlineAggregateLayout.Enum _ _ _)
           (ErrLowerExpr
             (box
@@ -15953,14 +15968,14 @@
         [(TcInlineAggregateLayout.Struct _ _ _)
           (lower-store-inline-struct-values ctx state dst values fields layout)]
         [(TcInlineAggregateLayout.Enum _ _ _)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box
               (lower-diagnostic
                 (string.append
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
-      (ErrLowerState (box (lower-diagnostic message)))]))
+      (ResultLowerState.Err (box (lower-diagnostic message)))]))
 
 (define (lower-construct-enum-inline-from-values
   [ctx : TcContext]
@@ -16023,9 +16038,9 @@
                       layout
                       layout-variant-name
                       0)
-                      [(OkLowerState done-state)
+                      [(ResultLowerState.Ok done-state)
                         (OkLowerExpr (LowerExpr done-state base enum-ty))]
-                      [(ErrLowerState message) (ErrLowerExpr message)]))])))]
+                      [(ResultLowerState.Err message) (ErrLowerExpr message)]))])))]
         [(TcInlineAggregateLayout.Struct _ _ _)
           (ErrLowerExpr
             (box
@@ -16069,14 +16084,14 @@
               layout-variant-name
               0))]
         [(TcInlineAggregateLayout.Struct _ _ _)
-          (ErrLowerState
+          (ResultLowerState.Err
             (box
               (lower-diagnostic
                 (string.append
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
-      (ErrLowerState (box (lower-diagnostic message)))]))
+      (ResultLowerState.Err (box (lower-diagnostic message)))]))
 
 (define (lower-enum-constructor-fields-for-result
   [ctx : TcContext]
@@ -16207,10 +16222,11 @@
                                 values
                                 resolved-fields
                                 8)
-                                [(OkLowerState done-state)
+                                [(ResultLowerState.Ok done-state)
                                   (OkLowerExpr
                                     (LowerExpr done-state base enum-ty))]
-                                [(ErrLowerState message) (ErrLowerExpr message)]))]))]))]
+                                [(ResultLowerState.Err message)
+                                  (ErrLowerExpr message)]))]))]))]
               [(ErrLowerArgs message) (ErrLowerExpr message)]))]
         [(ResultAstTypeList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))])]))
@@ -16299,13 +16315,13 @@
                     values
                     resolved-fields
                     enum-name)
-                  (ErrLowerState
+                  (ResultLowerState.Err
                     (box
                       (lower-diagnostic
                         "lower: enum destination construction requires inline aggregates"))))]
-              [(ErrLowerArgs message) (ErrLowerState message)]))]
+              [(ErrLowerArgs message) (ResultLowerState.Err message)]))]
         [(ResultAstTypeList.Err message)
-          (ErrLowerState (box (lower-diagnostic message)))])]))
+          (ResultLowerState.Err (box (lower-diagnostic message)))])]))
 
 (define (lower-construct-enum-with-handle-into
   [ctx : TcContext]
@@ -16346,7 +16362,7 @@
           (intern-str enum-name)
           enum-ty)]
       [_
-        (ErrLowerState
+        (ResultLowerState.Err
           (box
             (lower-diagnostic
               (string.append
@@ -16442,9 +16458,10 @@
                           base
                           values
                           (tc-repr-c-layout-fields layout))
-                          [(OkLowerState done-state)
+                          [(ResultLowerState.Ok done-state)
                             (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                          [(ErrLowerState message) (ErrLowerExpr message)])])]
+                          [(ResultLowerState.Err message)
+                            (ErrLowerExpr message)])])]
                   [(ResultTcReprCLayout.Err message)
                     (ErrLowerExpr (box (lower-diagnostic message)))])
                 (let
@@ -16458,9 +16475,9 @@
                         values
                         field-types
                         0)
-                        [(OkLowerState done-state)
+                        [(ResultLowerState.Ok done-state)
                           (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                        [(ErrLowerState message) (ErrLowerExpr message)])]))))]
+                        [(ResultLowerState.Err message) (ErrLowerExpr message)])]))))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
     [(ResultAstFieldDefList.Err message)
       (ErrLowerExpr (box (lower-diagnostic message)))]))
@@ -16495,13 +16512,13 @@
                 struct-name
                 values
                 fields)
-              (ErrLowerState
+              (ResultLowerState.Err
                 (box
                   (lower-diagnostic
                     "lower: struct destination construction requires inline aggregates"))))]
-          [(ErrLowerArgs message) (ErrLowerState message)]))]
+          [(ErrLowerArgs message) (ResultLowerState.Err message)]))]
     [(ResultAstFieldDefList.Err message)
-      (ErrLowerState (box (lower-diagnostic message)))]))
+      (ResultLowerState.Err (box (lower-diagnostic message)))]))
 
 (define (lower-init-expr-list-from-types [types : AstTypeList]) : AstExprList
   (match types
@@ -16637,7 +16654,7 @@
     [field-ctx : TcContext
       (lower-context-with-nominal-owner-module ctx struct-name)]
     (if (lower-struct-repr-c? field-ctx struct-name)
-      (ErrLowerState
+      (ResultLowerState.Err
         (box
           (lower-diagnostic "lower: init supports only default-layout structs")))
       (match (lower-struct-fields field-ctx struct-name)
@@ -16661,7 +16678,7 @@
               (lower-init-expr-list-from-types field-types)
               struct-ty))]
         [(ResultAstFieldDefList.Err message)
-          (ErrLowerState (box (lower-diagnostic message)))]))))
+          (ResultLowerState.Err (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum-into
   [ctx : TcContext]
@@ -16680,7 +16697,7 @@
           [(TcEnumDecl _ variants)
             (match variants
               [(AstVariantDefList.Nil)
-                (ErrLowerState
+                (ResultLowerState.Err
                   (box
                     (lower-diagnostic
                       "lower: init requires enum with at least one variant")))]
@@ -16717,14 +16734,14 @@
                           (lower-init-expr-list-from-types payload-types)
                           enum-name
                           enum-ty)
-                        (ErrLowerState
+                        (ResultLowerState.Err
                           (box
                             (lower-diagnostic
                               (string.append
                                 "lower: unknown variant "
                                 lookup-name))))))])])])]
       [(ResultTcEnumDecl.Err message)
-        (ErrLowerState (box (lower-diagnostic message)))])))
+        (ResultLowerState.Err (box (lower-diagnostic message)))])))
 
 (define (lower-init-expr-into
   [ctx : TcContext]
@@ -16774,7 +16791,7 @@
           (intern-str name)
           resolved)]
       [_
-        (ErrLowerState
+        (ResultLowerState.Err
           (box
             (lower-diagnostic-at-expr
               origin
@@ -17961,9 +17978,9 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (lower-let-bindings ctx state env type-env bindings)
-              [(OkLowerEnv binding-state body-env body-type-env)
+              [(ResultLowerEnv.Ok binding-state body-env body-type-env)
                 (lower-expr ctx binding-state body-env body-type-env body)]
-              [(ErrLowerEnv message) (ErrLowerExpr message)]))])]
+              [(ResultLowerEnv.Err message) (ErrLowerExpr message)]))])]
     [(AstExpr.Begin exprs) (lower-begin ctx state env type-env exprs)]
     [(AstExpr.Unsafe exprs)
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
@@ -18276,7 +18293,7 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (lower-let-bindings ctx state env type-env bindings)
-              [(OkLowerEnv binding-state body-env body-type-env)
+              [(ResultLowerEnv.Ok binding-state body-env body-type-env)
                 (lower-expr-expected
                   ctx
                   binding-state
@@ -18285,7 +18302,7 @@
                   body
                   expr-ty
                   body)]
-              [(ErrLowerEnv message) (ErrLowerExpr message)]))])]
+              [(ResultLowerEnv.Err message) (ErrLowerExpr message)]))])]
     [(AstExpr.Begin exprs)
       (lower-begin-expected ctx state env type-env exprs expr-ty)]
     [(AstExpr.Unsafe exprs)
@@ -19252,9 +19269,9 @@
     (lower-state-mode state)
     struct-name
     field)
-    [(OkLowerFieldInfo info)
+    [(ResultLowerFieldInfo.Ok info)
       (match info
-        [(LowerFieldInfo offset field-ty)
+        [(LowerFieldInfo.Info offset field-ty)
           ;; #2386: when the receiver is a register-resident struct, its value is
           ;; the packed word itself; extract the field with shift/mask instead of
           ;; computing an address and loading from memory.
@@ -19349,7 +19366,7 @@
                               (CompilerIrInstr.Load var-id ptr field-ty))
                             (CompilerIrValue.Var var-id)
                             result-ty))])])]))])]
-    [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
+    [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get-through-reference
   [ctx : TcContext]
@@ -19490,7 +19507,7 @@
                     (lower-type-inline-storage? ctx inner-ty)
                     (not (lower-type-register-resident? ctx inner-ty)))
                     (match (lower-inline-aggregate-copy-size ctx inner-ty)
-                      [(OkLowerSize size)
+                      [(ResultLowerSize.Ok size)
                         (OkLowerExpr
                           (LowerExpr
                             (lower-copy-bytes
@@ -19502,7 +19519,7 @@
                               size)
                             base
                             result-ty))]
-                      [(ErrLowerSize message)
+                      [(ResultLowerSize.Err message)
                         (ErrLowerExpr (box (lower-diagnostic message)))])
                     (if (lower-type-register-group? ctx inner-ty)
                       (OkLowerExpr
@@ -19614,7 +19631,7 @@
   [cursor : i64]) : ResultLowerFieldInfo
   (match types
     [(AstTypeList.Nil)
-      (ErrLowerFieldInfo
+      (ResultLowerFieldInfo.Err
         (box (lower-diagnostic "lower: tuple-ref index out of range")))]
     [(AstTypeList.Cons ty rest)
       (let
@@ -19623,7 +19640,7 @@
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
         (if (= index target)
-          (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+          (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
           (lower-tuple-elem-info
             ctx
             rest
@@ -19645,14 +19662,14 @@
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
   (match values
-    [(AstExprList.Nil) (OkLowerState state)]
+    [(AstExprList.Nil) (ResultLowerState.Ok state)]
     [(AstExprList.Cons value rest-values)
       (let
         [value : AstExpr (ast-node-get value)]
         [rest-values : AstExprList (box-get rest-values)]
         (match types
           [(AstTypeList.Nil)
-            (ErrLowerState
+            (ResultLowerState.Err
               (box (lower-diagnostic "lower: tuple arity mismatch")))]
           [(AstTypeList.Cons ty rest-types)
             (let
@@ -19691,7 +19708,7 @@
                         rest-values
                         rest-types
                         (+ offset size))])]
-                [(ErrLowerExpr message) (ErrLowerState message)]))]))]))
+                [(ErrLowerExpr message) (ResultLowerState.Err message)]))]))]))
 
 ;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
 ;; element types, store each element at its field offset, and return the storage
@@ -19721,9 +19738,9 @@
             values
             (box-get elem-tys)
             0)
-            [(OkLowerState final-state)
+            [(ResultLowerState.Ok final-state)
               (OkLowerExpr (LowerExpr final-state base result-ty))]
-            [(ErrLowerState message) (ErrLowerExpr message)])])]
+            [(ResultLowerState.Err message) (ErrLowerExpr message)])])]
     [_
       (ErrLowerExpr
         (box
@@ -19744,7 +19761,7 @@
   [elem-size : i64]
   [offset : i64]) : ResultLowerState
   (match values
-    [(AstExprList.Nil) (OkLowerState state)]
+    [(AstExprList.Nil) (ResultLowerState.Ok state)]
     [(AstExprList.Cons value rest-values)
       (let
         [value : AstExpr (ast-node-get value)]
@@ -19760,7 +19777,7 @@
             value
             elem-ty
             value)
-            [(LowerDirectStore elem-state)
+            [(LowerMaybeDirectStore.Store elem-state)
               (lower-array-literal-store-elems
                 ctx
                 elem-state
@@ -19771,8 +19788,8 @@
                 elem-ty
                 elem-size
                 (+ offset elem-size))]
-            [(LowerDirectStoreErr message) (ErrLowerState message)]
-            [(LowerNoDirectStore)
+            [(LowerMaybeDirectStore.Err message) (ResultLowerState.Err message)]
+            [(LowerMaybeDirectStore.No)
               (match (lower-expr-expected
                 ctx
                 state
@@ -19801,7 +19818,7 @@
                         elem-ty
                         elem-size
                         (+ offset elem-size))])]
-                [(ErrLowerExpr message) (ErrLowerState message)])])
+                [(ErrLowerExpr message) (ResultLowerState.Err message)])])
           (match (lower-expr-expected
             ctx
             state
@@ -19823,7 +19840,7 @@
                     elem-ty
                     elem-size
                     (+ offset elem-size))])]
-            [(ErrLowerExpr message) (ErrLowerState message)])))]))
+            [(ErrLowerExpr message) (ResultLowerState.Err message)])))]))
 
 ;; Lower `(array v0 v1 ...)`: reserve inline storage for `count` elements of the
 ;; element type, store each element at `index * elem-size`, and return the
@@ -19856,9 +19873,9 @@
               resolved-elem
               elem-size
               0)
-              [(OkLowerState final-state)
+              [(ResultLowerState.Ok final-state)
                 (OkLowerExpr (LowerExpr final-state base result-ty))]
-              [(ErrLowerState message) (ErrLowerExpr message)])]))]
+              [(ResultLowerState.Err message) (ErrLowerExpr message)])]))]
     [_
       (ErrLowerExpr
         (box
@@ -19884,9 +19901,9 @@
           (match (tc-resolve-type ctx tuple-ty)
             [(AstType.Tuple elem-tys)
               (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
-                [(OkLowerFieldInfo info)
+                [(ResultLowerFieldInfo.Ok info)
                   (match info
-                    [(LowerFieldInfo offset elem-ty)
+                    [(LowerFieldInfo.Info offset elem-ty)
                       (if (> (lower-type-size ctx elem-ty) 0)
                         (match (lower-load-inline-value-at-offset
                           ctx
@@ -19900,7 +19917,7 @@
                               (LowerExpr load-state load-value result-ty))])
                         (OkLowerExpr
                           (LowerExpr tuple-state CompilerIrValue.Unit result-ty)))])]
-                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
             [_
               (ErrLowerExpr
                 (box
@@ -19938,7 +19955,7 @@
   [str-value : CompilerIrValue]
   [index-value : CompilerIrValue]) : ResultLowerExpr
   (match (lower-string-fields state str-value)
-    [(LowerStringFields fields-state data-ptr str-len)
+    [(LowerStringFields.Fields fields-state data-ptr str-len)
       (match (lower-cast-value
         fields-state
         index-value
@@ -20178,7 +20195,7 @@
         [(LowerExpr str-state str-value str-ty)
           (if (lower-string-handle-type? ctx str-ty)
             (match (lower-string-fields str-state str-value)
-              [(LowerStringFields fields-state src-ptr src-len)
+              [(LowerStringFields.Fields fields-state src-ptr src-len)
                 (match (lower-integer-expr-with-expected-or-actual
                   ctx
                   fields-state
@@ -21591,13 +21608,14 @@
   [result-ty : AstType]) : ResultLowerArgs
   (if (lower-inline-aggregate-abi-copy-needed? ctx state result-ty)
     (match (lower-inline-aggregate-copy-size ctx result-ty)
-      [(OkLowerSize size)
+      [(ResultLowerSize.Ok size)
         (match (lower-reserve-inline-storage state size result-ty)
           [(LowerExpr slot-state slot-ptr _)
             (OkLowerArgs
               slot-state
               (lower-value-list-append-one values slot-ptr))])]
-      [(ErrLowerSize message) (ErrLowerArgs (box (lower-diagnostic message)))])
+      [(ResultLowerSize.Err message)
+        (ErrLowerArgs (box (lower-diagnostic message)))])
     (OkLowerArgs state values)))
 
 (define (lower-direct-call-values
@@ -22724,7 +22742,7 @@
                   [(LowerExpr arg-state arg-value arg-ty)
                     (if (lower-string-handle-type? ctx arg-ty)
                       (match (lower-string-fields arg-state arg-value)
-                        [(LowerStringFields fields-state ptr len)
+                        [(LowerStringFields.Fields fields-state ptr len)
                           (OkLowerExpr
                             (lower-inline-string-to-int-fields
                               fields-state
@@ -22843,14 +22861,14 @@
                                   (match (lower-string-fields
                                     right-state
                                     left-value)
-                                    [(LowerStringFields
+                                    [(LowerStringFields.Fields
                                         left-fields-state
                                         left-ptr
                                         left-len)
                                       (match (lower-string-fields
                                         left-fields-state
                                         right-value)
-                                        [(LowerStringFields
+                                        [(LowerStringFields.Fields
                                             done-fields-state
                                             right-ptr
                                             right-len)
@@ -23090,8 +23108,8 @@
 
 (define (lower-direct-store-result [result : ResultLowerState]) : LowerMaybeDirectStore
   (match result
-    [(OkLowerState done-state) (LowerDirectStore done-state)]
-    [(ErrLowerState message) (LowerDirectStoreErr message)]))
+    [(ResultLowerState.Ok done-state) (LowerMaybeDirectStore.Store done-state)]
+    [(ResultLowerState.Err message) (LowerMaybeDirectStore.Err message)]))
 
 (define (lower-direct-constructor-call-into
   [ctx : TcContext]
@@ -23104,7 +23122,7 @@
   [result-ty : AstType]
   [_origin : AstExpr]) : LowerMaybeDirectStore
   (if (sym_i64_env.sym-i64-contains env name)
-    (LowerNoDirectStore)
+    (LowerMaybeDirectStore.No)
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
@@ -23165,7 +23183,7 @@
               struct-name
               args
               result-ty))
-          (LowerNoDirectStore))))))
+          (LowerMaybeDirectStore.No))))))
 
 (define (lower-direct-nullary-variant-into
   [ctx : TcContext]
@@ -23176,7 +23194,7 @@
   [name : String]
   [result-ty : AstType]) : LowerMaybeDirectStore
   (if (sym_i64_env.sym-i64-contains env name)
-    (LowerNoDirectStore)
+    (LowerMaybeDirectStore.No)
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [registries : CompilerRegistries (tc-context-registries ctx)]
@@ -23204,10 +23222,10 @@
                     handle
                     AstExprList.Nil
                     result-ty))]
-              [_ (LowerNoDirectStore)])]
+              [_ (LowerMaybeDirectStore.No)])]
           [(ResultAstTypeList.Err message)
-            (LowerDirectStoreErr (box (lower-diagnostic message)))])
-        (LowerNoDirectStore)))))
+            (LowerMaybeDirectStore.Err (box (lower-diagnostic message)))])
+        (LowerMaybeDirectStore.No)))))
 
 (define (lower-direct-init-into
   [ctx : TcContext]
@@ -23231,7 +23249,7 @@
         (if (tc-type-eq resolved-init resolved-result)
           (lower-direct-store-result
             (lower-init-expr-into ctx state env type-env dst ty origin))
-          (LowerNoDirectStore)))]))
+          (LowerMaybeDirectStore.No)))]))
 
 (define (lower-direct-store-rhs-into
   [ctx : TcContext]
@@ -23293,10 +23311,10 @@
                 args
                 result-ty
                 origin)]
-            [_ (LowerNoDirectStore)]))]
+            [_ (LowerMaybeDirectStore.No)]))]
       [(AstExpr.Var name)
         (if (tc-dotted-local-field-name-id? type-env name)
-          (LowerNoDirectStore)
+          (LowerMaybeDirectStore.No)
           (lower-direct-nullary-variant-into
             ctx
             state
@@ -23305,8 +23323,8 @@
             dst
             (intern-str name)
             result-ty))]
-      [_ (LowerNoDirectStore)])
-    (LowerNoDirectStore)))
+      [_ (LowerMaybeDirectStore.No)])
+    (LowerMaybeDirectStore.No)))
 
 (define (lower-direct-store-rhs-at-offset
   [ctx : TcContext]
@@ -23340,7 +23358,7 @@
             value
             result-ty
             origin)]))
-    (LowerNoDirectStore)))
+    (LowerMaybeDirectStore.No)))
 
 (define (lower-call
   [ctx : TcContext]
@@ -25128,7 +25146,7 @@
   [exit-label : String]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc inc-alloc inc-var)
-      (OkLowerState
+      (ResultLowerState.Ok
         (lower-state-finish-block
           (lower-state-emit
             (lower-state-emit
@@ -25201,7 +25219,7 @@
                 index-var
                 header-label
                 exit-label)])])]
-    [(ErrLowerExpr message) (ErrLowerState message)]))
+    [(ErrLowerExpr message) (ResultLowerState.Err message)]))
 
 (define (lower-make-array-init-loop-with-labels
   [ctx : TcContext]
@@ -25314,7 +25332,7 @@
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
   (if (= elem-size 0)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (match (lower-state-fresh-label state "make_array_init_header")
       [(LowerLabel header-label-state header-label)
         (match (lower-state-fresh-label
@@ -25347,7 +25365,7 @@
   [elem-size : i64]
   [init-value : CompilerIrValue]) : ResultLowerState
   (if (= elem-size 0)
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (match (lower-state-fresh-label state "make_array_init_header")
       [(LowerLabel header-label-state header-label)
         (match (lower-state-fresh-label
@@ -25385,8 +25403,8 @@
     (AstType.Unit))
     [(OkLowerExpr lowered)
       (match lowered
-        [(LowerExpr done-state _ _) (OkLowerState done-state)])]
-    [(ErrLowerExpr message) (ErrLowerState message)]))
+        [(LowerExpr done-state _ _) (ResultLowerState.Ok done-state)])]
+    [(ErrLowerExpr message) (ResultLowerState.Err message)]))
 
 (define (lower-make-array-fill8-supported? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -25430,8 +25448,8 @@
     (AstType.Unit))
     [(OkLowerExpr lowered)
       (match lowered
-        [(LowerExpr done-state _ _) (OkLowerState done-state)])]
-    [(ErrLowerExpr message) (ErrLowerState message)]))
+        [(LowerExpr done-state _ _) (ResultLowerState.Ok done-state)])]
+    [(ErrLowerExpr message) (ResultLowerState.Err message)]))
 
 (define (lower-make-array-zero-literal-length? [len : AstExpr]) : bool
   (match (ast-expr-unspan len)
@@ -25450,7 +25468,7 @@
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
   (cond
-    [(= elem-size 0) (OkLowerState state)]
+    [(= elem-size 0) (ResultLowerState.Ok state)]
     [(lower-make-array-zero-fill-supported? ctx elem-ty)
       (lower-make-array-zero-fill state buf-value byte-count)]
     [(lower-init-default-share-safe? ctx elem-ty)
@@ -25468,7 +25486,7 @@
                   elem-ty
                   elem-size
                   init-value))])]
-        [(ErrLowerExpr message) (ErrLowerState message)])]
+        [(ErrLowerExpr message) (ResultLowerState.Err message)])]
     [else
       (lower-make-array-init-loop-runtime
         ctx
@@ -25494,11 +25512,11 @@
   [zero-literal-length : bool]
   [origin : AstExpr]) : ResultLowerState
   (if zero-literal-length
-    (OkLowerState state)
+    (ResultLowerState.Ok state)
     (match len-i64
       [(CompilerIrValue.I64 literal-len)
         (if (= literal-len 0)
-          (OkLowerState state)
+          (ResultLowerState.Ok state)
           (lower-make-array-init-loop-nonzero
             ctx
             state
@@ -25564,9 +25582,9 @@
               elem-size
               zero-literal-length
               origin)
-              [(OkLowerState init-state)
+              [(ResultLowerState.Ok init-state)
                 (lower-make-array-store-fat init-state arr-ty buf-var len-i64)]
-              [(ErrLowerState message) (ErrLowerExpr message)]))])]))
+              [(ResultLowerState.Err message) (ErrLowerExpr message)]))])]))
 
 (define (lower-make-array-after-max-check
   [ctx : TcContext]
@@ -25967,12 +25985,12 @@
               elem-ir-ty
               value)])]
       [_
-        (LowerDirectStoreErr
+        (LowerMaybeDirectStore.Err
           (box
             (lower-diagnostic-at-expr
               arr
               "lower: array-set! requires array type")))])
-    (LowerNoDirectStore)))
+    (LowerMaybeDirectStore.No)))
 
 (define (lower-mutable-var-storage-address-id
   [state : LowerState]
@@ -26058,24 +26076,24 @@
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(AstType.Struct struct-name)
       (match (lower-struct-field-info ctx (intern-str struct-name) field)
-        [(OkLowerFieldInfo info)
+        [(ResultLowerFieldInfo.Ok info)
           (match info
-            [(LowerFieldInfo offset field-ty)
+            [(LowerFieldInfo.Info offset field-ty)
               (match (lower-gep-byte state base offset)
                 [(LowerExpr ptr-state ptr _)
                   (OkLowerExpr
                     (LowerExpr ptr-state ptr (tc-type-without-regions field-ty)))])])]
-        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+        [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
     [(AstType.StructArgs struct-name _)
       (match (lower-struct-field-info ctx (intern-str struct-name) field)
-        [(OkLowerFieldInfo info)
+        [(ResultLowerFieldInfo.Ok info)
           (match info
-            [(LowerFieldInfo offset field-ty)
+            [(LowerFieldInfo.Info offset field-ty)
               (match (lower-gep-byte state base offset)
                 [(LowerExpr ptr-state ptr _)
                   (OkLowerExpr
                     (LowerExpr ptr-state ptr (tc-type-without-regions field-ty)))])])]
-        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+        [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
     [(AstType.MutRef _ referent-ty)
       (match (lower-emit-load state base receiver-ty)
         [(LowerExpr ref-state ref-value _)
@@ -26109,14 +26127,14 @@
   (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
     [(AstType.Tuple elem-tys)
       (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
-        [(OkLowerFieldInfo info)
+        [(ResultLowerFieldInfo.Ok info)
           (match info
-            [(LowerFieldInfo offset elem-ty)
+            [(LowerFieldInfo.Info offset elem-ty)
               (match (lower-gep-byte state base offset)
                 [(LowerExpr ptr-state ptr _)
                   (OkLowerExpr
                     (LowerExpr ptr-state ptr (tc-type-without-regions elem-ty)))])])]
-        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+        [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
     [(AstType.MutRef _ referent-ty)
       (match (lower-emit-load state base tuple-ty)
         [(LowerExpr ref-state ref-value _)
@@ -26316,10 +26334,10 @@
       value
       value-ty
       origin)
-      [(LowerDirectStore done-state)
+      [(LowerMaybeDirectStore.Store done-state)
         (OkLowerExpr (LowerExpr done-state CompilerIrValue.Unit (AstType.Unit)))]
-      [(LowerDirectStoreErr message) (ErrLowerExpr message)]
-      [(LowerNoDirectStore)
+      [(LowerMaybeDirectStore.Err message) (ErrLowerExpr message)]
+      [(LowerMaybeDirectStore.No)
         (match (lower-expr-expected
           ctx
           state
@@ -26428,16 +26446,17 @@
                         (CompilerIrValue.Var addr-var)
                         resolved)
                         [(LowerExpr load-state loaded _)
-                          (OkLowerState
+                          (ResultLowerState.Ok
                             (lower-state-emit-at-expr
                               load-state
                               (CompilerIrInstr.Mov local-id loaded resolved)
                               origin))])])
-                  (OkLowerState state)))]
+                  (ResultLowerState.Ok state)))]
             [(ResultTcType.Err message)
-              (ErrLowerState (box (lower-diagnostic-at-expr origin message)))])
-          (OkLowerState state)))]
-    [(TcMaybeString.No) (OkLowerState state)]))
+              (ResultLowerState.Err
+                (box (lower-diagnostic-at-expr origin message)))])
+          (ResultLowerState.Ok state)))]
+    [(TcMaybeString.No) (ResultLowerState.Ok state)]))
 
 (define (lower-register-resident-local-place?
   [ctx : TcContext]
@@ -26633,13 +26652,13 @@
                                         type-env
                                         receiver
                                         origin)
-                                        [(OkLowerState refreshed-state)
+                                        [(ResultLowerState.Ok refreshed-state)
                                           (OkLowerExpr
                                             (LowerExpr
                                               refreshed-state
                                               CompilerIrValue.Unit
                                               (AstType.Unit)))]
-                                        [(ErrLowerState message)
+                                        [(ResultLowerState.Err message)
                                           (ErrLowerExpr message)])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])])]
@@ -26704,15 +26723,16 @@
                                       container-ty
                                       elem-ir-ty
                                       value)
-                                      [(LowerDirectStore direct-state)
+                                      [(LowerMaybeDirectStore.Store
+                                          direct-state)
                                         (OkLowerExpr
                                           (LowerExpr
                                             direct-state
                                             CompilerIrValue.Unit
                                             (AstType.Unit)))]
-                                      [(LowerDirectStoreErr message)
+                                      [(LowerMaybeDirectStore.Err message)
                                         (ErrLowerExpr message)]
-                                      [(LowerNoDirectStore)
+                                      [(LowerMaybeDirectStore.No)
                                         (match (lower-expr-expected
                                           ctx
                                           idx-state
@@ -27228,7 +27248,7 @@
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]) : ResultLowerEnv
   (match bindings
-    [(AstLetBindingList.Nil) (OkLowerEnv state env type-env)]
+    [(AstLetBindingList.Nil) (ResultLowerEnv.Ok state env type-env)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -27267,7 +27287,7 @@
                                 (sym_i64_env.sym-i64-bind-id env name-id var-id)
                                 next-type-env
                                 rest))]))])]
-                [(ErrLowerExpr message) (ErrLowerEnv message)]))]))]))
+                [(ErrLowerExpr message) (ResultLowerEnv.Err message)]))]))]))
 
 (define (lower-resource-bindings
   [ctx : TcContext]
@@ -27278,8 +27298,8 @@
   [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
   (match bindings
     [(AstResourceBindingList.Nil)
-      (OkLowerResourceBindings
-        (LowerResourceBindings state env type-env cleanups))]
+      (ResultLowerResourceBindings.Ok
+        (LowerResourceBindings.Bindings state env type-env cleanups))]
     [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -27346,11 +27366,12 @@
                                           hidden-name
                                           cleanup-name)))]))]
                             [(ResultTcString.Err message)
-                              (ErrLowerResourceBindings
+                              (ResultLowerResourceBindings.Err
                                 (box (lower-diagnostic-at-expr cleanup message)))])])]
-                    [(ErrLowerExpr message) (ErrLowerResourceBindings message)])]
+                    [(ErrLowerExpr message)
+                      (ResultLowerResourceBindings.Err message)])]
                 [(ResultTcType.Err message)
-                  (ErrLowerResourceBindings
+                  (ResultLowerResourceBindings.Err
                     (box (lower-diagnostic-at-expr cleanup message)))]))]))]))
 
 (define (lower-with-resource
@@ -27367,9 +27388,13 @@
     type-env
     bindings
     (lower-cleanup-stack-empty))
-    [(OkLowerResourceBindings lowered-bindings)
+    [(ResultLowerResourceBindings.Ok lowered-bindings)
       (match lowered-bindings
-        [(LowerResourceBindings binding-state body-env body-type-env cleanups)
+        [(LowerResourceBindings.Bindings
+            binding-state
+            body-env
+            body-type-env
+            cleanups)
           (match (lower-begin ctx binding-state body-env body-type-env body)
             [(OkLowerExpr lowered-body)
               (match lowered-body
@@ -27380,11 +27405,11 @@
                       body-state
                       body-env
                       cleanups)
-                      [(OkLowerState cleanup-state)
+                      [(ResultLowerState.Ok cleanup-state)
                         (OkLowerExpr (LowerExpr cleanup-state value body-ty))]
-                      [(ErrLowerState message) (ErrLowerExpr message)]))])]
+                      [(ResultLowerState.Err message) (ErrLowerExpr message)]))])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-    [(ErrLowerResourceBindings message) (ErrLowerExpr message)]))
+    [(ResultLowerResourceBindings.Err message) (ErrLowerExpr message)]))
 
 (define (lower-begin
   [ctx : TcContext]
@@ -34099,7 +34124,7 @@
   [lanes : i64]
   [bindings : AstLetBindingList]) : ResultLowerEnv
   (match bindings
-    [(AstLetBindingList.Nil) (OkLowerEnv state env type-env)]
+    [(AstLetBindingList.Nil) (ResultLowerEnv.Ok state env type-env)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -34140,12 +34165,12 @@
                               lanes
                               rest)]
                           [_
-                            (ErrLowerEnv
+                            (ResultLowerEnv.Err
                               (box
                                 (lower-diagnostic-at-expr
                                   init
                                   "lower: masked let init did not produce an IR variable")))]))])]
-                [(ErrLowerExpr message) (ErrLowerEnv message)]))]))]))
+                [(ErrLowerExpr message) (ResultLowerEnv.Err message)]))]))]))
 
 (define (lower-avx512-masked-begin
   [ctx : TcContext]
@@ -35293,7 +35318,7 @@
               active-mask
               lanes
               bindings)
-              [(OkLowerEnv bound-state bound-env bound-type-env)
+              [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                 (lower-avx512-masked-expr
                   ctx
                   bound-state
@@ -35305,7 +35330,7 @@
                   active-mask
                   lanes
                   body)]
-              [(ErrLowerEnv message) (ErrLowerExpr message)]))])]
+              [(ResultLowerEnv.Err message) (ErrLowerExpr message)]))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -36786,7 +36811,7 @@
   [pattern : AstPattern]
   [field-ty : AstType]) : ResultLowerEnv
   (match pattern
-    [(AstPattern.Wildcard) (OkLowerEnv state env type-env)]
+    [(AstPattern.Wildcard) (ResultLowerEnv.Ok state env type-env)]
     [(AstPattern.Var name _)
       (match (lower-struct-get-named
         ctx
@@ -36800,16 +36825,16 @@
             [(LowerExpr field-state field-value _)
               (match field-value
                 [(CompilerIrValue.Var field-var)
-                  (OkLowerEnv
+                  (ResultLowerEnv.Ok
                     field-state
                     (sym_i64_env.sym-i64-bind-id env name field-var)
                     (tc-bind-id type-env name field-ty))]
                 [_
-                  (ErrLowerEnv
+                  (ResultLowerEnv.Err
                     (box
                       (lower-diagnostic
                         "lower: internal struct field pattern load failed")))])])]
-        [(ErrLowerExpr message) (ErrLowerEnv message)])]
+        [(ErrLowerExpr message) (ResultLowerEnv.Err message)])]
     [(AstPattern.Binding name)
       (match (lower-struct-get-named
         ctx
@@ -36823,16 +36848,16 @@
             [(LowerExpr field-state field-value _)
               (match field-value
                 [(CompilerIrValue.Var field-var)
-                  (OkLowerEnv
+                  (ResultLowerEnv.Ok
                     field-state
                     (sym_i64_env.sym-i64-bind-id env name field-var)
                     (tc-bind-id type-env name field-ty))]
                 [_
-                  (ErrLowerEnv
+                  (ResultLowerEnv.Err
                     (box
                       (lower-diagnostic
                         "lower: internal struct field pattern load failed")))])])]
-        [(ErrLowerExpr message) (ErrLowerEnv message)])]
+        [(ErrLowerExpr message) (ResultLowerEnv.Err message)])]
     [(AstPattern.Variant name args-box)
       (if (lower-struct-pattern-for-type? ctx field-ty name)
         (match (lower-struct-get-named
@@ -36855,11 +36880,11 @@
                   (lower-struct-type-name-or-empty
                     (tc-type-strip-region (tc-resolve-type ctx field-ty)))
                   (box-get args-box))])]
-          [(ErrLowerExpr message) (ErrLowerEnv message)])
-        (ErrLowerEnv
+          [(ErrLowerExpr message) (ResultLowerEnv.Err message)])
+        (ResultLowerEnv.Err
           (box (lower-diagnostic "lower: unsupported struct field pattern"))))]
     [_
-      (ErrLowerEnv
+      (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: unsupported struct field pattern")))]))
 
 (define (lower-bind-struct-pattern-fields
@@ -36875,9 +36900,9 @@
   (match patterns
     [(AstPatternList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerEnv state env type-env)]
+        [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
         [_
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box (lower-diagnostic "lower: struct pattern arity mismatch")))])]
     [(AstPatternList.Cons pattern rest-patterns)
       (let
@@ -36904,7 +36929,7 @@
                           (intern-str field-name)
                           pattern
                           ty)
-                          [(OkLowerEnv next-state next-env next-type-env)
+                          [(ResultLowerEnv.Ok next-state next-env next-type-env)
                             (lower-bind-struct-pattern-fields
                               ctx
                               next-state
@@ -36915,14 +36940,15 @@
                               rest-patterns
                               rest-fields
                               rest-types)]
-                          [(ErrLowerEnv message) (ErrLowerEnv message)]))]
+                          [(ResultLowerEnv.Err message)
+                            (ResultLowerEnv.Err message)]))]
                     [(AstTypeList.Nil)
-                      (ErrLowerEnv
+                      (ResultLowerEnv.Err
                         (box
                           (lower-diagnostic
                             "lower: struct pattern arity mismatch")))])]))]
           [(AstFieldDefList.Nil)
-            (ErrLowerEnv
+            (ResultLowerEnv.Err
               (box (lower-diagnostic "lower: struct pattern arity mismatch")))]))]))
 
 (define (lower-bind-struct-pattern
@@ -36953,9 +36979,9 @@
             fields
             field-types)]
         [(ResultTcTypeList.Err message)
-          (ErrLowerEnv (box (lower-diagnostic message)))])]
+          (ResultLowerEnv.Err (box (lower-diagnostic message)))])]
     [(ResultAstFieldDefList.Err message)
-      (ErrLowerEnv (box (lower-diagnostic message)))]))
+      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
 
 (define (lower-bind-match-catch-all-pattern
   [ctx : TcContext]
@@ -36967,7 +36993,7 @@
   [pattern : AstPattern]) : ResultLowerEnv
   (match pattern
     [(AstPattern.Binding name)
-      (OkLowerEnv
+      (ResultLowerEnv.Ok
         state
         (sym_i64_env.sym-i64-bind-id env name scrut-var)
         (tc-bind-id type-env name scrut-ty))]
@@ -36992,9 +37018,9 @@
             (lower-struct-type-name-or-empty
               (tc-type-strip-region (tc-resolve-type ctx scrut-ty)))
             (box-get args-box))
-          (ErrLowerEnv
+          (ResultLowerEnv.Err
             (box (lower-diagnostic "lower: unsupported match pattern")))))]
-    [_ (OkLowerEnv state env type-env)]))
+    [_ (ResultLowerEnv.Ok state env type-env)]))
 
 (define (lower-match-arms
   [ctx : TcContext]
@@ -37316,7 +37342,7 @@
                     8
                     merge-label
                     scrut-reg-group?)
-                    [(OkLowerEnv body-start body-env body-type-env)
+                    [(ResultLowerEnv.Ok body-start body-env body-type-env)
                       (match (lower-expr-expected
                         ctx
                         body-start
@@ -37350,7 +37376,7 @@
                                       body-end-label
                                       phi-inputs))))])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrLowerEnv message) (ErrLowerExpr message)])))]
+                    [(ResultLowerEnv.Err message) (ErrLowerExpr message)])))]
             [(ResultAstTypeList.Err message)
               (ErrLowerExpr (box (lower-diagnostic message)))])
           (ErrLowerExpr
@@ -37393,7 +37419,7 @@
     8
     next-label
     scrut-reg-group?)
-    [(OkLowerEnv bound-state body-env body-type-env)
+    [(ResultLowerEnv.Ok bound-state body-env body-type-env)
       (match (lower-expr-expected
         ctx
         bound-state
@@ -37433,7 +37459,7 @@
                       phi-inputs))
                   scrut-reg-group?))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(ErrLowerEnv message) (ErrLowerExpr message)]))
+    [(ResultLowerEnv.Err message) (ErrLowerExpr message)]))
 
 (define (lower-match-variant-arm
   [ctx : TcContext]
@@ -37632,7 +37658,7 @@
           scrut-var
           scrut-ty
           pat)
-          [(OkLowerEnv body-start body-env body-type-env)
+          [(ResultLowerEnv.Ok body-start body-env body-type-env)
             (match (lower-expr-expected
               ctx
               body-start
@@ -37666,7 +37692,7 @@
                             body-end-label
                             phi-inputs))))])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [(ErrLowerEnv message) (ErrLowerExpr message)]))]))
+          [(ResultLowerEnv.Err message) (ErrLowerExpr message)]))]))
 
 (define (lower-phi-input-list-empty? [phi-inputs : CompilerIrPhiInputList]) : bool
   (match phi-inputs
@@ -37887,7 +37913,7 @@
                       ret-ty
                       sret-var)
                       [(OkLowerArgs tail-state tail-values)
-                        (OkLowerState
+                        (ResultLowerState.Ok
                           (lower-state-emit-at-expr
                             tail-state
                             (CompilerIrInstr.TailCallIndirect
@@ -37895,12 +37921,12 @@
                               (compiler-ir-call-args-from-list tail-values)
                               (lower-one-word-register-storage-type ctx ret-ty))
                             origin))]
-                      [(ErrLowerArgs message) (ErrLowerState message)])]
-                  [(ErrLowerArgs message) (ErrLowerState message)])])]
-          [(ErrLowerExpr message) (ErrLowerState message)])
+                      [(ErrLowerArgs message) (ResultLowerState.Err message)])]
+                  [(ErrLowerArgs message) (ResultLowerState.Err message)])])]
+          [(ErrLowerExpr message) (ResultLowerState.Err message)])
         (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
     [(ResultTcType.Err message)
-      (ErrLowerState (box (lower-diagnostic-at-expr callee message)))]))
+      (ResultLowerState.Err (box (lower-diagnostic-at-expr callee message)))]))
 
 (define (lower-tail-let-bindings-candidate-env
   [env : sym_i64_env.SymI64Env]
@@ -38010,13 +38036,14 @@
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
   (match (lower-inline-aggregate-copy-size ctx ret-ty)
-    [(OkLowerSize size)
-      (OkLowerState
+    [(ResultLowerSize.Ok size)
+      (ResultLowerState.Ok
         (lower-state-emit
           (lower-copy-bytes state (CompilerIrValue.Var sret-var) 0 value 0 size)
           (CompilerIrInstr.Return
             (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty))))]
-    [(ErrLowerSize message) (ErrLowerState (box (lower-diagnostic message)))]))
+    [(ResultLowerSize.Err message)
+      (ResultLowerState.Err (box (lower-diagnostic message)))]))
 
 (define (lower-return-expr-generic
   [ctx : TcContext]
@@ -38031,26 +38058,26 @@
       (match lowered
         [(LowerExpr body-state value expr-ty)
           (if (tc-never-type? expr-ty)
-            (OkLowerState body-state)
+            (ResultLowerState.Ok body-state)
             (if (>= sret-var 0)
               (lower-return-expr-to-sret ctx body-state value ret-ty sret-var)
               (match (lower-return-abi-value ctx body-state value ret-ty)
                 [(OkLowerExpr return-copy)
                   (match return-copy
                     [(LowerExpr return-state return-value _)
-                      (OkLowerState
+                      (ResultLowerState.Ok
                         (lower-state-emit
                           return-state
                           (CompilerIrInstr.Return
                             (lower-return-maybe return-value ret-ty))))])]
-                [(ErrLowerExpr message) (ErrLowerState message)])))])]
-    [(ErrLowerExpr message) (ErrLowerState message)]))
+                [(ErrLowerExpr message) (ResultLowerState.Err message)])))])]
+    [(ErrLowerExpr message) (ResultLowerState.Err message)]))
 
 (define (lower-return-sret
   [state : LowerState]
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
-  (OkLowerState
+  (ResultLowerState.Ok
     (lower-state-emit
       state
       (CompilerIrInstr.Return
@@ -38364,7 +38391,7 @@
 ;; `lower-direct-call`'s ordinary (non-builtin, non-C-ABI) sret path verbatim,
 ;; only swapping the reserved slot for the provided `sret-var` and ending with the
 ;; return. Anything outside that path (builtins, C-ABI/extern, bytes-view,
-;; indirect targets, incompatible/aliasing returns) yields `LowerNoDirectStore`
+;; indirect targets, incompatible/aliasing returns) yields `LowerMaybeDirectStore.No`
 ;; and falls back to the unchanged value+copy path.
 (define (lower-return-direct-call-into-sret
   [ctx : TcContext]
@@ -38393,7 +38420,7 @@
     ;; An argument that may alias the caller-owned sret makes in-place forwarding
     ;; unsound (see `lower-rvo-args-cannot-alias-sret?`).
     (not (lower-rvo-args-cannot-alias-sret? ctx type-env args)))
-    (LowerNoDirectStore)
+    (LowerMaybeDirectStore.No)
     (match (lower-lookup-type
       ctx
       (lower-state-type-cache state)
@@ -38413,7 +38440,7 @@
               ;; result into the sret slot, so forwarding the slot to the callee
               ;; -- which would write its OWN-typed result -- is unsound. Keep the
               ;; materialize+copy path. (Same compatibility rule TCO requires.)
-              (LowerNoDirectStore)
+              (LowerMaybeDirectStore.No)
               (match (lower-direct-call-param-types
                 ctx
                 type-env
@@ -38452,19 +38479,20 @@
                                 ctx
                                 call-state
                                 writebacks)]
-                            (LowerDirectStore
+                            (LowerMaybeDirectStore.Store
                               (lower-state-emit
                                 writeback-state
                                 (CompilerIrInstr.Return
                                   (lower-return-maybe
                                     (CompilerIrValue.Var sret-var)
                                     ret-ty)))))])]
-                    [(ErrLowerCallArgs message) (LowerDirectStoreErr message)])]
+                    [(ErrLowerCallArgs message)
+                      (LowerMaybeDirectStore.Err message)])]
                 [(ResultTcTypeList.Err message)
-                  (LowerDirectStoreErr
+                  (LowerMaybeDirectStore.Err
                     (box (lower-diagnostic-at-expr origin message)))]))]
-          [_ (LowerNoDirectStore)])]
-      [(ResultTcType.Err _) (LowerNoDirectStore)])))
+          [_ (LowerMaybeDirectStore.No)])]
+      [(ResultTcType.Err _) (LowerMaybeDirectStore.No)])))
 
 ;; Tail-position direct-call fallback shared by the non-constructor branches of
 ;; `lower-return-call-name-to-sret`: try the call-slot RVO above, otherwise keep
@@ -38489,9 +38517,9 @@
     ret-ty
     sret-var
     origin)
-    [(LowerDirectStore done-state) (OkLowerState done-state)]
-    [(LowerDirectStoreErr message) (ErrLowerState message)]
-    [(LowerNoDirectStore)
+    [(LowerMaybeDirectStore.Store done-state) (ResultLowerState.Ok done-state)]
+    [(LowerMaybeDirectStore.Err message) (ResultLowerState.Err message)]
+    [(LowerMaybeDirectStore.No)
       (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
 
 (define (lower-return-call-name-to-sret
@@ -38543,9 +38571,9 @@
         variant-handle
         args
         ret-ty)
-        [(OkLowerState done-state)
+        [(ResultLowerState.Ok done-state)
           (lower-return-sret done-state ret-ty sret-var)]
-        [(ErrLowerState message) (ErrLowerState message)])
+        [(ResultLowerState.Err message) (ResultLowerState.Err message)])
       (let
         [struct-handle : i64
           (compiler-symbols-lookup-type-or
@@ -38566,9 +38594,9 @@
             struct-name
             args
             ret-ty)
-            [(OkLowerState done-state)
+            [(ResultLowerState.Ok done-state)
               (lower-return-sret done-state ret-ty sret-var)]
-            [(ErrLowerState message) (ErrLowerState message)])
+            [(ResultLowerState.Err message) (ResultLowerState.Err message)])
           (lower-return-call-fallback-to-sret
             ctx
             state
@@ -38782,7 +38810,7 @@
         [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
         (cond
           [(and unshadowed (lower-comptime-error-call-id? name))
-            (ErrLowerState
+            (ResultLowerState.Err
               (box
                 (lower-diagnostic-at-expr
                   origin
@@ -38824,7 +38852,7 @@
                   ret-ty
                   sret-var)
                   [(OkLowerArgs tail-state tail-values)
-                    (OkLowerState
+                    (ResultLowerState.Ok
                       (lower-state-emit-at-expr
                         tail-state
                         (CompilerIrInstr.TailCall
@@ -38832,8 +38860,8 @@
                           (compiler-ir-call-args-from-list tail-values)
                           (lower-one-word-register-storage-type ctx ret-ty))
                         origin))]
-                  [(ErrLowerArgs message) (ErrLowerState message)])]
-              [(ErrLowerArgs message) (ErrLowerState message)])]
+                  [(ErrLowerArgs message) (ResultLowerState.Err message)])]
+              [(ErrLowerArgs message) (ResultLowerState.Err message)])]
           [unshadowed
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(lower-tail-call-local-indirect-safe? env type-env name)
@@ -38873,7 +38901,7 @@
   [sret-var : i64]) : ResultLowerState
   (match exprs
     [(AstExprList.Nil)
-      (OkLowerState
+      (ResultLowerState.Ok
         (lower-state-emit
           state
           (CompilerIrInstr.Return
@@ -38891,7 +38919,7 @@
                 (match lowered
                   [(LowerExpr next-state _ expr-ty)
                     (if (tc-never-type? expr-ty)
-                      (OkLowerState next-state)
+                      (ResultLowerState.Ok next-state)
                       (lower-tail-begin
                         ctx
                         next-state
@@ -38900,7 +38928,7 @@
                         rest
                         ret-ty
                         sret-var))])]
-              [(ErrLowerExpr message) (ErrLowerState message)])]))]))
+              [(ErrLowerExpr message) (ResultLowerState.Err message)])]))]))
 
 (define (lower-tail-if
   [ctx : TcContext]
@@ -38936,7 +38964,7 @@
                       then-branch
                       ret-ty
                       sret-var)
-                      [(OkLowerState then-state)
+                      [(ResultLowerState.Ok then-state)
                         (lower-tail-expr
                           ctx
                           (lower-state-finish-block then-state else-label)
@@ -38945,8 +38973,9 @@
                           else-branch
                           ret-ty
                           sret-var)]
-                      [(ErrLowerState message) (ErrLowerState message)]))])])])]
-    [(ErrLowerExpr message) (ErrLowerState message)]))
+                      [(ResultLowerState.Err message)
+                        (ResultLowerState.Err message)]))])])])]
+    [(ErrLowerExpr message) (ResultLowerState.Err message)]))
 
 (define (lower-tail-match-arms
   [ctx : TcContext]
@@ -38960,7 +38989,8 @@
   [sret-var : i64]) : ResultLowerState
   (match arms
     [(AstMatchArmList.Nil)
-      (ErrLowerState (box (lower-diagnostic "lower: match with no arms")))]
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: match with no arms")))]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -39046,12 +39076,12 @@
                             arm
                             ret-ty
                             sret-var)
-                          (ErrLowerState
+                          (ResultLowerState.Err
                             (box
                               (lower-diagnostic
                                 "lower: unsupported match pattern")))))]
                     [_
-                      (ErrLowerState
+                      (ResultLowerState.Err
                         (box
                           (lower-diagnostic "lower: unsupported match pattern")))]))])]))]))
 
@@ -39101,7 +39131,7 @@
                     body
                     ret-ty
                     sret-var)
-                    [(OkLowerState body-state)
+                    [(ResultLowerState.Ok body-state)
                       (lower-tail-match-arms
                         ctx
                         (lower-state-finish-block body-state next-label)
@@ -39112,7 +39142,8 @@
                         rest
                         ret-ty
                         sret-var)]
-                    [(ErrLowerState message) (ErrLowerState message)]))])]))]))
+                    [(ResultLowerState.Err message)
+                      (ResultLowerState.Err message)]))])]))]))
 
 (define (lower-tail-match-catch-all
   [ctx : TcContext]
@@ -39136,7 +39167,7 @@
           scrut-var
           scrut-ty
           pat)
-          [(OkLowerEnv body-start body-env body-type-env)
+          [(ResultLowerEnv.Ok body-start body-env body-type-env)
             (lower-tail-expr
               ctx
               body-start
@@ -39145,7 +39176,7 @@
               body
               ret-ty
               sret-var)]
-          [(ErrLowerEnv message) (ErrLowerState message)]))]))
+          [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))]))
 
 (define (lower-tail-match-enum
   [ctx : TcContext]
@@ -39184,7 +39215,7 @@
                   (TcMaybeString.No)
                   true)]
               [_
-                (ErrLowerState
+                (ResultLowerState.Err
                   (box
                     (lower-diagnostic "lower: internal enum tag extract failed")))])])
         (lower-tail-match-enum-arms
@@ -39222,7 +39253,7 @@
                 (TcMaybeString.No)
                 false)]
             [_
-              (ErrLowerState
+              (ResultLowerState.Err
                 (box (lower-diagnostic "lower: internal enum tag load failed")))])]))))
 
 (define (lower-tail-match-enum-arms
@@ -39240,7 +39271,8 @@
   [scrut-reg-group? : bool]) : ResultLowerState
   (match arms
     [(AstMatchArmList.Nil)
-      (ErrLowerState (box (lower-diagnostic "lower: match with no arms")))]
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: match with no arms")))]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -39295,7 +39327,7 @@
                           borrow-lifetime
                           scrut-reg-group?))]
                     [_
-                      (ErrLowerState
+                      (ResultLowerState.Err
                         (box
                           (lower-diagnostic
                             "lower: unsupported enum match pattern")))])]
@@ -39349,7 +39381,7 @@
                           borrow-lifetime
                           scrut-reg-group?))]
                     [_
-                      (ErrLowerState
+                      (ResultLowerState.Err
                         (box
                           (lower-diagnostic
                             "lower: unsupported enum match pattern")))])]))]))]))
@@ -39397,7 +39429,7 @@
                   ctx
                   args
                   resolved-fields)
-                  (ErrLowerState
+                  (ResultLowerState.Err
                     (box
                       (lower-diagnostic
                         "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
@@ -39417,7 +39449,7 @@
                     8
                     (lower-state-current-label state)
                     scrut-reg-group?)
-                    [(OkLowerEnv body-start body-env body-type-env)
+                    [(ResultLowerEnv.Ok body-start body-env body-type-env)
                       (lower-tail-expr
                         ctx
                         body-start
@@ -39426,10 +39458,11 @@
                         body
                         ret-ty
                         sret-var)]
-                    [(ErrLowerEnv message) (ErrLowerState message)])))]
+                    [(ResultLowerEnv.Err message)
+                      (ResultLowerState.Err message)])))]
             [(ResultAstTypeList.Err message)
-              (ErrLowerState (box (lower-diagnostic message)))])
-          (ErrLowerState
+              (ResultLowerState.Err (box (lower-diagnostic message)))])
+          (ResultLowerState.Err
             (box
               (lower-diagnostic
                 (string.append "lower: unknown variant " variant-name))))))]))
@@ -39468,7 +39501,7 @@
     8
     next-label
     scrut-reg-group?)
-    [(OkLowerEnv bound-state body-env body-type-env)
+    [(ResultLowerEnv.Ok bound-state body-env body-type-env)
       (match (lower-tail-expr
         ctx
         bound-state
@@ -39477,7 +39510,7 @@
         body
         ret-ty
         sret-var)
-        [(OkLowerState body-state)
+        [(ResultLowerState.Ok body-state)
           (lower-tail-match-enum-arms
             ctx
             (lower-state-finish-block body-state next-label)
@@ -39491,8 +39524,8 @@
             sret-var
             borrow-lifetime
             scrut-reg-group?)]
-        [(ErrLowerState message) (ErrLowerState message)])]
-    [(ErrLowerEnv message) (ErrLowerState message)]))
+        [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
+    [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))
 
 (define (lower-tail-match-variant-arm
   [ctx : TcContext]
@@ -39583,8 +39616,8 @@
                                   borrow-lifetime
                                   scrut-reg-group?))])]))]))]
             [(ResultAstTypeList.Err message)
-              (ErrLowerState (box (lower-diagnostic message)))])
-          (ErrLowerState
+              (ResultLowerState.Err (box (lower-diagnostic message)))])
+          (ResultLowerState.Err
             (box
               (lower-diagnostic
                 (string.append "lower: unknown variant " variant-name))))))]))
@@ -39693,7 +39726,7 @@
                       arms
                       ret-ty
                       sret-var)])])])]
-      [(ErrLowerExpr message) (ErrLowerState message)])))
+      [(ErrLowerExpr message) (ResultLowerState.Err message)])))
 
 (define (lower-tail-expr
   [ctx : TcContext]
@@ -39722,7 +39755,8 @@
                 (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
                 (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
             [(ResultTcType.Err message)
-              (ErrLowerState (box (lower-diagnostic-at-expr inner message)))]))]
+              (ResultLowerState.Err
+                (box (lower-diagnostic-at-expr inner message)))]))]
       [(AstExpr.Call callee-box args)
         (let
           [callee : AstExpr (ast-node-get callee-box)]
@@ -39742,7 +39776,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match (lower-let-bindings ctx state env type-env bindings)
-                [(OkLowerEnv binding-state body-env body-type-env)
+                [(ResultLowerEnv.Ok binding-state body-env body-type-env)
                   (lower-tail-expr
                     ctx
                     binding-state
@@ -39751,7 +39785,7 @@
                     body
                     ret-ty
                     sret-var)]
-                [(ErrLowerEnv message) (ErrLowerState message)]))])]
+                [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))])]
       [(AstExpr.Begin exprs)
         (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]
       [(AstExpr.Unsafe exprs)
@@ -39975,7 +40009,7 @@
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
     (not (lower-supported-reference-type? ctx ret)))
-    (ErrLowerFunction
+    (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
       [param-count : i64 (lower-param-count params)]
@@ -40022,8 +40056,8 @@
           param-count)]
       (if (lower-supported-function-return-type? ctx ret-ty)
         (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
-          [(OkLowerState final-state)
-            (OkLowerFunction
+          [(ResultLowerState.Ok final-state)
+            (ResultLowerFunction.Ok
               (compiler-ir-function-cons
                 (CompilerIrFunction.Function
                   logical-name
@@ -40037,8 +40071,8 @@
                   (lower-state-build-function-blocks final-state))
                 (lower-state-functions final-state))
               (lower-state-spans final-state))]
-          [(ErrLowerState message) (ErrLowerFunction message)])
-        (ErrLowerFunction
+          [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])
+        (ResultLowerFunction.Err
           (box (lower-diagnostic-at-expr body "lower: unsupported expression")))))))
 
 (define (lower-global-value
@@ -40059,16 +40093,17 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-global-value names inner cast-ty))]
     [(AstExpr.Literal lit)
-      (OkLowerValue (lower-literal-value-with-type lit ty))]
-    [(AstExpr.BinaryData bytes) (OkLowerValue (CompilerIrValue.Bytes bytes))]
-    [(AstExpr.SpmdProgramIndex) (OkLowerValue (CompilerIrValue.I64 0))]
-    [(AstExpr.SpmdProgramCount) (OkLowerValue (CompilerIrValue.I64 1))]
+      (ResultLowerValue.Ok (lower-literal-value-with-type lit ty))]
+    [(AstExpr.BinaryData bytes)
+      (ResultLowerValue.Ok (CompilerIrValue.Bytes bytes))]
+    [(AstExpr.SpmdProgramIndex) (ResultLowerValue.Ok (CompilerIrValue.I64 0))]
+    [(AstExpr.SpmdProgramCount) (ResultLowerValue.Ok (CompilerIrValue.I64 1))]
     [(AstExpr.Var name)
-      (OkLowerValue
+      (ResultLowerValue.Ok
         (CompilerIrValue.Global
           (lower-name-cache-resolve names (intern-str name))))]
     [_
-      (ErrLowerValue
+      (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))
 
 (define (lower-global-init-function-name [global-name : String]) : String
@@ -40259,7 +40294,7 @@
           spans
           names
           mode)
-          [(OkLowerFunction fns _function-spans)
+          [(ResultLowerFunction.Ok fns _function-spans)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
               (begin
@@ -40291,8 +40326,8 @@
                         (if prev-persist
                           unit
                           (intern-persistent-storage-disable!))
-                        (OkLowerFunction escaped-fns escaped-spans)))))))]
-          [(ErrLowerFunction message)
+                        (ResultLowerFunction.Ok escaped-fns escaped-spans)))))))]
+          [(ResultLowerFunction.Err message)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
               (begin
@@ -40310,7 +40345,7 @@
                     (if prev-persist
                       unit
                       (intern-persistent-storage-disable!))
-                    (ErrLowerFunction escaped-message)))))])))))
+                    (ResultLowerFunction.Err escaped-message)))))])))))
 
 (define (lower-struct-cleanup-param-name) : String
   "__tl_cleanup_value")
@@ -40453,7 +40488,7 @@
             names
             mode))]
       [(ResultAstExprList.Err message)
-        (ErrLowerFunction (box (lower-diagnostic message)))])))
+        (ResultLowerFunction.Err (box (lower-diagnostic message)))])))
 
 (define (lower-struct-cleanup-decl
   [ctx : TcContext]
@@ -40467,7 +40502,8 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (match cleanup
-    [(AstStructCleanup.No) (OkLowerFunction CompilerIrFunctionList.Nil spans)]
+    [(AstStructCleanup.No)
+      (ResultLowerFunction.Ok CompilerIrFunctionList.Nil spans)]
     [(AstStructCleanup.Fn _)
       (lower-struct-cleanup-function
         ctx
@@ -40960,7 +40996,7 @@
                         maybe-avx2
                         maybe-avx512
                         param-count))))]
-              (OkLowerFunction
+              (ResultLowerFunction.Ok
                 (compiler-ir-function-cons
                   (CompilerIrFunction.Function
                     logical-name
@@ -40971,12 +41007,12 @@
                   CompilerIrFunctionList.Nil)
                 spans))]
           [(TcMaybeString.No)
-            (ErrLowerFunction
+            (ResultLowerFunction.Err
               (box
                 (lower-diagnostic
                   "lower: defdispatch requires a scalar variant")))]))]
     [_
-      (ErrLowerFunction
+      (ResultLowerFunction.Err
         (box
           (lower-diagnostic
             "lower: defdispatch did not typecheck as a function")))]))
@@ -41020,7 +41056,7 @@
           names
           mode))]
     [_
-      (ErrLowerFunction
+      (ResultLowerFunction.Err
         (box
           (lower-diagnostic
             "lower: defdispatch variants must be local functions")))]))
@@ -41066,8 +41102,8 @@
                 names
                 mode)]
             [(ResultAstDecl.Err message)
-              (ErrLowerFunction (box (lower-diagnostic message)))])
-          (ErrLowerFunction
+              (ResultLowerFunction.Err (box (lower-diagnostic message)))])
+          (ResultLowerFunction.Err
             (box
               (lower-diagnostic
                 (string.append
@@ -41087,7 +41123,7 @@
   [mode : CompilerLowerMode]
   [functions : CompilerIrFunctionList]) : ResultLowerFunction
   (if (>= index (ast-dispatch-variant-list-len variants))
-    (OkLowerFunction functions spans)
+    (ResultLowerFunction.Ok functions spans)
     (match (lower-dispatch-lower-variant
       ctx
       top-env
@@ -41101,7 +41137,7 @@
       spans
       names
       mode)
-      [(OkLowerFunction lowered-functions function-spans)
+      [(ResultLowerFunction.Ok lowered-functions function-spans)
         (lower-dispatch-lower-variants-from
           ctx
           top-env
@@ -41114,7 +41150,7 @@
           names
           mode
           (lower-function-list-append lowered-functions functions))]
-      [(ErrLowerFunction message) (ErrLowerFunction message)])))
+      [(ResultLowerFunction.Err message) (ResultLowerFunction.Err message)])))
 
 (define (lower-dispatch-lower-variants
   [ctx : TcContext]
@@ -41171,7 +41207,7 @@
             name-cache
             mode
             CompilerIrFunctionList.Nil)
-            [(OkLowerFunction variant-functions variant-spans)
+            [(ResultLowerFunction.Ok variant-functions variant-spans)
               (match (lower-dispatch-thunk-function
                 logical-name
                 fn-ty
@@ -41179,10 +41215,10 @@
                 module
                 name-cache
                 variant-spans)
-                [(OkLowerFunction thunk-functions thunk-spans)
-                  (OkLowerDispatchDecl
+                [(ResultLowerFunction.Ok thunk-functions thunk-spans)
+                  (ResultLowerDispatchDecl.Ok
                     (box
-                      (LowerDispatchDecl
+                      (LowerDispatchDecl.Decl
                         (CompilerIrGlobal.Global
                           (lower-dispatch-cache-name logical-name)
                           fn-ty
@@ -41191,10 +41227,12 @@
                           thunk-functions
                           variant-functions)
                         thunk-spans)))]
-                [(ErrLowerFunction message) (ErrLowerDispatchDecl message)])]
-            [(ErrLowerFunction message) (ErrLowerDispatchDecl message)]))]
+                [(ResultLowerFunction.Err message)
+                  (ResultLowerDispatchDecl.Err message)])]
+            [(ResultLowerFunction.Err message)
+              (ResultLowerDispatchDecl.Err message)]))]
       [(ResultTcType.Err message)
-        (ErrLowerDispatchDecl (box (lower-diagnostic message)))])))
+        (ResultLowerDispatchDecl.Err (box (lower-diagnostic message)))])))
 
 (define (lower-rvo-early-return-functions-from-decls-in-module
   [decls : AstDeclList]
@@ -41350,7 +41388,8 @@
     [cur-type-cache : LowerTypeCache type-cache]
     [cur-module : String module]
     [result : ResultLowerDecls
-      (ErrLowerDecls (box (lower-diagnostic "lower: internal decls walk")))]
+      (ResultLowerDecls.Err
+        (box (lower-diagnostic "lower: internal decls walk")))]
     [done : bool false]
     (begin
       (while (not done)
@@ -41359,7 +41398,7 @@
             (begin
               (set!
                 result
-                (OkLowerDecls
+                (ResultLowerDecls.Ok
                   (box
                     (LowerDeclsSuccess
                       (lower-global-list-reverse cur-globals)
@@ -41397,7 +41436,7 @@
                             cur-name-cache
                             expr
                             global-ty)
-                            [(OkLowerValue value)
+                            [(ResultLowerValue.Ok value)
                               (begin
                                 (set!
                                   cur-globals
@@ -41416,7 +41455,7 @@
                             ;; (scalars as well as aggregates), mirroring the
                             ;; former Rust lowerer, which emits an init function
                             ;; whenever `extract_const` yields no constant.
-                            [(ErrLowerValue _)
+                            [(ResultLowerValue.Err _)
                               (match (lower-function-escaping
                                 decl-ctx
                                 cur-local-top-env
@@ -41428,7 +41467,7 @@
                                 cur-spans
                                 cur-name-cache
                                 mode)
-                                [(OkLowerFunction init-funcs init-spans)
+                                [(ResultLowerFunction.Ok init-funcs init-spans)
                                   (begin
                                     (set!
                                       cur-globals
@@ -41445,15 +41484,18 @@
                                         cur-functions))
                                     (set! cur-spans init-spans)
                                     (set! cur-decls rest))]
-                                [(ErrLowerFunction init-message)
+                                [(ResultLowerFunction.Err init-message)
                                   (begin
-                                    (set! result (ErrLowerDecls init-message))
+                                    (set!
+                                      result
+                                      (ResultLowerDecls.Err init-message))
                                     (set! done true))])]))]
                       [(ResultTcType.Err message)
                         (begin
                           (set!
                             result
-                            (ErrLowerDecls (box (lower-diagnostic message))))
+                            (ResultLowerDecls.Err
+                              (box (lower-diagnostic message))))
                           (set! done true))]))]
                 [(AstDecl.Extern name _ metadata ty)
                   (let
@@ -41470,7 +41512,7 @@
                       (begin
                         (set!
                           result
-                          (ErrLowerDecls
+                          (ResultLowerDecls.Err
                             (box
                               (lower-diagnostic
                                 (lower-reference-support-message)))))
@@ -41517,7 +41559,9 @@
                           cur-spans
                           cur-name-cache
                           mode)
-                          [(OkLowerFunction lowered-functions function-spans)
+                          [(ResultLowerFunction.Ok
+                              lowered-functions
+                              function-spans)
                             (let
                               [next-externs : CompilerIrExternList
                                 (match export
@@ -41550,14 +41594,14 @@
                                 (set! cur-externs next-externs)
                                 (set! cur-spans function-spans)
                                 (set! cur-decls rest)))]
-                          [(ErrLowerFunction message)
+                          [(ResultLowerFunction.Err message)
                             (begin
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-detail-finish
                                   "function"
                                   logical-name))
-                              (set! result (ErrLowerDecls message))
+                              (set! result (ResultLowerDecls.Err message))
                               (set! done true))]))))]
                 [(AstDecl.DefMacro _ _ _ _) (set! cur-decls rest)]
                 [(AstDecl.DefDispatch name variants)
@@ -41572,9 +41616,9 @@
                     cur-name-cache
                     mode
                     cur-module)
-                    [(OkLowerDispatchDecl lowered)
+                    [(ResultLowerDispatchDecl.Ok lowered)
                       (match (box-get lowered)
-                        [(LowerDispatchDecl
+                        [(LowerDispatchDecl.Decl
                             cache-global
                             lowered-functions
                             function-spans)
@@ -41589,9 +41633,9 @@
                                 cur-functions))
                             (set! cur-spans function-spans)
                             (set! cur-decls rest))])]
-                    [(ErrLowerDispatchDecl message)
+                    [(ResultLowerDispatchDecl.Err message)
                       (begin
-                        (set! result (ErrLowerDecls message))
+                        (set! result (ResultLowerDecls.Err message))
                         (set! done true))])]
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
@@ -41607,7 +41651,7 @@
                       names
                       cur-name-cache
                       next-module-str)
-                      [(OkLowerModuleLocalEnv
+                      [(ResultLowerModuleLocalEnv.Ok
                           next-local-top-env
                           _
                           local-type-env
@@ -41634,11 +41678,12 @@
                             (if skip-runtime
                               (lower-skip-runtime-until-next-module rest)
                               rest)))]
-                      [(ErrLowerModuleLocalEnv message)
+                      [(ResultLowerModuleLocalEnv.Err message)
                         (begin
                           (set!
                             result
-                            (ErrLowerDecls (box (lower-diagnostic message))))
+                            (ResultLowerDecls.Err
+                              (box (lower-diagnostic message))))
                           (set! done true))]))]
                 [(AstDecl.Test _ _ _) (set! cur-decls rest)]
                 [(AstDecl.DefEnum name _ variants)
@@ -41700,7 +41745,7 @@
                       cur-spans
                       cur-name-cache
                       mode)
-                      [(OkLowerFunction cleanup-functions cleanup-spans)
+                      [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
                           (set!
                             cur-functions
@@ -41709,9 +41754,9 @@
                               cur-functions))
                           (set! cur-spans cleanup-spans)
                           (set! cur-decls rest))]
-                      [(ErrLowerFunction message)
+                      [(ResultLowerFunction.Err message)
                         (begin
-                          (set! result (ErrLowerDecls message))
+                          (set! result (ResultLowerDecls.Err message))
                           (set! done true))]))]
                 [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
                   (let
@@ -41743,7 +41788,7 @@
                       cur-spans
                       cur-name-cache
                       mode)
-                      [(OkLowerFunction cleanup-functions cleanup-spans)
+                      [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
                           (set!
                             cur-functions
@@ -41752,9 +41797,9 @@
                               cur-functions))
                           (set! cur-spans cleanup-spans)
                           (set! cur-decls rest))]
-                      [(ErrLowerFunction message)
+                      [(ResultLowerFunction.Err message)
                         (begin
-                          (set! result (ErrLowerDecls message))
+                          (set! result (ResultLowerDecls.Err message))
                           (set! done true))]))]
                 [(AstDecl.ComptimeDecl _ template-box)
                   (let
@@ -41789,17 +41834,17 @@
             (compiler-source-spans-empty)
             names
             mode)
-            [(OkLowerDecls payload)
+            [(ResultLowerDecls.Ok payload)
               (let
                 [success : LowerDeclsSuccess (box-get payload)]
-                (OkCompilerLower
+                (ResultCompilerLower.Ok
                   (CompilerIrProgram.Program
                     (struct-get success globals)
                     (compiler-ir-function-list-compact
                       (struct-get success functions))
                     (struct-get success externs))
                   (struct-get success spans)))]
-            [(ErrLowerDecls message) (ErrCompilerLower message)]))])))
+            [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
 
 (define (lower-compiler-program-checked-with-names
   [ctx : TcContext]
@@ -41853,8 +41898,9 @@
               specialized
               alias-names
               mode))]
-        [(ResultCompilerTypecheckChecked.Err diag) (ErrCompilerLower diag)])]
-    [(ResultSpecProgram.Err diag) (ErrCompilerLower diag)]))
+        [(ResultCompilerTypecheckChecked.Err diag)
+          (ResultCompilerLower.Err diag)])]
+    [(ResultSpecProgram.Err diag) (ResultCompilerLower.Err diag)]))
 
 (define (lower-compiler-program-unlocated-mode
   [program : AstProgram]
@@ -41868,8 +41914,8 @@
         (match (macro-expand-program generated)
           [(ResultMacroExpand.Ok expanded _)
             (lower-compiler-expanded-program-unlocated-mode expanded mode)]
-          [(ResultMacroExpand.Err diag) (ErrCompilerLower diag)])]
-      [(ResultGenProgram.Err diag) (ErrCompilerLower diag)])))
+          [(ResultMacroExpand.Err diag) (ResultCompilerLower.Err diag)])]
+      [(ResultGenProgram.Err diag) (ResultCompilerLower.Err diag)])))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
@@ -41879,9 +41925,10 @@
   [program : AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (lower-compiler-program-unlocated-mode program mode)
-    [(OkCompilerLower ir spans) (OkCompilerLower ir spans)]
-    [(ErrCompilerLower diag)
-      (ErrCompilerLower (box (lower-diagnostic-with-path (box-get diag) path)))]))
+    [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
+    [(ResultCompilerLower.Err diag)
+      (ResultCompilerLower.Err
+        (box (lower-diagnostic-with-path (box-get diag) path)))]))
 
 (define (lower-compiler-program-with-path
   [path : String]
@@ -42042,7 +42089,7 @@
                                         checked-program
                                         lower-names
                                         mode)
-                                        [(OkCompilerLower ir spans)
+                                        [(ResultCompilerLower.Ok ir spans)
                                           (begin
                                             (cfg
                                               compile-profile
@@ -42057,14 +42104,14 @@
                                               compile-profile
                                               (compiler-lower-profile-ir-arena
                                                 "after_decls"))
-                                            (OkCompilerLower ir spans))]
-                                        [(ErrCompilerLower diag)
+                                            (ResultCompilerLower.Ok ir spans))]
+                                        [(ResultCompilerLower.Err diag)
                                           (begin
                                             (cfg
                                               compile-profile
                                               (compiler-lower-profile-finish
                                                 "decls"))
-                                            (ErrCompilerLower
+                                            (ResultCompilerLower.Err
                                               (box
                                                 (lower-diagnostic-with-path
                                                   (box-get diag)
@@ -42075,17 +42122,17 @@
                                         compile-profile
                                         (compiler-lower-profile-finish
                                           "typecheck"))
-                                      (ErrCompilerLower diag))]))))]
+                                      (ResultCompilerLower.Err diag))]))))]
                         [(ErrLowerCloneRoots diag)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-lower-profile-finish "clone_roots"))
-                            (ErrCompilerLower diag))])))])))]
+                            (ResultCompilerLower.Err diag))])))])))]
         [(ResultSpecProgram.Err diag)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
-            (ErrCompilerLower
+            (ResultCompilerLower.Err
               (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
@@ -42243,12 +42290,12 @@
                 (cfg
                   compile-profile
                   (compiler-lower-profile-finish "macro_expand"))
-                (ErrCompilerLower
+                (ResultCompilerLower.Err
                   (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))]
       [(ResultGenProgramWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
-          (ErrCompilerLower
+          (ResultCompilerLower.Err
             (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))
 
 (define (lower-compiler-program-with-decl-paths-mode
@@ -42623,10 +42670,11 @@
                     "typecheck-prefix-lower"
                     stdlib-roots
                     cfgs))]
-              [(ResultCompilerLoadWithPaths.Err diag) (ErrCompilerLower diag)]))
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ResultCompilerLower.Err diag)]))
           (lower-compiler-program-with-path-mode path program mode))]
       [(ResultAstProgram.Err message)
-        (ErrCompilerLower
+        (ResultCompilerLower.Err
           (box (lower-diagnostic-with-path (lower-diagnostic message) path)))])))
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
@@ -43000,36 +43048,36 @@
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
-    [(ErrCompilerLower diag)
+    [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerLower _ _) false]))
+    [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-mode-error-ok?
   [src : String]
   [mode : CompilerLowerMode]
   [want : String]) : bool
   (match (lower-compiler-source-with-mode src mode)
-    [(ErrCompilerLower diag)
+    [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerLower _ _) false]))
+    [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(ErrCompilerLower diag)
+    [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerLower _ _) false]))
+    [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
-    [(ErrCompilerLower diag)
+    [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerLower _ _) false]))
+    [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerWindowsScalar))
-    [(ErrCompilerLower diag)
+    [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerLower _ _) false]))
+    [(ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-entry-moduled-main-ok?) : bool
   (let
@@ -43131,7 +43179,7 @@
 (define (compiler-lower-mut-ref-by-value-writeback-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-mut-ref-by-value-writeback-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -43139,7 +43187,7 @@
             (>= (lower-test-function-alloc-count functions "main") 2)
             (>= (lower-test-function-addr-of-count functions "main") 2)
             (>= (lower-test-function-load-count functions "main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-field-access-source) : String
   "(defstruct ArrayBag (items (Array i64)))
@@ -43325,7 +43373,7 @@
         "stdlib/tl"
         program
         (compiler-lower-stdlib-string-wrapper-prune-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -43346,7 +43394,7 @@
                   (lower-test-function-defined?
                     functions
                     "string.tl::stdlib.string/string-length")))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-source) : String
@@ -43673,8 +43721,8 @@
   (items (Array String))
   (pair (Tuple String String)))
 (defenum StringList
-  (SNil)
-  (SCons String (Box StringList)))
+  (Nil)
+  (Cons String (Box StringList)))
 (define (clone-tuple [items : (Array String)]) : i64
   (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
     (__tl_string_length (tuple-ref pair 0))))
@@ -43734,13 +43782,13 @@
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tuple-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (>= (lower-test-function-store-ptr-count functions "main") 2)
             (>= (lower-test-function-load-count functions "main") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-clone-source))
@@ -43749,7 +43797,7 @@
         "<source>"
         ast
         AstDeclPathList.Nil)
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (let
@@ -43835,7 +43883,7 @@
                     unit
                     (set! ok false))
                   ok))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
@@ -43845,7 +43893,7 @@
         "<source>"
         ast
         AstDeclPathList.Nil)
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (let
@@ -43905,7 +43953,7 @@
                     unit
                     (set! ok false))
                   ok))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-clone-reachable-helpers-ok?) : bool
@@ -43915,7 +43963,7 @@
         "<source>"
         ast
         AstDeclPathList.Nil)
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -43935,7 +43983,7 @@
                     "<source>::clone$NestedClone"
                     "<source>::clone$UsedClone")
                   1))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-inline-struct-source) : String
@@ -43971,22 +44019,22 @@
 
 (define (compiler-lower-inline-imported-enum-payload-source) : String
   "(module stdlib.maybe_string)
-(defenum MaybeString (NoString) (SomeString String))
+(defenum MaybeString (No) (Some String))
 (define (maybe-string-single [value : String]) : MaybeString
-  (SomeString value))
+  (MaybeString.Some value))
 (module main)
 (import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
     (match (maybe_string.maybe-string-single \"a\")
-      [(maybe_string.NoString) \"\"]
-      [(maybe_string.SomeString head) head])))")
+      [(maybe_string.MaybeString.No) \"\"]
+      [(maybe_string.MaybeString.Some head) head])))")
 
 (define (compiler-lower-inline-recursive-error-source) : String
-  "(defenum BadList (BadNil) (BadCons i64 BadList))
+  "(defenum BadList (Nil) (Cons i64 BadList))
 (define (main) : i64
   (let
-    [x : BadList (BadCons 1 BadNil)]
+    [x : BadList (BadList.Cons 1 BadList.Nil)]
     0))")
 
 (define (compiler-lower-inline-aggregate-copy-source) : String
@@ -44009,13 +44057,13 @@
   (struct-get (make-wide 40) c))")
 
 (define (compiler-lower-inline-sret-enum-constructor-source) : String
-  "(defenum WideChoice (WideSome i64 i64 i64) (WideNone))
+  "(defenum WideChoice (Some i64 i64 i64) (None))
 (define (make-wide-choice [x : i64]) : WideChoice
-  (WideSome x (+ x 1) (+ x 2)))
+  (WideChoice.Some x (+ x 1) (+ x 2)))
 (define (main) : i64
   (match (make-wide-choice 40)
-    [(WideSome _ _ c) c]
-    [WideNone 0]))")
+    [(WideChoice.Some _ _ c) c]
+    [WideChoice.None 0]))")
 
 (define (compiler-lower-inline-sret-enum-match-constructor-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
@@ -44074,55 +44122,55 @@
 ;; helper/constructor ordering when String and i64 payload result enums coexist.
 (define (compiler-lower-inline-enum-layout-cache-order-source-a) : String
   "(defenum FirstResult
-  (FirstErr String)
-  (FirstOk i64))
+  (Err String)
+  (Ok i64))
 (defenum SecondResult
-  (SecondOk i64)
-  (SecondErr String))
+  (Ok i64)
+  (Err String))
 (define (first-helper [flag : bool]) : FirstResult
   (if flag
-    (FirstOk 1)
-    (FirstErr \"first failed\")))
+    (FirstResult.Ok 1)
+    (FirstResult.Err \"first failed\")))
 (define (second-helper [value : i64]) : SecondResult
-  (SecondOk value))
+  (SecondResult.Ok value))
 (define (second-value-or [result : SecondResult] [fallback : i64]) : i64
   (match result
-    [(SecondErr _) fallback]
-    [(SecondOk value) value]))
+    [(SecondResult.Err _) fallback]
+    [(SecondResult.Ok value) value]))
 (define (main) : i64
   (+
     (match (first-helper false)
-      [(FirstErr message) (__tl_string_length message)]
-      [(FirstOk value) value])
+      [(FirstResult.Err message) (__tl_string_length message)]
+      [(FirstResult.Ok value) value])
     (second-value-or (second-helper 40) 0)))")
 
 (define (compiler-lower-inline-enum-layout-cache-order-source-b) : String
   "(defenum SecondResult
-  (SecondErr String)
-  (SecondOk i64))
+  (Err String)
+  (Ok i64))
 (defenum FirstResult
-  (FirstOk i64)
-  (FirstErr String))
+  (Ok i64)
+  (Err String))
 (define (second-value-or [result : SecondResult] [fallback : i64]) : i64
   (match result
-    [(SecondOk value) value]
-    [(SecondErr _) fallback]))
+    [(SecondResult.Ok value) value]
+    [(SecondResult.Err _) fallback]))
 (define (first-helper [flag : bool]) : FirstResult
   (if flag
-    (FirstOk 2)
-    (FirstErr \"first failed\")))
+    (FirstResult.Ok 2)
+    (FirstResult.Err \"first failed\")))
 (define (second-helper [value : i64]) : SecondResult
-  (SecondOk value))
+  (SecondResult.Ok value))
 (define (main) : i64
   (+
     (second-value-or (second-helper 40) 0)
     (match (first-helper false)
-      [(FirstOk value) value]
-      [(FirstErr message) (__tl_string_length message)])))")
+      [(FirstResult.Ok value) value]
+      [(FirstResult.Err message) (__tl_string_length message)])))")
 
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -44148,11 +44196,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-enum-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-enum-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -44181,11 +44229,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-boxed-recursive-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-boxed-recursive-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -44206,12 +44254,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-imported-enum-payload-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-inline-imported-enum-payload-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (>
@@ -44219,7 +44267,7 @@
               functions
               "stdlib.maybe_string/maybe-string-single")
             0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 ;; #2386: `id-pair` is the identity on a 16-byte all-integer struct, which is now
 ;; register-resident -- it is carried in a register pair end-to-end, so the
@@ -44231,13 +44279,13 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-aggregate-copy-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower pair-program _)
+    [(ResultCompilerLower.Ok pair-program _)
       (match pair-program
         [(CompilerIrProgram.Program _ pair-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-mixed16-copy-source)
             (CompilerLowerInlineAggregates))
-            [(OkCompilerLower mixed-program _)
+            [(ResultCompilerLower.Ok mixed-program _)
               (match mixed-program
                 [(CompilerIrProgram.Program _ mixed-functions _)
                   (and
@@ -44256,20 +44304,20 @@
                         mixed-functions
                         "id-mixed")
                       1))])]
-            [(ErrCompilerLower _) false])])]
-    [(ErrCompilerLower _) false]))
+            [(ResultCompilerLower.Err _) false])])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-sret-struct-constructor-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower struct-program _)
+    [(ResultCompilerLower.Ok struct-program _)
       (match struct-program
         [(CompilerIrProgram.Program _ struct-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-sret-enum-constructor-source)
             (CompilerLowerInlineAggregates))
-            [(OkCompilerLower enum-program _)
+            [(ResultCompilerLower.Ok enum-program _)
               (match enum-program
                 [(CompilerIrProgram.Program _ enum-functions _)
                   (and
@@ -44283,20 +44331,20 @@
                         enum-functions
                         "make-wide-choice")
                       0))])]
-            [(ErrCompilerLower _) false])])]
-    [(ErrCompilerLower _) false]))
+            [(ResultCompilerLower.Err _) false])])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-sret-enum-match-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-sret-enum-match-constructor-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower constructor-program _)
+    [(ResultCompilerLower.Ok constructor-program _)
       (match constructor-program
         [(CompilerIrProgram.Program _ constructor-functions _)
           (match (lower-compiler-source-with-mode
             (compiler-lower-inline-sret-enum-match-generic-source)
             (CompilerLowerInlineAggregates))
-            [(OkCompilerLower generic-program _)
+            [(ResultCompilerLower.Ok generic-program _)
               (match generic-program
                 [(CompilerIrProgram.Program _ generic-functions _)
                   (and
@@ -44320,24 +44368,24 @@
                         generic-functions
                         "from-choice")
                       0))])]
-            [(ErrCompilerLower _) false])])]
-    [(ErrCompilerLower _) false]))
+            [(ResultCompilerLower.Err _) false])])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-hot-loop-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-hot-loop-struct-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (> (lower-test-function-branch-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-direct-store-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -44360,7 +44408,7 @@
                 functions
                 "direct-fixed-literal")
               0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-enum-layout-cache-order-ok?) : bool
   (and
@@ -44493,10 +44541,10 @@
 (define (compiler-lower-borrowed-enum-match-ref-struct-array-source) : String
   "(defenum Slot (Empty) (Occupied i64))
 (defstruct Bag (slots (Array Slot)))
-(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag i64)))
 (define (take [v : (& bag i64)]) : i64 41)
-(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) SlotLookup.Missing)
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotLookup.Found value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref (struct-get bag slots) 0))
     [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
@@ -44513,8 +44561,8 @@
       (let [bag : Bag (Bag slots)]
         (+ (score (& bag))
           (match (lookup (& bag))
-            [(SlotFound v) (take v)]
-            [SlotMissing 0]))))))")
+            [(SlotLookup.Found v) (take v)]
+            [SlotLookup.Missing 0]))))))")
 
 (define (compiler-lower-borrowed-enum-match-str-source) : String
   "(defenum Item (Named String) (Empty))
@@ -44638,8 +44686,8 @@
 
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 ;; Provenance side-table smoke (#605): the smoke source defines two functions
 ;;
@@ -44661,16 +44709,16 @@
 
 (define (compiler-lower-spans-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower _ spans)
+    [(ResultCompilerLower.Ok _ spans)
       (and
         (= (compiler-source-spans-count spans) 2)
         (compiler-lower-span-start-line-ok? spans "inc" 3)
         (compiler-lower-span-start-line-ok? spans "main" 5))]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (let
         [summary : CompilerIrSummary (compiler-ir-program-summary program)]
         [ok : bool true]
@@ -44709,7 +44757,7 @@
             unit
             (set! ok false))
           ok))]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 ;; Count `CompilerIrInstr.Phi` nodes, to assert the merge-phi shape of lowered scalar
 ;; matches (#602): value-returning matches emit a merge phi, unit matches none.
@@ -47253,7 +47301,7 @@
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-defdispatch-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program globals functions _)
           (let
@@ -47336,12 +47384,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-defdispatch-shared-helper-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -47389,7 +47437,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-generated-path-source) : String
   "(comptime-decl (:generated point-family Point \"same\")
@@ -47415,7 +47463,7 @@
         "app.tl"
         program
         (compiler-lower-generated-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -47427,7 +47475,7 @@
                     "main"
                     "lib.tl::after")
                   1))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-symbol-source) : String
@@ -47449,7 +47497,7 @@
         "app.tl"
         program
         (compiler-lower-module-symbol-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program globals functions _)
               (and
@@ -47461,7 +47509,7 @@
                   0)
                 (> (lower-test-function-binop-count functions "lib.tl::inc") 0)
                 (>= (lower-test-function-binop-count functions "main") 0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-package-owned-symbol-source) : String
@@ -47483,7 +47531,7 @@
         ""
         program
         (compiler-lower-package-owned-symbol-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -47497,7 +47545,7 @@
                     "main"
                     "app/src/main.tl::app-helper")
                   1))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-entry-main-source) : String
@@ -47512,7 +47560,7 @@
         "stdlib/arena.tl"
         program
         AstDeclPathList.Nil)
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -47523,7 +47571,7 @@
                     "main"
                     "arena.tl::stdlib.arena/helper")
                   1))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-qualified-source) : String
@@ -47540,7 +47588,7 @@
 
 (define (compiler-lower-module-qualified-ok?) : bool
   (match (lower-compiler-source (compiler-lower-module-qualified-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program globals functions _)
           (and
@@ -47549,7 +47597,7 @@
             (> (lower-test-functions-call-count functions "left/get") 0)
             (> (lower-test-functions-call-count functions "right/get") 0)
             (> (lower-test-function-binop-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-import-alias-source) : String
   "(module data)
@@ -47570,13 +47618,13 @@
 
 (define (compiler-lower-import-alias-ok?) : bool
   (match (lower-compiler-source (compiler-lower-import-alias-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-functions-call-count functions "data/get") 0)
             (= (lower-test-functions-call-count functions "d/get") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-dotted-import-default-alias-source) : String
   "(module pkg.data)
@@ -47588,13 +47636,13 @@
 (define (compiler-lower-dotted-import-default-alias-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-dotted-import-default-alias-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-functions-call-count functions "pkg.data/get") 0)
             (= (lower-test-functions-call-count functions "data/get") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
@@ -47612,35 +47660,36 @@
 (define (compiler-lower-dotted-import-string-call-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-dotted-import-string-call-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (> (lower-test-functions-call-count functions "pkg.string/eq") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String
   "(module data)
 (defstruct Candidate (number i64))
-(defenum CandList (CandNil) (CandCons Candidate (Box CandList)))
+(defenum CandList (Nil) (Cons Candidate (Box CandList)))
 (define (cand-nth [cands : CandList]) : Candidate
   (match cands
-    [(CandNil) (Candidate 0)]
-    [(CandCons head rest) head]))
+    [(CandList.Nil) (Candidate 0)]
+    [(CandList.Cons head rest) head]))
 (module main)
 (import data)
 (define (main) : i64
   (let [c : data.Candidate
-    (data.cand-nth (data.CandCons (data.Candidate 7) (box (data.CandNil))))]
+    (data.cand-nth
+      (data.Cons (data.Candidate 7) (box data.Nil)))]
     (struct-get c number)))")
 
 (define (compiler-lower-module-function-returning-struct-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-module-function-returning-struct-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (> (lower-test-functions-call-count functions "data/cand-nth") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-function-returning-enum-source) : String
   "(module data)
@@ -47656,11 +47705,11 @@
 (define (compiler-lower-module-function-returning-enum-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-module-function-returning-enum-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (> (lower-test-functions-call-count functions "main/get") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-imported-enum-aggregate-payload-source) : String
   "(module data)
@@ -47677,11 +47726,11 @@
 (define (compiler-lower-imported-enum-aggregate-payload-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-imported-enum-aggregate-payload-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (> (lower-test-function-copy-bytes-count functions "main/make") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-macro-codegen-source) : String
   "(defmacro (int-box) : Module
@@ -47699,7 +47748,7 @@
 
 (define (compiler-lower-module-macro-codegen-ok?) : bool
   (match (lower-compiler-source (compiler-lower-module-macro-codegen-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -47724,7 +47773,7 @@
                 "generated.intbox/bumped"
                 "generated.intbox/double")
               1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-macro-global-init-source) : String
   "(defmacro (global-module) : Module
@@ -47738,7 +47787,7 @@
 (define (compiler-lower-module-macro-global-init-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-module-macro-global-init-source))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program globals functions _)
           (and
@@ -47751,7 +47800,7 @@
             (lower-test-function-defined?
               functions
               "generated.global_init_user/read-answer"))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-macro-stdlib-vector-import-source) : String
   "(import stdlib.vector)
@@ -47780,8 +47829,8 @@
 (define (compiler-lower-module-macro-stdlib-vector-import-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-module-macro-stdlib-vector-import-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-function-decl-count-wrapped-ok?) : bool
   (let
@@ -47823,7 +47872,7 @@
         "app.tl"
         program
         (compiler-lower-module-specialize-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (>
@@ -47831,7 +47880,7 @@
                   functions
                   "__tl_specialized_alloc_type_i64_none")
                 0)])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-extern-link-metadata-source) : String
@@ -47872,7 +47921,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-unsupported-aggregate-source)
     (CompilerLowerWindowsScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -47884,13 +47933,13 @@
             ;; remains: the byref buffer the register pair is spilled into before
             ;; the call (down from two when construction also allocated).
             (>= (lower-test-function-call-count functions "main" "tl_alloc") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-nested-small-aggregate-source)
     (CompilerLowerWindowsScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (=
@@ -47899,13 +47948,13 @@
               "main"
               "outer-float-box-use")
             1)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-small-float-aggregate-source)
     (CompilerLowerWindowsScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -47920,7 +47969,7 @@
               1)
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (>= (lower-test-function-bitcast-count functions "main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
@@ -47951,7 +48000,7 @@
 
 (define (compiler-lower-extern-link-metadata-ok?) : bool
   (match (lower-compiler-source (compiler-lower-extern-link-metadata-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ _ externs)
           (match externs
@@ -47964,7 +48013,7 @@
                 (ast-extern-abi-c? abi)
                 (compiler-lower-extern-link-inputs-ok? link-inputs))]
             [_ false])])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
@@ -47979,7 +48028,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-extern-value-fnptr-source)
     (CompilerLowerLinuxScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -47987,7 +48036,7 @@
             (= (lower-test-function-call-count functions "main" "direct-fn") 1)
             (= (lower-test-function-indirect-call-count functions "main") 0)
             (= (lower-test-function-indirect-c-call-count functions "main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))
@@ -48014,7 +48063,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-linux-tag-only-enum-source)
     (CompilerLowerLinuxScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48023,12 +48072,12 @@
               2)
             (= (lower-test-function-indirect-c-call-count functions "main") 1)
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-payload-enum-source) : String
-  "(defenum SmallChoice (SmallNone) (SmallSome i64))
+  "(defenum SmallChoice (None) (Some i64))
 (defstruct SmallBox (choice SmallChoice))
-(defenum WideChoice (WideNone) (WideSome u64 u64))
+(defenum WideChoice (None) (Some u64 u64))
 (extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
 (extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (-> SmallChoice i64))
 (extern (box-score [arg : SmallBox]) : i64 (:symbol \"tl_cabi_box_score\"))
@@ -48036,20 +48085,20 @@
 (extern (wide-make [seed : u64]) : WideChoice (:symbol \"tl_cabi_wide_make\"))
 (define (wide-score [w : WideChoice]) : i64
   (match w
-    [WideNone 0]
-    [(WideSome lo hi) (+ (cast lo : i64) (cast hi : i64))]))
+    [WideChoice.None 0]
+    [(WideChoice.Some lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
     [copy : (-> SmallChoice i64) small-score-ptr]
     [boxed : SmallBox (box-make 5)]
     [made : WideChoice (wide-make (cast 10 : u64))]
-    (+ (small-score (SmallSome 11)) (+ (copy (SmallNone)) (+ (box-score boxed) (wide-score made))))))")
+    (+ (small-score (SmallChoice.Some 11)) (+ (copy SmallChoice.None) (+ (box-score boxed) (wide-score made))))))")
 
 (define (compiler-lower-c-abi-linux-payload-enum-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-payload-enum-source)
     (CompilerLowerLinuxScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48060,13 +48109,13 @@
             (= (lower-test-function-call-count functions "main" "box-make") 1)
             (= (lower-test-function-call-count functions "main" "wide-make") 1)
             (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-windows-enum-aggregate-source) : String
   "(defenum Status (Ready) (Done) (Failed))
-(defenum SmallChoice (SmallNone) (SmallSome i64))
-(defenum WideChoice (WideNone) (WideSome u64 f64))
-(defenum ReturnChoice (ReturnNone) (ReturnPair u64 u64))
+(defenum SmallChoice (None) (Some i64))
+(defenum WideChoice (None) (Some u64 f64))
+(defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
 (extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
   Status
@@ -48091,8 +48140,8 @@
   ReturnChoice))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
-    [ReturnNone 0]
-    [(ReturnPair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
+    [ReturnChoice.None 0]
+    [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
     [status-copy : (-> Status Status i64 Status) status-pick-ptr]
@@ -48101,10 +48150,10 @@
     [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
-    [small-direct : i64 (small-score (SmallSome 11) 5)]
-    [small-via-ptr : i64 (small-copy (SmallNone) 7)]
-    [wide-direct : i64 (wide-score (WideSome (cast 20 : u64) 2.5) (cast 3 : u64))]
-    [wide-via-ptr : i64 (wide-copy (WideNone) (cast 4 : u64))]
+    [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]
+    [small-via-ptr : i64 (small-copy SmallChoice.None 7)]
+    [wide-direct : i64 (wide-score (WideChoice.Some (cast 20 : u64) 2.5) (cast 3 : u64))]
+    [wide-via-ptr : i64 (wide-copy WideChoice.None (cast 4 : u64))]
     [made : ReturnChoice
       (return-choice-make (cast 3 : u32) (cast 4 : u32) (cast 10 : u64))]
     [made-via-ptr : ReturnChoice
@@ -48119,7 +48168,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-c-abi-windows-enum-aggregate-source)
     (CompilerLowerWindowsScalar))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48138,7 +48187,7 @@
               1)
             (= (lower-test-function-indirect-c-call-count functions "main") 4)
             (>= (lower-test-function-call-count functions "main" "tl_alloc") 3))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-global-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
@@ -48152,7 +48201,7 @@
 
 (define (compiler-lower-global-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-global-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program globals functions externs)
           (let
@@ -48181,7 +48230,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-numeric-source) : String
   "(define (bits [a : i32] [b : i32] [s : i32]) : i32
@@ -48197,7 +48246,7 @@
 
 (define (compiler-lower-numeric-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-numeric-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -48263,7 +48312,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-simple-source) : String
   "(define (loop [n : i64] [acc : i64]) : i64
@@ -48382,37 +48431,37 @@
 
 (define (compiler-lower-tail-simple-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-simple-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
             (= (lower-test-function-call-count functions "loop" "loop") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-context-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-context-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
             (= (lower-test-function-call-count functions "loop" "loop") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-operand-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-operand-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-tail-call-count functions "loop" "loop") 0)
             (> (lower-test-function-call-count functions "loop" "loop") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-direct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-direct-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48420,11 +48469,11 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               1)
             (= (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-direct-stack-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-direct-stack-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48432,11 +48481,11 @@
               (lower-test-function-tail-call-count functions "step5" "finish5")
               1)
             (= (lower-test-function-call-count functions "step5" "finish5") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-return-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-aggregate-return-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48446,11 +48495,11 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               1)
             (= (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-param-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-aggregate-param-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48460,11 +48509,11 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               1)
             (= (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-local-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-aggregate-local-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48472,12 +48521,12 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               0)
             (> (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-reassigned-param-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-tail-aggregate-reassigned-param-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48485,11 +48534,11 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               0)
             (> (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-indirect-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48497,12 +48546,12 @@
               (lower-test-function-indirect-tail-call-count functions "step")
               1)
             (= (lower-test-function-indirect-call-count functions "step") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-aggregate-param-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-tail-indirect-aggregate-param-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48510,12 +48559,12 @@
               (lower-test-function-indirect-tail-call-count functions "step")
               1)
             (= (lower-test-function-indirect-call-count functions "step") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-aggregate-return-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-tail-indirect-aggregate-return-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48523,11 +48572,11 @@
               (lower-test-function-indirect-tail-call-count functions "step")
               1)
             (= (lower-test-function-indirect-call-count functions "step") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-cleanup-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-cleanup-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48535,7 +48584,7 @@
               (lower-test-function-tail-call-count functions "step" "finish")
               0)
             (> (lower-test-function-call-count functions "step" "finish") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-call-shape-ok?) : bool
   (and
@@ -48846,20 +48895,20 @@
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-i64-mov-count functions "main" want) 0)
             (= (lower-test-function-binop-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-comptime-float-fold-ok?
   [src : String]
   [want : String]
   [ty : AstType]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48870,7 +48919,7 @@
                 (lower-float-literal-bits want ty))
               0)
             (= (lower-test-function-binop-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
   (compiler-lower-comptime-float-fold-ok? src want (AstType.F64)))
@@ -48882,7 +48931,7 @@
 ;; a merge phi; the unit-typed match (`announce`) emits no value phi.
 (define (compiler-lower-match-phi-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48890,11 +48939,11 @@
             (> (lower-test-function-phi-count functions "flag-score") 0)
             (> (lower-test-function-phi-count functions "sign") 0)
             (= (lower-test-function-phi-count functions "announce") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-enum-match-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48904,12 +48953,12 @@
             (= (lower-test-function-phi-count functions "touch") 0)
             (> (lower-test-function-load-count functions "score") 1)
             (> (lower-test-function-load-count functions "or-zero") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-enum-string-literal-payload-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48917,11 +48966,11 @@
             (= (lower-test-functions-call-count functions "string-eq") 0)
             (> (lower-test-function-branch-count functions "classify") 2)
             (> (lower-test-function-load-count functions "classify") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-borrowed-enum-match-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-borrowed-enum-match-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48929,11 +48978,11 @@
             (> (lower-test-function-call-count functions "score" "take") 0)
             (> (lower-test-function-gep-offset-count functions "score" 8) 0)
             (> (lower-test-function-branch-count functions "slot-score") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-result-try-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48941,49 +48990,49 @@
             (> (lower-test-function-return-count functions ".::sum") 2)
             (> (lower-test-function-return-count functions ".::chain") 1)
             (> (lower-test-function-load-count functions ".::sum") 3))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-option-try-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-branch-count functions ".::main") 1)
             (> (lower-test-function-return-count functions ".::main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-return-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-return-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (> (lower-test-function-return-count functions "main") 1)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-return-with-arena-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-return-with-arena-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-return-count functions "main") 1)
             (> (lower-test-functions-call-count functions "tl_region_reset") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-sret-rvo-early-return-fallback-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-sret-rvo-early-return-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-call-count functions "main" "make-big") 0)
             (> (lower-test-function-copy-bytes-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-resource-with-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-resource-with-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -48991,21 +49040,21 @@
             (= (lower-test-functions-call-count functions ".::close-b") 2)
             (> (lower-test-function-return-count functions ".::main") 2)
             (> (lower-test-function-branch-count functions ".::main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-resource-with-nested-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-functions-call-count functions ".::close-a") 1)
             (= (lower-test-functions-call-count functions ".::close-b") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-cleanup-struct-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49022,11 +49071,11 @@
                 ".::cleanup-file-handle")
               1)
             (> (lower-test-function-return-count functions ".::main") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-cleanup-struct-nested-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49053,22 +49102,22 @@
               "cleanup-buffered-file"
               "close-buffer"
               "cleanup-file-handle"))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-bounds-count functions "get") 0)
             (> (lower-test-function-bounds-count functions "put") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-field-access-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-mut-ref-array-field-access-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49076,11 +49125,11 @@
             (> (lower-test-function-load-count functions "len") 0)
             (> (lower-test-function-bounds-count functions "get") 0)
             (> (lower-test-function-bounds-count functions "put") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49105,34 +49154,34 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fixed-array-literal-stack-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-array-literal-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (>= (lower-test-function-alloc-count functions "main") 3)
             (= (lower-test-function-addr-of-count functions "main") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fixed-array-aggregate-layout-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-fixed-array-aggregate-literal-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (> (lower-test-function-gep-offset-count functions "main" 16) 0)
             (= (lower-test-function-copy-bytes-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49140,11 +49189,11 @@
             (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
             (> (lower-test-function-binop-count functions "grow") 0)
             (> (lower-test-function-store-ptr-count functions "grow") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49153,11 +49202,11 @@
             (=
               (lower-test-function-call-count functions "main" "tl_array_zero")
               1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49166,7 +49215,7 @@
               1)
             (>= (lower-test-function-store-ptr-count functions "main") 2)
             (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-function-counts-match?
   [private-funcs : CompilerIrFunctionList]
@@ -49234,9 +49283,9 @@
   [private-name : String]
   [qualified-name : String]) : bool
   (match (lower-compiler-source private-src)
-    [(OkCompilerLower private-program _)
+    [(ResultCompilerLower.Ok private-program _)
       (match (lower-compiler-source qualified-src)
-        [(OkCompilerLower qualified-program _)
+        [(ResultCompilerLower.Ok qualified-program _)
           (match private-program
             [(CompilerIrProgram.Program _ private-funcs _)
               (match qualified-program
@@ -49246,8 +49295,8 @@
                     qualified-funcs
                     private-name
                     qualified-name)])])]
-        [(ErrCompilerLower _) false])]
-    [(ErrCompilerLower _) false]))
+        [(ResultCompilerLower.Err _) false])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-qualified-array-parity-ok?) : bool
   (and
@@ -49316,17 +49365,17 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-make-array-register-resident-fill8-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (=
             (lower-test-function-call-count functions "main" "tl_array_fill8")
             1)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49395,11 +49444,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-concat-fusion-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-string-concat-fusion-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49433,11 +49482,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-print-string-stdlib-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-print-string-stdlib-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49450,11 +49499,11 @@
             (=
               (lower-test-functions-direct-call-count functions "io.print-str")
               1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-borrowed-str-param-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49482,7 +49531,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-stdlib-hash-string-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdlib-hash-string-source))
@@ -49491,7 +49540,7 @@
         "app.tl"
         program
         (compiler-lower-stdlib-hash-string-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (let
@@ -49518,12 +49567,12 @@
                     unit
                     (set! ok false))
                   ok))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-reference-values-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-reference-return-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49554,11 +49603,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-reference-place-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-reference-place-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49586,12 +49635,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-reference-inline-struct-field-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-reference-inline-struct-field-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49602,7 +49651,7 @@
                 "take-inner")
               1)
             (= (lower-test-function-load-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-reference-nominal-aggregate-ok?) : bool
   (and
@@ -49612,7 +49661,7 @@
 
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49626,11 +49675,11 @@
             (> (lower-test-functions-call-count functions "string.char-at") 0)
             (= (lower-test-functions-call-count functions "tl_string_concat") 0)
             (= (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-function-value-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-function-value-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49673,12 +49722,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-function-value-contextual-init-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-function-value-contextual-init-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49686,12 +49735,12 @@
               (lower-test-function-indirect-tail-call-count functions "main")
               1)
             (= (lower-test-function-indirect-call-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-noncapturing-lambda-value-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49705,11 +49754,11 @@
                   lambda-name)
                 1)
               (> (lower-test-function-binop-count functions lambda-name) 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-immediate-lambda-call-ok?) : bool
   (match (lower-compiler-source (compiler-lower-immediate-lambda-call-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49728,11 +49777,11 @@
               (=
                 (lower-test-function-call-count functions "main" lambda-name)
                 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unit-lambda-call-ok?) : bool
   (match (lower-compiler-source (compiler-lower-unit-lambda-call-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49746,7 +49795,7 @@
                   "main"
                   lambda-name)
                 1)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-noncapturing-lambda-tests-ok?) : bool
   (and
@@ -49756,7 +49805,7 @@
 
 (define (compiler-lower-capturing-lambda-scalar-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-capturing-lambda-scalar-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49781,12 +49830,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-function-value-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-capturing-lambda-function-value-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49814,12 +49863,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-fat-handle-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-capturing-lambda-fat-handle-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49841,12 +49890,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-aggregate-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-capturing-lambda-aggregate-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49871,11 +49920,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-capturing-lambda-shadow-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -49883,12 +49932,12 @@
             (=
               (lower-test-function-indirect-tail-call-count functions "main")
               1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-reference-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-capturing-lambda-reference-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49907,12 +49956,12 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-reference-immediate-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-capturing-lambda-reference-immediate-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -49931,7 +49980,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-tests-ok?) : bool
   (and
@@ -49945,7 +49994,7 @@
 
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -50069,11 +50118,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fs-status-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-fs-status-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -50212,7 +50261,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-region-source) : String
   "(define (string.int->string [value : i64]) : String
@@ -50225,13 +50274,13 @@
 
 (define (compiler-lower-region-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-region-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-functions-call-count functions "tl_region_mark") 0)
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-arena-source [src : String]) : String
   (string.append
@@ -50295,8 +50344,8 @@
   (items (Array String))
   (cell (Box String)))
 (defenum EscapeResult
-  (EscapeOk EscapePayload)
-  (EscapeNone))
+  (Ok EscapePayload)
+  (None))
 (define (main) : EscapeResult
   (let
     [scratch : Arena (arena-make)]
@@ -50306,7 +50355,7 @@
         (begin
           (array-set! items 0 (string.int->string 1))
           (array-set! items 1 (string.int->string 2))
-          (EscapeOk
+          (EscapeResult.Ok
             (EscapePayload
               (string.int->string 3)
               items
@@ -50314,7 +50363,7 @@
 
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -50324,11 +50373,11 @@
             (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
             (> (lower-test-functions-call-count functions "tl_region_mark") 0)
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-array-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-with-escape-array-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -50336,11 +50385,11 @@
               (compiler-lower-with-escape-array-source))
             (> (lower-test-functions-call-count functions "tl_alloc") 1)
             (> (lower-test-functions-branch-count functions) 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-box-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-with-escape-box-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -50348,7 +50397,7 @@
               (compiler-lower-with-escape-box-source))
             (> (lower-test-functions-call-count functions "tl_alloc") 0)
             (> (lower-test-functions-call-count functions "tl_substring") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-with-escape-owning-source))
@@ -50357,14 +50406,14 @@
         "<source>"
         ast
         AstDeclPathList.Nil)
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
                 (compiler-lower-with-escape-arena-shape-ok?
                   (compiler-lower-with-escape-owning-source))
                 (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
@@ -50377,14 +50426,14 @@
         (set! ok false))
       (if (match (lower-compiler-source
         (compiler-lower-with-escape-string-source))
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
                 (compiler-lower-with-escape-arena-shape-ok?
                   (compiler-lower-with-escape-string-source))
                 (> (lower-test-functions-call-count functions "tl_substring") 0))])]
-        [(ErrCompilerLower _) false])
+        [(ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
       (if (compiler-lower-with-escape-array-shape-ok?)
@@ -50447,16 +50496,16 @@
   (items (Array String))
   (cell (Box String)))
 (defenum ScratchResult
-  (ScratchOk ScratchPayload)
-  (ScratchNone))
+  (Ok ScratchPayload)
+  (None))
 (define (main) : ScratchResult
   (with-scratch
     (let
       [items : (Array String) (make-array String 2)]
-      (begin
-        (array-set! items 0 (string.int->string 1))
-        (array-set! items 1 (string.int->string 2))
-        (ScratchOk
+        (begin
+          (array-set! items 0 (string.int->string 1))
+          (array-set! items 1 (string.int->string 2))
+        (ScratchResult.Ok
           (ScratchPayload
             (string.int->string 3)
             items
@@ -50464,7 +50513,7 @@
 
 (define (compiler-lower-with-scratch-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -50478,7 +50527,7 @@
               1)
             (= (lower-test-functions-call-count functions "tl_region_mark") 0)
             (= (lower-test-functions-call-count functions "tl_region_reset") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-with-scratch-owning-source))
@@ -50487,14 +50536,14 @@
         "<source>"
         ast
         AstDeclPathList.Nil)
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
                 (compiler-lower-with-scratch-arena-shape-ok?
                   (compiler-lower-with-scratch-owning-source))
                 (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-with-scratch-shape-ok?) : bool
@@ -50507,14 +50556,14 @@
         (set! ok false))
       (if (match (lower-compiler-source
         (compiler-lower-with-scratch-string-source))
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
                 (compiler-lower-with-scratch-arena-shape-ok?
                   (compiler-lower-with-scratch-string-source))
                 (> (lower-test-functions-call-count functions "tl_substring") 0))])]
-        [(ErrCompilerLower _) false])
+        [(ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
       (if (compiler-lower-with-scratch-owning-shape-ok?)
@@ -50529,7 +50578,7 @@
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -50542,7 +50591,7 @@
                     "main"
                     "tl_substring")
                   0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
@@ -50552,7 +50601,7 @@
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -50565,7 +50614,7 @@
                     "main"
                     "tl_substring")
                   0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?) : bool
@@ -50576,7 +50625,7 @@
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -50589,7 +50638,7 @@
                     "main"
                     "tl_substring")
                   0))])]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-in-arena-source) : String
@@ -50620,7 +50669,7 @@
 
 (define (compiler-lower-tls-current-arena-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tls-current-arena-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -50636,14 +50685,14 @@
                 "main"
                 "tl_tls_current_arena_store")
               1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-in-arena-shape-ok?) : bool
   (let
     [ok : bool true]
     (begin
       (if (match (lower-compiler-source (compiler-lower-in-arena-source))
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -50653,11 +50702,11 @@
                 (>=
                   (lower-test-functions-call-count functions "tl_arena_set")
                   2))])]
-        [(ErrCompilerLower _) false])
+        [(ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
       (if (match (lower-compiler-source (compiler-lower-in-arena-return-source))
-        [(OkCompilerLower program _)
+        [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
               (and
@@ -50668,34 +50717,34 @@
                   (lower-test-functions-call-count functions "tl_arena_set")
                   3)
                 (> (lower-test-functions-return-count functions) 1))])]
-        [(ErrCompilerLower _) false])
+        [(ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
       ok)))
 
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (> (lower-test-function-gep-offset-count functions "main" 4) 0)
             (> (lower-test-function-gep-offset-count functions "main" 12) 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 ;; `foreach` scalar lowering (#1012): a foreach `main` lowers to a loop, so its
 ;; body holds at least the guard branch (`i < end`) and two binops (the `<`
 ;; guard and the `+ 1` increment).
 (define (compiler-lower-foreach-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-branch-count functions "main") 0)
             (> (lower-test-function-binop-count functions "main") 1))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-foreach-map-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -50864,7 +50913,7 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -50888,7 +50937,7 @@
               (= store-count 1)
               (= shape-count 4)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-foreach-map-shape-ok?) : bool
   (and
@@ -50945,7 +50994,7 @@
   [want-binops : i64]
   [want-shapes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -50969,7 +51018,7 @@
               (= store-count 1)
               (= shape-count want-shapes)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-foreach-uniform-shape-ok?) : bool
   (and
@@ -51056,7 +51105,7 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -51070,7 +51119,7 @@
                 elem-ty)
               2)
             (> (lower-test-function-bounds-count functions "fill") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-broadcast-avx2-shape-ok?) : bool
   (and
@@ -51103,7 +51152,7 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51136,7 +51185,7 @@
               (= tail-mask-count 1)
               (= shape-count 8)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-foreach-map-shape-ok?) : bool
   (and
@@ -51194,7 +51243,7 @@
   [want-binops : i64]
   [want-shapes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51227,7 +51276,7 @@
               (= tail-mask-count 1)
               (= shape-count want-shapes)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-foreach-uniform-shape-ok?) : bool
   (and
@@ -51325,7 +51374,7 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -51341,7 +51390,7 @@
                 elem-ty)
               4)
             (> (lower-test-function-bounds-count functions "fill") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-broadcast-avx512-shape-ok?) : bool
   (and
@@ -51415,7 +51464,7 @@
 
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51442,7 +51491,7 @@
               (= tail-mask-count 2)
               (> tail-store-count 0)
               true))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-shape-ok?) : bool
   (compiler-lower-avx512-masked-if-source-shape-ok?
@@ -51456,7 +51505,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-index-value-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51489,13 +51538,13 @@
               (= tail-mask-count 2)
               (>= shape-count 6)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-index-mod-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-index-mod-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51528,13 +51577,13 @@
               (= tail-mask-count 2)
               (>= shape-count 10)
               (> tail-store-count 0)))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-value-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-value-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51569,13 +51618,13 @@
               (= select-count 2)
               (= tail-mask-count 2)
               (and (>= shape-count 8) (> tail-store-count 0))))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-avx512-masked-if-nested-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -51606,7 +51655,7 @@
               (> shape-count 0)
               (> tail-store-count 0)
               true))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
   (and
@@ -51637,11 +51686,11 @@
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (= (lower-test-function-vector-load-count functions "fill") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-simd-foreach-fallback-diagnostic-ok?) : bool
   (and
@@ -51701,7 +51750,7 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -51715,22 +51764,22 @@
                 elem-ty)
               2)
             (> (lower-test-function-bounds-count functions "f") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-spmd-reduce-stays-scalar-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (= (lower-test-function-vector-reduce-count functions "f") 0)])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-spmd-reduce-shape-ok?
   [src : String]
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -51744,7 +51793,7 @@
                 elem-ty)
               2)
             (> (lower-test-function-bounds-count functions "f") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-lane-identity-source) : String
   "(define (f [n : i64]) : i64
@@ -51756,7 +51805,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-lower-spmd-reduce-lane-identity-source)
     mode)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -51771,7 +51820,7 @@
                 (AstType.I64))
               3)
             (= (lower-test-function-bounds-count functions "f") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
   (and
@@ -51959,13 +52008,13 @@
 
 (define (compiler-lower-short-circuit-branch? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (> (lower-test-function-branch-count functions "f") 0)
             (= (lower-test-function-binop-count functions "f") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-and-or-short-circuit-shape-ok?) : bool
   (and
@@ -51982,18 +52031,18 @@
 
 (define (compiler-lower-raw-pointer-addr-of-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-raw-pointer-ops-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (= (lower-test-function-addr-of-count functions "main") 1)
             (>= (lower-test-function-store-ptr-count functions "main") 2))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-raw-pointer-call-value-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
@@ -52001,35 +52050,35 @@
             (= (lower-test-functions-call-count functions "raw-value") 1)
             (= (lower-test-function-store-ptr-count functions "main") 1)
             (> (lower-test-function-u64-mov-count functions "main") 0))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-length-source))
     [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
-        [(OkCompilerLower _ _) true]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Ok _ _) true]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-runtime-source))
     [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
-        [(OkCompilerLower _ _) true]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Ok _ _) true]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-stdio-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdio-source))
     [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
-        [(OkCompilerLower _ _) true]
-        [(ErrCompilerLower _) false])]
+        [(ResultCompilerLower.Ok _ _) true]
+        [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-stdio-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-stdio-builtin-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -52080,11 +52129,11 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-env-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-env-builtin-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -52118,7 +52167,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-stdlib-helper-defaults-disabled-ok?) : bool
   (let
@@ -52167,7 +52216,7 @@
 
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-cpu-builtin-source))
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (let
@@ -52192,7 +52241,7 @@
                 unit
                 (set! ok false))
               ok))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-runtime-helper-tests-ok?) : bool
   (let
@@ -52815,14 +52864,14 @@
   (match (lower-compiler-source
     "(import stdlib.comptime)
 (define (main) : i64 0)")
-    [(OkCompilerLower program _)
+    [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program globals _ _)
           (not
             (lower-test-global-list-has-name?
               globals
               "__enum_obj_stdlib.comptime/Pattern_PatternWildcard"))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
@@ -53308,14 +53357,14 @@
     "entry.tl"
     (compiler-lower-stdlib-comptime-runtime-dce-program)
     AstDeclPathList.Nil)
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions externs)
           (and
             (= (compiler-ir-function-list-count functions) 1)
             (= (compiler-ir-extern-list-count externs) 0)
             (lower-test-function-defined? functions "main"))])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
   (and

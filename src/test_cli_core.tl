@@ -2881,11 +2881,11 @@
     (CompilerLowerScalar)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
           (tltest-function-base-defined? functions "clone$Pair")])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (tltest-nested-module-macro-vector-loaded-ok?
   [source : String]
@@ -3029,8 +3029,8 @@
                 (CompilerLowerScalar)
                 roots
                 (tltest-typecheck-cache-scope roots target))
-                [(OkCompilerLower _ _) true]
-                [(ErrCompilerLower diag)
+                [(ResultCompilerLower.Ok _ _) true]
+                [(ResultCompilerLower.Err diag)
                   (begin
                     (io.print-error
                       (compiler-diagnostic-render
@@ -3226,7 +3226,7 @@
       (CompilerLowerScalar)
       roots
       (tltest-typecheck-cache-scope roots target))
-      [(OkCompilerLower ir spans)
+      [(ResultCompilerLower.Ok ir spans)
         (match (source-tool-lowered-object-or-assembly-and-link
           source
           ir
@@ -3277,7 +3277,7 @@
                         temp-dir
                         error))
                     1)]))])]
-      [(ErrCompilerLower diag)
+      [(ResultCompilerLower.Err diag)
         (begin
           (io.print-error
             (compiler-diagnostic-render

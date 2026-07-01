@@ -1409,7 +1409,7 @@
           virtual-path
           (ast-program decls)
           paths)
-          [(OkCompilerLower program spans)
+          [(ResultCompilerLower.Ok program spans)
             (match (compiler-driver-emit-lowered-with-level
               virtual-path
               program
@@ -1423,7 +1423,7 @@
               [(ResultCompilerDriver.Err diag)
                 (ResultSourceToolString.Err
                   (compiler-diagnostic-render (box-get diag)))])]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLower.Err diag)
             (ResultSourceToolString.Err
               (compiler-diagnostic-render (box-get diag)))])]
       [(ResultCompilerLoadWithPaths.Err diag)

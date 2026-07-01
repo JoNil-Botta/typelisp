@@ -29,8 +29,8 @@
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-smoke-imported-local-vector-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
@@ -44,17 +44,17 @@
       (io.write-file
         dep
         "(module stdlib.maybe_string)
-(defenum MaybeString (NoString) (SomeString String))
+(defenum MaybeString (No) (Some String))
 (define (maybe-string-single [value : String]) : MaybeString
-  (SomeString value))")
+  (MaybeString.Some value))")
       (io.write-file
         entry
         "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
     (match (maybe_string.maybe-string-single \"a\")
-      [(maybe_string.NoString) \"\"]
-      [(maybe_string.SomeString head) head])))")
+      [(maybe_string.MaybeString.No) \"\"]
+      [(maybe_string.MaybeString.Some head) head])))")
       (match (compiler-load-file-with-paths-and-roots
         entry
         (sym_i64_env.sym-i64-empty)
@@ -64,8 +64,8 @@
             entry
             (ast-program decls)
             paths)
-            [(OkCompilerLower _ _) true]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Ok _ _) true]
+            [(ResultCompilerLower.Err diag)
               (panic (compiler-diagnostic-message (box-get diag)))])]
         [(ResultCompilerLoadWithPaths.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
@@ -110,8 +110,8 @@
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
@@ -188,7 +188,7 @@
         "stdlib/arena.tl"
         program
         AstDeclPathList.Nil)
-        [(OkCompilerLower lowered _)
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
               (begin
@@ -223,7 +223,7 @@
                       (if (= bare-count 1)
                         (panic "lower: module entry main uses bare helper")
                         (panic "lower: module entry main helper call missing"))))))])]
-        [(ErrCompilerLower diag)
+        [(ResultCompilerLower.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))])]
     [(ResultAstProgram.Err _) (panic "lower: module entry main parse failed")]))
 

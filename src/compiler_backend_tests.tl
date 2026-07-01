@@ -613,9 +613,9 @@
     "stdlib/runtime.tl"
     (compiler-backend-runtime-atomic-wrapper-source)
     (compiler-backend-lower-mode-for-target target (CompilerBackendMode.Scalar)))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-with-spans-for-target program spans target)]
-    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackend.Err diag)]))
 
 (define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
@@ -721,13 +721,13 @@
     "stdlib/runtime.tl"
     (compiler-backend-runtime-tls-wrapper-source)
     (compiler-backend-lower-mode-for-target target (CompilerBackendMode.Scalar)))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-with-spans-for-target-and-entry
         program
         spans
         target
         false)]
-    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackend.Err diag)]))
 
 (define (compiler-backend-runtime-tls-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
@@ -1643,7 +1643,7 @@
 
 (define (compiler-backend-implicit-main-ok?) : bool
   (match (lower-compiler-source (compiler-backend-implicit-main-source))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-with-spans-for-target-and-entry
         program
         spans
@@ -1672,7 +1672,7 @@
                 [(ResultCompilerBackend.Err _) false])]
             [(ResultCompilerBackend.Err _) false])]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-string-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-string-source))
@@ -2182,9 +2182,9 @@
 
 (define (compiler-backend-c-abi-win64-enum-aggregate-source) : String
   "(defenum Status (Ready) (Done) (Failed))
-(defenum SmallChoice (SmallNone) (SmallSome i64))
-(defenum WideChoice (WideNone) (WideSome u64 f64))
-(defenum ReturnChoice (ReturnNone) (ReturnPair u64 u64))
+(defenum SmallChoice (None) (Some i64))
+(defenum WideChoice (None) (Some u64 f64))
+(defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
 (extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
   Status
@@ -2209,8 +2209,8 @@
   ReturnChoice))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
-    [ReturnNone 0]
-    [(ReturnPair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
+    [ReturnChoice.None 0]
+    [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
     [status-copy : (-> Status Status i64 Status) status-pick-ptr]
@@ -2219,10 +2219,10 @@
     [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
-    [small-direct : i64 (small-score (SmallSome 11) 5)]
-    [small-via-ptr : i64 (small-copy (SmallNone) 7)]
-    [wide-direct : i64 (wide-score (WideSome (cast 20 : u64) 2.5) (cast 3 : u64))]
-    [wide-via-ptr : i64 (wide-copy (WideNone) (cast 4 : u64))]
+    [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]
+    [small-via-ptr : i64 (small-copy SmallChoice.None 7)]
+    [wide-direct : i64 (wide-score (WideChoice.Some (cast 20 : u64) 2.5) (cast 3 : u64))]
+    [wide-via-ptr : i64 (wide-copy WideChoice.None (cast 4 : u64))]
     [made : ReturnChoice
       (return-choice-make (cast 3 : u32) (cast 4 : u32) (cast 10 : u64))]
     [made-via-ptr : ReturnChoice
@@ -5405,7 +5405,7 @@
 
 (define (compiler-backend-target-linux-no-entry-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-with-spans-for-target-and-entry
         program
         spans
@@ -5418,7 +5418,7 @@
             (not (compiler-backend-string-contains? asm ".globl _tl_start\n"))
             (not (compiler-backend-string-contains? asm "_tl_start:\n")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-target-linux-crt-entry-source) : String
   "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
@@ -5431,7 +5431,7 @@
 (define (compiler-backend-target-linux-crt-entry-ok?) : bool
   (match (lower-compiler-source
     (compiler-backend-target-linux-crt-entry-source))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode-and-crt
         program
         (CompilerBackendTarget.Linux)
@@ -5457,7 +5457,7 @@
             (not (compiler-backend-string-contains? asm ".globl _tl_start\n"))
             (not (compiler-backend-string-contains? asm "_tl_start:\n")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-target-windows-stack-probe-ok?) : bool
   (let
@@ -6206,7 +6206,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-lane-id-rodata-source)
     lower-mode)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6238,7 +6238,7 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-lane-id-rodata-ok?) : bool
   (and
@@ -6262,7 +6262,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
     (CompilerLowerAvx2))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6281,7 +6281,7 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx2-vector-map-ok?) : bool
   (and
@@ -6302,7 +6302,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
     (CompilerLowerAvx2))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6325,13 +6325,13 @@
               true)
             true)]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx2-uniform-zip-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
     (CompilerLowerAvx2))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6356,7 +6356,7 @@
               true)
             true)]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx2-uniform-vector-map-ok?) : bool
   (and
@@ -6784,7 +6784,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6807,11 +6807,11 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-source-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6834,13 +6834,13 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-index-value-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-value-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6868,13 +6868,13 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-index-mod-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-mod-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6902,13 +6902,13 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-value-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-value-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -6931,7 +6931,7 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-ok?) : bool
   (and
@@ -7005,7 +7005,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -7028,13 +7028,13 @@
                   "vector/mask IR emission is not implemented")))
             true)]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-uniform-zip-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
     (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -7059,7 +7059,7 @@
               true)
             true)]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-uniform-vector-map-ok?) : bool
   (and
@@ -7112,7 +7112,7 @@
   [horizontal : String]
   [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -7135,7 +7135,7 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and
@@ -7177,7 +7177,7 @@
   [horizontal : String]
   [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
         (CompilerBackendTarget.Linux)
@@ -7200,7 +7200,7 @@
                 asm
                 "vector/mask IR emission is not implemented")))]
         [(ResultCompilerBackend.Err _) false])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-avx512-vector-reduce-i64-minmax-ok?) : bool
   (and
@@ -7930,7 +7930,7 @@
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-data-pointer-cse-source)
     (CompilerLowerAvx2))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (match (optimize-program-with-spans program spans)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (match (compiler-backend-emit-program-target-with-mode
@@ -7961,7 +7961,7 @@
                       loop
                       "vector/mask IR emission is not implemented"))))]
             [(ResultCompilerBackend.Err _) false])])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-simd-vector-ok?) : bool
   (and

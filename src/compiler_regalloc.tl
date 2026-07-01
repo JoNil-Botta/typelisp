@@ -3241,43 +3241,20 @@
         set)]))
 
 ;; --- Register-eligible direct-call args (option b) -------------------------
-;; A direct IrInstrCall is "simple" for register-eligible args when it has at
-;; most 4 integer-class scalar args. 4 is the Win64 GP arg-register count (the
-;; safe minimum across both ABIs), so every arg of a simple call is GP-register
-;; passed on BOTH SysV (%rdi..%rcx) and Win64 (%rcx..%r9); none land on the
-;; stack and there are no float/group/aggregate args (which shift positions or
-;; need two-register marshalling). Only such calls' arg vars are left eligible;
-;; the backend resolves any register source/dest conflict among them with a
-;; sound parallel move (compiler-backend-emit-arg-move-list). Every other call
-;; shape keeps its arg vars ineligible (memory-sourced), so the backend's naive
+;; A direct IrInstrCall keeps its arg vars register-eligible when every arg is
+;; passed in a single GP arg register (compiler-reg-call-gp-parallel?): no
+;; float/group/aggregate args (which shift positions or need two-register
+;; marshalling) and at most the per-ABI GP arg-register count, so none land on
+;; the stack. Scalars and 8-byte handles are one register class here; the
+;; backend resolves any register source/dest conflict among them with a sound
+;; parallel move (compiler-backend-emit-arg-move-list). Every other call shape
+;; keeps its arg vars ineligible (memory-sourced), so the backend's naive
 ;; ascending marshalling stays correct for them. The SIMD path keeps the old
 ;; block-everything behavior via compiler-reg-call-arg-vars-blocks (unchanged).
-(define (compiler-reg-call-arg-int-class?
-  [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]) : bool
-  (match value
-    [(IrValueVar id)
-      (match (compiler-reg-var-type-lookup types id)
-        [(CompilerRegSomeType ty) (compiler-reg-integer-param-type? ty)]
-        [(CompilerRegNoType) false])]
-    [(IrValueF64 _) false]
-    [(IrValueUnit) false]
-    [_ true]))
-
-(define (compiler-reg-call-args-array-int-class?
-  [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
-  [index : i64]
-  [count : i64]) : bool
-  (if (>= index count)
-    true
-    (and
-      (compiler-reg-call-arg-int-class? (array.array-ref values index) types)
-      (compiler-reg-call-args-array-int-class? values types (+ index 1) count))))
 
 ;; Per-ABI GP integer arg-register count: SysV has 6 (%rdi/%rsi/%rdx/%rcx/%r8/%r9),
 ;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Direct-call args within this arity (and all
-;; integer-class) are register-passed and left eligible; the backend parallel
+;; GP-class) are register-passed and left eligible; the backend parallel
 ;; move resolves any source/dest conflict (and uses the matching target-aware
 ;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled). Mirrored in the
 ;; backend at compiler-backend-call-args-gp-parallel? -- keep the two in sync.
@@ -3286,34 +3263,12 @@
     [(CompilerRegAbiLinux) 6]
     [(CompilerRegAbiWindows) 4]))
 
-(define (compiler-reg-call-simple?
-  [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
-  [limit : i64]) : bool
-  (match args
-    [(IrCallArgsNil) true]
-    [(IrCallArgsOne v) (compiler-reg-call-arg-int-class? v types)]
-    [(IrCallArgsTwo a b)
-      (and
-        (compiler-reg-call-arg-int-class? a types)
-        (compiler-reg-call-arg-int-class? b types))]
-    [(IrCallArgsArray values)
-      (if (> (array.array-length values) limit)
-        false
-        (compiler-reg-call-args-array-int-class?
-          values
-          types
-          0
-          (array.array-length values)))]))
-
 ;; A call arg is passed in a SINGLE general-purpose arg register on both ABIs iff it
 ;; is neither a float nor a register-group value. Handle values (string/box/array/
 ;; enum/single-word-struct pointers) count as GP, exactly like a raw pointer -- the
 ;; backend marshals them with one movq. This is the regalloc mirror of the backend's
 ;; compiler-backend-types-all-gp-int? (the parallel-move precondition); keep the two
-;; in sync. Unlike compiler-reg-call-arg-int-class? (which excludes handles, reusing
-;; the param-pin rule) this admits handle args so a mixed scalar+handle call is still
-;; recognized as a clean GP-register call.
+;; in sync.
 (define (compiler-reg-call-arg-gp-class?
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]) : bool
@@ -3342,9 +3297,10 @@
 
 ;; A call whose args are ALL single-GP-register passed (and within the per-ABI
 ;; arg-register arity) is marshalled by the backend with the sound parallel move
-;; (compiler-backend-emit-arg-move-list), exactly like a fully-scalar "simple" call.
-;; Its scalar arg vars may therefore stay register-homed even when some args are
-;; handles. Mirrors compiler-backend-call-args-gp-parallel? (count<=limit, all GP).
+;; (compiler-backend-emit-arg-move-list) whenever a register source/dest conflict
+;; exists, so ALL its arg vars -- scalars and 8-byte handles alike, they are the
+;; same GP register class -- may stay register-homed.
+;; Mirrors compiler-backend-call-args-gp-parallel? (count<=limit, all GP).
 (define (compiler-reg-call-gp-parallel?
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
@@ -3365,56 +3321,6 @@
           0
           (array.array-length values)))]))
 
-;; Collect the arg vars of a call that are NOT scalar-int-class -- i.e. the handle
-;; (aggregate) args. In a gp-parallel call these stay memory-sourced (ineligible)
-;; while the scalar arg vars are left eligible; the backend marshals a memory-sourced
-;; handle arg with a plain load inside the parallel move, so its handling is unchanged.
-(define (compiler-reg-call-non-int-class-arg-into
-  [set : CompilerLiveI64Set]
-  [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
-  (if (compiler-reg-call-arg-int-class? value types)
-    set
-    (compiler-live-value-vars-into set value)))
-
-(define (compiler-reg-call-non-int-class-args-array
-  [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
-  [index : i64]
-  [count : i64]
-  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index count)
-    set
-    (compiler-reg-call-non-int-class-args-array
-      values
-      types
-      (+ index 1)
-      count
-      (compiler-reg-call-non-int-class-arg-into
-        set
-        (array.array-ref values index)
-        types))))
-
-(define (compiler-reg-call-non-int-class-arg-vars
-  [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
-  (match args
-    [(IrCallArgsNil) (compiler-live-set-empty)]
-    [(IrCallArgsOne v)
-      (compiler-reg-call-non-int-class-arg-into (compiler-live-set-empty) v types)]
-    [(IrCallArgsTwo a b)
-      (compiler-reg-call-non-int-class-arg-into
-        (compiler-reg-call-non-int-class-arg-into (compiler-live-set-empty) a types)
-        b
-        types)]
-    [(IrCallArgsArray values)
-      (compiler-reg-call-non-int-class-args-array
-        values
-        types
-        0
-        (array.array-length values)
-        (compiler-live-set-empty))]))
-
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
@@ -3432,24 +3338,21 @@
             out
             (match (array.array-ref slots index)
               [(IrInstrCall _ _ args _)
-                (if (compiler-reg-call-simple? args types limit)
+                ;; GP-parallel call (every arg passed in ONE GP arg register,
+                ;; within the per-ABI arity): scalars and 8-byte handles are the
+                ;; same register class to the backend, whose marshalling resolves
+                ;; every register source/dest conflict with the sound parallel
+                ;; move (compiler-backend-emit-call-args), so ALL arg vars --
+                ;; handle args included -- may stay register-homed. Zero-arg
+                ;; calls have no arg vars to disqualify. Float / register-group /
+                ;; over-arity calls are marshalled by the naive ascending path,
+                ;; which is correct only when every arg var is memory-sourced,
+                ;; so keep those calls' arg vars ineligible.
+                (if (compiler-reg-call-gp-parallel? args types limit)
                   out
-                  (if (compiler-reg-call-gp-parallel? args types limit)
-                    ;; Mixed GP call (e.g. f(scalar, handle, scalar)): the backend
-                    ;; passes every arg in one GP register and resolves any source/dest
-                    ;; conflict with the parallel move, exactly as for a fully-scalar
-                    ;; simple call. Disqualify ONLY the non-scalar (handle) arg vars
-                    ;; (kept memory-sourced); the scalar arg vars stay eligible for
-                    ;; register homing instead of being needlessly spilled and reloaded.
-                    (compiler-live-set-union
-                      out
-                      (compiler-reg-call-non-int-class-arg-vars args types))
-                    ;; Float / register-group / over-arity call: the backend marshals it
-                    ;; with the naive ascending path, which is correct only when every
-                    ;; arg var is memory-sourced, so keep them all ineligible.
-                    (compiler-live-set-union
-                      out
-                      (compiler-live-call-args-vars args))))]
+                  (compiler-live-set-union
+                    out
+                    (compiler-live-call-args-vars args)))]
               [(IrInstrCallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
@@ -14485,6 +14388,23 @@
               unit)
             (compiler-reg-color-flags (box-get rest) flags))])]))
 
+;; Per-var AstType array for the coloring walk's same-type sharing guard.
+;; Every colorable var has a types-list entry (compiler-reg-color-flags only
+;; sets its flag from one), so the walk never reads an unwritten element.
+(define (compiler-reg-color-var-tys
+  [types : CompilerRegVarTypeList]
+  [tys : (Array AstType)]) : unit
+  (match types
+    [(CompilerRegVarTypeNil) unit]
+    [(CompilerRegVarTypeCons item rest)
+      (match item
+        [(CompilerRegVarType var ty)
+          (begin
+            (if (< var (array.array-length tys))
+              (array.array-set! tys var ty)
+              unit)
+            (compiler-reg-color-var-tys (box-get rest) tys))])]))
+
 ;; Sorted insert by (start, var): deterministic processing order.
 ;; In-place heapsort of an interval array by (start, var) -- deterministic
 ;; total order, O(n log n), no allocation beyond the array itself (the
@@ -14645,16 +14565,33 @@
 ;; destinations at the same interval position, so same-position reuse would let
 ;; one phi's destination clobber another phi's not-yet-read input through the
 ;; slot. Parameter pins use i64-max in slot-ends and therefore never match.
+;; SAME-TYPE only: sharing a slot MERGES the two variables' ids in the emitted
+;; IR, and the rebuilt per-id type table keeps ONE type. The backend recovers
+;; operand width/signedness/float-ness from that table (e.g.
+;; compiler-backend-binop-operand-ty for bit ops), so merging an i64 with a
+;; bool would emit `andb` for a 64-bit bit-and -- a real M-A2 bring-up
+;; miscompile (compiler-live-set-minus-words). Only type-identical variables
+;; may merge.
 (define (compiler-reg-color-find-slot
   [slot-ends : (Array i64)]
+  [slot-tys : (Array AstType)]
+  [ty : AstType]
   [used : i64]
   [start : i64]
   [index : i64]) : i64
   (if (>= index used)
     used
-    (if (< (array.array-ref slot-ends index) start)
+    (if (and
+      (< (array.array-ref slot-ends index) start)
+      (ast-type-eq? (array.array-ref slot-tys index) ty))
       index
-      (compiler-reg-color-find-slot slot-ends used start (+ index 1)))))
+      (compiler-reg-color-find-slot
+        slot-ends
+        slot-tys
+        ty
+        used
+        start
+        (+ index 1)))))
 
 (define (compiler-reg-color-walk
   [items : (Array CompilerRegInterval)]
@@ -14664,7 +14601,9 @@
   [pinned : CompilerLiveI64Set]
   [ineligible : CompilerLiveI64Set]
   [colorable : (Array bool)]
+  [var-tys : (Array AstType)]
   [slot-ends : (Array i64)]
+  [slot-tys : (Array AstType)]
   [extent-ends : (Array i64)]
   [used : i64]
   [remap : (Array i64)]) : i64
@@ -14698,15 +14637,19 @@
             pinned
             ineligible
             colorable
+            var-tys
             slot-ends
+            slot-tys
             extent-ends
             used
             remap)
           (let
-            ;; Prefer the lowest same-size scalar slot whose prior owner ended
+            ;; Prefer the lowest SAME-TYPE scalar slot whose prior owner ended
             ;; before this variable starts. Otherwise take a fresh slot,
             ;; skipping param-pinned ids so sparse parameter ids leave no hole.
-            [found : i64 (compiler-reg-color-find-slot slot-ends used start 0)]
+            [ty : AstType (array.array-ref var-tys var)]
+            [found : i64
+              (compiler-reg-color-find-slot slot-ends slot-tys ty used start 0)]
             [slot : i64
               (if (>= found used)
                 (compiler-reg-color-next-free-slot slot-ends used)
@@ -14719,6 +14662,9 @@
               (compiler-reg-max end (array.array-ref extent-ends var))]
             (begin
               (array.array-set! slot-ends slot full-end)
+              (if (< slot (array.array-length slot-tys))
+                (array.array-set! slot-tys slot ty)
+                unit)
               (array.array-set! remap var slot)
               (compiler-reg-color-walk
                 items
@@ -14728,7 +14674,9 @@
                 pinned
                 ineligible
                 colorable
+                var-tys
                 slot-ends
+                slot-tys
                 extent-ends
                 next-used
                 remap))))])))
@@ -15754,6 +15702,10 @@
                     (set! i (+ i 1))))))]
           [_flagged : unit
             (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
+          [var-tys : (Array AstType) (array.make-array AstType vars)]
+          [slot-tys : (Array AstType) (array.make-array AstType slots)]
+          [_typed : unit
+            (compiler-reg-color-var-tys (compiler-reg-plan-types plan) var-tys)]
           [param-floor : i64
             (compiler-reg-color-param-pins params remap slot-ends 0)]
           [sorted : (Array CompilerRegInterval)
@@ -15769,7 +15721,9 @@
               group-vars
               ineligible
               colorable
+              var-tys
               slot-ends
+              slot-tys
               extent-ends
               0
               remap)]
@@ -17670,6 +17624,40 @@
                 IrInstrNil)))))
       IrBlockNil)))
 
+;; M-A2 fixture: a direct call mixing a HANDLE arg (8-byte Array descriptor
+;; pointer, var 0, produced by a call so it is not remat-classified) with a
+;; scalar arg (var 1). Every arg is single-GP-register passed, and var 0 is
+;; used again after the call, so it spans the call point.
+(define (compiler-reg-handle-call-arg-function) : CompilerIrFunction
+  (IrFunction
+    "handle_call_arg"
+    IrParamNil
+    (AstTyUnit)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            0
+            "make_handle"
+            (IrCallArgsNil)
+            (ast-ty-dyn-array (AstTyI64)))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "use_args"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyUnit))
+              (compiler-ir-instr-cons
+                (IrInstrMov 3 (IrValueVar 0) (ast-ty-dyn-array (AstTyI64)))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn IrNoValue)
+                  IrInstrNil))))))
+      IrBlockNil)))
+
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
   (IrFunction
     "ineligible"
@@ -18376,6 +18364,21 @@
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 0)
           "%rdi"))]))
+
+;; M-A2: a handle arg of a gp-parallel direct call is register-eligible exactly
+;; like a scalar arg (same GP register class; the backend's parallel move
+;; handles register-sourced handle args). Var 0 (the handle, live across the
+;; call) is register-homed instead of being kept memory-sourced; the scalar arg
+;; (var 1) stays eligible as before.
+(define (compiler-reg-scalar-handle-call-arg-ok?) : bool
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-handle-call-arg-function))
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
+      (and
+        (not (compiler-live-set-contains? ineligible 0))
+        (not (compiler-live-set-contains? ineligible 1))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 0)))]))
 
 (cfg
   test
@@ -21791,6 +21794,7 @@
     (compiler-reg-scalar-call-live-ok?)
     (compiler-reg-scalar-f64-call-live-ok?)
     (compiler-reg-scalar-handle-eligible-ok?)
+    (compiler-reg-scalar-handle-call-arg-ok?)
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)

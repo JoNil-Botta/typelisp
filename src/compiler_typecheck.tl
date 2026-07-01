@@ -5919,6 +5919,15 @@
         [g : (-> unit) (lambda () : unit (with-escape scratch (set! n 1)))]
         (begin (g) n)))))"))
 
+(define (compiler-typecheck-function-param-set-source) : String
+  "(defstruct Boxed (value i64))
+(define (score [n : i64] [box : Boxed]) : i64
+  (begin
+    (set! n (+ n 1))
+    (set! box (Boxed n))
+    (+ n (struct-get box value))))
+(define (main) : i64 (score 20 (Boxed 0)))")
+
 (define (compiler-typecheck-lambda-param-set-source) : String
   "(define (main) : i64
   (let
@@ -5967,6 +5976,7 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-lambda-captured-set-with-escape-source)
       "typecheck: lambda cannot assign captured binding")
+    (compiler-typecheck-ok? (compiler-typecheck-function-param-set-source))
     (compiler-typecheck-ok? (compiler-typecheck-lambda-param-set-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-lambda-shadowed-local-set-source))

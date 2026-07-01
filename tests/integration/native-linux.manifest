@@ -78,6 +78,7 @@ function_pointer_values|tests/integration/function_pointer_values.tl|42|-|-|-
 functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
+parameter_set_rebind|tests/integration/parameter_set_rebind.tl|42|-|-|-
 i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl

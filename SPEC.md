@@ -3394,7 +3394,7 @@ arena-owned storage escape the scoped region.
 - Global variables: visible everywhere after their definition.
 - Function parameters: visible in the function body.
 - `let` bindings: visible in the `let` body only.
-- `set!` mutates variables in scope (locals and globals).
+- `set!` mutates storage bindings in scope (locals, parameters, and globals).
 - Variables are looked up in order: local bindings → function parameters → globals.
 
 ### 5.3 Function calls
@@ -3527,8 +3527,9 @@ suitable for side effects and early-return guards.
 
 ### 5.10 `(set! var expr)` — mutation
 
-- Mutates an existing local or global variable.
-- Type of `expr` must match `var`'s type.
+- Mutates an existing local, parameter, or global storage binding.
+- Type of `expr` must match `var`'s type. Assignment is subject to the same
+  move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.
 - Aggregate mutation through specific place forms follows the receiver's
   ownership mode. `array-set!` and struct field assignment require an owned

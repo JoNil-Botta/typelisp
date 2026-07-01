@@ -384,8 +384,8 @@
       (write-i64-ref exclusive))))")
 
 (define (compiler-typecheck-borrow-returned-call-source) : String
-  "(define (borrow-text [text : (& text str)]) : (& text str)
-  text)
+  "(define (borrow-text [source : (& source str)]) : (& source str)
+  source)
 (define (len [text : (& text str)]) : i64 1)
 (define (main) : i64
   (let
@@ -397,8 +397,8 @@
         (len borrowed)))))")
 
 (define (compiler-typecheck-borrow-returned-call-after-last-use-source) : String
-  "(define (borrow-text [text : (& text str)]) : (& text str)
-  text)
+  "(define (borrow-text [source : (& source str)]) : (& source str)
+  source)
 (define (len [text : (& text str)]) : i64 1)
 (define (main) : i64
   (let
@@ -408,6 +408,15 @@
       (begin
         (len borrowed)
         (let [moved : String text] 1)))))")
+
+(define (compiler-typecheck-borrow-non-returning-call-source) : String
+  "(define (len [text : (& text str)]) : i64 1)
+(define (main) : i64
+  (let
+    [text : String \"borrowed\"]
+    (begin
+      (let [n : i64 (len (& text))] n)
+      (let [moved : String text] 1))))")
 
 (define (compiler-typecheck-borrow-narrow-lexical-ok-source) : String
   "(define (take [n : (& n i64)]) : i64
@@ -808,6 +817,8 @@
       "typecheck: cannot move borrowed place `text`")
     (compiler-typecheck-ok?
       (compiler-typecheck-borrow-returned-call-after-last-use-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-non-returning-call-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-borrow-narrow-lexical-ok-source))
     (compiler-typecheck-ok?

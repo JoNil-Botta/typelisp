@@ -286,9 +286,11 @@
 (defenum AstFieldDef
   (Def i64 AstType AstFieldCleanup))
 
-(defenum AstFieldDefList
-  (Nil)
-  (Cons AstFieldDef (Box AstFieldDefList)))
+(comptime-decl
+  (:generated vector-family AstFieldDefList "AstFieldDef")
+  (defstruct AstFieldDefList
+    (slots (Array AstFieldDef))
+    (len i64)))
 
 (defenum AstStructRepr
   (Default)
@@ -1948,8 +1950,116 @@
   [cleanup : AstFieldCleanup]) : AstFieldDef
   (AstFieldDef.Def name ty cleanup))
 
+(define (ast-field-def-fallback) : AstFieldDef
+  (AstFieldDef.Def 0 (AstType.Unit) AstFieldCleanup.No))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-with-capacity "AstFieldDef")
+  (define (ast-field-def-list-with-capacity [capacity : i64]) : AstFieldDefList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstFieldDefList (array.make-array AstFieldDef cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-new "AstFieldDef")
+  (define (ast-field-def-list-new) : AstFieldDefList
+    (ast-field-def-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-len "AstFieldDef")
+  (define (ast-field-def-list-len [v : (& v AstFieldDefList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-capacity "AstFieldDef")
+  (define (ast-field-def-list-capacity [v : (& v AstFieldDefList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-empty? "AstFieldDef")
+  (define (ast-field-def-list-empty? [v : (& v AstFieldDefList)]) : bool
+    (= (ast-field-def-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-get "AstFieldDef")
+  (define (ast-field-def-list-get
+    [v : (& v AstFieldDefList)]
+    [index : i64]
+    [fallback : AstFieldDef]) : AstFieldDef
+    (if (and (>= index 0) (< index (ast-field-def-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-copy-range "AstFieldDef")
+  (define (ast-field-def-list-copy-range
+    [dst : (&mut dst (Array AstFieldDef))]
+    [src : (& src (Array AstFieldDef))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-field-def-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-grow "AstFieldDef")
+  (define (ast-field-def-list-grow [v : (&mut v AstFieldDefList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstFieldDef) (array.make-array AstFieldDef new-cap)]
+      (begin
+        (ast-field-def-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-field-def-list-push "AstFieldDef")
+  (define (ast-field-def-list-push
+    [v : (&mut v AstFieldDefList)]
+    [value : AstFieldDef]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-field-def-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-field-def-list-append-from
+  [out : (&mut out AstFieldDefList)]
+  [items : (& items AstFieldDefList)]
+  [index : i64]) : unit
+  (if (>= index (ast-field-def-list-len items))
+    unit
+    (begin
+      (ast-field-def-list-push
+        out
+        (ast-field-def-list-get items index (ast-field-def-fallback)))
+      (ast-field-def-list-append-from out items (+ index 1)))))
+
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
-  (AstFieldDefList.Cons head (box rest)))
+  (let
+    [out : AstFieldDefList
+      (ast-field-def-list-with-capacity (+ 1 (ast-field-def-list-len (& rest))))]
+    (begin
+      (ast-field-def-list-push (&mut out) head)
+      (ast-field-def-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-extern-link-input-cons
   [head : AstExternLinkInput]
@@ -3297,15 +3407,30 @@
     [(AstFieldCleanup.Fn name) (AstFieldCleanup.Fn name)]
     [(AstFieldCleanup.Owned) AstFieldCleanup.Owned]))
 
+(define (ast-compaction-remap-field-def-list-into
+  [remap : AstProgramCompactionRemap]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]
+  [out : (&mut out AstFieldDefList)]) : unit
+  (if (>= index (ast-field-def-list-len fields))
+    unit
+    (begin
+      (ast-field-def-list-push
+        out
+        (ast-compaction-remap-field-def
+          remap
+          (ast-field-def-list-get fields index (ast-field-def-fallback))))
+      (ast-compaction-remap-field-def-list-into remap fields (+ index 1) out))))
+
 (define (ast-compaction-remap-field-def-list
   [remap : AstProgramCompactionRemap]
   [fields : AstFieldDefList]) : AstFieldDefList
-  (match fields
-    [(AstFieldDefList.Nil) AstFieldDefList.Nil]
-    [(AstFieldDefList.Cons field rest)
-      (AstFieldDefList.Cons
-        (ast-compaction-remap-field-def remap field)
-        (box (ast-compaction-remap-field-def-list remap (box-get rest))))]))
+  (let
+    [out : AstFieldDefList
+      (ast-field-def-list-with-capacity (ast-field-def-list-len (& fields)))]
+    (begin
+      (ast-compaction-remap-field-def-list-into remap (& fields) 0 (&mut out))
+      out)))
 
 (define (ast-compaction-remap-extern-abi
   [remap : AstProgramCompactionRemap]

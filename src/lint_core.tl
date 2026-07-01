@@ -1961,18 +1961,26 @@
   [fields : AstFieldDefList]
   [alias : String]
   [module-name : String]) : bool
-  (match fields
-    [(AstFieldDefList.Nil) false]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty cleanup)
-            (if (lint-type-uses-import? ty alias module-name)
-              true
-              (if (lint-field-cleanup-uses-import? cleanup alias module-name)
-                true
-                (lint-field-def-list-uses-import? rest alias module-name)))]))]))
+  (lint-field-def-list-uses-import-at? (& fields) alias module-name 0))
+
+(define (lint-field-def-list-uses-import-at?
+  [fields : (& fields AstFieldDefList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len fields))
+    false
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty cleanup)
+        (if (lint-type-uses-import? ty alias module-name)
+          true
+          (if (lint-field-cleanup-uses-import? cleanup alias module-name)
+            true
+            (lint-field-def-list-uses-import-at?
+              fields
+              alias
+              module-name
+              (+ index 1))))])))
 
 (define (lint-struct-cleanup-uses-import?
   [cleanup : AstStructCleanup]
@@ -3003,14 +3011,18 @@
     [_ state]))
 
 (define (lint-copy-on-update-field-names [fields : AstFieldDefList]) : LintNameList
-  (match fields
-    [(AstFieldDefList.Nil) LintNameList.Nil]
-    [(AstFieldDefList.Cons field rest)
-      (match field
-        [(AstFieldDef.Def name _ _)
-          (LintNameList.Cons
-            (intern-str name)
-            (box (lint-copy-on-update-field-names (box-get rest))))])]))
+  (lint-copy-on-update-field-names-at (& fields) 0))
+
+(define (lint-copy-on-update-field-names-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : LintNameList
+  (if (>= index (ast-field-def-list-len fields))
+    LintNameList.Nil
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name _ _)
+        (LintNameList.Cons
+          (intern-str name)
+          (box (lint-copy-on-update-field-names-at fields (+ index 1))))])))
 
 (define (lint-copy-on-update-add-struct
   [name : i64]

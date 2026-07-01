@@ -2649,26 +2649,26 @@
   [fields : AstFieldDefList]
   [struct-index : i64]
   [field-index : i64]) : CompilerRegistries
-  (match fields
-    [(AstFieldDefList.Nil) registries]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name _ _)
-            (compiler-registries-add-field-aliases-list
-              (compiler-registries-add-field-alias
-                registries
-                struct-name
-                (intern-str name)
-                (compiler-registry-make-handle
-                  (compiler-symbol-kind-struct-field)
-                  struct-index
-                  field-index))
-              struct-name
-              rest
+  (if (>= field-index (ast-field-def-list-len (& fields)))
+    registries
+    (match (ast-field-def-list-get
+      (& fields)
+      field-index
+      (ast-field-def-fallback))
+      [(AstFieldDef.Def name _ _)
+        (compiler-registries-add-field-aliases-list
+          (compiler-registries-add-field-alias
+            registries
+            struct-name
+            (intern-str name)
+            (compiler-registry-make-handle
+              (compiler-symbol-kind-struct-field)
               struct-index
-              (+ field-index 1))]))]))
+              field-index))
+          struct-name
+          fields
+          struct-index
+          (+ field-index 1))])))
 
 (define (compiler-registries-add-decl-alias-in-module
   [registries : CompilerRegistries]
@@ -2871,34 +2871,34 @@
   [struct-name : String]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
-  (match fields
-    [(AstFieldDefList.Nil) (ResultCompilerRegistries.Ok registries)]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name _ _)
-            (if (sym_i64_env.sym-i64-contains-id seen name)
-              (ResultCompilerRegistries.Err
-                (compiler-registries-duplicate-field-message
-                  struct-name
-                  (intern-str name)))
-              (match (compiler-registries-add-field
-                registries
+  (if (>= field-index (ast-field-def-list-len (& fields)))
+    (ResultCompilerRegistries.Ok registries)
+    (match (ast-field-def-list-get
+      (& fields)
+      field-index
+      (ast-field-def-fallback))
+      [(AstFieldDef.Def name _ _)
+        (if (sym_i64_env.sym-i64-contains-id seen name)
+          (ResultCompilerRegistries.Err
+            (compiler-registries-duplicate-field-message
+              struct-name
+              (intern-str name)))
+          (match (compiler-registries-add-field
+            registries
+            struct-name
+            (intern-str name)
+            struct-index
+            field-index)
+            [(ResultCompilerRegistries.Ok next-registries)
+              (build-compiler-field-registry-list
+                fields
+                next-registries
+                (sym_i64_env.sym-i64-bind-id seen name field-index)
                 struct-name
-                (intern-str name)
                 struct-index
-                field-index)
-                [(ResultCompilerRegistries.Ok next-registries)
-                  (build-compiler-field-registry-list
-                    rest
-                    next-registries
-                    (sym_i64_env.sym-i64-bind-id seen name field-index)
-                    struct-name
-                    struct-index
-                    (+ field-index 1))]
-                [(ResultCompilerRegistries.Err message)
-                  (ResultCompilerRegistries.Err message)]))]))]))
+                (+ field-index 1))]
+            [(ResultCompilerRegistries.Err message)
+              (ResultCompilerRegistries.Err message)]))])))
 
 (define (build-compiler-registry-list
   [decls : AstDeclList]
@@ -3216,16 +3216,13 @@
   [fields : AstFieldDefList]
   [target : i64]
   [index : i64]) : ResultAstType
-  (match fields
-    [(AstFieldDefList.Nil) (ResultAstType.Err "symbols: field index not found")]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (if (= target index)
-              (ResultAstType.Ok ty)
-              (compiler-field-type-at-index rest target (+ index 1)))]))]))
+  (if (>= index (ast-field-def-list-len (& fields)))
+    (ResultAstType.Err "symbols: field index not found")
+    (match (ast-field-def-list-get (& fields) index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (if (= target index)
+          (ResultAstType.Ok ty)
+          (compiler-field-type-at-index fields target (+ index 1)))])))
 
 (define (compiler-registries-variant-fields
   [program : AstProgram]

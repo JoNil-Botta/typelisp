@@ -2063,7 +2063,9 @@
             asm
             (compiler-backend-alloc-generic-call-text 4 "%rcx"))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+        (or
+          (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movl %r11d, (%r10)\n"))
         (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (not
@@ -4563,6 +4565,65 @@
           [(ResultCompilerBackend.Err _) false])]
       [(ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-win64-bounds-index-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [length-rax : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%rax"))
+        CompilerRegAssignmentList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.Var 1)
+            "bounds_ok")
+          CompilerIrInstrList.Nil)
+        length-rax
+        2)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    xorl %r10d, %r10d\n")
+            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (not
+              (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
+(define (compiler-backend-win64-compare-rhs-rax-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [rhs-rax : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%rax"))
+        CompilerRegAssignmentList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-compare-branch
+        rhs-rax
+        "cmp"
+        (CompilerIrBinOp.Lt)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64)
+        "then"
+        "else"
+        (CompilerBackendMaybeLabel.No))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (not
+              (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
@@ -4570,6 +4631,8 @@
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
+    (compiler-backend-win64-bounds-index-scratch-ok?)
+    (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)
@@ -9004,6 +9067,48 @@
           (compiler-backend-string-contains? asm "    movq -32(%rbp), %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-win64-gep-offset-rax-home-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rsi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rax"))
+            CompilerRegAssignmentList.Nil)))]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            2
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.U64))
+          CompilerIrInstrList.Nil)
+        assignments
+        3)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq %rsi, %r10\n")
+            (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
+            (compiler-backend-string-contains?
+              asm
+              "    leaq (%r10,%r8,8), %r10\n")
+            (compiler-backend-string-contains? asm "    movq %r10, %rax\n")
+            (not
+              (compiler-backend-string-contains? asm "    movq %rsi, %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-gep-load-r10-reuse-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
@@ -9165,6 +9270,47 @@
             (not (compiler-backend-string-contains? asm "%r10")))]
         [(ResultCompilerBackend.Err _) false]))))
 
+(define (compiler-backend-win64-store-value-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rcx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          CompilerRegAssignmentList.Nil))]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-store-to-gep
+        assignments
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.U64)
+        (CompilerIrValue.Var 2)
+        (AstType.I64)
+        index)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
+            (compiler-backend-string-contains? asm "    movq -24(%rbp), %r11\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq %r11, (%rcx,%r8,8)\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq -24(%rbp), %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -9200,6 +9346,47 @@
           (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
           (not (compiler-backend-string-contains? asm "    movq %r13, %r11\n")))]
       [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-win64-copy-bytes-gp-scratch-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rax"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
+          CompilerRegAssignmentList.Nil))]
+    [ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CopyBytes
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            24)
+          CompilerIrInstrList.Nil)
+        assignments
+        3)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movups (%rcx), %xmm15\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movups %xmm15, (%rax)\n")
+            (compiler-backend-string-contains? asm "    movq 16(%rcx), %r8\n")
+            (compiler-backend-string-contains? asm "    movq %r8, 16(%rax)\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 16(%rcx), %rax\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
 
 (define (compiler-backend-widening-cast-direct-home-shape-ok?) : bool
   (let
@@ -9335,11 +9522,13 @@
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-scratch-staging-direct-home-shape-ok?) : bool
-  (backend-and4
-    (compiler-backend-copy-bytes-direct-home-shape-ok?)
-    (compiler-backend-widening-cast-direct-home-shape-ok?)
-    (compiler-backend-global-store-direct-home-shape-ok?)
-    (compiler-backend-pack-direct-home-shape-ok?)))
+  (and
+    (backend-and4
+      (compiler-backend-copy-bytes-direct-home-shape-ok?)
+      (compiler-backend-widening-cast-direct-home-shape-ok?)
+      (compiler-backend-global-store-direct-home-shape-ok?)
+      (compiler-backend-pack-direct-home-shape-ok?))
+    (compiler-backend-win64-copy-bytes-gp-scratch-ok?)))
 
 (define (compiler-backend-address-mode-fusion-ok?) : bool
   (and
@@ -9352,6 +9541,8 @@
       (compiler-backend-load-load-pointer-chase-shape-ok?)
       (compiler-backend-store-ptr-pair-shape-ok?)
       (compiler-backend-store-home-base-shape-ok?))
+    (compiler-backend-win64-store-value-scratch-ok?)
+    (compiler-backend-win64-gep-offset-rax-home-ok?)
     (compiler-backend-gep-load-compare-priority-shape-ok?)))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr

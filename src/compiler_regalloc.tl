@@ -3,9 +3,9 @@
 ;; This pass mirrors the legacy backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
 ;; and register/spill homes for scalar IR values. The selfhost pools keep
-;; %rsp/%rbp reserved. The Linux scalar pool keeps the emitter's hard scratch
-;; registers reserved for byte-stable output; the Win64 scalar pool uses its
-;; full caller-saved set behind an ABI-specific scratch clobber model.
+;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
+;; caller-saved integer/XMM registers for values that cannot be clobbered by
+;; call emission.
 (import stdlib.io)
 (import stdlib.array)
 (import stdlib.string)
@@ -4736,45 +4736,43 @@
       (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
-(define (compiler-reg-backend-win64-scratch-clobber-instr?
+(define (compiler-reg-backend-win64-extra-clobber-instr?
   [instr : CompilerIrInstr]) : bool
-  (or
-    (compiler-reg-backend-caller-clobber-instr? instr)
-    (match instr
-      [(CompilerIrInstr.Mov _ _ _) true]
-      [(CompilerIrInstr.AddrOf _ _) true]
-      [(CompilerIrInstr.Gep _ _ _ _) true]
-      [(CompilerIrInstr.Load _ _ _) true]
-      [(CompilerIrInstr.StorePtr _ _ _) true]
-      [(CompilerIrInstr.CopyBytes _ _ _) true]
-      [(CompilerIrInstr.Cast _ _ _ _) true]
-      [(CompilerIrInstr.Bitcast _ _ _ _) true]
-      [(CompilerIrInstr.BinOp _ _ _ _ _) true]
-      [(CompilerIrInstr.UnOp _ _ _ _) true]
-      [(CompilerIrInstr.LaneId _ _ _) true]
-      [(CompilerIrInstr.Splat _ _ _ _) true]
-      [(CompilerIrInstr.VectorBinOp _) true]
-      [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
-      [(CompilerIrInstr.VectorCompare _) true]
-      [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
-      [(CompilerIrInstr.MaskNot _ _ _) true]
-      [(CompilerIrInstr.MaskReduce _ _ _ _) true]
-      [(CompilerIrInstr.Select _) true]
-      [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
-      [(CompilerIrInstr.VectorStore _) true]
-      [(CompilerIrInstr.PredicatedStore _) true]
-      [(CompilerIrInstr.PredicatedLoad _) true]
-      [(CompilerIrInstr.TailMask _ _ _ _) true]
-      [(CompilerIrInstr.EntryArgc _) true]
-      [(CompilerIrInstr.EntryArgv _) true]
-      [(CompilerIrInstr.EntryEnvp _) true]
-      [(CompilerIrInstr.Store _ _ _) true]
-      [(CompilerIrInstr.Branch _ _ _) true]
-      [(CompilerIrInstr.Return _) true]
-      [(CompilerIrInstr.Pack _ _ _) true]
-      [(CompilerIrInstr.Word _ _ _ _) true]
-      [(CompilerIrInstr.Switch _ _ _ _) true]
-      [_ false])))
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.AddrOf _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.LaneId _ _ _) true]
+    [(CompilerIrInstr.Splat _ _ _ _) true]
+    [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorCompare _) true]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.MaskNot _ _ _) true]
+    [(CompilerIrInstr.MaskReduce _ _ _ _) true]
+    [(CompilerIrInstr.Select _) true]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [(CompilerIrInstr.PredicatedLoad _) true]
+    [(CompilerIrInstr.TailMask _ _ _ _) true]
+    [(CompilerIrInstr.EntryArgc _) true]
+    [(CompilerIrInstr.EntryArgv _) true]
+    [(CompilerIrInstr.EntryEnvp _) true]
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Return _) true]
+    [(CompilerIrInstr.Pack _ _ _) true]
+    [(CompilerIrInstr.Word _ _ _ _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
+    [_ false]))
 
 (define (compiler-reg-backend-caller-clobber-instr-for-abi?
   [abi : CompilerRegTargetAbi]
@@ -4783,7 +4781,9 @@
     [(CompilerRegTargetAbi.Linux)
       (compiler-reg-backend-caller-clobber-instr? instr)]
     [(CompilerRegTargetAbi.Windows)
-      (compiler-reg-backend-win64-scratch-clobber-instr? instr)]))
+      (or
+        (compiler-reg-backend-caller-clobber-instr? instr)
+        (compiler-reg-backend-win64-extra-clobber-instr? instr))]))
 
 (define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
   (let
@@ -4843,29 +4843,6 @@
           (set! index (+ index 1))))
       (CompilerRegCallScan.Scan p out))))
 
-(define (compiler-reg-backend-caller-clobber-points-seq-for-abi
-  [abi : CompilerRegTargetAbi]
-  [instrs : CompilerIrInstrSeq]
-  [point : i64]
-  [set : CompilerLiveI64Set]) : CompilerRegCallScan
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [index : i64 0]
-    [p : i64 point]
-    [out : CompilerLiveI64Set set]
-    (begin
-      (while (< index count)
-        (begin
-          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
-            abi
-            (array-ref slots index))
-            (set! out (compiler-live-set-insert out p))
-            unit)
-          (set! p (+ p 2))
-          (set! index (+ index 1))))
-      (CompilerRegCallScan.Scan p out))))
-
 (define (compiler-reg-backend-caller-clobber-points-blocks
   [blocks : CompilerIrBlockList]
   [point : i64]
@@ -4889,6 +4866,38 @@
         (compiler-ir-block-seq-to-list seq)
         point
         set)]))
+
+(define (compiler-reg-backend-caller-clobber-points [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (compiler-reg-backend-caller-clobber-points-blocks
+        blocks
+        0
+        (compiler-live-set-empty))
+        [(CompilerRegCallScan.Scan _ set) set])]))
+
+(define (compiler-reg-backend-caller-clobber-points-seq-for-abi
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
+            abi
+            (array-ref slots index))
+            (set! out (compiler-live-set-insert out p))
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-backend-caller-clobber-points-blocks-for-abi
   [abi : CompilerRegTargetAbi]
@@ -4918,26 +4927,21 @@
         point
         set)]))
 
-(define (compiler-reg-backend-caller-clobber-points [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (match (compiler-reg-backend-caller-clobber-points-blocks
-        blocks
-        0
-        (compiler-live-set-empty))
-        [(CompilerRegCallScan.Scan _ set) set])]))
-
 (define (compiler-reg-backend-caller-clobber-points-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (match (compiler-reg-backend-caller-clobber-points-blocks-for-abi
-        abi
-        blocks
-        0
-        (compiler-live-set-empty))
-        [(CompilerRegCallScan.Scan _ set) set])]))
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-points func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (match (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+            abi
+            blocks
+            0
+            (compiler-live-set-empty))
+            [(CompilerRegCallScan.Scan _ set) set])])]))
 
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
@@ -5244,6 +5248,29 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-reg-backend-caller-clobber-vars-blocks
+  [blocks : CompilerIrBlockList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-backend-caller-clobber-vars-blocks
+            (box-get rest)
+            (compiler-reg-backend-caller-clobber-vars-seq instrs set))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-vars-blocks
+        (compiler-ir-block-seq-to-list seq)
+        set)]))
+
+(define (compiler-reg-backend-caller-clobber-vars [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-backend-caller-clobber-vars-blocks
+        blocks
+        (compiler-live-set-empty))]))
+
 (define (compiler-reg-backend-caller-clobber-vars-seq-for-abi
   [abi : CompilerRegTargetAbi]
   [instrs : CompilerIrInstrSeq]
@@ -5268,22 +5295,6 @@
           (set! index (+ index 1))))
       out)))
 
-(define (compiler-reg-backend-caller-clobber-vars-blocks
-  [blocks : CompilerIrBlockList]
-  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match blocks
-    [(CompilerIrBlockList.Nil) set]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (compiler-reg-backend-caller-clobber-vars-blocks
-            (box-get rest)
-            (compiler-reg-backend-caller-clobber-vars-seq instrs set))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-reg-backend-caller-clobber-vars-blocks
-        (compiler-ir-block-seq-to-list seq)
-        set)]))
-
 (define (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
   [abi : CompilerRegTargetAbi]
   [blocks : CompilerIrBlockList]
@@ -5306,22 +5317,19 @@
         (compiler-ir-block-seq-to-list seq)
         set)]))
 
-(define (compiler-reg-backend-caller-clobber-vars [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-backend-caller-clobber-vars-blocks
-        blocks
-        (compiler-live-set-empty))]))
-
 (define (compiler-reg-backend-caller-clobber-vars-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
-        abi
-        blocks
-        (compiler-live-set-empty))]))
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-vars func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+            abi
+            blocks
+            (compiler-live-set-empty))])]))
 
 (define (compiler-reg-loop-depth-max) : i64
   8)
@@ -17340,6 +17348,11 @@
       (compiler-reg-win64-caller-saved-integer-registers)]
     [win-callees : CompilerRegStringList
       (compiler-reg-win64-callee-saved-integer-registers)]
+    [copy-instr : CompilerIrInstr
+      (CompilerIrInstr.CopyBytes
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        24)]
     [add-instr : CompilerIrInstr
       (CompilerIrInstr.BinOp
         2
@@ -17385,6 +17398,13 @@
       (compiler-reg-string-list-contains? win-pool "%r11")
       (compiler-reg-string-list-contains? win-pool "%rsi")
       (compiler-reg-string-list-contains? win-pool "%rdi")
+      (not
+        (compiler-reg-backend-caller-clobber-instr-for-abi?
+          CompilerRegTargetAbi.Linux
+          copy-instr))
+      (compiler-reg-backend-caller-clobber-instr-for-abi?
+        CompilerRegTargetAbi.Windows
+        copy-instr)
       (not
         (compiler-reg-backend-caller-clobber-instr-for-abi?
           CompilerRegTargetAbi.Linux

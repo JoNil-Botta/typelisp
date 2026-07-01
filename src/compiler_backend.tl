@@ -6439,6 +6439,77 @@
             ""))]
       [_ (compiler-backend-emit-load-value-with-plan assignments value "%rax")])))
 
+(define (compiler-backend-emit-load-typed-value-to-reg-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [reg : String]) : ResultCompilerBackend
+  (if (compiler-backend-float-type? ty)
+    (match value
+      [(CompilerIrValue.Global name)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            "    "
+            (compiler-backend-float-move ty)
+            " "
+            (compiler-backend-global-symbol-index program-index name)
+            "(%rip), "
+            reg
+            "\n"))]
+      [_
+        (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          value
+          ty
+          reg)])
+    (match value
+      [(CompilerIrValue.Var id)
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegMaybeLocation.Some location)
+            (match location
+              [(CompilerRegLocation.Register home)
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-emit-load-register-to-reg home ty reg))]
+              [(CompilerRegLocation.RegisterPair home _)
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-emit-load-register-to-reg home ty reg))]
+              [(CompilerRegLocation.Spill offset)
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-emit-load-memory-to-reg
+                    (compiler-backend-frame-offset offset)
+                    ty
+                    reg))]
+              [(CompilerRegLocation.Remat value)
+                (compiler-backend-emit-load-value-with-plan
+                  CompilerRegAssignmentList.Nil
+                  value
+                  reg)])]
+          [(CompilerRegMaybeLocation.No)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-load-memory-to-reg
+                (compiler-backend-slot id)
+                ty
+                reg))])]
+      [(CompilerIrValue.Global name)
+        (ResultCompilerBackend.Ok
+          (compiler-backend-emit-load-memory-to-reg
+            (str_cat.str-cat
+              (compiler-backend-global-symbol-index program-index name)
+              "(%rip)"
+              "")
+            ty
+            reg))]
+      [(CompilerIrValue.GlobalAddr name)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            "    leaq "
+            (compiler-backend-function-or-global-addr-symbol program-index name)
+            "(%rip), "
+            reg
+            "\n"))]
+      [_ (compiler-backend-emit-load-value-with-plan assignments value reg)])))
+
 (define (compiler-backend-emit-load-typed-value
   [value : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
@@ -8799,13 +8870,14 @@
 (define (compiler-backend-emit-compare-flags
   [op : CompilerIrBinOp]
   [rhs : String]
-  [ty : AstType]) : String
+  [ty : AstType]
+  [lhs-reg : String]) : String
   (if (and (string.eq rhs "$0") (compiler-backend-compare-uses-zero-test? op))
     (compiler-backend-binop-reg-asm
       "test"
       ty
-      (compiler-backend-sized-reg "%rax" ty)
-      (compiler-backend-sized-reg "%rax" ty))
+      (compiler-backend-sized-reg lhs-reg ty)
+      (compiler-backend-sized-reg lhs-reg ty))
     (string.append
       (str_cat.str-cat
         "    cmp"
@@ -8813,7 +8885,7 @@
         " "
         rhs
         ", ")
-      (str_cat.str-cat (compiler-backend-sized-reg "%rax" ty) "\n" ""))))
+      (str_cat.str-cat (compiler-backend-sized-reg lhs-reg ty) "\n" ""))))
 
 ;; A scalar register-homed var IS its own cmp source operand, so a comparison can
 ;; emit `cmp <home>, %rax` directly instead of `movq <home>, %r8; cmp %r8, %rax`
@@ -8837,6 +8909,17 @@
           [_ ""]))]
     [_ ""]))
 
+(define (compiler-backend-compare-lhs-scratch
+  [assignments : CompilerRegAssignmentList]
+  [rhs : CompilerIrValue]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (if (string.eq
+      (compiler-backend-value-scalar-register-home assignments rhs)
+      "%rax")
+      "%r10"
+      "%rax")
+    "%rax"))
+
 (define (compiler-backend-emit-compare-branch
   [assignments : CompilerRegAssignmentList]
   [function : String]
@@ -8850,13 +8933,17 @@
   (let
     [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
+    [lhs-reg : String (compiler-backend-compare-lhs-scratch assignments rhs)]
     (if (string.eq true-jcc "")
       (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             "backend: unsupported compare branch")))
-      (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        lhs
+        lhs-reg)
         [(ResultCompilerBackend.Ok lhs-asm)
           (match (compiler-backend-immediate-operand rhs)
             [(CompilerBackendMaybeImmediate.Some imm)
@@ -8864,7 +8951,7 @@
                 (string.append
                   lhs-asm
                   (string.append
-                    (compiler-backend-emit-compare-flags op imm ty)
+                    (compiler-backend-emit-compare-flags op imm ty lhs-reg)
                     (compiler-backend-emit-compare-branch-jumps
                       function
                       true-label
@@ -8884,7 +8971,8 @@
                         (compiler-backend-emit-compare-flags
                           op
                           (compiler-backend-sized-reg rhs-home ty)
-                          ty)
+                          ty
+                          lhs-reg)
                         (compiler-backend-emit-compare-branch-jumps
                           function
                           true-label
@@ -8906,7 +8994,8 @@
                               (compiler-backend-emit-compare-flags
                                 op
                                 (compiler-backend-sized-reg "%r8" ty)
-                                ty)
+                                ty
+                                lhs-reg)
                               (compiler-backend-emit-compare-branch-jumps
                                 function
                                 true-label
@@ -9085,6 +9174,13 @@
           length-reg
           (compiler-backend-value-stack-address assignments length)))]))
 
+(define (compiler-backend-bounds-index-scratch [length-operand : String]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (if (string.eq length-operand "%r10")
+      "%r11"
+      "%r10")
+    "%rax"))
+
 (define (compiler-backend-bounds-check-tail
   [call-space : i64]
   [ok-symbol : String]
@@ -9151,15 +9247,17 @@
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home assignments index)]
+    [length-direct-operand : String
+      (compiler-backend-bounds-length-operand assignments length)]
     [index-operand : String
       (if (string.eq index-reg "")
-        "%rax"
+        (compiler-backend-bounds-index-scratch length-direct-operand)
         index-reg)]
     (if (string.eq index-reg "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         index
-        "%rax")
+        index-operand)
         [(ResultCompilerBackend.Ok index-asm)
           (let
             [length-operand : String
@@ -9352,6 +9450,28 @@
           "\n")
         "    addq %r8, %r10\n"))))
 
+(define (compiler-backend-gep-index-base-asm [base-reg : String] [scale : i64]) : String
+  (if (= scale 1)
+    (str_cat.str-cat "    addq %r8, " base-reg "\n")
+    (if (or (= scale 2) (= scale 4) (= scale 8))
+      (str_cat.str-cat
+        "    leaq ("
+        base-reg
+        ",%r8,"
+        (string.int->string scale)
+        "), "
+        base-reg
+        "\n"
+        "")
+      (string.append
+        (str_cat.str-cat
+          "    imulq $"
+          (string.int->string scale)
+          ", "
+          "%r8"
+          "\n")
+        (str_cat.str-cat "    addq %r8, " base-reg "\n")))))
+
 (define (compiler-backend-gep-index-address-r10 [scale : i64]) : String
   (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
     (str_cat.str-cat "(%r10,%r8," (string.int->string scale) ")" "")
@@ -9377,6 +9497,33 @@
       (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat "    addq $" (string.int->string disp) ", %r10\n" ""))
       (CompilerBackendMaybeAsm.No))))
+
+(define (compiler-backend-gep-immediate-base-asm
+  [base-reg : String]
+  [disp : i64]) : CompilerBackendMaybeAsm
+  (if (= disp 0)
+    (CompilerBackendMaybeAsm.Some "")
+    (if (compiler-backend-imm32? disp)
+      (CompilerBackendMaybeAsm.Some
+        (str_cat.str-cat
+          "    addq $"
+          (string.int->string disp)
+          ", "
+          base-reg
+          "\n"
+          ""))
+      (CompilerBackendMaybeAsm.No))))
+
+(define (compiler-backend-gep-staged-base-reg
+  [assignments : CompilerRegAssignmentList]
+  [offset : CompilerIrValue]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (if (string.eq
+      (compiler-backend-value-scalar-register assignments offset)
+      "%rax")
+      "%r10"
+      "%rax")
+    "%rax"))
 
 (define (compiler-backend-emit-gep
   [assignments : CompilerRegAssignmentList]
@@ -9421,62 +9568,72 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
-    [(ResultCompilerBackend.Ok base-asm)
-      (let
-        [scale : i64 (compiler-backend-type-size elem-ty)]
-        (match (compiler-backend-value-as-i64 offset)
-          [(option_i64.Some n)
-            (match (compiler-backend-gep-immediate-asm (* n scale))
-              [(CompilerBackendMaybeAsm.Some offset-asm)
-                (ResultCompilerBackend.Ok
-                  (string.append
-                    base-asm
+  (let
+    [base-reg : String
+      (compiler-backend-gep-staged-base-reg assignments offset)]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      base
+      base-reg)
+      [(ResultCompilerBackend.Ok base-asm)
+        (let
+          [scale : i64 (compiler-backend-type-size elem-ty)]
+          (match (compiler-backend-value-as-i64 offset)
+            [(option_i64.Some n)
+              (match (compiler-backend-gep-immediate-base-asm
+                base-reg
+                (* n scale))
+                [(CompilerBackendMaybeAsm.Some offset-asm)
+                  (ResultCompilerBackend.Ok
                     (string.append
-                      offset-asm
-                      (compiler-backend-emit-store-var-with-plan
-                        assignments
-                        dst
-                        "%rax"))))]
-              [(CompilerBackendMaybeAsm.No)
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  offset
-                  "%r8")
-                  [(ResultCompilerBackend.Ok offset-asm)
-                    (ResultCompilerBackend.Ok
+                      base-asm
                       (string.append
-                        base-asm
-                        (string.append
-                          offset-asm
-                          (string.append
-                            (compiler-backend-gep-index-asm scale)
-                            (compiler-backend-emit-store-var-with-plan
-                              assignments
-                              dst
-                              "%rax")))))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)])])]
-          [(option_i64.None)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              offset
-              "%r8")
-              [(ResultCompilerBackend.Ok offset-asm)
-                (ResultCompilerBackend.Ok
-                  (string.append
-                    base-asm
-                    (string.append
-                      offset-asm
-                      (string.append
-                        (compiler-backend-gep-index-asm scale)
+                        offset-asm
                         (compiler-backend-emit-store-var-with-plan
                           assignments
                           dst
-                          "%rax")))))]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)])]))]
-    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+                          base-reg))))]
+                [(CompilerBackendMaybeAsm.No)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    offset
+                    "%r8")
+                    [(ResultCompilerBackend.Ok offset-asm)
+                      (ResultCompilerBackend.Ok
+                        (string.append
+                          base-asm
+                          (string.append
+                            offset-asm
+                            (string.append
+                              (compiler-backend-gep-index-base-asm
+                                base-reg
+                                scale)
+                              (compiler-backend-emit-store-var-with-plan
+                                assignments
+                                dst
+                                base-reg)))))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])])]
+            [(option_i64.None)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                offset
+                "%r8")
+                [(ResultCompilerBackend.Ok offset-asm)
+                  (ResultCompilerBackend.Ok
+                    (string.append
+                      base-asm
+                      (string.append
+                        offset-asm
+                        (string.append
+                          (compiler-backend-gep-index-base-asm base-reg scale)
+                          (compiler-backend-emit-store-var-with-plan
+                            assignments
+                            dst
+                            base-reg)))))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-instr
   [assignments : CompilerRegAssignmentList]
@@ -9540,9 +9697,28 @@
     [(= chunk 2) (AstType.U16)]
     [else (AstType.U8)]))
 
+(define (compiler-backend-copy-gp-scratch [dst-reg : String] [src-reg : String]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (cond
+      [(and (not (string.eq dst-reg "%r8")) (not (string.eq src-reg "%r8")))
+        "%r8"]
+      [(and (not (string.eq dst-reg "%r9")) (not (string.eq src-reg "%r9")))
+        "%r9"]
+      [(and (not (string.eq dst-reg "%rax")) (not (string.eq src-reg "%rax")))
+        "%rax"]
+      [(and (not (string.eq dst-reg "%r10")) (not (string.eq src-reg "%r10")))
+        "%r10"]
+      [(and (not (string.eq dst-reg "%r11")) (not (string.eq src-reg "%r11")))
+        "%r11"]
+      [(and (not (string.eq dst-reg "%rcx")) (not (string.eq src-reg "%rcx")))
+        "%rcx"]
+      [else "%rdx"])
+    "%rax"))
+
 (define (compiler-backend-emit-copy-bytes-chunks
   [dst-reg : String]
   [src-reg : String]
+  [scratch-reg : String]
   [offset : i64]
   [remaining : i64]) : String
   (if (<= remaining 0)
@@ -9567,12 +9743,13 @@
           (compiler-backend-emit-copy-bytes-chunks
             dst-reg
             src-reg
+            scratch-reg
             (+ offset 16)
             (- remaining 16))))
       (let
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
         [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
-        [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
+        [reg : String (compiler-backend-sized-reg scratch-reg chunk-ty)]
         (string.append
           (str_cat.str-cat
             "    mov"
@@ -9598,6 +9775,7 @@
                     (compiler-backend-emit-copy-bytes-chunks
                       dst-reg
                       src-reg
+                      scratch-reg
                       (+ offset chunk)
                       (- remaining chunk))))))))))))
 
@@ -9640,6 +9818,7 @@
                       (compiler-backend-emit-copy-bytes-chunks
                         dst-reg
                         src-reg
+                        (compiler-backend-copy-gp-scratch dst-reg src-reg)
                         0
                         size))))]
               [(ResultCompilerBackend.Err message)
@@ -9679,6 +9858,7 @@
                               (compiler-backend-emit-copy-bytes-chunks
                                 "%r10"
                                 "%r11"
+                                (compiler-backend-copy-gp-scratch "%r10" "%r11")
                                 0
                                 size)))))]
                     [(ResultCompilerBackend.Err message)
@@ -9712,6 +9892,9 @@
                                 (compiler-backend-emit-copy-bytes-chunks
                                   "%r10"
                                   "%r11"
+                                  (compiler-backend-copy-gp-scratch
+                                    "%r10"
+                                    "%r11")
                                   0
                                   size))))))]
                     [(ResultCompilerBackend.Err message)
@@ -9737,7 +9920,12 @@
               (string.int->string
                 (compiler-backend-outgoing-stack-arg-offset target stack-idx))
               "(%rsp), %r10\n")
-            (compiler-backend-emit-copy-bytes-chunks "%r10" "%r11" 0 size))))]
+            (compiler-backend-emit-copy-bytes-chunks
+              "%r10"
+              "%r11"
+              (compiler-backend-copy-gp-scratch "%r10" "%r11")
+              0
+              size))))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-load-from-gep
@@ -10000,23 +10188,56 @@
     [(CompilerBackendMaybeAsm.Some store-asm)
       (ResultCompilerBackend.Ok store-asm)]
     [(CompilerBackendMaybeAsm.No)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        ty
-        program-index)
-        [(ResultCompilerBackend.Ok src-asm)
-          (ResultCompilerBackend.Ok
-            (str_cat.str-cat
-              src-asm
+      (if (compiler-backend-current-fn-win64?)
+        (let
+          [home : String
+            (compiler-backend-value-scalar-register assignments src)]
+          [scratch : String "%r11"]
+          (if (and
+            (not (compiler-backend-float-type? ty))
+            (not (string.eq home "")))
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-store-reg-to-memory addr home ty))
+            (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              assignments
+              src
+              ty
+              program-index
               (if (compiler-backend-float-type? ty)
-                (compiler-backend-emit-store-xmm-to-memory
-                  (string.copy addr)
-                  "%xmm0"
-                  ty)
-                (compiler-backend-emit-store-rax-to-memory addr ty))))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]))
+                "%xmm0"
+                scratch))
+              [(ResultCompilerBackend.Ok src-asm)
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    src-asm
+                    (if (compiler-backend-float-type? ty)
+                      (compiler-backend-emit-store-xmm-to-memory
+                        (string.copy addr)
+                        "%xmm0"
+                        ty)
+                      (compiler-backend-emit-store-reg-to-memory
+                        addr
+                        scratch
+                        ty))))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])))
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          ty
+          program-index)
+          [(ResultCompilerBackend.Ok src-asm)
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                src-asm
+                (if (compiler-backend-float-type? ty)
+                  (compiler-backend-emit-store-xmm-to-memory
+                    (string.copy addr)
+                    "%xmm0"
+                    ty)
+                  (compiler-backend-emit-store-rax-to-memory addr ty))))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]

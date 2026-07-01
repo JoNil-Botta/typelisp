@@ -3812,6 +3812,24 @@
         (set! tc-return-type-id-cache-generation (intern-generation))
         id))))
 
+(define (tc-loop-target-name) : String
+  "__tl_loop_target")
+
+(define tc-loop-target-id-cache : i64
+  -1)
+(define tc-loop-target-id-cache-generation : i64
+  -1)
+
+(define (tc-loop-target-id) : i64
+  (if (= tc-loop-target-id-cache-generation (intern-generation))
+    tc-loop-target-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-loop-target-name))]
+      (begin
+        (set! tc-loop-target-id-cache id)
+        (set! tc-loop-target-id-cache-generation (intern-generation))
+        id))))
+
 (define (tc-hygiene-global-boundary-name) : String
   "__tl_hygiene_global_boundary")
 
@@ -4266,6 +4284,25 @@
       [(AstMaybeType.No)
         (ResultTcType.Err
           "typecheck: try requires enclosing Result-like function")])))
+
+(define (tc-enter-loop-target [env : TcTypeEnv]) : TcTypeEnv
+  (tc-bind-id env (tc-loop-target-id) (AstType.Unit)))
+
+(define (tc-clear-loop-target [env : TcTypeEnv]) : TcTypeEnv
+  (tc-bind-id env (tc-loop-target-id) (AstType.Never)))
+
+(define (tc-in-loop-target? [env : TcTypeEnv]) : bool
+  (match (tc-env-marker-type env (tc-loop-target-id))
+    [(AstMaybeType.Some ty) (not (tc-never-type? ty))]
+    [(AstMaybeType.No) false]))
+
+(define (tc-loop-control-expr [env : TcTypeEnv] [form : String]) : ResultTcType
+  (if (tc-in-loop-target? env)
+    (ResultTcType.Ok (AstType.Never))
+    (ResultTcType.Err
+      (string.append
+        "typecheck: "
+        (string.append form " requires enclosing scalar while")))))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (ast-type-cons a AstTypeList.Nil))
@@ -22793,9 +22830,17 @@
                 (if (tc-spmd-varying? cond-class)
                   (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
                     [(ResultTcUnit.Ok)
-                      (match (tc-spmd-masked-if-expr ctx env cond-env body)
+                      (match (tc-spmd-masked-if-expr
+                        ctx
+                        (tc-enter-loop-target env)
+                        cond-env
+                        body)
                         [(ResultTcUnit.Ok)
-                          (match (tc-spmd-expr ctx env cond-env body)
+                          (match (tc-spmd-expr
+                            ctx
+                            (tc-enter-loop-target env)
+                            cond-env
+                            body)
                             [(ResultTcSpmdExprInfo.Ok body-info)
                               (match body-info
                                 [(TcSpmdExprInfo _ _ body-env)
@@ -22811,7 +22856,11 @@
                           (ResultTcSpmdExprInfo.Err message)])]
                     [(ResultTcUnit.Err message)
                       (ResultTcSpmdExprInfo.Err message)])
-                  (match (tc-spmd-expr ctx env cond-env body)
+                  (match (tc-spmd-expr
+                    ctx
+                    (tc-enter-loop-target env)
+                    cond-env
+                    body)
                     [(ResultTcSpmdExprInfo.Ok body-info)
                       (match body-info
                         [(TcSpmdExprInfo _ _ body-env)
@@ -23103,6 +23152,12 @@
     [(AstExpr.Return _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: return inside foreach is not supported")]
+    [(AstExpr.Break)
+      (ResultTcSpmdExprInfo.Err
+        "typecheck: break inside foreach is not supported")]
+    [(AstExpr.Continue)
+      (ResultTcSpmdExprInfo.Err
+        "typecheck: continue inside foreach is not supported")]
     [(AstExpr.PtrNull _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
@@ -23736,6 +23791,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrNullCheck inner-box)
       (let
@@ -24202,6 +24259,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-sets-free-name? inner name bound))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrNullCheck inner-box)
       (let
@@ -30547,11 +30606,11 @@
           (match maybe-ret
             [(AstMaybeType.Some ret)
               (tc-bind-return-type
-                (tc-bind-params ctx env params)
+                (tc-bind-params ctx (tc-clear-loop-target env) params)
                 (tc-resolve-type ctx ret))]
             [(AstMaybeType.No)
               (tc-bind-return-type
-                (tc-bind-params ctx env params)
+                (tc-bind-params ctx (tc-clear-loop-target env) params)
                 (AstType.Never))])]
         (match (match maybe-ret
           [(AstMaybeType.Some ret)
@@ -31150,7 +31209,7 @@
             (AstType.Bool)
             "typecheck: while condition must be bool")
             [(ResultTcUnit.Ok)
-              (match (tc-expr-id ctx env body-box)
+              (match (tc-expr-id ctx (tc-enter-loop-target env) body-box)
                 [(ResultTcType.Ok body-ty)
                   (match (tc-expect
                     body-ty
@@ -31461,6 +31520,8 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (tc-return-expr ctx env value))]
+    [(AstExpr.Break) (tc-loop-control-expr env "break")]
+    [(AstExpr.Continue) (tc-loop-control-expr env "continue")]
     [(AstExpr.PtrNull ty)
       (let
         [resolved : AstType (tc-resolve-type ctx ty)]
@@ -32615,6 +32676,8 @@
       (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
     [(AstExpr.Return inner)
       (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExpr.Break) ResultTcUnit.Ok]
+    [(AstExpr.Continue) ResultTcUnit.Ok]
     [(AstExpr.PtrNull _)
       (tc-comptime-purity-reject-or-template-ok
         expr
@@ -36235,6 +36298,8 @@
                   return-ty)]
               [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+    [(AstExpr.Break) (TcMoveResult.Ok moved)]
+    [(AstExpr.Continue) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNull _) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
@@ -39815,6 +39880,8 @@
                   return-ty)]
               [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(AstExpr.Break) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.Continue) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.PtrNull _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.PtrNullCheck inner-box)
       (let

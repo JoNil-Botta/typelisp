@@ -1152,6 +1152,8 @@
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExpr.Return inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
+    [(AstExpr.Break) refs]
+    [(AstExpr.Continue) refs]
     [(AstExpr.PtrNull ty) (selfhost-lint-dead-type-refs ty refs)]
     [(AstExpr.PtrNullCheck inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]

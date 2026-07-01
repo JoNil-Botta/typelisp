@@ -582,6 +582,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-return-expr? inner))]
     [(AstExpr.Return _) true]
+    [(AstExpr.Break) true]
+    [(AstExpr.Continue) true]
     [_ false]))
 
 (define (lint-expr-list-has-return? [exprs : AstExprList]) : bool
@@ -602,6 +604,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-return-branch? inner))]
     [(AstExpr.Return _) true]
+    [(AstExpr.Break) true]
+    [(AstExpr.Continue) true]
     [(AstExpr.Begin exprs) (lint-expr-list-has-return? exprs)]
     [_ false]))
 
@@ -1841,6 +1845,8 @@
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExpr.Return inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
     [(AstExpr.PtrNull ty) (lint-type-uses-import? ty alias module-name)]
     [(AstExpr.PtrNullCheck inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
@@ -2992,6 +2998,8 @@
       (lint-copy-on-update-expr (ast-node-get inner) state span)]
     [(AstExpr.Return inner)
       (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [_ state]))
 
 (define (lint-copy-on-update-field-names [fields : AstFieldDefList]) : LintNameList
@@ -3738,6 +3746,8 @@
       (lint-single-element-array-expr (ast-node-get inner) state)]
     [(AstExpr.Return inner)
       (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [(AstExpr.PtrNull _) state]
     [(AstExpr.PtrNullCheck inner)
       (lint-single-element-array-expr (ast-node-get inner) state)]
@@ -4160,6 +4170,8 @@
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExpr.Return inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [(AstExpr.PtrNull _) state]
     [(AstExpr.PtrNullCheck inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
@@ -5485,6 +5497,8 @@
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
     [(AstExpr.Return inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [(AstExpr.PtrNullCheck inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
     [(AstExpr.PtrAddrOf place)
@@ -5938,6 +5952,8 @@
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.Return inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [(AstExpr.PtrNull ty) (lint-unused-variable-type ty state)]
     [(AstExpr.PtrNullCheck inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
@@ -7157,6 +7173,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
+    [(AstExpr.Break) acc]
+    [(AstExpr.Continue) acc]
     [(AstExpr.PtrNull _) acc]
     [(AstExpr.PtrNullCheck inner-box)
       (let

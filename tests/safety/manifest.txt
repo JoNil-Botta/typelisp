@@ -87,6 +87,11 @@ safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_rejec
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported
+while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
+while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
+while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while
+while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
+while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
@@ -144,6 +149,8 @@ spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_r
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
 spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
 spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
+spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
+spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support uniform while
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String

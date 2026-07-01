@@ -3523,7 +3523,12 @@ suitable for side effects and early-return guards.
 - The body is one or more expressions. Multiple body expressions are evaluated
   as an implicit `begin`; each body expression must be unit-valued.
 - Returns `unit`.
-- No `break` or `continue`.
+- `(break)` exits the nearest enclosing scalar `while`; `(continue)` jumps to
+  that loop's next condition check. Both forms take no operands, have the
+  compiler-internal bottom type, and run active resource cleanups and
+  `with-arena` resets for scopes they leave.
+- `break` and `continue` do not cross lambda/function boundaries, have no
+  labels, and cannot carry values. `while` remains unit-valued.
 
 ### 5.10 `(set! var expr)` — mutation
 
@@ -3734,10 +3739,10 @@ Semantics:
 - `start` and `end` are uniform `i64` expressions evaluated once before the
   loop. If `end <= start`, the loop has zero logical iterations.
 - `body` must have type `unit`; the `foreach` expression has type `unit`.
-- Function-local early exits are not part of the current SPMD control-flow
-  surface: `(return expr)` and recoverable `(try expr)` propagation are rejected
-  inside `foreach` bodies. Future `break`/`continue` forms are also outside this
-  surface until a separate SPMD ordering, mask, and cleanup policy is specified.
+- Early exits are not part of the current SPMD control-flow surface:
+  `(return expr)`, recoverable `(try expr)` propagation, `(break)`, and
+  `(continue)` are rejected inside `foreach` bodies until a separate SPMD
+  ordering, mask, and cleanup policy is specified.
 - Programs that do not evaluate public lane identity forms must produce the
   same observable result as an ordinary scalar loop over the same range. SIMD
   lowering may group iterations into lanes, but those programs must not depend
@@ -3998,11 +4003,11 @@ Masked varying control flow (v2/v3):
   `if`: local `let`/`begin`, nested varying `if`, varying `match`, nested
   varying `while`, supported arithmetic/comparison/boolean operations,
   contiguous `array-ref`/`array-set!`, and accepted source-known SPMD helper
-  calls. Uniform `while` loops inside masked branches, function-local early
-  exits (`return` and `try` propagation), future `break`/`continue` forms,
-  public mask values, gather reads and scatter writes through index arrays
-  inside masked branches, overlapping ordinary writes, general atomics, and
-  user-defined SPMD calls outside the accepted helper subset remain deferred.
+  calls. Uniform `while` loops inside masked branches, early exits (`return`,
+  `try` propagation, `break`, and `continue`), public mask values, gather reads
+  and scatter writes through index arrays inside masked branches, overlapping
+  ordinary writes, general atomics, and user-defined SPMD calls outside the
+  accepted helper subset remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
@@ -4337,7 +4342,7 @@ Unsupported in the current SPMD implementation:
 - Scans, general shuffles, general atomics beyond the explicit integer element
   helpers, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
-- Early exits, `break`, and `continue`.
+- Early exits: `return`, `try` propagation, `break`, and `continue`.
 - Non-inlineable user-defined function calls with varying arguments or varying
   returns remain rejected until the v1 private out-of-line SPMD call ABI above
   is implemented. Direct source-known, non-dispatch helper calls may be inlined
@@ -6383,6 +6388,10 @@ Function-local early exit uses the Lisp-shaped `(return expr)` form:
   before the early exit leaves their scope.
 - `(return expr)` is rejected outside a function and inside `foreach`/SPMD
   bodies.
+- `(break)` and `(continue)` are valid only inside scalar `while`. They have the
+  same compiler-internal bottom type and cleanup behavior as `return`, but
+  target the nearest enclosing scalar `while` exit or condition check and are
+  rejected inside `foreach`/SPMD bodies.
 
 Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
@@ -6911,6 +6920,8 @@ expr          ::= literal
                 | "(" "let" "(" binding* ")" expr+ ")"
                 | "(" "let" "[]" expr+ ")"
                 | "(" "while" expr expr+ ")"
+                | "(" "break" ")"
+                | "(" "continue" ")"
                 | "(" "begin" expr+ ")"
                 | "(" "set!" ident expr ")"
                 | "(" "ann" expr ":" type ")"

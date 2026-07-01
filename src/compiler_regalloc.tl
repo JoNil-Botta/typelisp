@@ -168,6 +168,37 @@
   (piece-writeback (Array i64))
   (occupant-split CompilerRegOccupantSplitList))
 
+;; SplitKit M2 in-worklist split state (design 2.2/2.3/2.4). Bundles everything
+;; trySplit needs to MINT call-free sub-range pieces of a spilled call-spanning
+;; root V and re-queue them into the greedy worklist, plus the CompilerRegSplitPlan
+;; geometry it records. A minted piece V_i has id `orig-vars + k` (k the mint
+;; order), covers one preserved call-free sub-range [start,end), is seeded with V's
+;; weight and marked pending so the worklist pops it to compete for a register over
+;; the full pool (V_i is call-free => spans-call=false). Fields:
+;;   orig-vars       -- boundary: ids < orig-vars are REAL vars, >= are pieces
+;;                      (only real vars ever split -> pieces never re-mint => the
+;;                      termination guard, design 2.3);
+;;   split-cap       -- EXCLUSIVE upper bound on minted piece ids (= orig-vars +
+;;                      budget). budget = 0 (default self-host path, no splitkit-
+;;                      stress cfg) => split-cap = orig-vars, so trySplit's mint
+;;                      loop runs zero iterations and allocation is byte-identical;
+;;   next-piece      -- 1-slot mutable counter: the next id to mint (starts at
+;;                      orig-vars, bounded by split-cap);
+;;   split-done      -- per-var: 1 once V has been split (mints AT MOST once);
+;;   piece-of/-start/-end/-writeback -- the recorded CompilerRegSplitPlan geometry
+;;                      (piece-of[V_i] = V, -1 for non-pieces). REALIZATION IS
+;;                      DEFERRED to M3: the backend ignores this plan, so minted
+;;                      pieces are inert w.r.t. emitted code.
+(defstruct CompilerRegSplitCtx
+  (orig-vars i64)
+  (split-cap i64)
+  (next-piece (Array i64))
+  (split-done (Array i64))
+  (piece-of (Array i64))
+  (piece-start (Array i64))
+  (piece-end (Array i64))
+  (piece-writeback (Array i64)))
+
 (defenum CompilerRegPlan
   (CompilerRegPlan
     CompilerRegAssignmentList
@@ -10576,6 +10607,175 @@
     (array.make-array i64 0)
     CompilerRegOccupantSplitNil))
 
+;; SplitKit M2 split budget (design 2.4): the per-function cap on minted pieces,
+;; which also bounds the array growth (each per-var array grows by `budget`). The
+;; DEFAULT self-host path forces budget = 0 (byte-identical: no growth, no mint),
+;; so this cap only takes effect under the `splitkit-stress` cfg, where it proves
+;; the mint/re-queue/termination substrate on a real budget without realization.
+;; A fixed modest cap keeps compile memory bounded (extra unminted slots are inert)
+;; while giving the worklist room to mint several pieces per function and let them
+;; compete/evict -- enough to exercise the termination bound (design 2.3).
+(define (compiler-reg-split-budget-cap) : i64
+  8)
+
+;; An inert split context: split-cap = orig-vars so trySplit's cap gate
+;; (next-piece >= split-cap) is immediately true and NOTHING mints. Used on every
+;; non-integer greedy pass and on the integer pass whenever budget = 0 (the
+;; committed self-host path). All geometry arrays are size-0; trySplit never
+;; touches them because it declines before the mint step.
+(define (compiler-reg-split-ctx-empty [orig-vars : i64]) : CompilerRegSplitCtx
+  (let
+    [np : (Array i64) (array.make-array i64 1)]
+    (begin
+      (array.array-set! np 0 (if (< orig-vars 0) 0 orig-vars))
+      (CompilerRegSplitCtx
+        (if (< orig-vars 0) 0 orig-vars)
+        (if (< orig-vars 0) 0 orig-vars)
+        np
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)))))
+
+(define (compiler-reg-make-i64-filled [size : i64] [value : i64]) : (Array i64)
+  (let
+    [n : i64 (if (< size 1) 1 size)]
+    [out : (Array i64) (array.make-array i64 n)]
+    (begin
+      (compiler-reg-fill-i64-array out value)
+      out)))
+
+;; A budget-grown split context (design 2.4). split-cap = orig-vars + budget; the
+;; geometry arrays are sized to hold every mintable piece id. next-piece starts at
+;; orig-vars (the first piece id). Only reached under the splitkit-stress cfg
+;; (budget > 0); the self-host path uses compiler-reg-split-ctx-empty.
+(define (compiler-reg-split-ctx-make
+  [orig-vars : i64]
+  [budget : i64]) : CompilerRegSplitCtx
+  (let
+    [ov : i64 (if (< orig-vars 0) 0 orig-vars)]
+    [b : i64 (if (< budget 0) 0 budget)]
+    [cap : i64 (+ ov b)]
+    [sz : i64 (if (< cap 1) 1 cap)]
+    [np : (Array i64) (array.make-array i64 1)]
+    (begin
+      (array.array-set! np 0 ov)
+      (CompilerRegSplitCtx
+        ov
+        cap
+        np
+        (compiler-reg-make-i64-filled sz 0)
+        (compiler-reg-make-i64-filled sz (- 0 1))
+        (compiler-reg-make-i64-filled sz 0)
+        (compiler-reg-make-i64-filled sz 0)
+        (compiler-reg-make-i64-filled sz 0)))))
+
+;; Grow an i64 per-var array by `extra` slots, filling the new tail with `fill`.
+;; Byte-identity note: only ever called with extra > 0 (budget-stress); the
+;; budget-0 path keeps the original array object untouched.
+(define (compiler-reg-i64-array-grow
+  [src : (Array i64)]
+  [extra : i64]
+  [fill : i64]) : (Array i64)
+  (let
+    [old-n : i64 (array.array-length src)]
+    [new-n : i64 (+ old-n (if (< extra 0) 0 extra))]
+    [nn : i64 (if (< new-n 1) 1 new-n)]
+    [out : (Array i64) (array.make-array i64 nn)]
+    [i : i64 0]
+    (begin
+      (while (< i nn)
+        (begin
+          (array.array-set!
+            out
+            i
+            (if (< i old-n) (array.array-ref src i) fill))
+          (set! i (+ i 1))))
+      out)))
+
+;; Grow the interval index by `extra` piece slots. New slots get start = end = -1
+;; (absent: interference/spans-clobber tests skip a var whose start < 0) and Nil
+;; segments; trySplit overwrites a slot when it mints a piece there.
+(define (compiler-reg-interval-index-grow
+  [index : CompilerRegIntervalIndex]
+  [extra : i64]) : CompilerRegIntervalIndex
+  (let
+    [starts : (Array i64) (struct-get index starts)]
+    [ends : (Array i64) (struct-get index ends)]
+    [segs : (Array CompilerRegIntervalList) (struct-get index segments)]
+    [old-n : i64 (array.array-length starts)]
+    [new-n : i64 (+ old-n (if (< extra 0) 0 extra))]
+    [nn : i64 (if (< new-n 1) 1 new-n)]
+    [new-starts : (Array i64) (array.make-array i64 nn)]
+    [new-ends : (Array i64) (array.make-array i64 nn)]
+    [new-segs : (Array CompilerRegIntervalList)
+      (array.make-array CompilerRegIntervalList nn)]
+    [i : i64 0]
+    (begin
+      (while (< i nn)
+        (begin
+          (array.array-set!
+            new-starts
+            i
+            (if (< i old-n) (array.array-ref starts i) (- 0 1)))
+          (array.array-set!
+            new-ends
+            i
+            (if (< i old-n) (array.array-ref ends i) (- 0 1)))
+          (array.array-set!
+            new-segs
+            i
+            (if (< i (array.array-length segs))
+              (array.array-ref segs i)
+              CompilerRegIntervalNil))
+          (set! i (+ i 1))))
+      (CompilerRegIntervalIndex new-starts new-ends new-segs))))
+
+;; Grow the assignment table by `extra` piece slots (new slots absent: present=0).
+(define (compiler-reg-assignment-table-grow
+  [table : CompilerRegAssignmentTable]
+  [extra : i64]) : CompilerRegAssignmentTable
+  (let
+    [present : (Array i64) (struct-get table present)]
+    [items : (Array CompilerRegLocation) (struct-get table items)]
+    [old-n : i64 (array.array-length present)]
+    [new-n : i64 (+ old-n (if (< extra 0) 0 extra))]
+    [nn : i64 (if (< new-n 1) 1 new-n)]
+    [new-present : (Array i64) (array.make-array i64 nn)]
+    [new-items : (Array CompilerRegLocation)
+      (array.make-array CompilerRegLocation nn)]
+    [i : i64 0]
+    (begin
+      (while (< i nn)
+        (begin
+          (array.array-set!
+            new-present
+            i
+            (if (< i old-n) (array.array-ref present i) 0))
+          (array.array-set!
+            new-items
+            i
+            (if (< i old-n) (array.array-ref items i) (CompilerRegSpill 0)))
+          (set! i (+ i 1))))
+      (CompilerRegAssignmentTable new-present new-items))))
+
+;; Build the returned CompilerRegSplitPlan from a split context: carry the recorded
+;; piece geometry (piece-of/-start/-end/-writeback). piece-reg stays empty (M2 does
+;; not realize, so the worklist's per-piece register choice is not threaded into the
+;; plan yet) and occupant-split stays Nil (design 3.2 is M5). At budget 0 every
+;; piece-of slot is -1, so the plan is inert -- equivalent to the empty plan for the
+;; (disabled) realization pass.
+(define (compiler-reg-split-plan-from-ctx
+  [ctx : CompilerRegSplitCtx]) : CompilerRegSplitPlan
+  (CompilerRegSplitPlan
+    (struct-get ctx piece-of)
+    (struct-get ctx piece-start)
+    (struct-get ctx piece-end)
+    (array.make-array String 0)
+    (struct-get ctx piece-writeback)
+    CompilerRegOccupantSplitNil))
+
 ;; Build the split kit from the post-greedy, PRE-expansion ROOT assignment table:
 ;; at this point each coalesce class still has a single root carrying the merged
 ;; interval + segment union (eff-index built by compiler-reg-merged-root-index),
@@ -11160,6 +11360,198 @@
             reg
             ""))))))
 
+(define (compiler-reg-split-done?
+  [split-done : (Array i64)]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array.array-length split-done))
+    (= (array.array-ref split-done var) 1)))
+
+(define (compiler-reg-split-done-set!
+  [split-done : (Array i64)]
+  [var : i64]) : unit
+  (if (and (>= var 0) (< var (array.array-length split-done)))
+    (array.array-set! split-done var 1)
+    unit))
+
+;; Write a minted piece's interval into the (grown) index. A piece is a call-free
+;; leaf -> no sub-segments, so its segment list is Nil and spans-call(V_i) is false
+;; (its [start,end) holds no call point), which is exactly why it competes over the
+;; full register pool when the worklist pops it.
+(define (compiler-reg-index-set-piece!
+  [index : CompilerRegIntervalIndex]
+  [pid : i64]
+  [s : i64]
+  [e : i64]) : unit
+  (let
+    [starts : (Array i64) (struct-get index starts)]
+    [ends : (Array i64) (struct-get index ends)]
+    [segments : (Array CompilerRegIntervalList) (struct-get index segments)]
+    (begin
+      (if (and (>= pid 0) (< pid (array.array-length starts)))
+        (array.array-set! starts pid s)
+        unit)
+      (if (and (>= pid 0) (< pid (array.array-length ends)))
+        (array.array-set! ends pid e)
+        unit)
+      (if (and (>= pid 0) (< pid (array.array-length segments)))
+        (array.array-set! segments pid CompilerRegIntervalNil)
+        unit))))
+
+;; Record one minted piece's geometry into the split plan arrays (design 1.2).
+(define (compiler-reg-split-plan-record!
+  [ctx : CompilerRegSplitCtx]
+  [pid : i64]
+  [root : i64]
+  [s : i64]
+  [e : i64]
+  [wb : i64]) : unit
+  (let
+    [po : (Array i64) (struct-get ctx piece-of)]
+    [ps : (Array i64) (struct-get ctx piece-start)]
+    [pe : (Array i64) (struct-get ctx piece-end)]
+    [pw : (Array i64) (struct-get ctx piece-writeback)]
+    (begin
+      (if (and (>= pid 0) (< pid (array.array-length po)))
+        (array.array-set! po pid root)
+        unit)
+      (if (and (>= pid 0) (< pid (array.array-length ps)))
+        (array.array-set! ps pid s)
+        unit)
+      (if (and (>= pid 0) (< pid (array.array-length pe)))
+        (array.array-set! pe pid e)
+        unit)
+      (if (and (>= pid 0) (< pid (array.array-length pw)))
+        (array.array-set! pw pid wb)
+        unit))))
+
+;; Mint one call-free piece V_i per preserved sub-range in `segs`, budget-capped
+;; (next-piece < split-cap) and index-bounded (pid < n). Each piece inherits V's
+;; weight (so a hot piece pops early), is marked pending (so the worklist competes
+;; it), and is recorded in the plan. Advances the shared next-piece counter.
+(define (compiler-reg-greedy-mint-pieces!
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [pending : (Array i64)]
+  [split-ctx : CompilerRegSplitCtx]
+  [root : i64]
+  [weight : i64]
+  [segs : CompilerRegIntervalList]
+  [n : i64]) : unit
+  (match segs
+    [(CompilerRegIntervalNil) unit]
+    [(CompilerRegIntervalCons seg rest)
+      (begin
+        (match seg
+          [(CompilerRegInterval _ seg-start seg-end)
+            (let
+              [next-piece : (Array i64) (struct-get split-ctx next-piece)]
+              [split-cap : i64 (struct-get split-ctx split-cap)]
+              [pid : i64 (array.array-ref next-piece 0)]
+              (if (and
+                (< pid split-cap)
+                (< pid n)
+                (>= seg-start 0)
+                (< seg-start seg-end))
+                (begin
+                  (compiler-reg-index-set-piece!
+                    interval-index
+                    pid
+                    seg-start
+                    seg-end)
+                  (if (< pid (array.array-length ref-counts))
+                    (array.array-set! ref-counts pid weight)
+                    unit)
+                  (if (< pid (array.array-length pending))
+                    (array.array-set! pending pid 1)
+                    unit)
+                  (compiler-reg-split-plan-record!
+                    split-ctx
+                    pid
+                    root
+                    seg-start
+                    seg-end
+                    0)
+                  (array.array-set! next-piece 0 (+ pid 1)))
+                unit))])
+        (compiler-reg-greedy-mint-pieces!
+          interval-index
+          ref-counts
+          pending
+          split-ctx
+          root
+          weight
+          (box-get rest)
+          n))]))
+
+;; trySplit (design 2.2/2.3), inserted between tryEvict and spill in alloc-one!.
+;; When an ORIGINAL call-spanning root V that the greedy could neither assign nor
+;; evict-for has a preserved call-free segment structure and the split budget is
+;; not exhausted, partition V at its call-free sub-ranges and MINT a register piece
+;; V_i per sub-range into the (budget-grown) index + worklist; V itself keeps its
+;; canonical stack slot (identical to the plain-spill fallback). Each V_i is popped
+;; later by the SAME worklist and -- being call-free -- competes for a register over
+;; the full pool, possibly evicting a colder resident (which re-queues, the existing
+;; cascade). Returns RS_Split when it fired, -1 when it declined (control then falls
+;; to the existing spill).
+;;
+;; REALIZATION IS DEFERRED to M3: the backend ignores the recorded plan, so the
+;; minted pieces' register choices are inert w.r.t. emitted code. With budget = 0
+;; (default self-host, no splitkit-stress cfg) the cap gate declines immediately and
+;; allocation is byte-identical; the splitkit-stress cfg sets budget > 0 to exercise
+;; the mint/re-queue/termination substrate.
+;;
+;; TERMINATION (design 2.3): only real vars (var < orig-vars) split, each at most
+;; once (split-done), and total pieces are capped by the budget (next-piece <
+;; split-cap). Pieces have id >= orig-vars and are call-free, so they never re-enter
+;; this path -- the worklist's total pops stay bounded.
+(define (compiler-reg-greedy-try-split!
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [pending : (Array i64)]
+  [split-ctx : CompilerRegSplitCtx]
+  [var : i64]
+  [spans-call : bool]
+  [n : i64]) : i64
+  (let
+    [orig-vars : i64 (struct-get split-ctx orig-vars)]
+    [split-cap : i64 (struct-get split-ctx split-cap)]
+    [next-piece : (Array i64) (struct-get split-ctx next-piece)]
+    [split-done : (Array i64) (struct-get split-ctx split-done)]
+    (if (or
+      (< var 0)
+      (>= var orig-vars)
+      (>= (array.array-ref next-piece 0) split-cap)
+      (not spans-call)
+      (not (compiler-reg-interval-index-var-has-segments? interval-index var))
+      (compiler-reg-split-done? split-done var))
+      (- 0 1)
+      (let
+        [weight : i64
+          (if (< var (array.array-length ref-counts))
+            (array.array-ref ref-counts var)
+            0)]
+        [segs : CompilerRegIntervalList
+          (array.array-ref (struct-get interval-index segments) var)]
+        (begin
+          (compiler-reg-split-done-set! split-done var)
+          (compiler-reg-greedy-mint-pieces!
+            interval-index
+            ref-counts
+            pending
+            split-ctx
+            var
+            weight
+            segs
+            n)
+          (compiler-reg-assignment-table-insert
+            assignments
+            var
+            (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
+          (compiler-reg-greedy-stage-rs-split))))))
+
 (define (compiler-reg-greedy-alloc-one!
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -11178,7 +11570,8 @@
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
   [pending : (Array i64)]
-  [evict-count : (Array i64)]) : i64
+  [evict-count : (Array i64)]
+  [split-ctx : CompilerRegSplitCtx]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
@@ -11301,16 +11694,33 @@
                     var
                     (CompilerRegRegister ev))
                   (compiler-reg-greedy-stage-rs-assign))
-                (begin
-                  (compiler-reg-assignment-table-insert
-                    assignments
-                    var
-                    (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
-                  (if (compiler-reg-interval-index-var-has-segments?
-                    interval-index
-                    var)
-                    (compiler-reg-greedy-stage-rs-split)
-                    (compiler-reg-greedy-stage-rs-spill)))))))))))
+                ;; trySplit (design 2.2), between tryEvict and spill: mint call-
+                ;; free sub-range pieces of a spilled call-spanning V and re-queue
+                ;; them (budget > 0 only). Declines (returns -1) at budget 0 -> the
+                ;; existing whole-interval spill runs, byte-identical.
+                (let
+                  [split-stage : i64
+                    (compiler-reg-greedy-try-split!
+                      assignments
+                      interval-index
+                      ref-counts
+                      pending
+                      split-ctx
+                      var
+                      spans-call
+                      n)]
+                  (if (>= split-stage 0)
+                    split-stage
+                    (begin
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
+                      (if (compiler-reg-interval-index-var-has-segments?
+                        interval-index
+                        var)
+                        (compiler-reg-greedy-stage-rs-split)
+                        (compiler-reg-greedy-stage-rs-spill)))))))))))))
 
 (define (compiler-reg-greedy-collect-vars
   [candidates : CompilerRegIntervalList]
@@ -11500,7 +11910,8 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
-  [caller-saved-count : i64]) : unit
+  [caller-saved-count : i64]
+  [split-ctx : CompilerRegSplitCtx]) : unit
   (let
     [v : i64
       (compiler-reg-greedy-worklist-pick!
@@ -11536,7 +11947,8 @@
               callee-regs
               caller-saved-count
               pending
-              evict-count)]
+              evict-count
+              split-ctx)]
           (if (and (>= v 0) (< v (array.array-length stages)))
             (array.array-set! stages v stg)
             unit))
@@ -11558,7 +11970,8 @@
           div-points
           shift-points
           callee-regs
-          caller-saved-count)))))
+          caller-saved-count
+          split-ctx)))))
 
 ;; Staged worklist driver (RAGreedy Component 1): re-entrant evict-and-requeue
 ;; priority worklist over the unassigned root set, processing highest-current-
@@ -11589,7 +12002,8 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
-  [caller-saved-count : i64]) : unit
+  [caller-saved-count : i64]
+  [split-ctx : CompilerRegSplitCtx]) : unit
   (let
     [cap : i64 (if (< n 1) 1 n)]
     [pending : (Array i64) (array.make-array i64 cap)]
@@ -11616,7 +12030,8 @@
         div-points
         shift-points
         callee-regs
-        caller-saved-count))))
+        caller-saved-count
+        split-ctx))))
 
 ;; Unified Greedy integer register pool: caller-saved zero-call scratch
 ;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no
@@ -11922,7 +12337,8 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
-  [caller-saved-count : i64]) : CompilerRegAssignState
+  [caller-saved-count : i64]
+  [split-ctx : CompilerRegSplitCtx]) : CompilerRegAssignState
   (let
     [n : i64 (array.array-length (struct-get assignments present))]
     [rcount : i64 (compiler-reg-string-list-count regs)]
@@ -11971,7 +12387,8 @@
             div-points
             shift-points
             callee-regs
-            caller-saved-count)
+            caller-saved-count
+            split-ctx)
           (CompilerRegAssignState CompilerRegActiveNil assignments))))))
 
 (define (compiler-reg-plan-from
@@ -12169,6 +12586,44 @@
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
     ;; The incoming table flows straight in; integer-candidates is borrowed directly.
     [prepass-assignments : CompilerRegAssignmentTable assignment-table]
+    ;; SplitKit M2 budget + array growth (design 2.4). On the COMMITTED self-host
+    ;; path split-budget = 0 (no splitkit-stress cfg): every split-* binding aliases
+    ;; its original and split-ctx is inert, so the greedy runs exactly as before --
+    ;; byte-identical, trySplit declines. Under `--cfg splitkit-stress` split-budget
+    ;; > 0 grows each per-var array by `budget` (so trySplit mints pieces at ids
+    ;; >= orig-vars as plain array writes) and the split-ctx carries the mint counter
+    ;; + recorded plan geometry, exercising the mint/re-queue/termination substrate.
+    ;; Only the integer greedy splits; the SIMD/float passes get an inert ctx.
+    [split-orig-vars : i64
+      (array.array-length (struct-get interval-index starts))]
+    [split-budget : i64
+      (if allow-caller-saved-zero-call
+        (cfg splitkit-stress (compiler-reg-split-budget-cap) 0)
+        0)]
+    [split-index : CompilerRegIntervalIndex
+      (if (> split-budget 0)
+        (compiler-reg-interval-index-grow eff-index split-budget)
+        eff-index)]
+    [split-assignments : CompilerRegAssignmentTable
+      (if (> split-budget 0)
+        (compiler-reg-assignment-table-grow prepass-assignments split-budget)
+        prepass-assignments)]
+    [split-ref-counts : (Array i64)
+      (if (> split-budget 0)
+        (compiler-reg-i64-array-grow eviction-ref-counts split-budget 0)
+        eviction-ref-counts)]
+    [split-copy-hints : (Array i64)
+      (if (> split-budget 0)
+        (compiler-reg-i64-array-grow copy-hints split-budget (- 0 1))
+        copy-hints)]
+    [split-arg-prefs : (Array i64)
+      (if (> split-budget 0)
+        (compiler-reg-i64-array-grow arg-prefs split-budget (- 0 1))
+        arg-prefs)]
+    [split-ctx : CompilerRegSplitCtx
+      (if (> split-budget 0)
+        (compiler-reg-split-ctx-make split-orig-vars split-budget)
+        (compiler-reg-split-ctx-empty split-orig-vars))]
     [integer-state
       : CompilerRegAssignState
       ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
@@ -12180,23 +12635,25 @@
         (compiler-reg-greedy-state
           integer-candidates
           (compiler-reg-greedy-integer-pool-for-abi abi)
-          prepass-assignments
-          eff-index
+          split-assignments
+          split-index
           group-vars
-          eviction-ref-counts
-          copy-hints
-          arg-prefs
+          split-ref-counts
+          split-copy-hints
+          split-arg-prefs
           call-points
           div-points
           shift-points
           integer-registers
-          (compiler-reg-greedy-caller-saved-count-for-abi abi))
+          (compiler-reg-greedy-caller-saved-count-for-abi abi)
+          split-ctx)
         ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
         ;; integer registers (= the old SIMD pool) with caller-saved-count=0 so every
         ;; register is treated callee-saved (no caller-saved-first ordering; the SIMD
         ;; path never partitioned). ref-counts/copy-hints are empty here -> the
         ;; greedy's bounds-guarded spill-weight/hint accesses fall back to var-id
-        ;; order / no-hint, matching the old linear-scan's defaults.
+        ;; order / no-hint, matching the old linear-scan's defaults. split-budget = 0
+        ;; here, so split-ctx is inert (no minting on the SIMD path).
         (compiler-reg-greedy-state
           integer-candidates
           integer-registers
@@ -12210,7 +12667,8 @@
           div-points
           shift-points
           integer-registers
-          0))]
+          0
+          split-ctx))]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -12263,7 +12721,9 @@
         div-points
         shift-points
         CompilerRegStringNil
-        (compiler-reg-string-list-count (compiler-reg-xmm-registers)))]
+        (compiler-reg-string-list-count (compiler-reg-xmm-registers))
+        ;; floats never split -> a guaranteed-inert ctx (split-cap = next-piece)
+        (compiler-reg-split-ctx-empty split-orig-vars))]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -12315,7 +12775,13 @@
           eff-index
           (array.array-length (struct-get interval-index starts)))
         (compiler-reg-splitkit-empty))]
-    [split-plan : CompilerRegSplitPlan (compiler-reg-split-plan-empty)]
+    ;; SplitKit M2: carry the trySplit-recorded piece geometry in the plan. On the
+    ;; committed path split-budget = 0, so no piece was minted and every piece-of
+    ;; slot is -1 -- an inert plan the (disabled) realization pass ignores, exactly
+    ;; like the M1 empty plan. Under splitkit-stress the recorded sub-range pieces
+    ;; are threaded here for M3+ to consume.
+    [split-plan : CompilerRegSplitPlan
+      (compiler-reg-split-plan-from-ctx split-ctx)]
     ;; #3489 (PR2): the passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.

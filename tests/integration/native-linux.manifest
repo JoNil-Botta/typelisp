@@ -37,6 +37,7 @@ call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|
 loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
 csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
+callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-

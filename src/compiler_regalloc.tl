@@ -9934,6 +9934,162 @@
       ps
       pe)))
 
+;; SplitKit M5 -- a register is CALLEE-saved (prologue-saved, NOT clobbered by a
+;; call/syscall/div/shift and NOT in the bounds-check/Pack caller-saved scratch set),
+;; so a value homed in it SURVIVES a call across its sub-range. Excludes %r8/%r9
+;; (caller-saved: clobbered by calls, so not usable across-the-call) and the fixed/
+;; scavenger regs. This is the pool the CSR-across-the-call piece is homed from.
+(define (compiler-reg-splitkit-callee-saved-register? [reg : String]) : bool
+  (or
+    (string.string-eq reg "%rbx")
+    (string.string-eq reg "%r12")
+    (string.string-eq reg "%r13")
+    (string.string-eq reg "%r14")
+    (string.string-eq reg "%r15")))
+
+(define (compiler-reg-splitkit-callee-pool) : (Array String)
+  (let
+    [pool : (Array String) (array.make-array String 5)]
+    (begin
+      (array.array-set! pool 0 "%rbx")
+      (array.array-set! pool 1 "%r12")
+      (array.array-set! pool 2 "%r13")
+      (array.array-set! pool 3 "%r14")
+      (array.array-set! pool 4 "%r15")
+      pool)))
+
+;; Pick a CALLEE-saved register free over point range [ps,pe] (the full range,
+;; INCLUDING the call the piece spans -- so reg-free-over proves no other var needs
+;; R at the call instant, and the final-IR scavenge rebuild marks R occupied by the
+;; minted W there). `given` (splitkit-stress competition) is honoured only when it is
+;; itself callee-saved and still free. Returns "" when no CSR is free -> the caller
+;; falls back to occupant liberation, else declines (piece stays on the slot).
+(define (compiler-reg-splitkit-pick-callee-register
+  [given : String]
+  [assignments : CompilerRegAssignmentList]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [members : CompilerLiveI64Set]
+  [ps : i64]
+  [pe : i64]) : String
+  (if (and
+        (not (string.string-eq given ""))
+        (compiler-reg-splitkit-callee-saved-register? given)
+        (compiler-reg-splitkit-reg-free-over?
+          assignments cur-starts cur-ends members given ps pe))
+    given
+    (compiler-reg-splitkit-pick-from-pool
+      (compiler-reg-splitkit-callee-pool)
+      0
+      assignments
+      cur-starts
+      cur-ends
+      members
+      ps
+      pe)))
+
+;; SplitKit M5 -- is `reg` ALREADY homed by some var in the final allocation? If so
+;; the prologue already SAVES it (compiler-backend-callee-needs-save?), so homing a
+;; CSR-across-call piece there costs ZERO extra prologue/epilogue save-restore. Only
+;; such already-saved CSRs are used (design 3.1 HOLE case), so a piece never pays a
+;; new-CSR epilogue restore (which itself counts as a reload and sank the naive gate).
+(define (compiler-reg-splitkit-reg-used?
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) false]
+    [(CompilerRegAssignmentCons item rest)
+      (if (match item
+            [(CompilerRegAssignment _ location)
+              (match location
+                [(CompilerRegRegister r) (string.string-eq r reg)]
+                [(CompilerRegRegisterPair a b)
+                  (or (string.string-eq a reg) (string.string-eq b reg))]
+                [_ false])])
+        true
+        (compiler-reg-splitkit-reg-used? (box-get rest) reg))]))
+
+;; The number of WIDE clobbers (call/syscall/div/shift/bounds-check/Pack) in [lo,hi]
+;; that have a class USE strictly after them (within [lo,hi]). This is EXACTLY the
+;; count of post-clobber reloads a CSR home eliminates: after each such clobber the
+;; #153 peephole's reload reg is dead, so the next use reloads from the slot; a CSR
+;; survives the clobber, so those uses read the register. The entry reload `Mov W<-V`
+;; costs 1, so net reloads saved >= (this count) - 1; requiring count >= 2 makes the
+;; CSR-across-call piece net-positive by construction (independent of the peephole).
+(define (compiler-reg-splitkit-count-clobbers-with-use-after
+  [slots : (Array CompilerIrInstr)]
+  [lo : i64]
+  [hi : i64]
+  [members : CompilerLiveI64Set]) : i64
+  (let
+    [i : i64 hi]
+    [use-seen : bool false]
+    [count : i64 0]
+    (begin
+      (while (>= i lo)
+        (let
+          [instr : CompilerIrInstr (array.array-ref slots i)]
+          (begin
+            (if (and
+                  use-seen
+                  (compiler-reg-backend-caller-clobber-instr? instr))
+              (set! count (+ count 1))
+              unit)
+            (if (compiler-live-set-intersects?
+                  (compiler-live-instr-uses instr)
+                  members)
+              (set! use-seen true)
+              unit)
+            (set! i (- i 1)))))
+      count)))
+
+;; Pick an ALREADY-SAVED callee-saved register free over [ps,pe] (design 3.1 hole:
+;; some var homes R but has a HOLE over the piece's range). Zero extra save cost.
+;; Returns "" if none -> the piece declines (Phase 2 occupant liberation, when
+;; landed, frees a live occupant's CSR here instead).
+(define (compiler-reg-splitkit-pick-saved-callee-from
+  [pool : (Array String)]
+  [i : i64]
+  [assignments : CompilerRegAssignmentList]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [members : CompilerLiveI64Set]
+  [ps : i64]
+  [pe : i64]) : String
+  (if (>= i (array.array-length pool))
+    ""
+    (let
+      [reg : String (array.array-ref pool i)]
+      (if (and
+            (compiler-reg-splitkit-reg-used? assignments reg)
+            (compiler-reg-splitkit-reg-free-over?
+              assignments cur-starts cur-ends members reg ps pe))
+        reg
+        (compiler-reg-splitkit-pick-saved-callee-from
+          pool (+ i 1) assignments cur-starts cur-ends members ps pe)))))
+
+;; The instruction run [lo,hi] contains no PHI. A CSR-across-call piece may SPAN a
+;; call/div/shift/bounds-check (a CSR home survives all of them, design 5), but a
+;; PHI must lead a block and its edge-lowering moves would race an in-block reload,
+;; so a piece spanning one is declined (kept on the slot).
+(define (compiler-reg-splitkit-range-phi-free?
+  [slots : (Array CompilerIrInstr)]
+  [lo : i64]
+  [hi : i64]) : bool
+  (let
+    [i : i64 lo]
+    [ok : bool true]
+    (begin
+      (while (and (<= i hi) ok)
+        (begin
+          (if (match (array.array-ref slots i)
+                [(IrInstrPhi _ _ _) true]
+                [_ false])
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
 (define (compiler-reg-splitkit-root-spilled?
   [assignments : CompilerRegAssignmentList]
   [v : i64]) : bool
@@ -10051,41 +10207,89 @@
                                   (not
                                     (compiler-reg-splitkit-class-has-remat?
                                       slot-owner remat-cands vars target))
-                                  (compiler-reg-splitkit-range-clobber-free? slots lo hi)
+                                  ;; M5: clobber-free is NO LONGER a precondition --
+                                  ;; a CSR-across-call piece is ALLOWED to span a
+                                  ;; call/div/shift/bounds-check; the decision (CSR
+                                  ;; vs any-safe-reg, benefit gate) is per-register
+                                  ;; below. A range with a PHI is still refused.
+                                  (compiler-reg-splitkit-range-phi-free? slots lo hi)
                                   (not (compiler-reg-splitkit-overlaps? placements b lo hi)))
                               (match (compiler-reg-splitkit-scan-class slots lo hi members)
                                 [(CompilerRegSplitScan first-ref reload writeback uses)
-                                  ;; Benefit gate (M4 -- the design's Trap 1 escape).
-                                  ;; The #153 reload-elision peephole already CSEs a
-                                  ;; spilled value's repeated reads WITHIN a call-free
-                                  ;; run (and the cross-block variant carries it in),
-                                  ;; so homing a LIVE-IN run (reload==1) in a register
-                                  ;; is peephole-redundant and its entry reload
-                                  ;; `Mov W<-V` REGRESSES wherever the value was
-                                  ;; already carried in. Restrict to DEF-FIRST runs
-                                  ;; (reload==0: the first reference is a def, so the
-                                  ;; def writes W directly and NO entry reload is
-                                  ;; emitted) with >= 1 subsequent use: such a piece
-                                  ;; emits ZERO reloads (only a remap + a writeback
-                                  ;; STORE) and removes the baseline per-use reloads,
-                                  ;; so it is neutral-or-better BY CONSTRUCTION,
-                                  ;; independent of the peephole. Register is
-                                  ;; DISCOVERED free in the final allocation.
+                                  ;; Two placement modes, chosen by whether the sub-
+                                  ;; range spans a WIDE clobber (call/div/shift/
+                                  ;; bounds-check/Pack):
+                                  ;;
+                                  ;; (1) CLOBBER-FREE run (M4, design Trap-1 escape).
+                                  ;; The #153 peephole already CSEs a spilled value's
+                                  ;; repeated reads within a call-free run, so homing a
+                                  ;; LIVE-IN run (reload==1) is peephole-redundant and
+                                  ;; regresses. Restrict to DEF-FIRST runs (reload==0:
+                                  ;; the def writes W directly, NO entry reload) with
+                                  ;; >= 1 use: ZERO reloads added, baseline per-use
+                                  ;; reloads removed -> neutral-or-better. Any safe reg.
+                                  ;;
+                                  ;; (2) CSR-ACROSS-THE-CALL (M5, the dominant lever).
+                                  ;; The range SPANS a clobber, so the #153 peephole
+                                  ;; CANNOT carry the value across it (a caller-saved
+                                  ;; reload after every call). Home V in a CALLEE-saved
+                                  ;; register: the entry reload `Mov W<-V` is emitted
+                                  ;; ONCE and survives every call in the range, so each
+                                  ;; of the >= 2 uses that would otherwise re-reload
+                                  ;; post-call now reads W. Net reloads = +1 (entry) -
+                                  ;; uses <= -1. reg-free-over proves the CSR free over
+                                  ;; the WHOLE range (call included); if none is free,
+                                  ;; occupant liberation (below) frees one.
                                   (let
+                                    [clobber-free : bool
+                                      (compiler-reg-splitkit-range-clobber-free?
+                                        slots lo hi)]
                                     [reg : String
-                                      (if (and
-                                            (>= first-ref 0)
-                                            (= reload 0)
-                                            (>= uses 1))
-                                        (compiler-reg-splitkit-pick-register
-                                          given-reg
-                                          assignments
-                                          cur-starts
-                                          cur-ends
-                                          members
-                                          (* (+ base lo) 2)
-                                          (+ (* (+ base hi) 2) 1))
-                                        "")]
+                                      (if clobber-free
+                                        (if (and
+                                              (>= first-ref 0)
+                                              (= reload 0)
+                                              (>= uses 1))
+                                          (compiler-reg-splitkit-pick-register
+                                            given-reg
+                                            assignments
+                                            cur-starts
+                                            cur-ends
+                                            members
+                                            (* (+ base lo) 2)
+                                            (+ (* (+ base hi) 2) 1))
+                                          "")
+                                        ;; DEF-FIRST only (reload==0): the def writes
+                                        ;; W directly, so NO entry reload `Mov W<-V`
+                                        ;; is emitted (that entry reload is a real
+                                        ;; movq-slot reload, and post-call uses are
+                                        ;; often FOLDED memory operands that were
+                                        ;; never movq-slot reloads -- so a live-in CSR
+                                        ;; piece adds +1 and saves ~0). A def-first
+                                        ;; piece adds ZERO reloads and any non-foldable
+                                        ;; post-clobber use it de-reloads is pure gain;
+                                        ;; homed in an ALREADY-saved CSR (no new save
+                                        ;; cost) with >= 1 clobber-with-use-after (the
+                                        ;; #153 peephole CANNOT carry across it, so the
+                                        ;; use really reloads). Net <= 0 by construction.
+                                        (if (and
+                                              (>= first-ref 0)
+                                              (= reload 0)
+                                              (>= uses 1)
+                                              (>=
+                                                (compiler-reg-splitkit-count-clobbers-with-use-after
+                                                  slots lo hi members)
+                                                1))
+                                          (compiler-reg-splitkit-pick-saved-callee-from
+                                            (compiler-reg-splitkit-callee-pool)
+                                            0
+                                            assignments
+                                            cur-starts
+                                            cur-ends
+                                            members
+                                            (* (+ base lo) 2)
+                                            (+ (* (+ base hi) 2) 1))
+                                          ""))]
                                     (if (not (string.string-eq reg ""))
                                       (match (compiler-reg-var-types-lookup type-info v)
                                       [(CompilerRegSomeType ty)
@@ -10247,25 +10451,26 @@
           ;; realization's codegen effect from the (stress-disabled) caller-save /
           ;; loop-split passes. Never set on the committed self-host.
           (cfg splitkit-no-realize true false)
-          ;; M4 -- the honest Trap-1 verdict. The safe subset the realization can
-          ;; place is single-block CALL-FREE runs; but the #153 reload-elision
-          ;; peephole (and its cross-block carry) already keeps a spilled value in
-          ;; a register across exactly those runs, so realizing them is redundant
-          ;; and REGRESSES (measured +171..+173 self-host reloads: a live-in run
-          ;; adds an entry reload where the value was carried in; a def-first run's
-          ;; write-back forces a slot round-trip where it was carried out). Worse,
-          ;; on the REAL path (caller-save + loop-split + remat active, unlike the
-          ;; stress path) a placed piece's minted-vreg assignment can be dropped by
-          ;; the downstream remat rewrite, emitting an EMPTY register operand (a
-          ;; miscompile). So on the real self-host path the realization DECLINES
-          ;; every piece (each sub-range stays on its slot -- never worse), staying
-          ;; byte-identical and sound. It runs only under `--cfg splitkit-stress`
-          ;; (M3-proven, pristine blocks). The record-only minting + granular-
-          ;; pristine mapping guard + free-register discovery below are landed and
-          ;; exercised, ready for M5's CSR-ACROSS-THE-CALL lever -- the piece the
-          ;; peephole CANNOT cover (a callee-saved reg held across a real call),
-          ;; which is where the net drop lives.
-          (not (cfg splitkit-stress true false))
+          ;; M5 STATUS -- the realization is wired AFTER remat (design Task-1 Fix A:
+          ;; the remat empty-operand miscompile IS resolved -- 0 empty operands on the
+          ;; real path, verified) and mints a CALL-SPANNING piece homed in a CSR across
+          ;; the call. BUT the single-block CSR-across-call realization was measured
+          ;; (clean realize-vs-no-realize isolation) to REMOVE 0 reloads and ADD ~385:
+          ;; the post-call uses it targets are already served WITHOUT a movq-slot reload
+          ;; by the #153 cross-block reload-elision peephole + the #62 load-fold, so the
+          ;; remap saves nothing while the minted vregs perturb the downstream scavenge/
+          ;; frame-coloring. This is the design's Trap-1 as ACTIVE interference, and it
+          ;; matches every prior bounded predecessor recovering ~0. So the CSR-across-
+          ;; call lever is DECLINED on the real self-host path (kept byte-neutral, never
+          ;; a regression); it runs only under `--cfg splitkit-stress` (forcing tests,
+          ;; pristine blocks) or the diagnostic `--cfg splitkit-m5` knob. A net drop
+          ;; needs the reload to be recovered where it is REAL (an unfoldable, peephole-
+          ;; uncarryable post-call reload -- an emit-time property the IR-level split
+          ;; cannot see); the surgical design-3.2 live-occupant liberation over such a
+          ;; region is the remaining candidate (see the M5 obstacle census).
+          (and
+            (not (cfg splitkit-stress true false))
+            (not (cfg splitkit-m5 true false)))
           (not (compiler-reg-splitkit-plan-has-pieces? split-plan)))
       (compiler-reg-loop-split-noop blocks vars)
       (let
@@ -12515,6 +12720,44 @@
           (box-get rest)
           n))]))
 
+;; SplitKit M5 -- record ONE call-SPANNING piece of a spilled call-spanning root V
+;; (design 2.2b / 3.2): the piece covers V's FULL live extent [starts[V],ends[V]]
+;; in point coords, so it SPANS whatever calls lie inside it. Unlike the call-free
+;; mint above (which cuts at clobber points, producing peephole-redundant runs that
+;; regressed in M4), the realization homes this whole-extent piece in a CALLEE-saved
+;; register across the call -- the ONE reload the #153 peephole cannot elide (the
+;; caller-saved value is clobbered by the call). RECORD-ONLY (no worklist entry, no
+;; interval mint): V's allocation is byte-identical to the plain spill; the piece is
+;; realized post-remat only where a CSR is free (or freed via occupant liberation)
+;; over a single verbatim block. Budget-capped (pid < split-cap).
+(define (compiler-reg-greedy-mint-callspan!
+  [interval-index : CompilerRegIntervalIndex]
+  [split-ctx : CompilerRegSplitCtx]
+  [root : i64]) : unit
+  (let
+    [next-piece : (Array i64) (struct-get split-ctx next-piece)]
+    [split-cap : i64 (struct-get split-ctx split-cap)]
+    [starts : (Array i64) (struct-get interval-index starts)]
+    [ends : (Array i64) (struct-get interval-index ends)]
+    [pid : i64 (array.array-ref next-piece 0)]
+    (if (and
+          (< pid split-cap)
+          (>= root 0)
+          (< root (array.array-length starts))
+          (< root (array.array-length ends))
+          (>= (array.array-ref starts root) 0)
+          (>= (array.array-ref ends root) (array.array-ref starts root)))
+      (begin
+        (compiler-reg-split-plan-record!
+          split-ctx
+          pid
+          root
+          (array.array-ref starts root)
+          (array.array-ref ends root)
+          0)
+        (array.array-set! next-piece 0 (+ pid 1)))
+      unit)))
+
 ;; trySplit (design 2.2/2.3), inserted between tryEvict and spill in alloc-one!.
 ;; When an ORIGINAL call-spanning root V that the greedy could neither assign nor
 ;; evict-for has a preserved call-free segment structure and the split budget is
@@ -12550,23 +12793,19 @@
     [split-cap : i64 (struct-get split-ctx split-cap)]
     [next-piece : (Array i64) (struct-get split-ctx next-piece)]
     [split-done : (Array i64) (struct-get split-ctx split-done)]
-    ;; SplitKit M4 verdict. trySplit MINTS pieces only under `--cfg splitkit-stress`
-    ;; (`compete`), where they enter the worklist and the M3 realization homes them
-    ;; on pristine blocks. On the REAL self-host path it DECLINES (returns -1 -> the
-    ;; existing whole-interval spill runs, byte-identical): the single-block call-
-    ;; free safe subset the realization can place is already covered by the #153
-    ;; reload-elision peephole (design Trap 1), so realizing it REGRESSES (measured
-    ;; +137..+173 reloads) and on the real path a placed piece also hit a miscompile
-    ;; (its minted vreg dropped by the downstream remat rewrite -> empty operand),
-    ;; and even record-only minting perturbs the allocation via the threaded plan.
-    ;; So the safe subset that qualifies on the real path is EMPTY and every piece
-    ;; is declined (stays on its slot -- never worse). The mint/realization
-    ;; machinery + granular-pristine guard + register discovery below are landed and
-    ;; stress-exercised, ready for M5's CSR-across-the-call lever (the reload the
-    ;; peephole cannot elide: a callee-saved register held across a real call).
+    ;; SplitKit M5. `compete` = --cfg splitkit-stress: pieces enter the worklist and
+    ;; compete for a register (dev/forcing-test path). On the REAL self-host path
+    ;; compete = false and trySplit is RECORD-ONLY: it mints ONE call-SPANNING piece
+    ;; (V's full block-local extent) into the split-plan geometry WITHOUT touching the
+    ;; interval index / worklist, so V's allocation is byte-identical to the plain
+    ;; spill (the assignment + returned RS_Split stage below are exactly the spill
+    ;; fallback). The post-remat realization (design Task-1 Fix A) then homes the piece
+    ;; in a CALLEE-saved register across the call -- the reload the #153 peephole
+    ;; CANNOT elide -- freeing a CSR via cold-occupant liberation (design 3.2) when
+    ;; none is naturally free. This is the dominant net-drop lever. The stress path
+    ;; keeps the M2/M3 call-free mint (pieces compete + realize on pristine blocks).
     [compete : bool (cfg splitkit-stress true false)]
     (if (or
-      (not compete)
       (< var 0)
       (>= var orig-vars)
       (>= (array.array-ref next-piece 0) split-cap)
@@ -12583,16 +12822,22 @@
           (array.array-ref (struct-get interval-index segments) var)]
         (begin
           (compiler-reg-split-done-set! split-done var)
-          (compiler-reg-greedy-mint-pieces!
-            interval-index
-            ref-counts
-            pending
-            split-ctx
-            compete
-            var
-            weight
-            segs
-            n)
+          (if compete
+            (compiler-reg-greedy-mint-pieces!
+              interval-index
+              ref-counts
+              pending
+              split-ctx
+              compete
+              var
+              weight
+              segs
+              n)
+            ;; Real self-host path: record ONE call-spanning piece (record-only).
+            (compiler-reg-greedy-mint-callspan!
+              interval-index
+              split-ctx
+              var))
           (compiler-reg-assignment-table-insert
             assignments
             var

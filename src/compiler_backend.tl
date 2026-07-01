@@ -29874,72 +29874,83 @@
         [rewritten-vars : i64
           (match loop-split-rewrite
             [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
-        ;; SplitKit M3 realization pass (design section 4), wired between
-        ;; loop-split and remat. Consumes the CompilerRegSplitPlan pieces carried
-        ;; in rewrite-reg-plan and emits the sub-range reload/remap/write-back. At
-        ;; budget 0 (the committed self-host) the plan has no pieces -> no-op ->
-        ;; byte-identical. Runs whenever call-save-enabled so the (inert) self-host
-        ;; path still threads the plan through identically.
-        [splitkit-func : CompilerIrFunction
+        ;; SplitKit M5 PIPELINE REORDER (remat-threading fix, design Task-1 Fix A).
+        ;; Order is now loop-split -> REMAT -> SplitKit realization, so the minted
+        ;; region vregs are the LAST IR mutation: no downstream re-analysis pass
+        ;; runs after the mint, so remat can never re-derive a minted vreg's home
+        ;; away (the M4 empty-operand miscompile). The remat output is the
+        ;; intermediate (`remat0-*`); the SplitKit realization output takes the
+        ;; downstream-facing `remat-*` names below (final pipeline blocks/vars/plan),
+        ;; so nothing downstream changes. When the realization declines every piece
+        ;; (budget-0 / no CSR-across-call candidate) this is byte-identical to the
+        ;; pre-reorder chain (splitkit-noop = identity plan merge + same blocks).
+        [remat0-func : CompilerIrFunction
           (IrFunction name params ret-ty rewritten-vars rewritten-blocks)]
+        [remat0-rewrite : CompilerRegCallSaveRewrite
+          (if call-save-enabled
+            (compiler-reg-remat-rewrite-blocks
+              remat0-func
+              rewritten-blocks
+              rewritten-vars
+              (compiler-reg-function-var-types remat0-func)
+              rewrite-reg-plan)
+            (CompilerRegCallSaveRewrite
+              rewritten-blocks
+              rewritten-vars
+              rewritten-vars
+              CompilerRegAssignmentNil
+              CompilerRegVarTypeNil))]
+        [remat0-reg-plan : CompilerRegPlan
+          (if call-save-enabled
+            (compiler-reg-plan-with-call-save-rewrite
+              rewrite-reg-plan
+              remat0-rewrite)
+            rewrite-reg-plan)]
+        [remat0-blocks : CompilerIrBlockList
+          (match remat0-rewrite
+            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+        [remat0-vars : i64
+          (match remat0-rewrite
+            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+        ;; SplitKit realization pass (design section 4), now wired AFTER remat.
+        ;; Consumes the CompilerRegSplitPlan pieces carried in remat0-reg-plan and
+        ;; emits the CSR-across-call sub-range reload/remap/write-back + occupant
+        ;; liberation. The granular-pristine guard (block-verbatim?) declines any
+        ;; block remat mutated, so realization only fires on blocks left byte-
+        ;; identical by caller-save/loop-split/remat -- never a miscompile.
+        [splitkit-func : CompilerIrFunction
+          (IrFunction name params ret-ty remat0-vars remat0-blocks)]
         [splitkit-rewrite : CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler-reg-splitkit-rewrite-blocks
               splitkit-func
-              rewritten-blocks
-              rewritten-vars
+              remat0-blocks
+              remat0-vars
               (compiler-reg-function-var-types splitkit-func)
-              rewrite-reg-plan
-              ;; M4 granular-pristine: the greedy analysed `blocks` (pre
-              ;; caller-save / loop-split), so its recorded piece point coords are
-              ;; numbered over THESE bases. Passing them lets the realization home
-              ;; a piece only in a block the two rewrites left byte-identical.
+              remat0-reg-plan
+              ;; Granular-pristine: the greedy analysed `blocks` (pre caller-save /
+              ;; loop-split / remat), so its recorded piece point coords are numbered
+              ;; over THESE bases. Passing them lets the realization home a piece only
+              ;; in a block ALL three rewrites left byte-identical.
               (compiler-reg-splitkit-bases-of-blocks blocks))
             (CompilerRegCallSaveRewrite
-              rewritten-blocks
-              rewritten-vars
-              rewritten-vars
+              remat0-blocks
+              remat0-vars
+              remat0-vars
               CompilerRegAssignmentNil
               CompilerRegVarTypeNil))]
-        [splitkit-reg-plan : CompilerRegPlan
-          (if call-save-enabled
-            (compiler-reg-plan-with-call-save-rewrite
-              rewrite-reg-plan
-              splitkit-rewrite)
-            rewrite-reg-plan)]
-        [splitkit-blocks : CompilerIrBlockList
-          (match splitkit-rewrite
-            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
-        [splitkit-vars : i64
-          (match splitkit-rewrite
-            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
-        [remat-func : CompilerIrFunction
-          (IrFunction name params ret-ty splitkit-vars splitkit-blocks)]
-        [remat-rewrite : CompilerRegCallSaveRewrite
-          (if call-save-enabled
-            (compiler-reg-remat-rewrite-blocks
-              remat-func
-              splitkit-blocks
-              splitkit-vars
-              (compiler-reg-function-var-types remat-func)
-              splitkit-reg-plan)
-            (CompilerRegCallSaveRewrite
-              splitkit-blocks
-              splitkit-vars
-              splitkit-vars
-              CompilerRegAssignmentNil
-              CompilerRegVarTypeNil))]
+        ;; Downstream-facing FINAL pipeline names (= SplitKit realization output).
         [remat-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
-              splitkit-reg-plan
-              remat-rewrite)
-            splitkit-reg-plan)]
+              remat0-reg-plan
+              splitkit-rewrite)
+            remat0-reg-plan)]
         [remat-blocks : CompilerIrBlockList
-          (match remat-rewrite
+          (match splitkit-rewrite
             [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
         [remat-vars : i64
-          (match remat-rewrite
+          (match splitkit-rewrite
             [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
         [_regalloc-census : unit
           (cfg

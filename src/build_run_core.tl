@@ -47,19 +47,28 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(define (source-tool-cfg-names-to-env-from
-  [cfg-names : vector.StringVec]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (vector.string-vec-len cfg-names))
-    env
-    (source-tool-cfg-names-to-env-from
-      cfg-names
-      (+ index 1)
-      (compiler-cfg-enable env (vector.string-vec-get cfg-names index "")))))
+(defenum SourceToolCfgNames
+  (Nil)
+  (Cons String (Box SourceToolCfgNames)))
 
-(define (source-tool-cfg-names-to-env [cfg-names : vector.StringVec]) : sym_i64_env.SymI64Env
-  (source-tool-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
+(define (source-tool-cfg-names-empty) : SourceToolCfgNames
+  SourceToolCfgNames.Nil)
+
+(define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
+  (SourceToolCfgNames.Cons name (box names)))
+
+(define (source-tool-cfg-names-to-env-from
+  [names : SourceToolCfgNames]
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match names
+    [(SourceToolCfgNames.Nil) env]
+    [(SourceToolCfgNames.Cons name rest)
+      (source-tool-cfg-names-to-env-from
+        (box-get rest)
+        (compiler-cfg-enable env name))]))
+
+(define (source-tool-cfg-names-to-env [names : SourceToolCfgNames]) : sym_i64_env.SymI64Env
+  (source-tool-cfg-names-to-env-from names (compiler-cfg-empty)))
 
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
   (match target
@@ -1996,7 +2005,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfg-names : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
@@ -2006,12 +2015,11 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
+    [link-cfgs : sym_i64_env.SymI64Env (source-tool-cfg-names-to-env cfg-names)]
     (match (source-tool-link-inputs-for-source
       source
       stdlib-roots
-      (compiler-driver-target-cfgs
-        target
-        (source-tool-cfg-names-to-env cfg-names))
+      (compiler-driver-target-cfgs target link-cfgs)
       link-inputs)
       [(ResultSourceToolLinkInputs.Err message)
         (begin
@@ -2021,65 +2029,68 @@
       [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
         (begin
           (compiler-driver-reset-file-state!)
-          (match (source-tool-object-or-assembly-and-link
-            source
-            target
-            stdlib-roots
-            opt-level
-            mode
-            (source-tool-cfg-names-to-env cfg-names)
-            effective-link-inputs
-            asm-path
-            obj-path
-            bin-path
-            "run: failed to write assembly artifact")
-            [(SourceToolCommandStatus.Err message)
-              (begin
-                (io.print-error message)
-                (source-tool-clean-temp
-                  temp-dir
-                  asm-path
-                  obj-path
-                  bin-path
-                  true)
-                1)]
-            [(SourceToolCommandStatus.Ok)
-              (match (source-tool-run-executable bin-path target runtime-args)
-                [(process.OkProcessOutput output)
-                  (let
-                    [status : i64 (process.output-status output)]
+          (let
+            [emit-cfgs : sym_i64_env.SymI64Env
+              (source-tool-cfg-names-to-env cfg-names)]
+            (match (source-tool-object-or-assembly-and-link
+              source
+              target
+              stdlib-roots
+              opt-level
+              mode
+              emit-cfgs
+              effective-link-inputs
+              asm-path
+              obj-path
+              bin-path
+              "run: failed to write assembly artifact")
+              [(SourceToolCommandStatus.Err message)
+                (begin
+                  (io.print-error message)
+                  (source-tool-clean-temp
+                    temp-dir
+                    asm-path
+                    obj-path
+                    bin-path
+                    true)
+                  1)]
+              [(SourceToolCommandStatus.Ok)
+                (match (source-tool-run-executable bin-path target runtime-args)
+                  [(process.OkProcessOutput output)
+                    (let
+                      [status : i64 (process.output-status output)]
+                      (begin
+                        (source-tool-forward-output output)
+                        (source-tool-clean-temp
+                          temp-dir
+                          asm-path
+                          obj-path
+                          bin-path
+                          true)
+                        status))]
+                  [(process.ErrProcessOutput error)
                     (begin
-                      (source-tool-forward-output output)
+                      (io.print-error
+                        (str_cat.str-cat
+                          "Error: failed to run executable '"
+                          bin-path
+                          "' for target "
+                          (source-tool-target-name target)
+                          ": "
+                          (process.error-message error)))
                       (source-tool-clean-temp
                         temp-dir
                         asm-path
                         obj-path
                         bin-path
                         true)
-                      status))]
-                [(process.ErrProcessOutput error)
-                  (begin
-                    (io.print-error
-                      (str_cat.str-cat
-                        "Error: failed to run executable '"
-                        bin-path
-                        "' for target "
-                        (source-tool-target-name target)
-                        ": "
-                        (process.error-message error)))
-                    (source-tool-clean-temp
-                      temp-dir
-                      asm-path
-                      obj-path
-                      bin-path
-                      true)
-                    1)])]))])))
+                      1)])])))])))
 
 (define (source-tool-run-source
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
-  [cfg-names : vector.StringVec]
+  [cfg-names : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]

@@ -2414,6 +2414,8 @@
 (extern (foreign [x : i64]) : i64)
 (module entry.module)
 (import helper.module as helper)
+(defstruct LocalHelper (value bool))
+(define (shadow [helper : LocalHelper]) : bool helper.value)
 (define (score [item : helper.Item]) : i64
   (+
     (helper.get)
@@ -2423,6 +2425,93 @@
         [(helper.Choice.Full n) n]
         [(helper.Choice.Empty) 0]))))
 (define (main) : i64 (score (helper.Item 1)))")
+
+(define (compiler-typecheck-smoke-lazy-import-full-path-source) : String
+  "(module helper.module)
+(define value : i64 41)
+(module full.entry)
+(import helper.module)
+(define (full-score) : i64 helper.module.value)")
+
+(define (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
+  [entry-ctx : TcContext]
+  [env : TcTypeEnv]) : bool
+  (begin
+    (tc-source-dotted-alias-key-cache-reset!)
+    (match (tc-source-name-lookup-key entry-ctx env "helper.value")
+      [(ResultTcString.Ok key)
+        (and
+          (string.eq key "helper.module/value")
+          (=
+            (tc-source-dotted-alias-key-cache-get
+              (intern "entry.module")
+              (intern "helper.value"))
+            (intern "helper.module/value"))
+          (match (tc-source-name-lookup-key entry-ctx env "helper.value")
+            [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
+            [(ResultTcString.Err _) false]))]
+      [(ResultTcString.Err _) false])))
+
+(define (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
+  [full-ctx : TcContext]
+  [env : TcTypeEnv]) : bool
+  (begin
+    (tc-source-dotted-full-path-key-cache-reset!)
+    (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
+      [(ResultTcString.Ok key)
+        (and
+          (string.eq key "helper.module/value")
+          (=
+            (tc-source-dotted-full-path-key-cache-get
+              (intern "full.entry")
+              (intern "helper.module.value"))
+            (intern "helper.module/value"))
+          (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
+            [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
+            [(ResultTcString.Err _) false]))]
+      [(ResultTcString.Err _) false])))
+
+(define (compiler-typecheck-smoke-lazy-import-full-path-cache-ok?) : bool
+  (let
+    [ok : bool
+      (match (parse-ast-source-diagnostic
+        ""
+        (compiler-typecheck-smoke-lazy-import-full-path-source))
+        [(ResultAstProgramDiagnostic.Ok program)
+          (match (typecheck-compiler-program-with-paths-checked
+            program
+            AstDeclPathList.Nil)
+            [(ResultCompilerTypecheckChecked.Ok _ ctx env)
+              (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
+                (tc-context-with-module ctx "full.entry")
+                env)]
+            [(ResultCompilerTypecheckChecked.Err _) false])]
+        [(ResultAstProgramDiagnostic.Err _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      ok)))
+
+(define (compiler-typecheck-smoke-full-path-cache-derived-reset-ok?) : bool
+  (begin
+    (tc-source-dotted-full-path-key-cache-reset!)
+    (tc-source-dotted-full-path-key-cache-put!
+      (intern "reset.entry")
+      (intern "stdlib.json.stringify")
+      (intern "stdlib.json/stringify"))
+    (let
+      [before : i64
+        (tc-source-dotted-full-path-key-cache-get
+          (intern "reset.entry")
+          (intern "stdlib.json.stringify"))]
+      (begin
+        (macro-alias-derived-cache-reset!)
+        (and
+          (= before (intern "stdlib.json/stringify"))
+          (=
+            (tc-source-dotted-full-path-key-cache-get
+              (intern "reset.entry")
+              (intern "stdlib.json.stringify"))
+            -2))))))
 
 (define (compiler-typecheck-smoke-qualified-enum-variant-precedence-source) : String
   "(module provider.enums)
@@ -2513,6 +2602,9 @@
                     "helper.value")
                     [(ResultTcType.Ok _) true]
                     [(ResultTcType.Err _) false])
+                  (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
+                    entry-ctx
+                    env)
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
@@ -2695,6 +2787,12 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?)
       (io.panic "typecheck: lazy import alias fanout smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-full-path-cache-ok?)
+      (io.panic "typecheck: lazy import full path cache smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-full-path-cache-derived-reset-ok?)
+      (io.panic "typecheck: full path derived cache reset smoke failed"))
     (unless
       (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
       (io.panic "typecheck: qualified enum variant precedence smoke failed"))

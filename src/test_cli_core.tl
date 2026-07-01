@@ -1568,14 +1568,20 @@
 (define (tltest-reach-mark-field-cleanups
   [fields : AstFieldDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match fields
-    [(AstFieldDefList.Nil) names]
-    [(AstFieldDefList.Cons field rest)
-      (match field
-        [(AstFieldDef.Def _ _ cleanup)
-          (tltest-reach-mark-field-cleanups
-            (box-get rest)
-            (tltest-reach-mark-field-cleanup cleanup names))])]))
+  (tltest-reach-mark-field-cleanups-at (& fields) names 0))
+
+(define (tltest-reach-mark-field-cleanups-at
+  [fields : (& fields AstFieldDefList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-field-def-list-len fields))
+    names
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ _ cleanup)
+        (tltest-reach-mark-field-cleanups-at
+          fields
+          (tltest-reach-mark-field-cleanup cleanup names)
+          (+ index 1))])))
 
 (define (tltest-reach-mark-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]

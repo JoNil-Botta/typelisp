@@ -717,30 +717,27 @@
   (ctfe-reflect-info-lookup-from infos key (- (struct-get infos len) 1)))
 
 (define (ctfe-reflect-field-def-count [fields : AstFieldDefList]) : i64
-  (match fields
-    [(AstFieldDefList.Nil) 0]
-    [(AstFieldDefList.Cons _ rest)
-      (+ 1 (ctfe-reflect-field-def-count (box-get rest)))]))
+  (ast-field-def-list-len (& fields)))
 
 (define (ctfe-reflect-field-list-from-fields-into
-  [fields : AstFieldDefList]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]
   [out : CtfeReflectFieldList]) : CtfeReflectFieldList
-  (match fields
-    [(AstFieldDefList.Nil) out]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name ty _)
-            (ctfe-reflect-field-list-from-fields-into
-              rest
-              (ctfe-reflect-field-list-push
-                out
-                (CtfeReflectField.Field (intern-str name) ty)))]))]))
+  (if (>= index (ast-field-def-list-len fields))
+    out
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name ty _)
+        (ctfe-reflect-field-list-from-fields-into
+          fields
+          (+ index 1)
+          (ctfe-reflect-field-list-push
+            out
+            (CtfeReflectField.Field (intern-str name) ty)))])))
 
 (define (ctfe-reflect-field-list-from-fields [fields : AstFieldDefList]) : CtfeReflectFieldList
   (ctfe-reflect-field-list-from-fields-into
-    fields
+    (& fields)
+    0
     (ctfe-reflect-field-list-with-capacity
       (ctfe-reflect-field-def-count fields))))
 
@@ -11632,15 +11629,14 @@
 (define (compiler-ctfe-reflection-program) : AstProgram
   (let
     [fields : AstFieldDefList
-      (AstFieldDefList.Cons
+      (ast-field-def-cons
         (AstFieldDef.Def (intern "id") (AstType.I64) (AstFieldCleanup.No))
-        (box
-          (AstFieldDefList.Cons
-            (AstFieldDef.Def
-              (intern "label")
-              (AstType.String)
-              (AstFieldCleanup.No))
-            (box AstFieldDefList.Nil))))]
+        (ast-field-def-cons
+          (AstFieldDef.Def
+            (intern "label")
+            (AstType.String)
+            (AstFieldCleanup.No))
+          (ast-field-def-list-new)))]
     [variants : AstVariantDefList
       (AstVariantDefList.Cons
         (AstVariantDef.Def

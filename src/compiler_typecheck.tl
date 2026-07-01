@@ -1267,7 +1267,7 @@
           "GeneratedStruct"
           (AstStructRepr.Default)
           (AstStructCleanup.No)
-          AstFieldDefList.Nil))]
+          (ast-field-def-list-new)))]
     [diag : CompilerDiagnostic (tc-decl-diag decl "typecheck: policy fallback")]
     [message-ok : bool
       (string.eq
@@ -3260,7 +3260,7 @@
         (ast-struct-cleanup-fn "cleanup-bad")
         (ast-field-def-cons
           (ast-field-def "fd" (AstType.I64) (AstFieldCleanup.No))
-          AstFieldDefList.Nil))
+          (ast-field-def-list-new)))
       AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
@@ -3272,7 +3272,7 @@
         (AstStructCleanup.No)
         (ast-field-def-cons
           (ast-field-def "fd" (AstType.I64) (ast-field-cleanup-fn "close-fd"))
-          AstFieldDefList.Nil))
+          (ast-field-def-list-new)))
       AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-tests-ok?) : bool

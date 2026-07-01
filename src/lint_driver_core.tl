@@ -1316,16 +1316,22 @@
 (define (selfhost-lint-dead-field-def-list-refs
   [fields : AstFieldDefList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match fields
-    [(AstFieldDefList.Nil) refs]
-    [(AstFieldDefList.Cons field rest)
-      (match field
-        [(AstFieldDef.Def _ ty cleanup)
-          (selfhost-lint-dead-field-def-list-refs
-            (box-get rest)
-            (selfhost-lint-dead-field-cleanup-refs
-              cleanup
-              (selfhost-lint-dead-type-refs ty refs)))])]))
+  (selfhost-lint-dead-field-def-list-refs-at (& fields) refs 0))
+
+(define (selfhost-lint-dead-field-def-list-refs-at
+  [fields : (& fields AstFieldDefList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-field-def-list-len fields))
+    refs
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty cleanup)
+        (selfhost-lint-dead-field-def-list-refs-at
+          fields
+          (selfhost-lint-dead-field-cleanup-refs
+            cleanup
+            (selfhost-lint-dead-type-refs ty refs))
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-struct-cleanup-refs
   [cleanup : AstStructCleanup]

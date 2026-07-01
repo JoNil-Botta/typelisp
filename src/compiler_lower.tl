@@ -3903,25 +3903,33 @@
   [roots : CloneNameList]
   [fields : AstFieldDefList]
   [module : String]) : CloneNameList
-  (match fields
-    [(AstFieldDefList.Nil) roots]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (lower-clone-root-add-field-list
-              ctx
-              decls
-              able
-              (lower-clone-root-add-type
-                (tc-context-with-module ctx module)
-                decls
-                able
-                roots
-                ty)
-              rest
-              module)]))]))
+  (lower-clone-root-add-field-list-at ctx decls able roots (& fields) module 0))
+
+(define (lower-clone-root-add-field-list-at
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [fields : (& fields AstFieldDefList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-field-def-list-len fields))
+    roots
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (lower-clone-root-add-field-list-at
+          ctx
+          decls
+          able
+          (lower-clone-root-add-type
+            (tc-context-with-module ctx module)
+            decls
+            able
+            roots
+            ty)
+          fields
+          module
+          (+ index 1))])))
 
 (define (lower-clone-root-add-variant-list
   [ctx : TcContext]
@@ -5902,36 +5910,54 @@
   [names : LowerNameCache]
   [state : LowerReachState]
   [fields : AstFieldDefList]) : LowerReachState
-  (match fields
-    [(AstFieldDefList.Nil) state]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        [next : LowerReachState
-          (match field
-            [(AstFieldDef.Def _ _ cleanup)
-              (match cleanup
-                [(AstFieldCleanup.Fn cleanup-name)
-                  (let
-                    [cleanup-str : String (intern-str cleanup-name)]
-                    [logical-name : String
-                      (if (tc-name-qualified? cleanup-str)
-                        (lower-name-cache-resolve-hygiene names cleanup-str)
-                        (lower-decl-logical-name
-                          entry-path
-                          decl-path
-                          module
-                          cleanup-str))]
-                    (lower-reach-add-logical all-functions state logical-name))]
-                [_ state])])]
-        (lower-reach-struct-field-cleanup-roots
-          all-functions
-          entry-path
-          decl-path
-          module
-          names
-          next
-          rest))]))
+  (lower-reach-struct-field-cleanup-roots-at
+    all-functions
+    entry-path
+    decl-path
+    module
+    names
+    state
+    (& fields)
+    0))
+
+(define (lower-reach-struct-field-cleanup-roots-at
+  [all-functions : hashmap.StringI64Map]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : LowerReachState
+  (if (>= index (ast-field-def-list-len fields))
+    state
+    (let
+      [next : LowerReachState
+        (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+          [(AstFieldDef.Def _ _ cleanup)
+            (match cleanup
+              [(AstFieldCleanup.Fn cleanup-name)
+                (let
+                  [cleanup-str : String (intern-str cleanup-name)]
+                  [logical-name : String
+                    (if (tc-name-qualified? cleanup-str)
+                      (lower-name-cache-resolve-hygiene names cleanup-str)
+                      (lower-decl-logical-name
+                        entry-path
+                        decl-path
+                        module
+                        cleanup-str))]
+                  (lower-reach-add-logical all-functions state logical-name))]
+              [_ state])])]
+      (lower-reach-struct-field-cleanup-roots-at
+        all-functions
+        entry-path
+        decl-path
+        module
+        names
+        next
+        fields
+        (+ index 1)))))
 
 (define (lower-reach-cleanup-metadata-roots-in-module
   [all-functions : hashmap.StringI64Map]
@@ -7254,16 +7280,24 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [fields : AstFieldDefList]) : hashmap.I64I64Map
-  (match fields
-    [(AstFieldDefList.Nil) used]
-    [(AstFieldDefList.Cons field rest)
-      (match field
-        [(AstFieldDef.Def _ ty _)
-          (lower-used-types-add-field-list
-            pools
-            (lower-used-types-add-type pools used module ty)
-            module
-            (box-get rest))])]))
+  (lower-used-types-add-field-list-at pools used module (& fields) 0))
+
+(define (lower-used-types-add-field-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-field-def-list-len fields))
+    used
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (lower-used-types-add-field-list-at
+          pools
+          (lower-used-types-add-type pools used module ty)
+          module
+          fields
+          (+ index 1))])))
 
 (define (lower-used-types-add-variant-list
   [pools : AstNodePoolContext]
@@ -9454,51 +9488,69 @@
   [values : CompilerIrValueList]
   [fields : AstFieldDefList]
   [layout : TcInlineAggregateLayout]) : ResultLowerExpr
+  (lower-pack-inline-struct-values-at
+    ctx
+    state
+    acc
+    acc-ty
+    values
+    (& fields)
+    0
+    layout))
+
+(define (lower-pack-inline-struct-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [acc-ty : AstType]
+  [values : CompilerIrValueList]
+  [fields : (& fields AstFieldDefList)]
+  [field-index : i64]
+  [layout : TcInlineAggregateLayout]) : ResultLowerExpr
   (match values
     [(CompilerIrValueList.Nil)
-      (match fields
-        [(AstFieldDefList.Nil) (OkLowerExpr (LowerExpr state acc acc-ty))]
-        [_
-          (ErrLowerExpr
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= field-index (ast-field-def-list-len fields))
+        (OkLowerExpr (LowerExpr state acc acc-ty))
+        (ErrLowerExpr
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(AstFieldDefList.Cons field rest-fields)
-          (let
-            [rest-fields : AstFieldDefList (box-get rest-fields)]
-            (match field
-              [(AstFieldDef.Def name ty _)
-                (let
-                  [name-str : String (intern-str name)]
-                  [resolved : AstType (tc-resolve-type ctx ty)]
-                  [offset : i64
-                    (tc-inline-aggregate-layout-field-offset layout name-str)]
-                  (if (< offset 0)
-                    (ErrLowerExpr
-                      (box
-                        (lower-diagnostic
-                          (string.append
-                            "lower: inline struct layout missing field "
-                            name-str))))
-                    (match (lower-pack-word-field
+      (if (>= field-index (ast-field-def-list-len fields))
+        (ErrLowerExpr
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (match (ast-field-def-list-get
+          fields
+          field-index
+          (ast-field-def-fallback))
+          [(AstFieldDef.Def name ty _)
+            (let
+              [name-str : String (intern-str name)]
+              [resolved : AstType (tc-resolve-type ctx ty)]
+              [offset : i64
+                (tc-inline-aggregate-layout-field-offset layout name-str)]
+              (if (< offset 0)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic
+                      (string.append
+                        "lower: inline struct layout missing field "
+                        name-str))))
+                (match (lower-pack-word-field
+                  ctx
+                  state
+                  acc
+                  value
+                  offset
+                  resolved)
+                  [(LowerExpr packed-state packed-acc packed-ty)
+                    (lower-pack-inline-struct-values-at
                       ctx
-                      state
-                      acc
-                      value
-                      offset
-                      resolved)
-                      [(LowerExpr packed-state packed-acc packed-ty)
-                        (lower-pack-inline-struct-values
-                          ctx
-                          packed-state
-                          packed-acc
-                          packed-ty
-                          (box-get rest-values)
-                          rest-fields
-                          layout)])))]))]
-        [(AstFieldDefList.Nil)
-          (ErrLowerExpr
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+                      packed-state
+                      packed-acc
+                      packed-ty
+                      (box-get rest-values)
+                      fields
+                      (+ field-index 1)
+                      layout)])))]))]))
 
 ;; #2386: emit an CompilerIrInstr.Pack forming a register-group value from its word values.
 (define (lower-emit-pack
@@ -9723,62 +9775,83 @@
   [fields : AstFieldDefList]
   [layout : TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
+  (lower-pack-inline-struct-word-at
+    ctx
+    state
+    acc
+    acc-ty
+    values
+    (& fields)
+    0
+    layout
+    word-index))
+
+(define (lower-pack-inline-struct-word-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [acc-ty : AstType]
+  [values : CompilerIrValueList]
+  [fields : (& fields AstFieldDefList)]
+  [field-index : i64]
+  [layout : TcInlineAggregateLayout]
+  [word-index : i64]) : ResultLowerExpr
   (match values
     [(CompilerIrValueList.Nil)
-      (match fields
-        [(AstFieldDefList.Nil) (OkLowerExpr (LowerExpr state acc acc-ty))]
-        [_
-          (ErrLowerExpr
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= field-index (ast-field-def-list-len fields))
+        (OkLowerExpr (LowerExpr state acc acc-ty))
+        (ErrLowerExpr
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(AstFieldDefList.Cons field rest-fields)
-          (let
-            [rest-fields : AstFieldDefList (box-get rest-fields)]
-            (match field
-              [(AstFieldDef.Def name ty _)
-                (let
-                  [name-str : String (intern-str name)]
-                  [resolved : AstType (tc-resolve-type ctx ty)]
-                  [offset : i64
-                    (tc-inline-aggregate-layout-field-offset layout name-str)]
-                  (if (< offset 0)
-                    (ErrLowerExpr
-                      (box
-                        (lower-diagnostic
-                          (string.append
-                            "lower: inline struct layout missing field "
-                            name-str))))
-                    (if (= (/ offset 8) word-index)
-                      (match (lower-pack-word-field
+      (if (>= field-index (ast-field-def-list-len fields))
+        (ErrLowerExpr
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (match (ast-field-def-list-get
+          fields
+          field-index
+          (ast-field-def-fallback))
+          [(AstFieldDef.Def name ty _)
+            (let
+              [name-str : String (intern-str name)]
+              [resolved : AstType (tc-resolve-type ctx ty)]
+              [offset : i64
+                (tc-inline-aggregate-layout-field-offset layout name-str)]
+              (if (< offset 0)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic
+                      (string.append
+                        "lower: inline struct layout missing field "
+                        name-str))))
+                (if (= (/ offset 8) word-index)
+                  (match (lower-pack-word-field
+                    ctx
+                    state
+                    acc
+                    value
+                    (- offset (* word-index 8))
+                    resolved)
+                    [(LowerExpr packed-state packed-acc packed-ty)
+                      (lower-pack-inline-struct-word-at
                         ctx
-                        state
-                        acc
-                        value
-                        (- offset (* word-index 8))
-                        resolved)
-                        [(LowerExpr packed-state packed-acc packed-ty)
-                          (lower-pack-inline-struct-word
-                            ctx
-                            packed-state
-                            packed-acc
-                            packed-ty
-                            (box-get rest-values)
-                            rest-fields
-                            layout
-                            word-index)])
-                      (lower-pack-inline-struct-word
-                        ctx
-                        state
-                        acc
-                        acc-ty
+                        packed-state
+                        packed-acc
+                        packed-ty
                         (box-get rest-values)
-                        rest-fields
+                        fields
+                        (+ field-index 1)
                         layout
-                        word-index))))]))]
-        [(AstFieldDefList.Nil)
-          (ErrLowerExpr
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+                        word-index)])
+                  (lower-pack-inline-struct-word-at
+                    ctx
+                    state
+                    acc
+                    acc-ty
+                    (box-get rest-values)
+                    fields
+                    (+ field-index 1)
+                    layout
+                    word-index))))]))]))
 
 ;; #2386: construct a register-group struct value: pack each machine word and
 ;; combine them with IrInstrPack. Two-word integer-class structs only (slice 3).
@@ -10457,23 +10530,34 @@
   [subst : TcLifetimeSubst]
   [fields : AstFieldDefList]
   [stack : LowerStringSet]) : bool
-  (match fields
-    [(AstFieldDefList.Nil) true]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ ty _)
-            (and
-              (lower-supported-reference-type-with-stack?
-                ctx
-                (tc-lifetime-subst-type subst ty)
-                stack)
-              (lower-supported-reference-field-list-with-stack?
-                ctx
-                subst
-                rest
-                stack))]))]))
+  (lower-supported-reference-field-list-with-stack-at?
+    ctx
+    subst
+    (& fields)
+    stack
+    0))
+
+(define (lower-supported-reference-field-list-with-stack-at?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [fields : (& fields AstFieldDefList)]
+  [stack : LowerStringSet]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len fields))
+    true
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (and
+          (lower-supported-reference-type-with-stack?
+            ctx
+            (tc-lifetime-subst-type subst ty)
+            stack)
+          (lower-supported-reference-field-list-with-stack-at?
+            ctx
+            subst
+            fields
+            stack
+            (+ index 1)))])))
 
 (define (lower-supported-reference-variant-list-with-stack?
   [ctx : TcContext]
@@ -11359,58 +11443,74 @@
   [values : CompilerIrValueList]
   [fields : AstFieldDefList]
   [layout : TcInlineAggregateLayout]) : ResultLowerState
+  (lower-store-inline-struct-values-at
+    ctx
+    state
+    base
+    values
+    (& fields)
+    0
+    layout))
+
+(define (lower-store-inline-struct-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : (& fields AstFieldDefList)]
+  [field-index : i64]
+  [layout : TcInlineAggregateLayout]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (match fields
-        [(AstFieldDefList.Nil) (ResultLowerState.Ok state)]
-        [_
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= field-index (ast-field-def-list-len fields))
+        (ResultLowerState.Ok state)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(AstFieldDefList.Cons field rest-fields)
-          (let
-            [rest-fields : AstFieldDefList (box-get rest-fields)]
-            (match field
-              [(AstFieldDef.Def name ty _)
-                (let
-                  [name-str : String (intern-str name)]
-                  [resolved : AstType (tc-resolve-type ctx ty)]
-                  [offset : i64
-                    (tc-inline-aggregate-layout-field-offset layout name-str)]
-                  (if (< offset 0)
-                    (ResultLowerState.Err
-                      (box
-                        (lower-diagnostic
-                          (string.append
-                            "lower: inline struct layout missing field "
-                            name-str))))
-                    (match (tc-inline-aggregate-type-layout ctx resolved)
-                      [(ResultTcLayoutInfo.Ok info)
-                        (let
-                          [stored-state : LowerState
-                            (if (<= (tc-layout-info-size info) 0)
-                              state
-                              (lower-store-inline-value-at-offset
-                                ctx
-                                state
-                                base
-                                offset
-                                value
-                                resolved
-                                (tc-layout-info-size info)))]
-                          (lower-store-inline-struct-values
+      (if (>= field-index (ast-field-def-list-len fields))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (match (ast-field-def-list-get
+          fields
+          field-index
+          (ast-field-def-fallback))
+          [(AstFieldDef.Def name ty _)
+            (let
+              [name-str : String (intern-str name)]
+              [resolved : AstType (tc-resolve-type ctx ty)]
+              [offset : i64
+                (tc-inline-aggregate-layout-field-offset layout name-str)]
+              (if (< offset 0)
+                (ResultLowerState.Err
+                  (box
+                    (lower-diagnostic
+                      (string.append
+                        "lower: inline struct layout missing field "
+                        name-str))))
+                (match (tc-inline-aggregate-type-layout ctx resolved)
+                  [(ResultTcLayoutInfo.Ok info)
+                    (let
+                      [stored-state : LowerState
+                        (if (<= (tc-layout-info-size info) 0)
+                          state
+                          (lower-store-inline-value-at-offset
                             ctx
-                            stored-state
+                            state
                             base
-                            (box-get rest-values)
-                            rest-fields
-                            layout))]
-                      [(ResultTcLayoutInfo.Err message)
-                        (ResultLowerState.Err (box (lower-diagnostic message)))])))]))]
-        [(AstFieldDefList.Nil)
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+                            offset
+                            value
+                            resolved
+                            (tc-layout-info-size info)))]
+                      (lower-store-inline-struct-values-at
+                        ctx
+                        stored-state
+                        base
+                        (box-get rest-values)
+                        fields
+                        (+ field-index 1)
+                        layout))]
+                  [(ResultTcLayoutInfo.Err message)
+                    (ResultLowerState.Err (box (lower-diagnostic message)))])))]))]))
 
 (define (lower-store-inline-payload-values
   [ctx : TcContext]
@@ -12608,28 +12708,32 @@
   [fields : AstFieldDefList]
   [field-name : String]
   [cursor : i64]) : ResultLowerFieldInfo
-  (match fields
-    [(AstFieldDefList.Nil)
-      (ResultLowerFieldInfo.Err
-        (box
-          (lower-diagnostic
-            (string.append "lower: unknown struct field " field-name))))]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def name ty _)
-            (let
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              [offset : i64
-                (lower-align-up cursor (lower-type-align ctx resolved))]
-              (if (string.eq (intern-str name) field-name)
-                (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
-                (lower-field-info-from-list
-                  ctx
-                  rest
-                  field-name
-                  (+ offset (lower-type-size ctx resolved)))))]))]))
+  (lower-field-info-from-list-at ctx (& fields) field-name cursor 0))
+
+(define (lower-field-info-from-list-at
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [field-name : String]
+  [cursor : i64]
+  [index : i64]) : ResultLowerFieldInfo
+  (if (>= index (ast-field-def-list-len fields))
+    (ResultLowerFieldInfo.Err
+      (box
+        (lower-diagnostic
+          (string.append "lower: unknown struct field " field-name))))
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name ty _)
+        (let
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          (if (string.eq (intern-str name) field-name)
+            (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
+            (lower-field-info-from-list-at
+              ctx
+              fields
+              field-name
+              (+ offset (lower-type-size ctx resolved))
+              (+ index 1))))])))
 
 (define (lower-field-info-from-repr-c-list
   [fields : TcReprCFieldLayoutList]
@@ -37781,6 +37885,29 @@
   [patterns : AstPatternList]
   [fields : AstFieldDefList]
   [types : AstTypeList]) : ResultLowerEnv
+  (lower-bind-struct-pattern-fields-at
+    ctx
+    state
+    env
+    type-env
+    base
+    struct-name
+    patterns
+    (& fields)
+    0
+    types))
+
+(define (lower-bind-struct-pattern-fields-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [struct-name : String]
+  [patterns : AstPatternList]
+  [fields : (& fields AstFieldDefList)]
+  [field-index : i64]
+  [types : AstTypeList]) : ResultLowerEnv
   (match patterns
     [(AstPatternList.Nil)
       (match types
@@ -37792,48 +37919,47 @@
       (let
         [pattern : AstPattern (box-get pattern)]
         [rest-patterns : AstPatternList (box-get rest-patterns)]
-        (match fields
-          [(AstFieldDefList.Cons field rest-fields)
-            (let
-              [rest-fields : AstFieldDefList (box-get rest-fields)]
-              (match field
-                [(AstFieldDef.Def field-name _ _)
-                  (match types
-                    [(AstTypeList.Cons ty rest-types)
-                      (let
-                        [ty : AstType (tc-context-type-get ctx ty)]
-                        [rest-types : AstTypeList (box-get rest-types)]
-                        (match (lower-bind-struct-field-pattern
+        (if (>= field-index (ast-field-def-list-len fields))
+          (ResultLowerEnv.Err
+            (box (lower-diagnostic "lower: struct pattern arity mismatch")))
+          (match (ast-field-def-list-get
+            fields
+            field-index
+            (ast-field-def-fallback))
+            [(AstFieldDef.Def field-name _ _)
+              (match types
+                [(AstTypeList.Cons ty rest-types)
+                  (let
+                    [ty : AstType (tc-context-type-get ctx ty)]
+                    [rest-types : AstTypeList (box-get rest-types)]
+                    (match (lower-bind-struct-field-pattern
+                      ctx
+                      state
+                      env
+                      type-env
+                      base
+                      struct-name
+                      (intern-str field-name)
+                      pattern
+                      ty)
+                      [(ResultLowerEnv.Ok next-state next-env next-type-env)
+                        (lower-bind-struct-pattern-fields-at
                           ctx
-                          state
-                          env
-                          type-env
+                          next-state
+                          next-env
+                          next-type-env
                           base
                           struct-name
-                          (intern-str field-name)
-                          pattern
-                          ty)
-                          [(ResultLowerEnv.Ok next-state next-env next-type-env)
-                            (lower-bind-struct-pattern-fields
-                              ctx
-                              next-state
-                              next-env
-                              next-type-env
-                              base
-                              struct-name
-                              rest-patterns
-                              rest-fields
-                              rest-types)]
-                          [(ResultLowerEnv.Err message)
-                            (ResultLowerEnv.Err message)]))]
-                    [(AstTypeList.Nil)
-                      (ResultLowerEnv.Err
-                        (box
-                          (lower-diagnostic
-                            "lower: struct pattern arity mismatch")))])]))]
-          [(AstFieldDefList.Nil)
-            (ResultLowerEnv.Err
-              (box (lower-diagnostic "lower: struct pattern arity mismatch")))]))]))
+                          rest-patterns
+                          fields
+                          (+ field-index 1)
+                          rest-types)]
+                      [(ResultLowerEnv.Err message)
+                        (ResultLowerEnv.Err message)]))]
+                [(AstTypeList.Nil)
+                  (ResultLowerEnv.Err
+                    (box
+                      (lower-diagnostic "lower: struct pattern arity mismatch")))])])))]))
 
 (define (lower-bind-struct-pattern
   [ctx : TcContext]
@@ -41325,15 +41451,29 @@
   [value-name : String]
   [fields : AstFieldDefList]
   [acc : AstExprList]) : ResultAstExprList
-  (match fields
-    [(AstFieldDefList.Nil) (ResultAstExprList.Ok acc)]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match (lower-struct-cleanup-field-exprs ctx value-name field acc)
-          [(ResultAstExprList.Ok next)
-            (lower-struct-cleanup-body-fields ctx value-name rest next)]
-          [(ResultAstExprList.Err message) (ResultAstExprList.Err message)]))]))
+  (lower-struct-cleanup-body-fields-at ctx value-name (& fields) acc 0))
+
+(define (lower-struct-cleanup-body-fields-at
+  [ctx : TcContext]
+  [value-name : String]
+  [fields : (& fields AstFieldDefList)]
+  [acc : AstExprList]
+  [index : i64]) : ResultAstExprList
+  (if (>= index (ast-field-def-list-len fields))
+    (ResultAstExprList.Ok acc)
+    (match (lower-struct-cleanup-field-exprs
+      ctx
+      value-name
+      (ast-field-def-list-get fields index (ast-field-def-fallback))
+      acc)
+      [(ResultAstExprList.Ok next)
+        (lower-struct-cleanup-body-fields-at
+          ctx
+          value-name
+          fields
+          next
+          (+ index 1))]
+      [(ResultAstExprList.Err message) (ResultAstExprList.Err message)])))
 
 (define (lower-struct-cleanup-function
   [ctx : TcContext]
@@ -53695,7 +53835,7 @@
               "ExprClauseList"
               AstStructRepr.Default
               AstStructCleanup.No
-              AstFieldDefList.Nil))
+              (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-module "main")
             (ast-decl-cons
@@ -53730,7 +53870,7 @@
                   "ExprClauseList"
                   AstStructRepr.Default
                   AstStructCleanup.No
-                  AstFieldDefList.Nil))
+                  (ast-field-def-list-new)))
               (ast-decl-cons
                 (ast-decl-module "main")
                 (ast-decl-cons
@@ -53819,7 +53959,7 @@
                 "value"
                 (AstType.Enum (intern "UsedEnum"))
                 AstFieldCleanup.No)
-              AstFieldDefList.Nil))
+              (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-def-struct
               "DeadBox"
@@ -53827,7 +53967,7 @@
               AstStructCleanup.No
               (ast-field-def-cons
                 (ast-field-def "value" (AstType.I64) AstFieldCleanup.No)
-                AstFieldDefList.Nil))
+                (ast-field-def-list-new)))
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"
@@ -53895,7 +54035,7 @@
           AstStructCleanup.No
           (ast-field-def-cons
             (ast-field-def "handle" (AstType.I64) AstFieldCleanup.No)
-            AstFieldDefList.Nil))
+            (ast-field-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-struct
             "ArenaMark"
@@ -53903,7 +54043,7 @@
             AstStructCleanup.No
             (ast-field-def-cons
               (ast-field-def "handle" (AstType.I64) AstFieldCleanup.No)
-              AstFieldDefList.Nil))
+              (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-def-struct
               "DeadArenaPeer"
@@ -53911,7 +54051,7 @@
               AstStructCleanup.No
               (ast-field-def-cons
                 (ast-field-def "handle" (AstType.I64) AstFieldCleanup.No)
-                AstFieldDefList.Nil))
+                (ast-field-def-list-new)))
             (ast-decl-cons
               (ast-decl-module "main")
               (ast-decl-cons
@@ -53924,7 +54064,7 @@
                       "owner"
                       (AstType.Struct (intern "arena.Arena"))
                       AstFieldCleanup.No)
-                    AstFieldDefList.Nil))
+                    (ast-field-def-list-new)))
                 (ast-decl-cons
                   (ast-decl-def-fn
                     "main"
@@ -53966,13 +54106,13 @@
           "ImportedMark"
           AstStructRepr.Default
           AstStructCleanup.No
-          AstFieldDefList.Nil)
+          (ast-field-def-list-new))
         (ast-decl-cons
           (ast-decl-def-struct
             "DeadMark"
             AstStructRepr.Default
             AstStructCleanup.No
-            AstFieldDefList.Nil)
+            (ast-field-def-list-new))
           (ast-decl-cons
             (ast-decl-test
               "uses-imported-mark-annotation"
@@ -54008,7 +54148,7 @@
             (ast-field-def "x" (AstType.I64) AstFieldCleanup.No)
             (ast-field-def-cons
               (ast-field-def "y" (AstType.I64) AstFieldCleanup.No)
-              AstFieldDefList.Nil)))
+              (ast-field-def-list-new))))
         (ast-decl-cons
           (ast-decl-def-struct
             "DeadGeom"
@@ -54016,7 +54156,7 @@
             AstStructCleanup.No
             (ast-field-def-cons
               (ast-field-def "value" (AstType.I64) AstFieldCleanup.No)
-              AstFieldDefList.Nil))
+              (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-module "main")
             (ast-decl-cons

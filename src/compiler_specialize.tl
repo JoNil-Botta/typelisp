@@ -2867,6 +2867,8 @@
           [(ResultSpecExpr.Ok rewritten state2)
             (ResultSpecExpr.Ok (ast-expr-return rewritten) state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(AstExpr.Break) (ResultSpecExpr.Ok (ast-expr-break) state)]
+    [(AstExpr.Continue) (ResultSpecExpr.Ok (ast-expr-continue) state)]
     [(AstExpr.PtrNull ty)
       (ResultSpecExpr.Ok (ast-node-push (AstExpr.PtrNull ty)) state)]
     [(AstExpr.PtrNullCheck inner-box)
@@ -3570,6 +3572,8 @@
           [(ResultSpecSubExpr.Ok rewritten)
             (ResultSpecSubExpr.Ok (ast-expr-return rewritten))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExpr.Break) (ResultSpecSubExpr.Ok (ast-expr-break))]
+    [(AstExpr.Continue) (ResultSpecSubExpr.Ok (ast-expr-continue))]
     [(AstExpr.PtrNull ty)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.PtrNull ty)))]
     [(AstExpr.PtrNullCheck inner-box)
@@ -4366,6 +4370,8 @@
           [(ResultSpecSubExpr.Ok rewritten)
             (ResultSpecSubExpr.Ok (ast-expr-return rewritten))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExpr.Break) (ResultSpecSubExpr.Ok (ast-expr-break))]
+    [(AstExpr.Continue) (ResultSpecSubExpr.Ok (ast-expr-continue))]
     [(AstExpr.PtrNull ty)
       (ResultSpecSubExpr.Ok
         (ast-node-push (AstExpr.PtrNull (spec-substitute-type ty subs))))]

@@ -650,6 +650,12 @@
 (define (compiler-parse-tag-expr-return) : i64
   270)
 
+(define (compiler-parse-tag-expr-break) : i64
+  298)
+
+(define (compiler-parse-tag-expr-continue) : i64
+  299)
+
 (define (compiler-parse-tag-expr-ptr-null) : i64
   252)
 
@@ -1109,6 +1115,15 @@
       (set!
         out
         (sym_i64_env.sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "break" (compiler-parse-tag-expr-break)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "continue"
+          (compiler-parse-tag-expr-continue)))
       (set!
         out
         (sym_i64_env.sym-i64-bind
@@ -5245,6 +5260,16 @@
     [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-return))
       (parse-ast-return dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-break))
+      (parse-ast-no-arg-low-level
+        rest
+        "break"
+        (ast-expr-break-with-pools pools))]
+    [(= tag (compiler-parse-tag-expr-continue))
+      (parse-ast-no-arg-low-level
+        rest
+        "continue"
+        (ast-expr-continue-with-pools pools))]
     [(= tag (compiler-parse-tag-expr-box))
       (parse-ast-box-like dispatch pools rest false false)]
     [(= tag (compiler-parse-tag-expr-box-get))

@@ -2206,6 +2206,16 @@
         30
         0))))")
 
+(define (selfhost-lint-all-exit-ladder-source) : String
+  "(define (classify [x : i64]) : i64
+  (if (= x 0)
+    (return 10)
+    (if (= x 1)
+      (return 20)
+      (if (= x 2)
+        (return 30)
+        (return 0)))))")
+
 (define (selfhost-lint-return-path-chain-source) : String
   "(define (check [a : bool] [b : bool] [c : bool]) : i64
   (if a
@@ -3052,6 +3062,11 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
         (vector.string-vec-new))]
+    [all-exit-ladder-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-all-exit-ladder-source)
+        (vector.string-vec-new))]
     [unit-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
@@ -3094,6 +3109,13 @@
         1]
       [(not (= (lint-findings-count return-reported) 1)) 9]
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              all-exit-ladder-reported
+              (lint-rule-nested-if-ladder-id))
+            0))
+        41]
       [(not (= (lint-findings-count unit-reported) 1)) 12]
       [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
       [(not (= (lint-findings-count unit-set-reported) 1)) 16]

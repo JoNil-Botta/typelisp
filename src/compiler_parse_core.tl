@@ -59,6 +59,10 @@
   (Ok AstFieldDefList)
   (Err String))
 
+(defenum ResultAstFieldDefListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstFieldCleanup
   (Ok AstFieldCleanup)
   (Err String))
@@ -2108,28 +2112,45 @@
         [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
     [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
 
+(define (parse-ast-field-def-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [allow-cleanup : bool]
+  [out : (&mut out AstFieldDefList)]) : ResultAstFieldDefListBuild
+  (match s
+    [(Sexpr.Nil) (ResultAstFieldDefListBuild.Ok)]
+    [(Sexpr.Cons head tail)
+      (match (parse-ast-field-def dispatch pools (box-get head) allow-cleanup)
+        [(ResultAstFieldDef.Ok parsed-head)
+          (begin
+            (ast-field-def-list-push out parsed-head)
+            (parse-ast-field-def-list-into
+              dispatch
+              pools
+              (box-get tail)
+              allow-cleanup
+              out))]
+        [(ResultAstFieldDef.Err message)
+          (ResultAstFieldDefListBuild.Err message)])]
+    [_ (ResultAstFieldDefListBuild.Err "parse: malformed field list")]))
+
 (define (parse-ast-field-def-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstFieldDefList
-  (match s
-    [(Sexpr.Nil) (ResultAstFieldDefList.Ok AstFieldDefList.Nil)]
-    [(Sexpr.Cons head tail)
-      (match (parse-ast-field-def dispatch pools (box-get head) allow-cleanup)
-        [(ResultAstFieldDef.Ok parsed-head)
-          (match (parse-ast-field-def-list
-            dispatch
-            pools
-            (box-get tail)
-            allow-cleanup)
-            [(ResultAstFieldDefList.Ok parsed-tail)
-              (ResultAstFieldDefList.Ok
-                (ast-field-def-cons parsed-head parsed-tail))]
-            [(ResultAstFieldDefList.Err message)
-              (ResultAstFieldDefList.Err message)])]
-        [(ResultAstFieldDef.Err message) (ResultAstFieldDefList.Err message)])]
-    [_ (ResultAstFieldDefList.Err "parse: malformed field list")]))
+  (let
+    [out : AstFieldDefList (ast-field-def-list-new)]
+    (match (parse-ast-field-def-list-into
+      dispatch
+      pools
+      s
+      allow-cleanup
+      (&mut out))
+      [(ResultAstFieldDefListBuild.Ok) (ResultAstFieldDefList.Ok out)]
+      [(ResultAstFieldDefListBuild.Err message)
+        (ResultAstFieldDefList.Err message)])))
 
 (define (compiler-parse-metadata-key? [name : String]) : bool
   (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':')))
@@ -2203,6 +2224,7 @@
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]) : ResultAstStructDefParts
@@ -2212,29 +2234,22 @@
     (spanned-sexpr-form head)
     (ast-struct-cleanup? cleanup))
     [(ResultAstFieldDef.Ok parsed-field)
-      (match (parse-ast-defstruct-items
-        dispatch
-        pools
-        tail
-        lifetimes
-        repr
-        cleanup
-        seen-lifetimes
-        seen-repr
-        seen-cleanup
-        true)
-        [(ResultAstStructDefParts.Ok
-            parsed-lifetimes
-            parsed-repr
-            parsed-cleanup
-            parsed-rest)
-          (ResultAstStructDefParts.Ok
-            parsed-lifetimes
-            parsed-repr
-            parsed-cleanup
-            (ast-field-def-cons parsed-field parsed-rest))]
-        [(ResultAstStructDefParts.Err message)
-          (ResultAstStructDefParts.Err message)])]
+      (let
+        [next-fields : AstFieldDefList fields]
+        (begin
+          (ast-field-def-list-push (&mut next-fields) parsed-field)
+          (parse-ast-defstruct-items
+            dispatch
+            pools
+            tail
+            lifetimes
+            repr
+            cleanup
+            next-fields
+            seen-lifetimes
+            seen-repr
+            seen-cleanup
+            true)))]
     [(ResultAstFieldDef.Err message) (ResultAstStructDefParts.Err message)]))
 
 (define (parse-ast-defstruct-items
@@ -2244,13 +2259,14 @@
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]
   [seen-field : bool]) : ResultAstStructDefParts
   (match items
     [(SpannedSexpr.Nil _)
-      (ResultAstStructDefParts.Ok lifetimes repr cleanup AstFieldDefList.Nil)]
+      (ResultAstStructDefParts.Ok lifetimes repr cleanup fields)]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
@@ -2276,6 +2292,7 @@
                             next-lifetimes
                             repr
                             cleanup
+                            fields
                             true
                             seen-repr
                             seen-cleanup
@@ -2303,6 +2320,7 @@
                               lifetimes
                               next-repr
                               cleanup
+                              fields
                               seen-lifetimes
                               true
                               seen-cleanup
@@ -2329,6 +2347,7 @@
                               lifetimes
                               repr
                               next-cleanup
+                              fields
                               seen-lifetimes
                               seen-repr
                               true
@@ -2353,6 +2372,7 @@
                     lifetimes
                     repr
                     cleanup
+                    fields
                     seen-lifetimes
                     seen-repr
                     seen-cleanup)])]
@@ -2365,6 +2385,7 @@
                 lifetimes
                 repr
                 cleanup
+                fields
                 seen-lifetimes
                 seen-repr
                 seen-cleanup)])]
@@ -2377,6 +2398,7 @@
             lifetimes
             repr
             cleanup
+            fields
             seen-lifetimes
             seen-repr
             seen-cleanup)])]
@@ -6528,28 +6550,26 @@
             AstLifetimeList.Nil
             (AstStructRepr.Default)
             (AstStructCleanup.No)
+            (ast-field-def-list-new)
             false
             false
             false
             false)
             [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
-              (match parsed-fields
-                [(AstFieldDefList.Nil)
-                  (ResultAstDecl.Err
-                    "parse: defstruct needs at least one field")]
-                [_
-                  (match lifetimes
-                    [(AstLifetimeList.Nil)
-                      (ResultAstDecl.Ok
-                        (ast-decl-def-struct name repr cleanup parsed-fields))]
-                    [_
-                      (ResultAstDecl.Ok
-                        (ast-decl-def-struct-lifetimes
-                          name
-                          lifetimes
-                          repr
-                          cleanup
-                          parsed-fields))])])]
+              (if (ast-field-def-list-empty? (& parsed-fields))
+                (ResultAstDecl.Err "parse: defstruct needs at least one field")
+                (match lifetimes
+                  [(AstLifetimeList.Nil)
+                    (ResultAstDecl.Ok
+                      (ast-decl-def-struct name repr cleanup parsed-fields))]
+                  [_
+                    (ResultAstDecl.Ok
+                      (ast-decl-def-struct-lifetimes
+                        name
+                        lifetimes
+                        repr
+                        cleanup
+                        parsed-fields))]))]
             [(ResultAstStructDefParts.Err message) (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
     [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
@@ -9364,12 +9384,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-field-count [fields : AstFieldDefList]) : i64
-  (match fields
-    [(AstFieldDefList.Nil) 0]
-    [(AstFieldDefList.Cons _ rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (+ 1 (compiler-parse-field-count rest)))]))
+  (ast-field-def-list-len (& fields)))
 
 (define (compiler-parse-field-cleanup-score [cleanup : AstFieldCleanup]) : i64
   (match cleanup
@@ -9378,16 +9393,18 @@
     [(AstFieldCleanup.Owned) 100]))
 
 (define (compiler-parse-field-cleanup-list-score [fields : AstFieldDefList]) : i64
-  (match fields
-    [(AstFieldDefList.Nil) 0]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ _ cleanup)
-            (+
-              (compiler-parse-field-cleanup-score cleanup)
-              (compiler-parse-field-cleanup-list-score rest))]))]))
+  (compiler-parse-field-cleanup-list-score-at (& fields) 0))
+
+(define (compiler-parse-field-cleanup-list-score-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : i64
+  (if (>= index (ast-field-def-list-len fields))
+    0
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ _ cleanup)
+        (+
+          (compiler-parse-field-cleanup-score cleanup)
+          (compiler-parse-field-cleanup-list-score-at fields (+ index 1)))])))
 
 (define (compiler-parse-variant-payload-cleanup-score
   [cleanup : AstVariantPayloadCleanup]) : i64

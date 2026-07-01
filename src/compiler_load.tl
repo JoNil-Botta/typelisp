@@ -2876,16 +2876,18 @@
     [(AstGeneratedDeclMeta.Some _ _ _ _) true]))
 
 (define (compiler-load-surface-field-list-cleanup? [fields : AstFieldDefList]) : bool
-  (match fields
-    [(AstFieldDefList.Nil) false]
-    [(AstFieldDefList.Cons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef.Def _ _ cleanup)
-            (or
-              (ast-field-cleanup? cleanup)
-              (compiler-load-surface-field-list-cleanup? rest))]))]))
+  (compiler-load-surface-field-list-cleanup-at? (& fields) 0))
+
+(define (compiler-load-surface-field-list-cleanup-at?
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len fields))
+    false
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ _ cleanup)
+        (or
+          (ast-field-cleanup? cleanup)
+          (compiler-load-surface-field-list-cleanup-at? fields (+ index 1)))])))
 
 (define (compiler-load-surface-variant-payload-cleanup?
   [cleanups : AstVariantPayloadCleanupList]) : bool

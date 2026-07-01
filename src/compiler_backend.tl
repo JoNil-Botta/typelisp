@@ -32152,16 +32152,16 @@ tl_memchr:
   (match mode
     [(CompilerBackendMode.Avx2)
       (match target
-        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx2)]
-        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx2)])]
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxAvx2)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsAvx2)])]
     [(CompilerBackendMode.Avx512)
       (match target
-        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx512)]
-        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx512)])]
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxAvx512)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsAvx512)])]
     [_
       (match target
-        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxScalar)]
-        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsScalar)])]))
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxScalar)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsScalar)])]))
 
 (define (compiler-backend-lower-source-for-target
   [src : String]

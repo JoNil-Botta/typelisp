@@ -28489,6 +28489,18 @@
 (define compiler-backend-scavenge-ctx-vars : i64
   0)
 
+;; Forward span (in point units; each instruction step is +2) that a scavenged
+;; STAGING register is queried across, beyond its emit position. Loads sharing a
+;; base register fuse into one emit step but the lowering numbers their def points
+;; in REVERSE offset order, so a register-homed sibling carries an interval point
+;; AHEAD of a spilled sibling's staging that is nonetheless emitted into its home
+;; BEFORE it. Covering point + 2*(K-1) for the deepest K-field aggregate the
+;; compiler binds-and-loads in one arm keeps every reordered sibling OCCUPIED in
+;; the query so the staging scratch never clobbers it. See
+;; compiler-backend-scavenge-reg.
+(define compiler-backend-scavenge-staging-window : i64
+  16)
+
 (define (compiler-backend-scavenge-occupied-mask-at-point [point : i64]) : i64
   (let
     [masks : (Array i64) compiler-backend-scavenge-ctx-occupied-masks]
@@ -28499,6 +28511,43 @@
     (if (and (>= idx 0) (< idx (array-length masks)))
       (array-ref masks idx)
       0)))
+
+;; Union the occupancy masks across every instruction event in [lo, hi] (point
+;; coordinates; each event is point/2). A scavenge's staging scratch register
+;; (e.g. a spilled load: `mov addr,scratch` then `mov scratch,spill`) is live not
+;; only at the emit position but through the immediately following emission. A
+;; FUSED destructure loads its fields in offset order while the lowering assigns
+;; their interval points in the REVERSE order, so a register-homed sibling field
+;; is emitted into its home one step BEFORE a spilled field's staging load yet
+;; carries the HIGHER interval point (point+2). A single-point query at the emit
+;; position read that register "free" and the scratch clobbered the just-loaded
+;; sibling. ORing [point, point+2] keeps the emit-position endpoint (so a gep
+;; operand live only at the instruction start is still protected) and adds the
+;; next-step endpoint (so the reordered fused sibling is too).
+(define (compiler-backend-scavenge-occupied-mask-over-range
+  [lo : i64]
+  [hi : i64]) : i64
+  (let
+    [masks : (Array i64) compiler-backend-scavenge-ctx-occupied-masks]
+    [count : i64 (array-length masks)]
+    [lo-idx : i64
+      (if (< lo 0)
+        0
+        (/ lo 2))]
+    [hi-idx : i64
+      (if (< hi 0)
+        0
+        (/ hi 2))]
+    [i : i64 lo-idx]
+    [acc : i64 0]
+    (begin
+      (while (<= i hi-idx)
+        (begin
+          (if (and (>= i 0) (< i count))
+            (set! acc (bit-or acc (array-ref masks i)))
+            unit)
+          (set! i (+ i 1))))
+      acc)))
 
 (define (compiler-backend-set-scavenge-ctx-ready!
   [starts : (Array i64)]
@@ -29115,12 +29164,16 @@
     [assignment-index : CompilerRegAssignmentIndex
       compiler-backend-scavenge-ctx-assignment-index]
     [vars : i64 compiler-backend-scavenge-ctx-vars]
+    ;; See compiler-backend-scavenge-reg: query the staging register's forward live
+    ;; span so a fused/destructure float load cannot clobber a reordered sibling
+    ;; field emitted into its home before it.
     [point : i64
       (*
         2
         (-
           compiler-backend-emit-instr-post-base
           compiler-backend-emit-current-count))]
+    [hi-point : i64 (+ point compiler-backend-scavenge-staging-window)]
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
         (compiler-backend-var-register-home-index assignment-index dst-var)
@@ -29135,7 +29188,7 @@
         (+ exclude-n 1))]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
-        (compiler-backend-scavenge-occupied-mask-at-point point)
+        (compiler-backend-scavenge-occupied-mask-over-range point hi-point)
         ex
         ex-n
         fallback
@@ -29192,12 +29245,21 @@
     [assignment-index : CompilerRegAssignmentIndex
       compiler-backend-scavenge-ctx-assignment-index]
     [vars : i64 compiler-backend-scavenge-ctx-vars]
-    ;; Query at the emit POSITION (2*position), where this instruction's operands
-    ;; are still live (their uses extend their intervals to this point) -- NOT
-    ;; starts[dst]. For a FUSED gep-load, starts[dst] is the load's def point, one
-    ;; instruction past the gep's operands, so a live operand (e.g. a loop-invariant
-    ;; base) reads "free" and the scratch clobbers it. Same coordinate as
-    ;; scavenge-reg-here. Exclude the dst home (not live yet at this point) so the
+    ;; Query the occupancy across the staging register's live span, not just the
+    ;; single emit POSITION. Loads sharing a base (a destructure's fields, fused by
+    ;; emit-load-from-gep-pair / emit-load-load / emit-fused-gep-load-rest) are
+    ;; emitted in OFFSET order while the lowering assigns their def points in the
+    ;; REVERSE order, so a register-homed sibling (e.g. a String key in %r9) is
+    ;; emitted into its home BEFORE a spilled sibling's staging load yet carries a
+    ;; HIGHER interval point. Querying only `point` read that register "free" and
+    ;; the scratch clobbered the just-loaded sibling (intern-lookup's slot-id load
+    ;; picking %r9 over the live slot-key). A spilled field at offset position j in
+    ;; a K-field group is preceded by j siblings at point+2..point+2j, so the
+    ;; staging register's true upper coordinate is point + 2*(K-1); the window
+    ;; below covers the deepest fully-bound aggregates the compiler destructures.
+    ;; For a standalone def with nothing reordered ahead these forward events are
+    ;; the next instructions' (whose registers the result must avoid anyway), so
+    ;; this never under-protects. Exclude the dst home (not live yet) so the
     ;; scratch never overwrites the result register.
     [point : i64
       (*
@@ -29205,6 +29267,7 @@
         (-
           compiler-backend-emit-instr-post-base
           compiler-backend-emit-current-count))]
+    [hi-point : i64 (+ point compiler-backend-scavenge-staging-window)]
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
         (compiler-backend-var-register-home-index assignment-index dst-var)
@@ -29219,7 +29282,7 @@
         (+ exclude-n 1))]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
-        (compiler-backend-scavenge-occupied-mask-at-point point)
+        (compiler-backend-scavenge-occupied-mask-over-range point hi-point)
         ex
         ex-n
         fallback)]
@@ -29318,52 +29381,59 @@
         (while (< v vars)
           (begin
             (if (compiler-live-set-contains? uses v)
-              (begin
-                (if (and
-                  (>= (array-ref starts v) 0)
-                  (<= (array-ref starts v) point)
-                  (<= point (array-ref ends v)))
-                  unit
-                  (panic
-                    (str-cat
-                      "SCAVENGE-VIOLATION interval fn="
-                      name
-                      " point="
-                      (int->string point)
-                      " use-var="
-                      (int->string v)
-                      " iv=["
-                      (int->string (array-ref starts v))
-                      ","
-                      (int->string (array-ref ends v))
-                      "]")))
+                ;; Only REGISTER-HOMED used vars need interval coverage + a
+                ;; not-free home: a spilled/untracked used var has no register to
+                ;; clobber, and an all-spilled function installs an EMPTY scavenge
+                ;; ctx (Nil intervals -> starts[v]=-1) on purpose, so asserting
+                ;; coverage for non-register vars is a false positive (the old
+                ;; check aborted at the first all-spilled function before reaching
+                ;; the real register hazards). cfg-gated: oracle-only, no codegen.
                 (match (compiler-reg-assignment-index-lookup assignment-index v)
                   [(CompilerRegSomeLocation loc)
                     (match loc
                       [(CompilerRegRegister home)
-                        (if (compiler-backend-scavenge-free-for-instr?
-                          starts
-                          ends
-                          assignment-index
-                          vars
-                          point
-                          home)
-                          (panic
-                            (str-cat
-                              "SCAVENGE-VIOLATION free fn="
-                              name
-                              " point="
-                              (int->string point)
-                              " use-var="
-                              (int->string v)
-                              " reg="
-                              home
-                              " wrongly-reported-free"))
-                          unit)]
+                        (begin
+                          (if (and
+                            (>= (array-ref starts v) 0)
+                            (<= (array-ref starts v) point)
+                            (<= point (array-ref ends v)))
+                            unit
+                            (panic
+                              (str-cat
+                                "SCAVENGE-VIOLATION interval fn="
+                                name
+                                " point="
+                                (int->string point)
+                                " use-var="
+                                (int->string v)
+                                " iv=["
+                                (int->string (array-ref starts v))
+                                ","
+                                (int->string (array-ref ends v))
+                                "]")))
+                          (if (compiler-backend-scavenge-free-for-instr?
+                            starts
+                            ends
+                            assignment-index
+                            vars
+                            point
+                            home)
+                            (panic
+                              (str-cat
+                                "SCAVENGE-VIOLATION free fn="
+                                name
+                                " point="
+                                (int->string point)
+                                " use-var="
+                                (int->string v)
+                                " reg="
+                                home
+                                " wrongly-reported-free"))
+                            unit))]
                       [(CompilerRegRegisterPair _ _) unit]
                       [(CompilerRegSpill _) unit]
                       [(CompilerRegRemat _) unit])]
-                  [(CompilerRegNoLocation) unit]))
+                  [(CompilerRegNoLocation) unit])
               unit)
             (set! v (+ v 1))))
         ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this

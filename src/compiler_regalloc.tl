@@ -168,6 +168,52 @@
   (piece-writeback (Array i64))
   (occupant-split CompilerRegOccupantSplitList))
 
+;; SplitKit M3 realization record (design 4): one resolved single-block sub-range
+;; placement for a minted register piece. Fields:
+;;   block-index -- index of the target block in the function's block array;
+;;   lo/hi       -- LOCAL (0-based, within the block) instruction index range the
+;;                  sub-range covers, inclusive;
+;;   v           -- the original spilled root V;
+;;   w           -- the fresh region var homing the sub-range in a register;
+;;   reg         -- physreg R (= piece-reg[V_i]);
+;;   reload      -- 1 iff a reload copy `Mov W <- V` is needed at lo (V live-IN);
+;;   writeback   -- 1 iff a write-back copy `Mov V <- W` is needed after hi (the
+;;                  value is redefined inside the sub-range);
+;;   ty          -- V's AstType (the type of both boundary copies + the W var);
+;;   crmap       -- the class remap array (size = vars): every var sharing V's
+;;                  spill slot (the whole coalesce class -- the IR references the
+;;                  class MEMBERS, not just the root) maps to W, all others
+;;                  identity. Remapping the whole class is what makes the redefined
+;;                  (write-back) case sound.
+(defenum CompilerRegSplitPlacement
+  (CompilerRegSplitPlacement
+    i64 i64 i64 i64 i64 String i64 i64 AstType (Array i64)))
+
+(defenum CompilerRegSplitPlacementList
+  (CompilerRegSplitPlacementNil)
+  (CompilerRegSplitPlacementCons
+    CompilerRegSplitPlacement
+    (Box CompilerRegSplitPlacementList)))
+
+(defenum CompilerRegSplitMaybePlacement
+  (CompilerRegSplitNoPlacement)
+  (CompilerRegSplitSomePlacement CompilerRegSplitPlacement))
+
+;; Sub-range scan result: first V-reference index in the range (-1 if none),
+;; reload? (1 iff that first reference is a USE => V is live-IN), writeback? (1
+;; iff V is redefined anywhere in the range).
+(defenum CompilerRegSplitScan
+  (CompilerRegSplitScan i64 i64 i64))
+
+;; Collected realization: the placements, the extra var->register assignments and
+;; var->type entries for the fresh region vars, and the grown var count.
+(defenum CompilerRegSplitCollect
+  (CompilerRegSplitCollect
+    CompilerRegSplitPlacementList
+    CompilerRegAssignmentList
+    CompilerRegVarTypeList
+    i64))
+
 ;; SplitKit M2 in-worklist split state (design 2.2/2.3/2.4). Bundles everything
 ;; trySplit needs to MINT call-free sub-range pieces of a spilled call-spanning
 ;; root V and re-queue them into the greedy worklist, plus the CompilerRegSplitPlan
@@ -197,7 +243,17 @@
   (piece-of (Array i64))
   (piece-start (Array i64))
   (piece-end (Array i64))
-  (piece-writeback (Array i64)))
+  (piece-writeback (Array i64))
+  ;; SplitKit M3: the WIDE caller-clobber points (call/syscall/bounds-check/Pack/
+  ;; div/shift) in 2-per-instruction point coords. trySplit cuts each spilled
+  ;; value's segment at these points so every MINTED piece is a CLOBBER-FREE
+  ;; sub-range: call-free (=> spans-call false => competes over the full register
+  ;; pool, so it can win a caller-saved register a whole-segment spanning piece
+  ;; never could) AND bounds-check/Pack-free (=> a caller-saved home is never
+  ;; scavenged as scratch inside it -- the design section 5 #161 boundary). Empty
+  ;; in the inert ctx (budget 0 / non-integer passes): trySplit declines before it
+  ;; is read.
+  (clobber-points CompilerLiveI64Set))
 
 (defenum CompilerRegPlan
   (CompilerRegPlan
@@ -5512,6 +5568,60 @@
         (compiler-live-set-empty))
         [(CompilerRegCallScan _ set) set])]))
 
+;; SplitKit M3: the WIDE caller-clobber points (2-per-instruction coords). Marks
+;; every instruction point where compiler-reg-backend-caller-clobber-instr? holds
+;; (call/syscall/bounds-check/Pack/div/shift/cpuid/xgetbv). trySplit cuts a
+;; spilled value's segment at these so every minted piece is a clobber-free
+;; sub-range (design section 5).
+(define (compiler-reg-wide-clobber-points-seq
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr?
+                (array.array-ref slots index))
+            (set! out (compiler-live-set-insert out p))
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan p out))))
+
+(define (compiler-reg-wide-clobber-points-blocks
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (match blocks
+    [(IrBlockNil) (CompilerRegCallScan point set)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (compiler-reg-wide-clobber-points-seq instrs point set)
+            [(CompilerRegCallScan p2 s2)
+              (compiler-reg-wide-clobber-points-blocks (box-get rest) p2 s2)])])]
+    [(IrBlockArray seq)
+      (compiler-reg-wide-clobber-points-blocks
+        (compiler-ir-block-seq-to-list seq)
+        point
+        set)]))
+
+(define (compiler-reg-wide-clobber-points
+  [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (compiler-reg-wide-clobber-points-blocks
+        blocks
+        0
+        (compiler-live-set-empty))
+        [(CompilerRegCallScan _ set) set])]))
+
 (define (compiler-reg-backend-clobber-binop? [op : CompilerIrBinOp]) : bool
   (match op
     [(IrBinDiv) true]
@@ -9426,6 +9536,636 @@
     CompilerRegVarTypeNil
     (compiler-reg-loop-split-max-rounds)))
 
+;; ===========================================================================
+;; SplitKit M3 -- REALIZATION (design section 4). Consume the greedy-recorded
+;; CompilerRegSplitPlan pieces and emit, for each minted register piece V_i
+;; [start,end) with piece-reg R of a spilled call-spanning root V, in the SINGLE
+;; block its sub-range lies in:
+;;   * a RELOAD  `Mov W <- V`  (slot->R) at the sub-range entry, when V is
+;;     live-IN (its first reference in the range is a use);
+;;   * a REMAP of every read/def of V to a fresh region var W (homed in R) over
+;;     the sub-range;
+;;   * a WRITE-BACK `Mov V <- W` (R->slot) after the sub-range, when V is
+;;     redefined inside it (so V's canonical slot -- authoritative outside every
+;;     piece -- reflects the update).
+;;
+;; SOUNDNESS. Fires only under `--cfg splitkit-stress` (budget > 0), where
+;; caller-save/loop-split are disabled, so the blocks reaching this pass are
+;; PRISTINE -- byte-identical to the ones the greedy analysed. The recorded
+;; [start,end) point coords (2-per-instruction, block order -- the identical
+;; numbering compiler-reg-live-interval-selection built them with) therefore map
+;; directly onto these instructions, and R is exactly the register the worklist
+;; proved free over the sub-range (V_i competed for it against every resident).
+;; The pass additionally requires the sub-range to be CLOBBER-FREE under the WIDE
+;; caller-clobber set (no call/syscall/bounds-check/Pack/div/shift), which --
+;; together with the final-IR scavenge rebuild that marks W occupied over the
+;; range -- forbids any scratch/fixed-register use from stealing R (this subsumes
+;; the design section 5 #161 caller-saved-piece rule for EVERY register). Any
+;; piece that does not cleanly validate is DECLINED (its sub-range stays on the
+;; slot: reload-per-use, never worse than the pre-split spill). At budget 0 (the
+;; committed self-host) the plan has no pieces -> the pass is a no-op ->
+;; byte-identical.
+;; ===========================================================================
+
+(define (compiler-reg-splitkit-plan-has-pieces?
+  [split-plan : CompilerRegSplitPlan]) : bool
+  (let
+    [piece-of : (Array i64) (struct-get split-plan piece-of)]
+    [n : i64 (array.array-length piece-of)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (>= (array.array-ref piece-of i) 0) (set! found true) unit)
+          (set! i (+ i 1))))
+      found)))
+
+;; bases[b] = global instruction index of block b's first instruction (prefix sum
+;; of per-block instruction counts, in block order); bases[nblocks] = total. This
+;; is the inverse of the 2-per-instruction point numbering: global index G lives
+;; at point 2G, so a recorded point P maps to global index P/2 (P is even for a
+;; def/use, odd for a live-through boundary, and P/2 is the same instruction).
+(define (compiler-reg-splitkit-block-bases
+  [block-slots : (Array CompilerIrBlock)]
+  [nblocks : i64]) : (Array i64)
+  (let
+    [bases : (Array i64) (array.make-array i64 (+ nblocks 1))]
+    [b : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< b nblocks)
+        (begin
+          (array.array-set! bases b acc)
+          (set! acc
+            (+ acc
+              (match (array.array-ref block-slots b)
+                [(IrBlock _ instrs) (compiler-ir-instr-seq-count instrs)])))
+          (set! b (+ b 1))))
+      (array.array-set! bases nblocks acc)
+      bases)))
+
+(define (compiler-reg-splitkit-block-of-index
+  [bases : (Array i64)]
+  [nblocks : i64]
+  [g : i64]
+  [b : i64]) : i64
+  (if (>= b nblocks)
+    (- 0 1)
+    (if (and
+          (>= g (array.array-ref bases b))
+          (< g (array.array-ref bases (+ b 1))))
+      b
+      (compiler-reg-splitkit-block-of-index bases nblocks g (+ b 1)))))
+
+;; The instruction run [lo,hi] is clobber-free (WIDE caller-clobber set) -- no
+;; call/syscall/bounds-check/Pack/div/shift -- so a register R homed across it is
+;; never clobbered nor scavenged as scratch inside the run. Also refuses a run
+;; containing a PHI: phis must lead a block and their edge-lowering moves would
+;; race an in-block reload, so a piece spanning one is declined (kept on the slot).
+(define (compiler-reg-splitkit-range-clobber-free?
+  [slots : (Array CompilerIrInstr)]
+  [lo : i64]
+  [hi : i64]) : bool
+  (let
+    [i : i64 lo]
+    [ok : bool true]
+    (begin
+      (while (and (<= i hi) ok)
+        (begin
+          (if (or
+                (compiler-reg-backend-caller-clobber-instr? (array.array-ref slots i))
+                (match (array.array-ref slots i)
+                  [(IrInstrPhi _ _ _) true]
+                  [_ false]))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+;; slot-owner[X] = the Spill stack-slot offset X was assigned (0 = not spilled).
+;; stack-slot-offset is a bijection (-8*(var+1)), and expand-class-assignments
+;; gives every member of a spilled coalesce class the ROOT's Spill offset, so
+;; { X : slot-owner[X] = off } is EXACTLY that class. (This runs before
+;; color-stack-slots, so offsets are still per-root, never aliased.)
+(define (compiler-reg-splitkit-slot-owners-fill!
+  [assignments : CompilerRegAssignmentList]
+  [out : (Array i64)]
+  [vars : i64]) : unit
+  (match assignments
+    [(CompilerRegAssignmentNil) unit]
+    [(CompilerRegAssignmentCons item rest)
+      (begin
+        (match item
+          [(CompilerRegAssignment id location)
+            (if (and (>= id 0) (< id vars))
+              (match location
+                [(CompilerRegSpill off) (array.array-set! out id off)]
+                [_ unit])
+              unit)])
+        (compiler-reg-splitkit-slot-owners-fill! (box-get rest) out vars))]))
+
+(define (compiler-reg-splitkit-slot-owners
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 (if (< vars 1) 1 vars))]
+    (begin
+      (compiler-reg-fill-i64-array out 0)
+      (compiler-reg-splitkit-slot-owners-fill! assignments out vars)
+      out)))
+
+;; True iff any member of the class (vars sharing slot offset `target`) is a REMAT
+;; candidate (a value the remat pass will recompute at its use sites instead of
+;; spilling: a constant/address Mov, a foldable Gep, or an invariant Load). Such a
+;; value has no stable slot to reload from -- homing it in a register and inserting
+;; `Mov W <- V` races the rematerialization and miscompiles -- so the whole class
+;; is declined.
+(define (compiler-reg-splitkit-class-has-remat?
+  [slot-owner : (Array i64)]
+  [remat-cands : (Array i64)]
+  [vars : i64]
+  [target : i64]) : bool
+  (let
+    [x : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< x vars) (not found))
+        (begin
+          (if (and
+                (= (array.array-ref slot-owner x) target)
+                (< x (array.array-length remat-cands))
+                (= (array.array-ref remat-cands x) 1))
+            (set! found true)
+            unit)
+          (set! x (+ x 1))))
+      found)))
+
+;; The coalesce class of the root whose slot offset is `target`: every var sharing
+;; the slot. Used by the sub-range scan (does the range reference the value?).
+(define (compiler-reg-splitkit-class-set
+  [slot-owner : (Array i64)]
+  [vars : i64]
+  [target : i64]) : CompilerLiveI64Set
+  (let
+    [set : CompilerLiveI64Set (compiler-live-set-empty)]
+    [x : i64 0]
+    (begin
+      (while (< x vars)
+        (begin
+          (if (= (array.array-ref slot-owner x) target)
+            (set! set (compiler-live-set-insert set x))
+            unit)
+          (set! x (+ x 1))))
+      set)))
+
+;; The class remap array (size vars): every class member -> W, all else identity.
+(define (compiler-reg-splitkit-class-remap
+  [slot-owner : (Array i64)]
+  [vars : i64]
+  [target : i64]
+  [w : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 (if (< vars 1) 1 vars))]
+    [x : i64 0]
+    (begin
+      (while (< x vars)
+        (begin
+          (array.array-set!
+            out
+            x
+            (if (= (array.array-ref slot-owner x) target) w x))
+          (set! x (+ x 1))))
+      out)))
+
+;; VERIFIED register freeness (soundness net): R is free over the point range
+;; [ps,pe] iff no OTHER var (assigned Register R, not a class member of the value
+;; being homed) has a live interval overlapping [ps,pe] in the CURRENT (final,
+;; pre-emit) block liveness. This does NOT trust the greedy's piece register blind:
+;; it re-derives interference on the exact blocks the code is emitted from, so a
+;; stale coordinate or a register the surrounding allocation actually needs is
+;; caught and the piece declined (its sub-range stays on the slot). Combined with
+;; the clobber-free range gate (no scratch/fixed-register use can steal R) this is
+;; the realization's soundness guarantee.
+(define (compiler-reg-splitkit-reg-free-over?
+  [assignments : CompilerRegAssignmentList]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [members : CompilerLiveI64Set]
+  [reg : String]
+  [ps : i64]
+  [pe : i64]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) true]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment id location)
+          (if (and
+                (match location
+                  [(CompilerRegRegister r) (string.string-eq r reg)]
+                  [_ false])
+                (not (compiler-live-set-contains? members id))
+                (>= id 0)
+                (< id (array.array-length cur-starts))
+                (>= (array.array-ref cur-starts id) 0)
+                ;; overlap [start,end] with [ps,pe]
+                (<= (array.array-ref cur-starts id) pe)
+                (>= (array.array-ref cur-ends id) ps))
+            false
+            (compiler-reg-splitkit-reg-free-over?
+              (box-get rest) cur-starts cur-ends members reg ps pe))])]))
+
+;; Scan [lo,hi] for references to the coalesce class `members`: first-ref index
+;; (-1 none), reload? (1 iff that first reference is a USE => the value is
+;; live-IN), writeback? (1 iff a class member is redefined anywhere in the range).
+(define (compiler-reg-splitkit-scan-class
+  [slots : (Array CompilerIrInstr)]
+  [lo : i64]
+  [hi : i64]
+  [members : CompilerLiveI64Set]) : CompilerRegSplitScan
+  (let
+    [i : i64 lo]
+    [first-ref : i64 (- 0 1)]
+    [reload : i64 0]
+    [writeback : i64 0]
+    (begin
+      (while (<= i hi)
+        (let
+          [instr : CompilerIrInstr (array.array-ref slots i)]
+          [uses? : bool
+            (compiler-live-set-intersects?
+              (compiler-live-instr-uses instr)
+              members)]
+          [defs? : bool
+            (compiler-live-set-intersects?
+              (compiler-live-instr-defs instr)
+              members)]
+          (begin
+            (if (and (< first-ref 0) (or uses? defs?))
+              (begin
+                (set! first-ref i)
+                (if uses? (set! reload 1) unit))
+              unit)
+            (if defs? (set! writeback 1) unit)
+            (set! i (+ i 1)))))
+      (CompilerRegSplitScan first-ref reload writeback))))
+
+;; Registers a piece may be homed in: the callee-saved set (%rbx,%r12-%r15, always
+;; safe -- saved by the prologue, clobbered by nothing in a clobber-free range) and
+;; the two clean caller-saved scratch regs (%r8,%r9). EXCLUDES %rax/%rcx/%rdx
+;; (fixed-use: return value / shift count / div) and %rsi/%rdi (argument registers)
+;; whose implicit uses a clobber-free scan does not model, and %r10/%r11 (reserved
+;; for the emergency scavenger). Restricting to this set removes every fixed-use
+;; hazard the clobber-free gate cannot see.
+(define (compiler-reg-splitkit-safe-register? [reg : String]) : bool
+  (or
+    (string.string-eq reg "%rbx")
+    (string.string-eq reg "%r12")
+    (string.string-eq reg "%r13")
+    (string.string-eq reg "%r14")
+    (string.string-eq reg "%r15")
+    (string.string-eq reg "%r8")
+    (string.string-eq reg "%r9")))
+
+(define (compiler-reg-splitkit-root-spilled?
+  [assignments : CompilerRegAssignmentList]
+  [v : i64]) : bool
+  (match (compiler-reg-assignment-lookup assignments v)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegSpill _) true]
+        [_ false])]
+    [(CompilerRegNoLocation) false]))
+
+;; A candidate sub-range [lo,hi] in block b overlaps an already-accepted
+;; placement in the same block? (kept non-overlapping so the per-instruction
+;; rewrite has at most one active placement, avoiding remap races between two
+;; pieces that share instructions.)
+(define (compiler-reg-splitkit-overlaps?
+  [placements : CompilerRegSplitPlacementList]
+  [b : i64]
+  [lo : i64]
+  [hi : i64]) : bool
+  (match placements
+    [(CompilerRegSplitPlacementNil) false]
+    [(CompilerRegSplitPlacementCons p rest)
+      (match p
+        [(CompilerRegSplitPlacement pb plo phi _ _ _ _ _ _ _)
+          (if (and (= pb b) (<= lo phi) (<= plo hi))
+            true
+            (compiler-reg-splitkit-overlaps? (box-get rest) b lo hi))])]))
+
+;; Resolve every valid piece to a single-block placement, minting a fresh region
+;; var W (id = vars + k) per accepted piece and recording its W->Register(R)
+;; assignment + W->type entry. Declines a piece whose sub-range is not a single
+;; clobber-free block run in which V is referenced (or whose register lost / whose
+;; root is not spilled / whose type is unknown / which overlaps an accepted one).
+(define (compiler-reg-splitkit-collect
+  [split-plan : CompilerRegSplitPlan]
+  [block-slots : (Array CompilerIrBlock)]
+  [nblocks : i64]
+  [bases : (Array i64)]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [slot-owner : (Array i64)]
+  [cur-starts : (Array i64)]
+  [cur-ends : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [remat-cands : (Array i64)]
+  [depths : (Array i64)]
+  [vars : i64]) : CompilerRegSplitCollect
+  (let
+    [piece-of : (Array i64) (struct-get split-plan piece-of)]
+    [piece-start : (Array i64) (struct-get split-plan piece-start)]
+    [piece-end : (Array i64) (struct-get split-plan piece-end)]
+    [piece-reg : (Array String) (struct-get split-plan piece-reg)]
+    [np : i64 (array.array-length piece-of)]
+    [nr : i64 (array.array-length piece-reg)]
+    [placements : CompilerRegSplitPlacementList CompilerRegSplitPlacementNil]
+    [extra-assignments : CompilerRegAssignmentList CompilerRegAssignmentNil]
+    [extra-types : CompilerRegVarTypeList CompilerRegVarTypeNil]
+    [wcount : i64 0]
+    [pid : i64 0]
+    (begin
+      (while (< pid np)
+        (let
+          [v : i64 (array.array-ref piece-of pid)]
+          [reg : String (if (< pid nr) (array.array-ref piece-reg pid) "")]
+          (begin
+            (if (and
+                  (>= v 0)
+                  (not (string.string-eq reg ""))
+                  (compiler-reg-splitkit-safe-register? reg)
+                  ;; A group-typed value occupies a register PAIR (16 bytes); a
+                  ;; single-register piece would capture only word0 and miscompile.
+                  (not (compiler-live-set-contains? group-vars v))
+                  (compiler-reg-splitkit-root-spilled? assignments v))
+              (let
+                [ps : i64 (array.array-ref piece-start pid)]
+                [pe : i64 (array.array-ref piece-end pid)]
+                (if (and (>= ps 0) (>= pe ps))
+                  (let
+                    [gfirst : i64 (shr ps 1)]
+                    [glast : i64 (shr pe 1)]
+                    [b : i64
+                      (compiler-reg-splitkit-block-of-index bases nblocks gfirst 0)]
+                    (if (and
+                          (>= b 0)
+                          (< glast (array.array-ref bases (+ b 1))))
+                      (match (array.array-ref block-slots b)
+                        [(IrBlock _ instrs)
+                          (let
+                            [base : i64 (array.array-ref bases b)]
+                            [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+                            [len : i64 (compiler-ir-instr-seq-count instrs)]
+                            [lo : i64 (- gfirst base)]
+                            [hi0 : i64 (- glast base)]
+                            [hi : i64 (if (>= hi0 len) (- len 1) hi0)]
+                            [target : i64 (compiler-reg-stack-slot-offset v)]
+                            [members : CompilerLiveI64Set
+                              (compiler-reg-splitkit-class-set slot-owner vars target)]
+                            (if (and
+                                  (>= lo 0)
+                                  (<= lo hi)
+                                  (< hi len)
+                                  ;; Refuse loop blocks: an in-block reload of a
+                                  ;; loop-carried / loop-invariant value breaks its
+                                  ;; cross-iteration slot liveness (color-stack-slots
+                                  ;; would reuse the slot within the loop). Only
+                                  ;; straight-line (depth-0) sub-ranges are homed --
+                                  ;; the loop case is loop-split's job.
+                                  (= (array.array-ref depths b) 0)
+                                  (not
+                                    (compiler-reg-splitkit-class-has-remat?
+                                      slot-owner remat-cands vars target))
+                                  (compiler-reg-splitkit-range-clobber-free? slots lo hi)
+                                  (not (compiler-reg-splitkit-overlaps? placements b lo hi))
+                                  (compiler-reg-splitkit-reg-free-over?
+                                    assignments
+                                    cur-starts
+                                    cur-ends
+                                    members
+                                    reg
+                                    (* (+ base lo) 2)
+                                    (+ (* (+ base hi) 2) 1)))
+                              (match (compiler-reg-splitkit-scan-class slots lo hi members)
+                                [(CompilerRegSplitScan first-ref reload writeback)
+                                  (if (>= first-ref 0)
+                                    (match (compiler-reg-var-types-lookup type-info v)
+                                      [(CompilerRegSomeType ty)
+                                        (let
+                                          [w : i64 (+ vars wcount)]
+                                          [crmap : (Array i64)
+                                            (compiler-reg-splitkit-class-remap
+                                              slot-owner vars target w)]
+                                          (begin
+                                            (set! placements
+                                              (CompilerRegSplitPlacementCons
+                                                (CompilerRegSplitPlacement
+                                                  b lo hi v w reg reload writeback ty crmap)
+                                                (box placements)))
+                                            (set! extra-assignments
+                                              (compiler-reg-assignment-cons
+                                                (CompilerRegAssignment
+                                                  w (CompilerRegRegister reg))
+                                                extra-assignments))
+                                            (set! extra-types
+                                              (compiler-reg-var-type-cons
+                                                (CompilerRegVarType w ty)
+                                                extra-types))
+                                            (set! wcount (+ wcount 1))))]
+                                      [(CompilerRegNoType) unit])
+                                    unit)])
+                              unit))])
+                      unit))
+                  unit))
+              unit)
+            (set! pid (+ pid 1)))))
+      (CompilerRegSplitCollect
+        placements
+        extra-assignments
+        extra-types
+        (+ vars wcount)))))
+
+(define (compiler-reg-splitkit-placements-for-block
+  [placements : CompilerRegSplitPlacementList]
+  [b : i64]) : CompilerRegSplitPlacementList
+  (match placements
+    [(CompilerRegSplitPlacementNil) CompilerRegSplitPlacementNil]
+    [(CompilerRegSplitPlacementCons p rest)
+      (match p
+        [(CompilerRegSplitPlacement pb _ _ _ _ _ _ _ _ _)
+          (if (= pb b)
+            (CompilerRegSplitPlacementCons
+              p
+              (box (compiler-reg-splitkit-placements-for-block (box-get rest) b)))
+            (compiler-reg-splitkit-placements-for-block (box-get rest) b))])]))
+
+(define (compiler-reg-splitkit-find-active
+  [placements : CompilerRegSplitPlacementList]
+  [i : i64]) : CompilerRegSplitMaybePlacement
+  (match placements
+    [(CompilerRegSplitPlacementNil) (CompilerRegSplitNoPlacement)]
+    [(CompilerRegSplitPlacementCons p rest)
+      (match p
+        [(CompilerRegSplitPlacement _ plo phi _ _ _ _ _ _ _)
+          (if (and (>= i plo) (<= i phi))
+            (CompilerRegSplitSomePlacement p)
+            (compiler-reg-splitkit-find-active (box-get rest) i))])]))
+
+;; Rewrite one block's instructions [i..len): for the (at most one) placement
+;; active at index i, remap the whole coalesce class -> W via the placement's crmap
+;; (so every IR reference to the value, root OR member, resolves to the register);
+;; prepend the reload copy `Mov W <- V` at the placement's low end (when live-IN)
+;; and append the write-back copy `Mov V <- W` after its high end (when the value
+;; is redefined). Placements in a block are non-overlapping, so at most one is
+;; active per instruction and their crmaps never race.
+(define (compiler-reg-splitkit-rewrite-instrs-from
+  [slots : (Array CompilerIrInstr)]
+  [len : i64]
+  [i : i64]
+  [placements : CompilerRegSplitPlacementList]) : CompilerIrInstrList
+  (if (>= i len)
+    IrInstrNil
+    (let
+      [instr : CompilerIrInstr (array.array-ref slots i)]
+      (match (compiler-reg-splitkit-find-active placements i)
+        [(CompilerRegSplitNoPlacement)
+          (compiler-ir-instr-cons
+            instr
+            (compiler-reg-splitkit-rewrite-instrs-from
+              slots len (+ i 1) placements))]
+        [(CompilerRegSplitSomePlacement p)
+          (match p
+            [(CompilerRegSplitPlacement _ plo phi v w reg reload writeback ty crmap)
+              (let
+                [remapped : CompilerIrInstr (compiler-reg-remap-instr crmap instr)]
+                [tail : CompilerIrInstrList
+                  (compiler-reg-splitkit-rewrite-instrs-from
+                    slots len (+ i 1) placements)]
+                [with-writeback : CompilerIrInstrList
+                  (if (and (= i phi) (= writeback 1))
+                    (compiler-ir-instr-cons
+                      (IrInstrMov v (IrValueVar w) ty)
+                      tail)
+                    tail)]
+                [with-instr : CompilerIrInstrList
+                  (compiler-ir-instr-cons remapped with-writeback)]
+                (if (and (= i plo) (= reload 1))
+                  (compiler-ir-instr-cons
+                    (IrInstrMov w (IrValueVar v) ty)
+                    with-instr)
+                  with-instr))])]))))
+
+(define (compiler-reg-splitkit-rewrite-block-array
+  [block-slots : (Array CompilerIrBlock)]
+  [nblocks : i64]
+  [b : i64]
+  [placements : CompilerRegSplitPlacementList]) : CompilerIrBlockList
+  (if (>= b nblocks)
+    IrBlockNil
+    (match (array.array-ref block-slots b)
+      [(IrBlock label instrs)
+        (let
+          [block-placements : CompilerRegSplitPlacementList
+            (compiler-reg-splitkit-placements-for-block placements b)]
+          [new-block : CompilerIrBlock
+            (match block-placements
+              [(CompilerRegSplitPlacementNil) (IrBlock label instrs)]
+              [_
+                (IrBlock
+                  label
+                  (compiler-ir-instr-seq-from-list
+                    (compiler-reg-splitkit-rewrite-instrs-from
+                      (struct-get instrs slots)
+                      (compiler-ir-instr-seq-count instrs)
+                      0
+                      block-placements)))])]
+          (compiler-ir-block-cons
+            new-block
+            (compiler-reg-splitkit-rewrite-block-array
+              block-slots nblocks (+ b 1) placements)))])))
+
+;; The wired backend pass (signature mirrors compiler-reg-loop-split-rewrite-
+;; blocks): read the plan's CompilerRegSplitPlan, resolve pieces to single-block
+;; placements, and emit the boundary copies + sub-range remap. Returns a
+;; loop-split-noop (blocks + var count unchanged) when there is nothing to
+;; realize -- the budget-0 self-host path and the decline-everything path.
+(define (compiler-reg-splitkit-rewrite-blocks
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (let
+    [split-plan : CompilerRegSplitPlan (compiler-reg-plan-split-plan plan)]
+    (if (or
+          ;; `splitkit-no-realize`: mint pieces (budget>0) but DECLINE to realize
+          ;; them -- a diagnostic knob so a stress build can be compared against an
+          ;; otherwise-identical build with the realization off, isolating the
+          ;; realization's codegen effect from the (stress-disabled) caller-save /
+          ;; loop-split passes. Never set on the committed self-host.
+          (cfg splitkit-no-realize true false)
+          (not (compiler-reg-splitkit-plan-has-pieces? split-plan)))
+      (compiler-reg-loop-split-noop blocks vars)
+      (let
+        [seq : CompilerIrBlockSeq (compiler-ir-block-seq-from-list blocks)]
+        [block-slots : (Array CompilerIrBlock) (struct-get seq slots)]
+        [nblocks : i64 (struct-get seq len)]
+        [bases : (Array i64)
+          (compiler-reg-splitkit-block-bases block-slots nblocks)]
+        [assignments : CompilerRegAssignmentList
+          (compiler-reg-plan-assignments plan)]
+        [slot-owner : (Array i64)
+          (compiler-reg-splitkit-slot-owners assignments vars)]
+        ;; Interference over the CURRENT (final) blocks, for the verified
+        ;; register-freeness soundness net -- re-derived from the exact IR the code
+        ;; is emitted from, so a piece is only homed in R where R is provably free.
+        [cur-index : CompilerRegIntervalIndex
+          (compiler-reg-interval-index-build
+            (compiler-reg-live-intervals
+              func
+              (compiler-live-analyze-function func))
+            vars)]
+        [group-vars : CompilerLiveI64Set
+          (compiler-reg-function-group-vars
+            func
+            (compiler-reg-var-types-list type-info))]
+        ;; Values the remat pass will recompute -- excluded from realization (they
+        ;; have no stable slot to reload from).
+        [remat-cands : (Array i64)
+          (struct-get (compiler-reg-remat-table-build func) candidates)]
+        [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        (match (compiler-reg-splitkit-collect
+          split-plan
+          block-slots
+          nblocks
+          bases
+          type-info
+          assignments
+          slot-owner
+          (struct-get cur-index starts)
+          (struct-get cur-index ends)
+          group-vars
+          remat-cands
+          depths
+          vars)
+          [(CompilerRegSplitCollect placements extra-assignments extra-types new-vars)
+            (match placements
+              [(CompilerRegSplitPlacementNil)
+                (compiler-reg-loop-split-noop blocks vars)]
+              [_
+                (let
+                  [new-blocks : CompilerIrBlockList
+                    (compiler-reg-splitkit-rewrite-block-array
+                      block-slots nblocks 0 placements)]
+                  (CompilerRegCallSaveRewrite
+                    new-blocks
+                    vars
+                    new-vars
+                    extra-assignments
+                    extra-types))])])))))
+
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -10636,7 +11376,8 @@
         (array.make-array i64 0)
         (array.make-array i64 0)
         (array.make-array i64 0)
-        (array.make-array i64 0)))))
+        (array.make-array i64 0)
+        (compiler-live-set-empty)))))
 
 (define (compiler-reg-make-i64-filled [size : i64] [value : i64]) : (Array i64)
   (let
@@ -10652,7 +11393,8 @@
 ;; (budget > 0); the self-host path uses compiler-reg-split-ctx-empty.
 (define (compiler-reg-split-ctx-make
   [orig-vars : i64]
-  [budget : i64]) : CompilerRegSplitCtx
+  [budget : i64]
+  [clobber-points : CompilerLiveI64Set]) : CompilerRegSplitCtx
   (let
     [ov : i64 (if (< orig-vars 0) 0 orig-vars)]
     [b : i64 (if (< budget 0) 0 budget)]
@@ -10669,7 +11411,8 @@
         (compiler-reg-make-i64-filled sz (- 0 1))
         (compiler-reg-make-i64-filled sz 0)
         (compiler-reg-make-i64-filled sz 0)
-        (compiler-reg-make-i64-filled sz 0)))))
+        (compiler-reg-make-i64-filled sz 0)
+        clobber-points))))
 
 ;; Grow an i64 per-var array by `extra` slots, filling the new tail with `fill`.
 ;; Byte-identity note: only ever called with extra > 0 (budget-stress); the
@@ -10775,6 +11518,46 @@
     (array.make-array String 0)
     (struct-get ctx piece-writeback)
     CompilerRegOccupantSplitNil))
+
+;; SplitKit M3: build the plan piece-reg array from the FINAL post-worklist
+;; assignment table. Each minted piece V_i (piece-of[i] >= 0) was popped by the
+;; worklist and competed for a register over the full pool; its result lives in
+;; `assignments[V_i]`. Thread that per-piece register choice into the plan so the
+;; realization pass (compiler-reg-splitkit-rewrite-blocks) knows which register R
+;; to home the sub-range in. A piece that lost (spilled) records "" -> the
+;; realization declines it (its sub-range stays on the slot, never worse). At
+;; budget 0 no piece was minted (every piece-of slot is -1), so piece-reg is all
+;; "" -- inert, exactly like the empty plan.
+(define (compiler-reg-split-plan-from-ctx-regs
+  [ctx : CompilerRegSplitCtx]
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegSplitPlan
+  (let
+    [piece-of : (Array i64) (struct-get ctx piece-of)]
+    [n : i64 (array.array-length piece-of)]
+    [piece-reg : (Array String) (array.make-array String (if (< n 1) 1 n))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array.array-set!
+            piece-reg
+            i
+            (if (>= (array.array-ref piece-of i) 0)
+              (match (compiler-reg-assignment-table-lookup assignments i)
+                [(CompilerRegSomeLocation location)
+                  (match location
+                    [(CompilerRegRegister reg) reg]
+                    [_ ""])]
+                [(CompilerRegNoLocation) ""])
+              ""))
+          (set! i (+ i 1))))
+      (CompilerRegSplitPlan
+        piece-of
+        (struct-get ctx piece-start)
+        (struct-get ctx piece-end)
+        piece-reg
+        (struct-get ctx piece-writeback)
+        CompilerRegOccupantSplitNil))))
 
 ;; Build the split kit from the post-greedy, PRE-expansion ROOT assignment table:
 ;; at this point each coalesce class still has a single root carrying the merged
@@ -11426,10 +12209,89 @@
         (array.array-set! pw pid wb)
         unit))))
 
-;; Mint one call-free piece V_i per preserved sub-range in `segs`, budget-capped
-;; (next-piece < split-cap) and index-bounded (pid < n). Each piece inherits V's
-;; weight (so a hot piece pops early), is marked pending (so the worklist competes
-;; it), and is recorded in the plan. Advances the shared next-piece counter.
+;; Mint ONE call-free/clobber-free piece for the instruction run [lo-g, hi-g]
+;; (global instruction indices, both inclusive) of `root`. The piece interval is
+;; recorded in 2-per-instruction point coords [2*lo-g, 2*hi-g] -- the same coords
+;; the realization maps back via /2. Budget-capped (next-piece < split-cap) and
+;; index-bounded (pid < n). Seeds the piece with V's weight, marks it pending, and
+;; records its geometry; advances the shared next-piece counter.
+(define (compiler-reg-greedy-mint-run!
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [pending : (Array i64)]
+  [split-ctx : CompilerRegSplitCtx]
+  [root : i64]
+  [weight : i64]
+  [lo-g : i64]
+  [hi-g : i64]
+  [n : i64]) : unit
+  (let
+    [next-piece : (Array i64) (struct-get split-ctx next-piece)]
+    [split-cap : i64 (struct-get split-ctx split-cap)]
+    [pid : i64 (array.array-ref next-piece 0)]
+    [s : i64 (* lo-g 2)]
+    [e : i64 (* hi-g 2)]
+    (if (and
+      (< pid split-cap)
+      (< pid n)
+      (>= lo-g 0)
+      (<= lo-g hi-g))
+      (begin
+        (compiler-reg-index-set-piece! interval-index pid s e)
+        (if (< pid (array.array-length ref-counts))
+          (array.array-set! ref-counts pid weight)
+          unit)
+        (if (< pid (array.array-length pending))
+          (array.array-set! pending pid 1)
+          unit)
+        (compiler-reg-split-plan-record! split-ctx pid root s e 0)
+        (array.array-set! next-piece 0 (+ pid 1)))
+      unit)))
+
+;; Walk the instruction indices [g, g-end] of one segment, cutting at WIDE clobber
+;; points (clobber-points contains 2*g) into maximal clobber-free runs and minting
+;; a piece per run. `run-start` is the open run's first instruction (-1 = none):
+;; hitting a clobber flushes [run-start, g-1] and reopens after g; the segment end
+;; flushes the final open run.
+(define (compiler-reg-greedy-mint-segment-runs!
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [pending : (Array i64)]
+  [split-ctx : CompilerRegSplitCtx]
+  [root : i64]
+  [weight : i64]
+  [g : i64]
+  [g-end : i64]
+  [run-start : i64]
+  [n : i64]) : unit
+  (if (> g g-end)
+    (if (>= run-start 0)
+      (compiler-reg-greedy-mint-run!
+        interval-index ref-counts pending split-ctx root weight
+        run-start g-end n)
+      unit)
+    (if (compiler-live-set-contains?
+          (struct-get split-ctx clobber-points)
+          (* g 2))
+      (begin
+        (if (and (>= run-start 0) (<= run-start (- g 1)))
+          (compiler-reg-greedy-mint-run!
+            interval-index ref-counts pending split-ctx root weight
+            run-start (- g 1) n)
+          unit)
+        (compiler-reg-greedy-mint-segment-runs!
+          interval-index ref-counts pending split-ctx root weight
+          (+ g 1) g-end (- 0 1) n))
+      (compiler-reg-greedy-mint-segment-runs!
+        interval-index ref-counts pending split-ctx root weight
+        (+ g 1) g-end (if (< run-start 0) g run-start) n))))
+
+;; Mint clobber-free sub-range pieces of a spilled call-spanning root V: for each
+;; preserved segment, cut at the WIDE clobber points into call-free/clobber-free
+;; instruction runs and mint a piece per run (design section 2.2a + section 5).
+;; Each piece is call-free => spans-call false => competes for a register over the
+;; full pool when the worklist pops it (the whole-segment shape could only compete
+;; for the scarce callee-saved pool and lost). Advances next-piece.
 (define (compiler-reg-greedy-mint-pieces!
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
@@ -11445,36 +12307,19 @@
       (begin
         (match seg
           [(CompilerRegInterval _ seg-start seg-end)
-            (let
-              [next-piece : (Array i64) (struct-get split-ctx next-piece)]
-              [split-cap : i64 (struct-get split-ctx split-cap)]
-              [pid : i64 (array.array-ref next-piece 0)]
-              (if (and
-                (< pid split-cap)
-                (< pid n)
-                (>= seg-start 0)
-                (< seg-start seg-end))
-                (begin
-                  (compiler-reg-index-set-piece!
-                    interval-index
-                    pid
-                    seg-start
-                    seg-end)
-                  (if (< pid (array.array-length ref-counts))
-                    (array.array-set! ref-counts pid weight)
-                    unit)
-                  (if (< pid (array.array-length pending))
-                    (array.array-set! pending pid 1)
-                    unit)
-                  (compiler-reg-split-plan-record!
-                    split-ctx
-                    pid
-                    root
-                    seg-start
-                    seg-end
-                    0)
-                  (array.array-set! next-piece 0 (+ pid 1)))
-                unit))])
+            (if (and (>= seg-start 0) (<= seg-start seg-end))
+              (compiler-reg-greedy-mint-segment-runs!
+                interval-index
+                ref-counts
+                pending
+                split-ctx
+                root
+                weight
+                (shr seg-start 1)
+                (shr seg-end 1)
+                (- 0 1)
+                n)
+              unit)])
         (compiler-reg-greedy-mint-pieces!
           interval-index
           ref-counts
@@ -12622,7 +13467,10 @@
         arg-prefs)]
     [split-ctx : CompilerRegSplitCtx
       (if (> split-budget 0)
-        (compiler-reg-split-ctx-make split-orig-vars split-budget)
+        (compiler-reg-split-ctx-make
+          split-orig-vars
+          split-budget
+          (compiler-reg-wide-clobber-points func))
         (compiler-reg-split-ctx-empty split-orig-vars))]
     [integer-state
       : CompilerRegAssignState
@@ -12781,7 +13629,7 @@
     ;; like the M1 empty plan. Under splitkit-stress the recorded sub-range pieces
     ;; are threaded here for M3+ to consume.
     [split-plan : CompilerRegSplitPlan
-      (compiler-reg-split-plan-from-ctx split-ctx)]
+      (compiler-reg-split-plan-from-ctx-regs split-ctx assignments)]
     ;; #3489 (PR2): the passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.
@@ -14755,6 +15603,10 @@
 (define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (Array String)
   (match plan
     [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-regs split)]))
+
+(define (compiler-reg-plan-split-plan [plan : CompilerRegPlan]) : CompilerRegSplitPlan
+  (match plan
+    [(CompilerRegPlan _ _ _ _ _ split-plan) split-plan]))
 
 (define (compiler-reg-assignment-list-merge
   [extra : CompilerRegAssignmentList]

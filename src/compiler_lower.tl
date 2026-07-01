@@ -8763,7 +8763,7 @@
                         src-addr
                         (compiler-ir-value-cons
                           (CompilerIrValue.I64 size)
-                          (IrValueNil)))))
+                          (CompilerIrValueList.Nil)))))
                   (AstType.Unit)))])])]))
 
 (define (lower-emit-memcpy-value
@@ -8789,7 +8789,7 @@
                       dst-addr
                       (compiler-ir-value-cons
                         src-addr
-                        (compiler-ir-value-cons size (IrValueNil)))))
+                        (compiler-ir-value-cons size (CompilerIrValueList.Nil)))))
                   (AstType.Unit)))])])]))
 
 (define (lower-copy-bytes
@@ -9170,13 +9170,13 @@
   [fields : AstFieldDefList]
   [layout : TcInlineAggregateLayout]) : ResultLowerExpr
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match fields
         [(AstFieldDefList.Nil) (OkLowerExpr (LowerExpr state acc acc-ty))]
         [_
           (ErrLowerExpr
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(AstFieldDefList.Cons field rest-fields)
           (let
@@ -9405,7 +9405,9 @@
         [(LowerExpr s1 w1 _)
           (lower-emit-pack
             s1
-            (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
+            (CompilerIrValueList.Cons
+              w0
+              (box (CompilerIrValueList.Cons w1 (box CompilerIrValueList.Nil))))
             ty)])]))
 
 (define (lower-load-register-resident-from-ptr
@@ -9437,13 +9439,13 @@
   [layout : TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match fields
         [(AstFieldDefList.Nil) (OkLowerExpr (LowerExpr state acc acc-ty))]
         [_
           (ErrLowerExpr
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(AstFieldDefList.Cons field rest-fields)
           (let
@@ -9536,9 +9538,12 @@
                 [(LowerExpr w1-state word1 _)
                   (match (lower-emit-pack
                     w1-state
-                    (IrValueCons
+                    (CompilerIrValueList.Cons
                       word0
-                      (box (IrValueCons word1 (box IrValueNil))))
+                      (box
+                        (CompilerIrValueList.Cons
+                          word1
+                          (box CompilerIrValueList.Nil))))
                     struct-ty)
                     [(LowerExpr ps pv _)
                       (OkLowerExpr (LowerExpr ps pv struct-ty))])])]
@@ -9557,8 +9562,8 @@
   [values : CompilerIrValueList]
   [fields : AstTypeList]) : ResultLowerExpr
   (match values
-    [(IrValueNil) (OkLowerExpr (LowerExpr state acc acc-ty))]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Nil) (OkLowerExpr (LowerExpr state acc acc-ty))]
+    [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(AstTypeList.Cons ty rest-fields)
           (let
@@ -9606,10 +9611,11 @@
         [(LowerExpr w1-state word1 _)
           (match (lower-emit-pack
             w1-state
-            (IrValueCons
+            (CompilerIrValueList.Cons
               (CompilerIrValue.I64
                 (compiler-registry-handle-child-index handle))
-              (box (IrValueCons word1 (box IrValueNil))))
+              (box
+                (CompilerIrValueList.Cons word1 (box CompilerIrValueList.Nil))))
             enum-ty)
             [(LowerExpr ps pv _) (OkLowerExpr (LowerExpr ps pv enum-ty))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -9693,7 +9699,10 @@
             [(LowerExpr s1 w1 _)
               (lower-emit-pack
                 s1
-                (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
+                (CompilerIrValueList.Cons
+                  w0
+                  (box
+                    (CompilerIrValueList.Cons w1 (box CompilerIrValueList.Nil))))
                 ty)])])]
     [(lower-type-register-resident? ctx ty)
       (match (lower-load-at-offset
@@ -10030,7 +10039,7 @@
     env
     type-env
     exprs
-    IrValueNil
+    CompilerIrValueList.Nil
     0)
     [(OkLowerStringValues values-state values-rev count)
       (match (lower-state-alloc-var values-state)
@@ -10043,7 +10052,9 @@
                   var-id
                   (lower-string-concat-runtime-name count)
                   (compiler-ir-call-args-from-list
-                    (compiler-ir-value-list-reverse-onto values-rev IrValueNil))
+                    (compiler-ir-value-list-reverse-onto
+                      values-rev
+                      CompilerIrValueList.Nil))
                   (AstType.String)))
               (CompilerIrValue.Var var-id)
               (AstType.String)))])]
@@ -10987,13 +10998,13 @@
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match types
         [(AstTypeList.Nil) (OkLowerState state)]
         [_
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match types
         [(AstTypeList.Cons ty rest-types)
           (let
@@ -11020,13 +11031,13 @@
   [values : CompilerIrValueList]
   [fields : TcReprCFieldLayoutList]) : ResultLowerState
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match fields
         [(TcReprCFieldLayoutList.Nil) (OkLowerState state)]
         [_
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(TcReprCFieldLayoutList.Cons field rest-fields)
           (match field
@@ -11060,13 +11071,13 @@
   [fields : AstFieldDefList]
   [layout : TcInlineAggregateLayout]) : ResultLowerState
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match fields
         [(AstFieldDefList.Nil) (OkLowerState state)]
         [_
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(AstFieldDefList.Cons field rest-fields)
           (let
@@ -11122,13 +11133,13 @@
   [variant-name : String]
   [index : i64]) : ResultLowerState
   (match values
-    [(IrValueNil)
+    [(CompilerIrValueList.Nil)
       (match types
         [(AstTypeList.Nil) (OkLowerState state)]
         [_
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(IrValueCons value rest-values)
+    [(CompilerIrValueList.Cons value rest-values)
       (match types
         [(AstTypeList.Cons ty rest-types)
           (let
@@ -14705,7 +14716,7 @@
       (lower-runtime-call-values
         state
         (lower-arena-builtin-symbol-id name-id)
-        IrValueNil
+        CompilerIrValueList.Nil
         result-ty)
       (match args
         [(AstExprList.Cons arg tail)
@@ -14727,7 +14738,9 @@
                             (lower-runtime-call-values
                               cast-state
                               (lower-arena-builtin-symbol-id name-id)
-                              (compiler-ir-value-cons cast-value IrValueNil)
+                              (compiler-ir-value-cons
+                                cast-value
+                                CompilerIrValueList.Nil)
                               result-ty)])])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)])]
               [_
@@ -14748,7 +14761,7 @@
       (lower-runtime-call-values
         state
         "tl_tls_current_arena_load"
-        IrValueNil
+        CompilerIrValueList.Nil
         result-ty)]
     [_
       (ErrLowerExpr
@@ -14781,7 +14794,9 @@
                         (lower-runtime-call-values
                           cast-state
                           "tl_tls_current_arena_store"
-                          (compiler-ir-value-cons cast-value IrValueNil)
+                          (compiler-ir-value-cons
+                            cast-value
+                            CompilerIrValueList.Nil)
                           result-ty)])])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]
           [_
@@ -14828,7 +14843,7 @@
   (match (lower-call-append-sret-arg
     ctx
     state
-    (compiler-ir-value-cons value IrValueNil)
+    (compiler-ir-value-cons value CompilerIrValueList.Nil)
     ty)
     [(OkLowerArgs sret-state sret-values)
       (match (lower-state-alloc-var sret-state)
@@ -15656,7 +15671,10 @@
     [(AstExprList.Nil)
       (match types
         [(AstTypeList.Nil)
-          (OkLowerCallArgs state IrValueNil (lower-arg-writeback-list-empty))]
+          (OkLowerCallArgs
+            state
+            CompilerIrValueList.Nil
+            (lower-arg-writeback-list-empty))]
         [_
           (ErrLowerCallArgs
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
@@ -15758,7 +15776,7 @@
   (match args
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerArgs state IrValueNil)]
+        [(AstTypeList.Nil) (OkLowerArgs state CompilerIrValueList.Nil)]
         [_
           (ErrLowerArgs
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
@@ -19980,7 +19998,7 @@
                   src-ptr
                   (compiler-ir-value-cons
                     start-value
-                    (compiler-ir-value-cons len-value IrValueNil))))
+                    (compiler-ir-value-cons len-value CompilerIrValueList.Nil))))
               (AstType.String)))
           (CompilerIrValue.Var var-id)
           (AstType.String)))]))
@@ -20881,7 +20899,7 @@
   (match args
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkLowerArgs state IrValueNil)]
+        [(AstTypeList.Nil) (OkLowerArgs state CompilerIrValueList.Nil)]
         [_
           (ErrLowerArgs
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
@@ -21047,7 +21065,7 @@
   [slots : LowerCAbiSlotList]
   [index : i64]) : ResultLowerArgs
   (if (>= index (lower-c-abi-slot-list-count slots))
-    (OkLowerArgs state IrValueNil)
+    (OkLowerArgs state CompilerIrValueList.Nil)
     (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
         (match (if (lower-type-register-resident? ctx arg-ty)
@@ -21081,8 +21099,8 @@
   [values : CompilerIrValueList]
   [tail : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) tail]
-    [(IrValueCons head rest)
+    [(CompilerIrValueList.Nil) tail]
+    [(CompilerIrValueList.Cons head rest)
       (compiler-ir-value-cons
         head
         (lower-value-list-append (box-get rest) tail))]))
@@ -21091,10 +21109,10 @@
   [slots : LowerCAbiSlotList]
   [index : i64]) : CompilerIrCAbiReturnSlotList
   (if (>= index (lower-c-abi-slot-list-count slots))
-    (IrCAbiReturnSlotNil)
+    (CompilerIrCAbiReturnSlotList.Nil)
     (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
-        (IrCAbiReturnSlotCons
+        (CompilerIrCAbiReturnSlotList.Cons
           (CompilerIrCAbiReturnSlot.Slot scalar-ty offset)
           (box (lower-c-abi-ir-return-slots-from slots (+ index 1))))])))
 
@@ -21529,8 +21547,9 @@
   [values : CompilerIrValueList]
   [extra : CompilerIrValue]) : CompilerIrValueList
   (match values
-    [(IrValueNil) (compiler-ir-value-cons extra IrValueNil)]
-    [(IrValueCons head rest)
+    [(CompilerIrValueList.Nil)
+      (compiler-ir-value-cons extra CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Cons head rest)
       (compiler-ir-value-cons
         head
         (lower-value-list-append-one (box-get rest) extra))]))
@@ -21617,7 +21636,9 @@
                         base-value
                         (compiler-ir-value-cons
                           (CompilerIrValue.I64 0)
-                          (compiler-ir-value-cons len-value IrValueNil))))
+                          (compiler-ir-value-cons
+                            len-value
+                            CompilerIrValueList.Nil))))
                     (lower-one-word-register-storage-type ctx result-ty))
                   origin)
                 (CompilerIrValue.Var call-var)
@@ -21631,13 +21652,13 @@
   (match args-result
     [(OkLowerArgs args-state values)
       (match values
-        [(IrValueCons data-value rest0)
+        [(CompilerIrValueList.Cons data-value rest0)
           (match (box-get rest0)
-            [(IrValueCons len-value rest1)
+            [(CompilerIrValueList.Cons len-value rest1)
               (match (box-get rest1)
-                [(IrValueCons _ rest2)
+                [(CompilerIrValueList.Cons _ rest2)
                   (match (box-get rest2)
-                    [(IrValueNil)
+                    [(CompilerIrValueList.Nil)
                       (lower-bytes-view-from-parts-result
                         ctx
                         args-state
@@ -22136,7 +22157,9 @@
                         (lower-runtime-call-values
                           cast-state
                           runtime-name
-                          (compiler-ir-value-cons cast-value IrValueNil)
+                          (compiler-ir-value-cons
+                            cast-value
+                            CompilerIrValueList.Nil)
                           result-ty)])])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]
           [_
@@ -22177,7 +22200,7 @@
             (lower-runtime-call-values
               arg-state
               runtime-name
-              (compiler-ir-value-cons arg-value IrValueNil)
+              (compiler-ir-value-cons arg-value CompilerIrValueList.Nil)
               result-ty)
             (ErrLowerExpr (box (lower-diagnostic-at-expr arg message))))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -22738,7 +22761,9 @@
                         (lower-runtime-call-values
                           cast-state
                           "tl_int_to_string"
-                          (compiler-ir-value-cons cast-value IrValueNil)
+                          (compiler-ir-value-cons
+                            cast-value
+                            CompilerIrValueList.Nil)
                           result-ty)])])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]
           [_
@@ -24460,7 +24485,7 @@
                   ptr
                   (compiler-ir-value-cons
                     expected
-                    (compiler-ir-value-cons new-value (IrValueNil)))))
+                    (compiler-ir-value-cons new-value (CompilerIrValueList.Nil)))))
               (lower-one-word-register-storage-type ctx result-ty))
             origin)
           (CompilerIrValue.Var var-id)
@@ -25331,7 +25356,7 @@
       buf-value
       (compiler-ir-value-cons
         len-i64
-        (compiler-ir-value-cons init-value IrValueNil)))
+        (compiler-ir-value-cons init-value CompilerIrValueList.Nil)))
     (AstType.Unit))
     [(OkLowerExpr lowered)
       (match lowered
@@ -25376,7 +25401,7 @@
     "tl_array_zero"
     (compiler-ir-value-cons
       buf-value
-      (compiler-ir-value-cons byte-count IrValueNil))
+      (compiler-ir-value-cons byte-count CompilerIrValueList.Nil))
     (AstType.Unit))
     [(OkLowerExpr lowered)
       (match lowered
@@ -27013,7 +27038,7 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
   (match args
-    [(AstExprList.Nil) (OkLowerArgs state IrValueNil)]
+    [(AstExprList.Nil) (OkLowerArgs state CompilerIrValueList.Nil)]
     [(AstExprList.Cons arg rest)
       (let
         [arg : AstExpr (ast-node-get arg)]
@@ -27060,7 +27085,7 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
   (match args
-    [(AstExprList.Nil) (OkLowerArgs state IrValueNil)]
+    [(AstExprList.Nil) (OkLowerArgs state CompilerIrValueList.Nil)]
     [(AstExprList.Cons arg rest)
       (let
         [arg : AstExpr (ast-node-get arg)]
@@ -27502,7 +27527,7 @@
                 (match (lower-runtime-call-values
                   arena-state
                   "tl_arena_set"
-                  (compiler-ir-value-cons arena-value IrValueNil)
+                  (compiler-ir-value-cons arena-value CompilerIrValueList.Nil)
                   (AstType.Unit))
                   [(OkLowerExpr set-lowered)
                     (match set-lowered
@@ -27533,7 +27558,7 @@
                                       "tl_arena_set"
                                       (compiler-ir-value-cons
                                         (CompilerIrValue.Var saved-var)
-                                        IrValueNil)
+                                        CompilerIrValueList.Nil)
                                       (AstType.Unit))
                                       [(OkLowerExpr restore-lowered)
                                         (match restore-lowered
@@ -27566,7 +27591,7 @@
   (match (lower-runtime-call-values
     state
     "tl_region_reset"
-    (compiler-ir-value-cons mark-value IrValueNil)
+    (compiler-ir-value-cons mark-value CompilerIrValueList.Nil)
     (AstType.Unit))
     [(OkLowerExpr rewind-lowered)
       (match rewind-lowered
@@ -27574,7 +27599,7 @@
           (match (lower-runtime-call-values
             rewind-state
             "tl_arena_set"
-            (compiler-ir-value-cons new-enclosing-value IrValueNil)
+            (compiler-ir-value-cons new-enclosing-value CompilerIrValueList.Nil)
             (AstType.Unit))
             [(OkLowerExpr final-lowered)
               (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -27590,7 +27615,7 @@
   (match (lower-runtime-call-values
     state
     "tl_arena_current"
-    IrValueNil
+    CompilerIrValueList.Nil
     (AstType.I64))
     [(OkLowerExpr new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -27598,7 +27623,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             "tl_arena_set"
-            (compiler-ir-value-cons scratch-head-value IrValueNil)
+            (compiler-ir-value-cons scratch-head-value CompilerIrValueList.Nil)
             (AstType.Unit))
             [(OkLowerExpr restore-scratch-lowered)
               (match restore-scratch-lowered
@@ -27648,7 +27673,7 @@
           (match (lower-runtime-call-values
             body-state
             "tl_arena_current"
-            IrValueNil
+            CompilerIrValueList.Nil
             (AstType.I64))
             [(OkLowerExpr scratch-head-lowered)
               (match scratch-head-lowered
@@ -27656,7 +27681,9 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     "tl_arena_set"
-                    (compiler-ir-value-cons enclosing-value IrValueNil)
+                    (compiler-ir-value-cons
+                      enclosing-value
+                      CompilerIrValueList.Nil)
                     (AstType.Unit))
                     [(OkLowerExpr restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -27684,7 +27711,7 @@
   (match (lower-runtime-call-values
     state
     "tl_arena_current"
-    IrValueNil
+    CompilerIrValueList.Nil
     (AstType.I64))
     [(OkLowerExpr enclosing-lowered)
       (match enclosing-lowered
@@ -27702,7 +27729,9 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     "tl_arena_set"
-                    (compiler-ir-value-cons scratch-value IrValueNil)
+                    (compiler-ir-value-cons
+                      scratch-value
+                      CompilerIrValueList.Nil)
                     (AstType.Unit))
                     [(OkLowerExpr set-scratch-lowered)
                       (match set-scratch-lowered
@@ -27710,7 +27739,7 @@
                           (match (lower-runtime-call-values
                             set-scratch-state
                             "tl_region_mark"
-                            IrValueNil
+                            CompilerIrValueList.Nil
                             (AstType.U64))
                             [(OkLowerExpr mark-lowered)
                               (match mark-lowered
@@ -27736,7 +27765,7 @@
   (match (lower-runtime-call-values
     state
     "tl_arena_set"
-    (compiler-ir-value-cons new-enclosing-value IrValueNil)
+    (compiler-ir-value-cons new-enclosing-value CompilerIrValueList.Nil)
     (AstType.Unit))
     [(OkLowerExpr final-lowered)
       (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -27750,7 +27779,7 @@
   (match (lower-runtime-call-values
     state
     "tl_arena_current"
-    IrValueNil
+    CompilerIrValueList.Nil
     (AstType.I64))
     [(OkLowerExpr new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -27758,7 +27787,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             "tl_arena_destroy"
-            (compiler-ir-value-cons scratch-head-value IrValueNil)
+            (compiler-ir-value-cons scratch-head-value CompilerIrValueList.Nil)
             (AstType.Unit))
             [(OkLowerExpr destroy-lowered)
               (match destroy-lowered
@@ -27804,7 +27833,7 @@
           (match (lower-runtime-call-values
             body-state
             "tl_arena_current"
-            IrValueNil
+            CompilerIrValueList.Nil
             (AstType.I64))
             [(OkLowerExpr scratch-head-lowered)
               (match scratch-head-lowered
@@ -27812,7 +27841,9 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     "tl_arena_set"
-                    (compiler-ir-value-cons enclosing-value IrValueNil)
+                    (compiler-ir-value-cons
+                      enclosing-value
+                      CompilerIrValueList.Nil)
                     (AstType.Unit))
                     [(OkLowerExpr restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -27838,7 +27869,7 @@
   (match (lower-runtime-call-values
     state
     "tl_arena_current"
-    IrValueNil
+    CompilerIrValueList.Nil
     (AstType.I64))
     [(OkLowerExpr enclosing-lowered)
       (match enclosing-lowered
@@ -27846,7 +27877,7 @@
           (match (lower-runtime-call-values
             enclosing-state
             "tl_arena_make"
-            IrValueNil
+            CompilerIrValueList.Nil
             (AstType.I64))
             [(OkLowerExpr scratch-lowered)
               (match scratch-lowered
@@ -27854,7 +27885,9 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     "tl_arena_set"
-                    (compiler-ir-value-cons scratch-value IrValueNil)
+                    (compiler-ir-value-cons
+                      scratch-value
+                      CompilerIrValueList.Nil)
                     (AstType.Unit))
                     [(OkLowerExpr set-scratch-lowered)
                       (match set-scratch-lowered
@@ -39764,7 +39797,7 @@
 
 (define (lower-param-list [ctx : TcContext] [params : AstParamList] [idx : i64]) : CompilerIrParamList
   (match params
-    [(AstParamList.Nil) IrParamNil]
+    [(AstParamList.Nil) CompilerIrParamList.Nil]
     [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
@@ -39786,11 +39819,11 @@
   [params : CompilerIrParamList]
   [sret-var : i64]) : CompilerIrParamList
   (match params
-    [(IrParamNil)
+    [(CompilerIrParamList.Nil)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "__sret" (AstType.U64) sret-var)
-        IrParamNil)]
-    [(IrParamCons head rest)
+        CompilerIrParamList.Nil)]
+    [(CompilerIrParamList.Cons head rest)
       (compiler-ir-param-cons
         head
         (lower-param-list-append-sret (box-get rest) sret-var))]))
@@ -40483,7 +40516,7 @@
 
 (define (lower-dispatch-param-list-from-types [types : AstTypeList] [idx : i64]) : CompilerIrParamList
   (match types
-    [(AstTypeList.Nil) IrParamNil]
+    [(AstTypeList.Nil) CompilerIrParamList.Nil]
     [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ty-node-get ty)]
@@ -40497,7 +40530,7 @@
 
 (define (lower-dispatch-param-values [types : AstTypeList] [idx : i64]) : CompilerIrValueList
   (match types
-    [(AstTypeList.Nil) IrValueNil]
+    [(AstTypeList.Nil) CompilerIrValueList.Nil]
     [(AstTypeList.Cons _ rest)
       (let
         [rest : AstTypeList (box-get rest)]
@@ -44698,8 +44731,8 @@
   [values : CompilerIrValueList]
   [name : String]) : i64
   (match values
-    [(IrValueNil) 0]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) 0]
+    [(CompilerIrValueList.Cons value rest)
       (+
         (lower-test-value-function-count value name)
         (lower-test-value-list-function-count (box-get rest) name))]))

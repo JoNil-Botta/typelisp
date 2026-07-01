@@ -66,8 +66,8 @@
   (Some CompilerIrValue))
 
 (defenum CompilerIrValueList
-  (IrValueNil)
-  (IrValueCons CompilerIrValue (Box CompilerIrValueList)))
+  (Nil)
+  (Cons CompilerIrValue (Box CompilerIrValueList)))
 
 (defenum CompilerIrCallArgs
   (Nil)
@@ -100,10 +100,8 @@
   (Slot AstType i64))
 
 (defenum CompilerIrCAbiReturnSlotList
-  (IrCAbiReturnSlotNil)
-  (IrCAbiReturnSlotCons
-    CompilerIrCAbiReturnSlot
-    (Box CompilerIrCAbiReturnSlotList)))
+  (Nil)
+  (Cons CompilerIrCAbiReturnSlot (Box CompilerIrCAbiReturnSlotList)))
 
 (defenum CompilerIrPhiInputList
   (Nil)
@@ -113,8 +111,8 @@
   (Case i64 String))
 
 (defenum CompilerIrSwitchCaseList
-  (IrSwitchCaseNil)
-  (IrSwitchCaseCons CompilerIrSwitchCase (Box CompilerIrSwitchCaseList)))
+  (Nil)
+  (Cons CompilerIrSwitchCase (Box CompilerIrSwitchCaseList)))
 
 (defenum CompilerIrInstrVectorBinOpPayload
   (Payload i64 CompilerIrBinOp CompilerIrValue CompilerIrValue i64 AstType))
@@ -370,8 +368,8 @@
   (Param String AstType i64))
 
 (defenum CompilerIrParamList
-  (IrParamNil)
-  (IrParamCons CompilerIrParam (Box CompilerIrParamList)))
+  (Nil)
+  (Cons CompilerIrParam (Box CompilerIrParamList)))
 
 (defenum CompilerIrFunction
   (Function String CompilerIrParamList AstType i64 CompilerIrBlockList))
@@ -405,7 +403,7 @@
 (define (compiler-ir-value-cons
   [value : CompilerIrValue]
   [rest : CompilerIrValueList]) : CompilerIrValueList
-  (IrValueCons value (box rest)))
+  (CompilerIrValueList.Cons value (box rest)))
 
 (define (compiler-ir-phi-input-cons
   [value : CompilerIrValue]
@@ -417,7 +415,9 @@
   [tag : i64]
   [label : String]
   [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
-  (IrSwitchCaseCons (CompilerIrSwitchCase.Case tag label) (box rest)))
+  (CompilerIrSwitchCaseList.Cons
+    (CompilerIrSwitchCase.Case tag label)
+    (box rest)))
 
 (define (compiler-ir-instr-cons
   [instr : CompilerIrInstr]
@@ -624,7 +624,7 @@
 (define (compiler-ir-param-cons
   [param : CompilerIrParam]
   [rest : CompilerIrParamList]) : CompilerIrParamList
-  (IrParamCons param (box rest)))
+  (CompilerIrParamList.Cons param (box rest)))
 
 (define (compiler-ir-function-cons
   [func : CompilerIrFunction]
@@ -756,8 +756,8 @@
   [values : CompilerIrValueList]
   [acc : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) acc]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-clone-value-list-acc
         (box-get rest)
         (compiler-ir-value-cons (compiler-ir-clone-value value) acc))]))
@@ -766,16 +766,16 @@
   [values : CompilerIrValueList]
   [acc : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) acc]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-list-reverse-onto
         (box-get rest)
         (compiler-ir-value-cons value acc))]))
 
 (define (compiler-ir-clone-value-list [values : CompilerIrValueList]) : CompilerIrValueList
   (compiler-ir-value-list-reverse-onto
-    (compiler-ir-clone-value-list-acc values IrValueNil)
-    IrValueNil))
+    (compiler-ir-clone-value-list-acc values CompilerIrValueList.Nil)
+    CompilerIrValueList.Nil))
 
 (define (compiler-ir-clone-call-args [args : CompilerIrCallArgs]) : CompilerIrCallArgs
   (match args
@@ -834,9 +834,9 @@
 (define (compiler-ir-clone-c-abi-return-slots
   [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
   (match slots
-    [(IrCAbiReturnSlotNil) (IrCAbiReturnSlotNil)]
-    [(IrCAbiReturnSlotCons slot rest)
-      (IrCAbiReturnSlotCons
+    [(CompilerIrCAbiReturnSlotList.Nil) (CompilerIrCAbiReturnSlotList.Nil)]
+    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
+      (CompilerIrCAbiReturnSlotList.Cons
         (compiler-ir-clone-c-abi-return-slot slot)
         (box (compiler-ir-clone-c-abi-return-slots (box-get rest))))]))
 
@@ -877,26 +877,28 @@
   [cases : CompilerIrSwitchCaseList]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (match cases
-    [(IrSwitchCaseNil) acc]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (compiler-ir-clone-switch-case-list-acc
         (box-get rest)
-        (IrSwitchCaseCons (compiler-ir-clone-switch-case case) (box acc)))]))
+        (CompilerIrSwitchCaseList.Cons
+          (compiler-ir-clone-switch-case case)
+          (box acc)))]))
 
 (define (compiler-ir-switch-case-list-reverse-onto
   [cases : CompilerIrSwitchCaseList]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (match cases
-    [(IrSwitchCaseNil) acc]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (compiler-ir-switch-case-list-reverse-onto
         (box-get rest)
-        (IrSwitchCaseCons case (box acc)))]))
+        (CompilerIrSwitchCaseList.Cons case (box acc)))]))
 
 (define (compiler-ir-clone-switch-case-list [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-list-reverse-onto
-    (compiler-ir-clone-switch-case-list-acc cases IrSwitchCaseNil)
-    IrSwitchCaseNil))
+    (compiler-ir-clone-switch-case-list-acc cases CompilerIrSwitchCaseList.Nil)
+    CompilerIrSwitchCaseList.Nil))
 
 ;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
 ;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
@@ -1347,8 +1349,8 @@
   [params : CompilerIrParamList]
   [acc : CompilerIrParamList]) : CompilerIrParamList
   (match params
-    [(IrParamNil) acc]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Cons param rest)
       (compiler-ir-clone-param-list-acc
         (box-get rest)
         (compiler-ir-param-cons (compiler-ir-clone-param param) acc))]))
@@ -1357,16 +1359,16 @@
   [params : CompilerIrParamList]
   [acc : CompilerIrParamList]) : CompilerIrParamList
   (match params
-    [(IrParamNil) acc]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Cons param rest)
       (compiler-ir-param-list-reverse-onto
         (box-get rest)
         (compiler-ir-param-cons param acc))]))
 
 (define (compiler-ir-clone-param-list [params : CompilerIrParamList]) : CompilerIrParamList
   (compiler-ir-param-list-reverse-onto
-    (compiler-ir-clone-param-list-acc params IrParamNil)
-    IrParamNil))
+    (compiler-ir-clone-param-list-acc params CompilerIrParamList.Nil)
+    CompilerIrParamList.Nil))
 
 (define (compiler-ir-clone-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -1648,12 +1650,12 @@
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
   (match values
-    [(IrValueNil) ""]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) ""]
+    [(CompilerIrValueList.Cons value rest)
       (str_cat.str-cat
         (compiler-ir-value-render value)
         (match (box-get rest)
-          [(IrValueNil) ""]
+          [(CompilerIrValueList.Nil) ""]
           [_
             (str_cat.str-cat
               ", "
@@ -1666,12 +1668,12 @@
 
 (define (compiler-ir-switch-case-list-render [cases : CompilerIrSwitchCaseList]) : String
   (match cases
-    [(IrSwitchCaseNil) ""]
-    [(IrSwitchCaseCons case rest)
+    [(CompilerIrSwitchCaseList.Nil) ""]
+    [(CompilerIrSwitchCaseList.Cons case rest)
       (str_cat.str-cat
         (compiler-ir-switch-case-render case)
         (match (box-get rest)
-          [(IrSwitchCaseNil) ""]
+          [(CompilerIrSwitchCaseList.Nil) ""]
           [_
             (str_cat.str-cat
               ", "
@@ -1679,16 +1681,17 @@
 
 (define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
   (match values
-    [(IrValueNil) 0]
-    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count (box-get rest)))]))
+    [(CompilerIrValueList.Nil) 0]
+    [(CompilerIrValueList.Cons _ rest)
+      (+ 1 (compiler-ir-value-list-count (box-get rest)))]))
 
 (define (compiler-ir-value-list-fill-array
   [values : CompilerIrValueList]
   [out : (Array CompilerIrValue)]
   [index : i64]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (array-set! out index value)
         (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]))
@@ -1703,13 +1706,13 @@
 
 (define (compiler-ir-call-args-from-list [values : CompilerIrValueList]) : CompilerIrCallArgs
   (match values
-    [(IrValueNil) (CompilerIrCallArgs.Nil)]
-    [(IrValueCons a rest)
+    [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Nil)]
+    [(CompilerIrValueList.Cons a rest)
       (match (box-get rest)
-        [(IrValueNil) (CompilerIrCallArgs.One a)]
-        [(IrValueCons b tail)
+        [(CompilerIrValueList.Nil) (CompilerIrCallArgs.One a)]
+        [(CompilerIrValueList.Cons b tail)
           (match (box-get tail)
-            [(IrValueNil) (CompilerIrCallArgs.Two a b)]
+            [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Two a b)]
             [_ (compiler-ir-call-args-array values)])])]))
 
 (define (compiler-ir-call-args-array-render
@@ -3237,10 +3240,10 @@
 
 (define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
   (match values
-    [(IrValueNil) ""]
-    [(IrValueCons head tail)
+    [(CompilerIrValueList.Nil) ""]
+    [(CompilerIrValueList.Cons head tail)
       (match (box-get tail)
-        [(IrValueNil) (compiler-ir-value-describe head)]
+        [(CompilerIrValueList.Nil) (compiler-ir-value-describe head)]
         [_
           (str_cat.str-cat
             (compiler-ir-value-describe head)
@@ -3691,7 +3694,7 @@
         (compiler-ir-switch-case-cons
           1
           "one"
-          (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+          (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil))
         "default")
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
@@ -4050,7 +4053,7 @@
       (compiler-ir-switch-case-cons
         4
         "four"
-        (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
+        (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil))]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
     (and

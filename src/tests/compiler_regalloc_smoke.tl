@@ -18,7 +18,7 @@
           IrSpmdCallArgNil))]
     (CompilerIrFunction.Function
       "spmd_call"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       5
       (compiler-ir-block-cons

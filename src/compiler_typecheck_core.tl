@@ -9471,6 +9471,17 @@
               target
               index
               (intern-str next-module))]
+          [(AstDecl.ModuleBody name body-box)
+            (let
+              [body : AstDeclList (box-get body-box)]
+              [body-count : i64 (compiler-decl-list-index-count body)]
+              (if (< target (+ index body-count))
+                (tc-nominal-owner-name-list body target index (intern-str name))
+                (tc-nominal-owner-name-list
+                  rest
+                  target
+                  (+ index body-count)
+                  module)))]
           [(AstDecl.Test _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.DefEnum name _ _)
@@ -11091,6 +11102,11 @@
         "typecheck: include-bin must be expanded by compiler loader")]
     [(AstDecl.Import _) ResultTcUnit.Ok]
     [(AstDecl.Module _) ResultTcUnit.Ok]
+    [(AstDecl.ModuleBody name body-box)
+      (tc-source-decl-list-policy-ok-in-module
+        (tc-context-with-module ctx (intern-str name))
+        (box-get body-box)
+        (intern-str name))]
     [(AstDecl.Test _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -13320,6 +13336,12 @@
   [decl : AstDecl]) : ResultTcEnv
   (match decl
     [(AstDecl.Module _) (ResultTcEnv.Ok env)]
+    [(AstDecl.ModuleBody name body-box)
+      (tc-build-top-env-list-in-module
+        ctx
+        (box-get body-box)
+        env
+        (intern-str name))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -39884,6 +39906,38 @@
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (macro-decl-list-reverse-into (macro-decl-list-reverse left) right))
 
+(define (macro-flatten-module-body-decls-in-module
+  [decls : AstDeclList]
+  [module : String]) : AstDeclList
+  (match decls
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDecl.Module next-module)
+            (ast-decl-cons
+              decl
+              (macro-flatten-module-body-decls-in-module
+                rest
+                (intern-str next-module)))]
+          [(AstDecl.ModuleBody target-module-id body-box)
+            (let
+              [target-module : String (intern-str target-module-id)]
+              (ast-decl-cons
+                (ast-decl-module target-module)
+                (macro-decl-list-append
+                  (macro-flatten-module-body-decls-in-module
+                    (box-get body-box)
+                    target-module)
+                  (ast-decl-cons
+                    (ast-decl-module module)
+                    (macro-flatten-module-body-decls-in-module rest module)))))]
+          [_
+            (ast-decl-cons
+              decl
+              (macro-flatten-module-body-decls-in-module rest module))]))]))
+
 (define (macro-decl-path-list-reverse-into
   [items : AstDeclPathList]
   [out : AstDeclPathList]) : AstDeclPathList
@@ -40211,6 +40265,10 @@
         (match decl
           [(AstDecl.Module next-module)
             (macro-decls-final-module rest (intern-str next-module))]
+          [(AstDecl.ModuleBody _ _)
+            (macro-decls-final-module
+              (macro-flatten-module-body-decls-in-module decls module)
+              module)]
           [_ (macro-decls-final-module rest module)]))]))
 
 (define (macro-decls-module-count [decls : AstDeclList]) : i64
@@ -40221,6 +40279,8 @@
         [rest-count : i64 (macro-decls-module-count (box-get rest))]
         (match decl
           [(AstDecl.Module _) (+ rest-count 1)]
+          [(AstDecl.ModuleBody _ body-box)
+            (+ rest-count (+ 1 (macro-decls-module-count (box-get body-box))))]
           [_ rest-count]))]))
 
 (define (macro-identity-key-join [head : String] [tail : String]) : String
@@ -40618,6 +40678,10 @@
       (ast-decl-comptime-decl-with-meta
         meta
         (macro-generated-context-decl (box-get inner-box) definition-module))]
+    [(AstDecl.ModuleBody name body-box)
+      (ast-decl-module-body-id
+        name
+        (macro-generated-context-decls (box-get body-box) definition-module))]
     [_ decl]))
 
 (define (macro-generated-context-decls
@@ -46340,6 +46404,16 @@
           definition-module
           env
           (box-get inner-box)))]
+    [(AstDecl.ModuleBody name body-box)
+      (ast-decl-module-body-id
+        name
+        (macro-rewrite-generated-import-decls-with-env
+          ctx
+          orig-decls
+          (intern-str name)
+          definition-module
+          env
+          (box-get body-box)))]
     [_ decl]))
 
 (define (macro-rewrite-generated-import-decls-with-env
@@ -48879,10 +48953,62 @@
         (match generated
           [(AstDeclList.Cons first body-rest-box)
             (match first
+              [(AstDecl.ModuleBody target-module-id body-box)
+                (match (box-get body-rest-box)
+                  [(AstDeclList.Nil)
+                    (let
+                      [target-module : String (intern-str target-module-id)]
+                      [body-rest : AstDeclList
+                        (macro-flatten-module-body-decls-in-module
+                          (box-get body-box)
+                          target-module)]
+                      [contextual-body : AstDeclList
+                        (macro-generated-context-decls
+                          body-rest
+                          definition-module)]
+                      [final-body : AstDeclList
+                        (if rewrite-imports?
+                          (let
+                            [rewrite-decls : AstDeclList
+                              (ast-decl-cons
+                                (ast-decl-module target-module)
+                                contextual-body)]
+                            [lookup-decls : AstDeclList
+                              (macro-decl-list-append orig-decls rewrite-decls)]
+                            (macro-rewrite-generated-import-decls
+                              (tc-context-with-module ctx target-module)
+                              lookup-decls
+                              target-module
+                              definition-module
+                              macro-env
+                              contextual-body))
+                          contextual-body)]
+                      (macro-expand-module-materialized
+                        ctx
+                        top-env
+                        orig-decls
+                        module
+                        target-module
+                        alias
+                        span
+                        decl-path
+                        macro-name
+                        identity
+                        final-body
+                        call-expr))]
+                  [_
+                    (ResultMacroDeclExpansion.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: Module macro output must include exactly one module declaration")))])]
               [(AstDecl.Module target-module-id)
                 (let
                   [target-module : String (intern-str target-module-id)]
-                  [body-rest : AstDeclList (box-get body-rest-box)]
+                  [body-rest : AstDeclList
+                    (macro-flatten-module-body-decls-in-module
+                      (box-get body-rest-box)
+                      target-module)]
                   [contextual-body : AstDeclList
                     (macro-generated-context-decls body-rest definition-module)]
                   [final-body : AstDeclList
@@ -49007,9 +49133,13 @@
                                             (macro-generated-context-decls
                                               generated
                                               definition-module)]
+                                          [flattened-generated : AstDeclList
+                                            (macro-flatten-module-body-decls-in-module
+                                              contextual-generated
+                                              module)]
                                           [wrapped : AstDeclList
                                             (macro-wrap-generated-decls-decls
-                                              contextual-generated
+                                              flattened-generated
                                               macro-name
                                               (macro-decls-generated-key
                                                 identity))]
@@ -49057,9 +49187,13 @@
                                               (macro-generated-context-decls
                                                 generated
                                                 definition-module)]
+                                            [flattened-generated : AstDeclList
+                                              (macro-flatten-module-body-decls-in-module
+                                                contextual-generated
+                                                module)]
                                             [wrapped : AstDeclList
                                               (macro-wrap-generated-decls-decls
-                                                contextual-generated
+                                                flattened-generated
                                                 macro-name
                                                 (macro-decls-generated-key
                                                   identity))]
@@ -50743,6 +50877,8 @@
       (ctfe-decl-has-type-literal? (box-get inner-box))]
     [(AstDecl.ComptimeDecl _ template-box)
       (ctfe-decl-has-type-literal? (box-get template-box))]
+    [(AstDecl.ModuleBody _ body-box)
+      (ctfe-program-has-type-literal? (box-get body-box))]
     [_ false]))
 
 (define (ctfe-program-has-type-literal? [decls : AstDeclList]) : bool
@@ -50756,6 +50892,8 @@
 (define (macro-expanded-decl-inert? [decl : AstDecl] [can-share : bool]) : bool
   (match decl
     [(AstDecl.Module _) true]
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-expanded-decls-inert? (box-get body-box) can-share)]
     [(AstDecl.Def _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
     [(AstDecl.DefFn _ _ _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
     [(AstDecl.Test _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
@@ -53322,6 +53460,8 @@
 (define (tc-prefix-decl-key [decl : AstDecl]) : String
   (match decl
     [(AstDecl.Module name) (str_cat.str-cat "module:" (intern-str name))]
+    [(AstDecl.ModuleBody name _)
+      (str_cat.str-cat "module-body:" (intern-str name))]
     [(AstDecl.Def name _ _) (str_cat.str-cat "def:" (intern-str name))]
     [(AstDecl.DefFn name _ _ _ _) (str_cat.str-cat "fn:" (intern-str name))]
     [(AstDecl.DefMacro name _ _ _) (str_cat.str-cat "macro:" (intern-str name))]

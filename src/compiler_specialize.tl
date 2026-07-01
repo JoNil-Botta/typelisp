@@ -957,6 +957,20 @@
             (gen-maybe-module-name-eq? a-module b-module)
             (gen-maybe-import-alias-eq? a-alias b-alias))])]))
 
+(define (gen-decl-list-eq? [a : AstDeclList] [b : AstDeclList]) : bool
+  (match a
+    [(AstDeclList.Nil)
+      (match b
+        [(AstDeclList.Nil) true]
+        [_ false])]
+    [(AstDeclList.Cons a-head a-rest)
+      (match b
+        [(AstDeclList.Cons b-head b-rest)
+          (and
+            (gen-decl-eq? a-head b-head)
+            (gen-decl-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
     [(AstDecl.Def a-name a-ty a-value-box)
@@ -1065,6 +1079,13 @@
     [(AstDecl.Module a-name)
       (match b
         [(AstDecl.Module b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstDecl.ModuleBody a-name a-body-box)
+      (match b
+        [(AstDecl.ModuleBody b-name b-body-box)
+          (and
+            (= a-name b-name)
+            (gen-decl-list-eq? (box-get a-body-box) (box-get b-body-box)))]
         [_ false])]
     [(AstDecl.ComptimeDecl _ a-inner-box)
       (let

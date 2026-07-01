@@ -41278,6 +41278,7 @@
                   (let
                     [inner : AstDecl (box-get inner-box)]
                     (set! cur-decls (ast-decl-cons inner rest)))]
+                [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def name _ expr-box)
                   (let
                     [expr : AstExpr (ast-node-get expr-box)]

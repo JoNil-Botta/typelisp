@@ -1444,6 +1444,14 @@
   [visible-root : bool]
   [allow-report : bool]) : SelfhostLintDeadScan
   (match decl
+    [(AstDecl.ModuleBody _ body-box)
+      (selfhost-lint-dead-scan-decls
+        scan
+        path
+        source
+        visible-root
+        allow-report
+        (box-get body-box))]
     [(AstDecl.Module _) scan]
     [(AstDecl.Def name maybe-ty body)
       (let

@@ -2344,6 +2344,14 @@
             (if (string.eq (intern-str name) want)
               true
               (compiler-load-decl-list-has-module-name? rest want))]
+          [(AstDecl.ModuleBody name body-box)
+            (if (string.eq (intern-str name) want)
+              true
+              (or
+                (compiler-load-decl-list-has-module-name?
+                  (box-get body-box)
+                  want)
+                (compiler-load-decl-list-has-module-name? rest want)))]
           [_ (compiler-load-decl-list-has-module-name? rest want)]))]))
 
 (define (compiler-load-decl-list-has-extern-symbol?
@@ -3224,23 +3232,41 @@
         (or generated (compiler-load-surface-generated-meta? meta))
         was-unsafe
         build)]
+    [(AstDecl.ModuleBody nested-module body-box)
+      (compiler-load-surface-build-decls-into
+        source-path
+        (intern-str nested-module)
+        (box-get body-box)
+        build)]
     [(AstDecl.Module _) build]))
 
-(define (compiler-load-surface-build-decls
+(define (compiler-load-surface-build-decls-into
   [source-path : String]
   [module-id : String]
-  [decls : AstDeclList]) : CompilerLoadSurfaceBuild
+  [decls : AstDeclList]
+  [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match decls
-    [(AstDeclList.Nil) (compiler-load-surface-build-empty)]
+    [(AstDeclList.Nil) build]
     [(AstDeclList.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
           [(AstDecl.Module next-module)
-            (compiler-load-surface-build-decls
+            (compiler-load-surface-build-decls-into
               source-path
               (intern-str next-module)
-              rest)]
+              rest
+              build)]
+          [(AstDecl.ModuleBody nested-module body-box)
+            (compiler-load-surface-build-decls-into
+              source-path
+              (intern-str nested-module)
+              (box-get body-box)
+              (compiler-load-surface-build-decls-into
+                source-path
+                module-id
+                rest
+                build))]
           [_
             (compiler-load-surface-build-decl
               source-path
@@ -3248,7 +3274,21 @@
               decl
               false
               false
-              (compiler-load-surface-build-decls source-path module-id rest))]))]))
+              (compiler-load-surface-build-decls-into
+                source-path
+                module-id
+                rest
+                build))]))]))
+
+(define (compiler-load-surface-build-decls
+  [source-path : String]
+  [module-id : String]
+  [decls : AstDeclList]) : CompilerLoadSurfaceBuild
+  (compiler-load-surface-build-decls-into
+    source-path
+    module-id
+    decls
+    (compiler-load-surface-build-empty)))
 
 (define (compiler-load-surface-summary-from-decls
   [path : String]
@@ -3467,6 +3507,73 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
+          [(AstDecl.ModuleBody target-module-id body-box)
+            (let
+              [target-module : String (intern-str target-module-id)]
+              [body : AstDeclList (box-get body-box)]
+              (if (or
+                (compiler-load-decl-list-has-module-name? body target-module)
+                (compiler-load-decl-list-has-module-name? rest target-module))
+                (ResultCompilerLoadWithPaths.Err
+                  (box
+                    (compiler-diagnostic-at-start
+                      importer-path
+                      "compiler-load: duplicate module declaration")))
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  body
+                  importer-path
+                  target-module
+                  target-module
+                  seen
+                  stdlib-roots
+                  import-root
+                  cfgs
+                  pools)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      body-decls
+                      body-paths
+                      body-modules
+                      body-seen)
+                    (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                      rest
+                      importer-path
+                      importer-module
+                      importer-source-module
+                      body-seen
+                      stdlib-roots
+                      import-root
+                      cfgs
+                      pools)
+                      [(ResultCompilerLoadWithPaths.Ok
+                          rest-decls
+                          rest-paths
+                          rest-modules
+                          rest-seen)
+                        (ResultCompilerLoadWithPaths.Ok
+                          (ast-decl-cons
+                            (ast-decl-module target-module)
+                            (compiler-load-decl-list-append
+                              body-decls
+                              (ast-decl-cons
+                                (ast-decl-module importer-source-module)
+                                rest-decls)))
+                          (ast-decl-path-cons
+                            importer-path
+                            (compiler-load-decl-path-list-append
+                              body-paths
+                              (ast-decl-path-cons importer-path rest-paths)))
+                          (ast-decl-module-cons
+                            target-module
+                            (compiler-load-decl-module-list-append
+                              body-modules
+                              (ast-decl-module-cons
+                                importer-module
+                                rest-modules)))
+                          rest-seen)]
+                      [(ResultCompilerLoadWithPaths.Err diag)
+                        (ResultCompilerLoadWithPaths.Err diag)])]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])))]
           [(AstDecl.Import
               (AstImportSpec.Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
@@ -6809,6 +6916,54 @@
         "compiler-load: duplicate module declaration")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
+(define (compiler-load-nested-module-body-ok?) : bool
+  (match (compiler-load-source
+    "src/nested_module.tl"
+    "(module local.helper (define value : i64 1))
+(define root-value : i64 2)"
+    (sym_i64_env.sym-i64-empty))
+    [(ResultCompilerLoad.Ok decls _)
+      (match decls
+        [(AstDeclList.Cons (AstDecl.Module nested-module) rest1)
+          (let
+            [rest1 : AstDeclList (box-get rest1)]
+            (match rest1
+              [(AstDeclList.Cons (AstDecl.Def value-name _ _) rest2)
+                (let
+                  [rest2 : AstDeclList (box-get rest2)]
+                  (match rest2
+                    [(AstDeclList.Cons (AstDecl.Module restored-module) rest3)
+                      (let
+                        [rest3 : AstDeclList (box-get rest3)]
+                        (match rest3
+                          [(AstDeclList.Cons
+                              (AstDecl.Def root-name _ _)
+                              AstDeclList.Nil)
+                            (and
+                              (string.eq
+                                (intern-str nested-module)
+                                "local.helper")
+                              (string.eq (intern-str value-name) "value")
+                              (string.eq (intern-str restored-module) "")
+                              (string.eq (intern-str root-name) "root-value"))]
+                          [_ false]))]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]
+    [(ResultCompilerLoad.Err _) false]))
+
+(define (compiler-load-nested-module-duplicate-ok?) : bool
+  (match (compiler-load-source
+    "src/nested_dup.tl"
+    "(module local.helper (define a : i64 1))
+(module local.helper (define b : i64 2))"
+    (sym_i64_env.sym-i64-empty))
+    [(ResultCompilerLoad.Err diag)
+      (string.eq
+        (compiler-diagnostic-message (box-get diag))
+        "compiler-load: duplicate module declaration")]
+    [(ResultCompilerLoad.Ok _ _) false]))
+
 (define (compiler-load-seen-module-ok?) : bool
   (match (compiler-load-source
     "src/other.tl"
@@ -10057,6 +10212,13 @@
     (unless
       (compiler-load-duplicate-module-ok?)
       (return (io.panic "compiler-load: duplicate module smoke mismatch")))
+    (unless
+      (compiler-load-nested-module-body-ok?)
+      (return (io.panic "compiler-load: nested module body smoke mismatch")))
+    (unless
+      (compiler-load-nested-module-duplicate-ok?)
+      (return
+        (io.panic "compiler-load: nested module duplicate smoke mismatch")))
     (unless
       (compiler-load-seen-module-ok?)
       (return (io.panic "compiler-load: seen module smoke mismatch")))

@@ -353,9 +353,11 @@
   (Variant i64 (Box AstPatternList))
   (Literal AstLiteral))
 
-(defenum AstPatternList
-  (Nil)
-  (Cons (Box AstPattern) (Box AstPatternList)))
+(comptime-decl
+  (:generated vector-family AstPatternList "AstPattern")
+  (defstruct AstPatternList
+    (slots (Array AstPattern))
+    (len i64)))
 
 (defenum AstLetBinding
   (Binding i64 AstMaybeType i64))
@@ -374,9 +376,11 @@
 (defenum AstMatchArm
   (Arm AstPattern i64))
 
-(defenum AstMatchArmList
-  (Nil)
-  (Cons AstMatchArm (Box AstMatchArmList)))
+(comptime-decl
+  (:generated vector-family AstMatchArmList "AstMatchArm")
+  (defstruct AstMatchArmList
+    (slots (Array AstMatchArm))
+    (len i64)))
 
 ;; Boxed payload for `AstExpr.Lambda`. Lambdas are rare in the AST, but their
 ;; inline payload (AstParamList ~80 B + AstMaybeType ~48 B) made
@@ -2110,8 +2114,120 @@
   [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
   (AstVariantPayloadCleanupList.Cons head (box rest)))
 
+(define (ast-pattern-fallback) : AstPattern
+  AstPattern.Wildcard)
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-with-capacity "AstPattern")
+  (define (ast-pattern-list-with-capacity [capacity : i64]) : AstPatternList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstPatternList (array.make-array AstPattern cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-new "AstPattern")
+  (define (ast-pattern-list-new) : AstPatternList
+    (ast-pattern-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-len "AstPattern")
+  (define (ast-pattern-list-len [v : (& v AstPatternList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-capacity "AstPattern")
+  (define (ast-pattern-list-capacity [v : (& v AstPatternList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-empty? "AstPattern")
+  (define (ast-pattern-list-empty? [v : (& v AstPatternList)]) : bool
+    (= (ast-pattern-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-get "AstPattern")
+  (define (ast-pattern-list-get
+    [v : (& v AstPatternList)]
+    [index : i64]
+    [fallback : AstPattern]) : AstPattern
+    (if (and (>= index 0) (< index (ast-pattern-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-copy-range "AstPattern")
+  (define (ast-pattern-list-copy-range
+    [dst : (&mut dst (Array AstPattern))]
+    [src : (& src (Array AstPattern))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-pattern-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-grow "AstPattern")
+  (define (ast-pattern-list-grow [v : (&mut v AstPatternList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstPattern) (array.make-array AstPattern new-cap)]
+      (begin
+        (ast-pattern-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-pattern-list-push "AstPattern")
+  (define (ast-pattern-list-push
+    [v : (&mut v AstPatternList)]
+    [value : AstPattern]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-pattern-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-pattern-list-append-from
+  [out : (&mut out AstPatternList)]
+  [items : (& items AstPatternList)]
+  [index : i64]) : unit
+  (if (>= index (ast-pattern-list-len items))
+    unit
+    (begin
+      (ast-pattern-list-push
+        out
+        (ast-pattern-list-get items index (ast-pattern-fallback)))
+      (ast-pattern-list-append-from out items (+ index 1)))))
+
+(define (ast-pattern-list-tail [items : AstPatternList]) : AstPatternList
+  (let
+    [out : AstPatternList
+      (ast-pattern-list-with-capacity (- (ast-pattern-list-len (& items)) 1))]
+    (begin
+      (ast-pattern-list-append-from (&mut out) (& items) 1)
+      out)))
+
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
-  (AstPatternList.Cons (box head) (box rest)))
+  (let
+    [out : AstPatternList
+      (ast-pattern-list-with-capacity (+ 1 (ast-pattern-list-len (& rest))))]
+    (begin
+      (ast-pattern-list-push (&mut out) head)
+      (ast-pattern-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-pat-binding [name : String]) : AstPattern
   (AstPattern.Binding (ci.intern name)))
@@ -2157,8 +2273,125 @@
 (define (ast-match-arm [pattern : AstPattern] [body : i64]) : AstMatchArm
   (AstMatchArm.Arm pattern body))
 
+(define (ast-match-arm-fallback) : AstMatchArm
+  (AstMatchArm.Arm AstPattern.Wildcard 0))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-with-capacity "AstMatchArm")
+  (define (ast-match-arm-list-with-capacity [capacity : i64]) : AstMatchArmList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstMatchArmList (array.make-array AstMatchArm cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-new "AstMatchArm")
+  (define (ast-match-arm-list-new) : AstMatchArmList
+    (ast-match-arm-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-len "AstMatchArm")
+  (define (ast-match-arm-list-len [v : (& v AstMatchArmList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-capacity "AstMatchArm")
+  (define (ast-match-arm-list-capacity [v : (& v AstMatchArmList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-empty? "AstMatchArm")
+  (define (ast-match-arm-list-empty? [v : (& v AstMatchArmList)]) : bool
+    (= (ast-match-arm-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-get "AstMatchArm")
+  (define (ast-match-arm-list-get
+    [v : (& v AstMatchArmList)]
+    [index : i64]
+    [fallback : AstMatchArm]) : AstMatchArm
+    (if (and (>= index 0) (< index (ast-match-arm-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-copy-range "AstMatchArm")
+  (define (ast-match-arm-list-copy-range
+    [dst : (&mut dst (Array AstMatchArm))]
+    [src : (& src (Array AstMatchArm))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-match-arm-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-grow "AstMatchArm")
+  (define (ast-match-arm-list-grow [v : (&mut v AstMatchArmList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstMatchArm) (array.make-array AstMatchArm new-cap)]
+      (begin
+        (ast-match-arm-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-match-arm-list-push "AstMatchArm")
+  (define (ast-match-arm-list-push
+    [v : (&mut v AstMatchArmList)]
+    [value : AstMatchArm]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-match-arm-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-match-arm-list-append-from
+  [out : (&mut out AstMatchArmList)]
+  [items : (& items AstMatchArmList)]
+  [index : i64]) : unit
+  (if (>= index (ast-match-arm-list-len items))
+    unit
+    (begin
+      (ast-match-arm-list-push
+        out
+        (ast-match-arm-list-get items index (ast-match-arm-fallback)))
+      (ast-match-arm-list-append-from out items (+ index 1)))))
+
+(define (ast-match-arm-list-tail [items : AstMatchArmList]) : AstMatchArmList
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity
+        (- (ast-match-arm-list-len (& items)) 1))]
+    (begin
+      (ast-match-arm-list-append-from (&mut out) (& items) 1)
+      out)))
+
 (define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
-  (AstMatchArmList.Cons head (box rest)))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (+ 1 (ast-match-arm-list-len (& rest))))]
+    (begin
+      (ast-match-arm-list-push (&mut out) head)
+      (ast-match-arm-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
   (AstExprList.Cons head (box rest)))
@@ -3558,15 +3791,30 @@
         (box (ast-compaction-remap-pattern-list remap (box-get items))))]
     [(AstPattern.Literal lit) (AstPattern.Literal lit)]))
 
+(define (ast-compaction-remap-pattern-list-into
+  [remap : AstProgramCompactionRemap]
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [out : (&mut out AstPatternList)]) : unit
+  (if (>= index (ast-pattern-list-len patterns))
+    unit
+    (begin
+      (ast-pattern-list-push
+        out
+        (ast-compaction-remap-pattern
+          remap
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))))
+      (ast-compaction-remap-pattern-list-into remap patterns (+ index 1) out))))
+
 (define (ast-compaction-remap-pattern-list
   [remap : AstProgramCompactionRemap]
   [patterns : AstPatternList]) : AstPatternList
-  (match patterns
-    [(AstPatternList.Nil) AstPatternList.Nil]
-    [(AstPatternList.Cons pattern rest)
-      (AstPatternList.Cons
-        (box (ast-compaction-remap-pattern remap (box-get pattern)))
-        (box (ast-compaction-remap-pattern-list remap (box-get rest))))]))
+  (let
+    [out : AstPatternList
+      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
+    (begin
+      (ast-compaction-remap-pattern-list-into remap (& patterns) 0 (&mut out))
+      out)))
 
 (define (ast-compaction-remap-let-binding
   [remap : AstProgramCompactionRemap]
@@ -3617,15 +3865,30 @@
         (ast-compaction-remap-pattern remap pattern)
         (ast-compaction-remap-expr-id remap body))]))
 
+(define (ast-compaction-remap-match-arm-list-into
+  [remap : AstProgramCompactionRemap]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [out : (&mut out AstMatchArmList)]) : unit
+  (if (>= index (ast-match-arm-list-len arms))
+    unit
+    (begin
+      (ast-match-arm-list-push
+        out
+        (ast-compaction-remap-match-arm
+          remap
+          (ast-match-arm-list-get arms index (ast-match-arm-fallback))))
+      (ast-compaction-remap-match-arm-list-into remap arms (+ index 1) out))))
+
 (define (ast-compaction-remap-match-arm-list
   [remap : AstProgramCompactionRemap]
   [arms : AstMatchArmList]) : AstMatchArmList
-  (match arms
-    [(AstMatchArmList.Nil) AstMatchArmList.Nil]
-    [(AstMatchArmList.Cons arm rest)
-      (AstMatchArmList.Cons
-        (ast-compaction-remap-match-arm remap arm)
-        (box (ast-compaction-remap-match-arm-list remap (box-get rest))))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (begin
+      (ast-compaction-remap-match-arm-list-into remap (& arms) 0 (&mut out))
+      out)))
 
 (define (ast-compaction-remap-expr-list
   [remap : AstProgramCompactionRemap]
@@ -4609,65 +4872,40 @@
         [args : AstPatternList (box-get args-box)]
         (and
           (= name (ci.intern "Some"))
-          (match args
-            [(AstPatternList.Cons tuple-pattern rest-box)
+          (= (ast-pattern-list-len (& args)) 1)
+          (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
+            [(AstPattern.Tuple items-box)
               (let
-                [tuple-pattern : AstPattern (box-get tuple-pattern)]
-                [rest : AstPatternList (box-get rest-box)]
+                [items : AstPatternList (box-get items-box)]
                 (and
-                  (match rest
-                    [(AstPatternList.Nil) true]
+                  (= (ast-pattern-list-len (& items)) 2)
+                  (match (ast-pattern-list-get
+                    (& items)
+                    0
+                    (ast-pattern-fallback))
+                    [(AstPattern.Binding bind-name)
+                      (= bind-name (ci.intern "item"))]
                     [_ false])
-                  (match tuple-pattern
-                    [(AstPattern.Tuple items-box)
-                      (let
-                        [items : AstPatternList (box-get items-box)]
-                        (match items
-                          [(AstPatternList.Cons first tail-box)
-                            (let
-                              [first : AstPattern (box-get first)]
-                              [tail : AstPatternList (box-get tail-box)]
-                              (and
-                                (match first
-                                  [(AstPattern.Binding bind-name)
-                                    (= bind-name (ci.intern "item"))]
-                                  [_ false])
-                                (match tail
-                                  [(AstPatternList.Cons second done-box)
-                                    (let
-                                      [second : AstPattern (box-get second)]
-                                      [done : AstPatternList (box-get done-box)]
-                                      (and
-                                        (match second
-                                          [(AstPattern.Wildcard) true]
-                                          [_ false])
-                                        (match done
-                                          [(AstPatternList.Nil) true]
-                                          [_ false])))]
-                                  [_ false])))]
-                          [_ false]))]
+                  (match (ast-pattern-list-get
+                    (& items)
+                    1
+                    (ast-pattern-fallback))
+                    [(AstPattern.Wildcard) true]
                     [_ false])))]
             [_ false])))]
     [_ false]))
 
 (define (compiler-ast-single-arm-box-ok? [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Cons arm rest-box)
-      (let
-        [rest : AstMatchArmList (box-get rest-box)]
-        (and
-          (match rest
-            [(AstMatchArmList.Nil) true]
-            [_ false])
-          (match arm
-            [(AstMatchArm.Arm pattern body-id)
-              (let
-                [body : AstExpr (ast-node-get body-id)]
-                (and
-                  (compiler-ast-nested-pattern-box-ok? pattern)
-                  (compiler-ast-begin-expr? body)))]
-            [_ false])))]
-    [_ false]))
+  (and
+    (= (ast-match-arm-list-len (& arms)) 1)
+    (match (ast-match-arm-list-get (& arms) 0 (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-id)
+        (let
+          [body : AstExpr (ast-node-get body-id)]
+          (and
+            (compiler-ast-nested-pattern-box-ok? pattern)
+            (compiler-ast-begin-expr? body)))]
+      [_ false])))
 
 (define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
   (match expr
@@ -4737,15 +4975,15 @@
       (ast-pat-tuple
         (ast-pattern-cons
           (ast-pat-binding "item")
-          (ast-pattern-cons (AstPattern.Wildcard) AstPatternList.Nil)))]
+          (ast-pattern-cons (AstPattern.Wildcard) (ast-pattern-list-new))))]
     [variant-pattern : AstPattern
       (ast-pat-variant
         "Some"
-        (ast-pattern-cons tuple-pattern AstPatternList.Nil))]
+        (ast-pattern-cons tuple-pattern (ast-pattern-list-new)))]
     [arms : AstMatchArmList
       (ast-match-arm-cons
         (ast-match-arm variant-pattern begin-expr)
-        AstMatchArmList.Nil)]
+        (ast-match-arm-list-new))]
     [match-expr : i64
       (ast-expr-match (ast-node-push (AstExpr.Var (ci.intern "input"))) arms)]
     [nested : i64

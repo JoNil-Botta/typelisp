@@ -10381,15 +10381,20 @@
 (define (tc-source-pattern-list-policy-ok
   [ctx : TcContext]
   [patterns : AstPatternList]) : ResultTcUnit
-  (match patterns
-    [(AstPatternList.Nil) ResultTcUnit.Ok]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (match (tc-source-pattern-policy-ok ctx pattern)
-          [(ResultTcUnit.Ok) (tc-source-pattern-list-policy-ok ctx rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-source-pattern-list-policy-ok-at ctx (& patterns) 0))
+
+(define (tc-source-pattern-list-policy-ok-at
+  [ctx : TcContext]
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-pattern-list-len patterns))
+    ResultTcUnit.Ok
+    (match (tc-source-pattern-policy-ok
+      ctx
+      (ast-pattern-list-get patterns index (ast-pattern-fallback)))
+      [(ResultTcUnit.Ok)
+        (tc-source-pattern-list-policy-ok-at ctx patterns (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-source-pattern-policy-ok [ctx : TcContext] [pattern : AstPattern]) : ResultTcUnit
   (match pattern
@@ -10407,22 +10412,25 @@
 (define (tc-source-match-arm-list-policy-ok
   [ctx : TcContext]
   [arms : AstMatchArmList]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-source-pattern-policy-ok ctx pattern)
+  (tc-source-match-arm-list-policy-ok-at ctx (& arms) 0))
+
+(define (tc-source-match-arm-list-policy-ok-at
+  [ctx : TcContext]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-source-pattern-policy-ok ctx pattern)
+            [(ResultTcUnit.Ok)
+              (match (tc-source-expr-policy-ok ctx body)
                 [(ResultTcUnit.Ok)
-                  (match (tc-source-expr-policy-ok ctx body)
-                    [(ResultTcUnit.Ok)
-                      (tc-source-match-arm-list-policy-ok ctx rest)]
-                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+                  (tc-source-match-arm-list-policy-ok-at ctx arms (+ index 1))]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-let-binding-list-policy-ok
   [ctx : TcContext]
@@ -10580,19 +10588,25 @@
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok
   [arms : AstMatchArmList]
   [allow : bool]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-source-expr-spmd-broadcast-scope-ok body allow)
-                [(ResultTcUnit.Ok)
-                  (tc-source-match-arm-list-spmd-broadcast-scope-ok rest allow)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-source-match-arm-list-spmd-broadcast-scope-ok-at (& arms) allow 0))
+
+(define (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
+  [arms : (& arms AstMatchArmList)]
+  [allow : bool]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-source-expr-spmd-broadcast-scope-ok body allow)
+            [(ResultTcUnit.Ok)
+              (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
+                arms
+                allow
+                (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-expr-spmd-broadcast-scope-ok [expr : AstExpr] [allow : bool]) : ResultTcUnit
   (match expr
@@ -19829,21 +19843,29 @@
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) true]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (and
-                (tc-ref-closure-local-uses-ok?
-                  body
-                  name
-                  (tc-pattern-add-bound-names pattern bound))
-                (tc-ref-closure-match-arms-local-uses-ok? rest name bound)))]))]))
+  (tc-ref-closure-match-arms-local-uses-ok-at? (& arms) name bound 0))
+
+(define (tc-ref-closure-match-arms-local-uses-ok-at?
+  [arms : (& arms AstMatchArmList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    true
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (and
+            (tc-ref-closure-local-uses-ok?
+              body
+              name
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-ref-closure-match-arms-local-uses-ok-at?
+              arms
+              name
+              bound
+              (+ index 1))))])))
 
 (define (tc-ref-closure-direct-call?
   [func : AstExpr]
@@ -21775,39 +21797,50 @@
   [scrut-ty : AstType]
   [scrut-class : TcSpmdClass]
   [arms : AstMatchArmList]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(ResultTcEnv.Ok arm-env)
-                  (match (tc-spmd-match-bind-pattern-names
-                    arm-env
-                    spmd-env
-                    (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
-                    scrut-class)
-                    [(ResultTcSpmdEnv.Ok arm-spmd-env)
-                      (match (tc-spmd-masked-if-expr
+  (tc-spmd-masked-if-match-arms-at
+    ctx
+    env
+    spmd-env
+    scrut-ty
+    scrut-class
+    (& arms)
+    0))
+
+(define (tc-spmd-masked-if-match-arms-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrut-ty : AstType]
+  [scrut-class : TcSpmdClass]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(ResultTcEnv.Ok arm-env)
+              (match (tc-spmd-match-bind-pattern-names
+                arm-env
+                spmd-env
+                (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
+                scrut-class)
+                [(ResultTcSpmdEnv.Ok arm-spmd-env)
+                  (match (tc-spmd-masked-if-expr ctx arm-env arm-spmd-env body)
+                    [(ResultTcUnit.Ok)
+                      (tc-spmd-masked-if-match-arms-at
                         ctx
-                        arm-env
-                        arm-spmd-env
-                        body)
-                        [(ResultTcUnit.Ok)
-                          (tc-spmd-masked-if-match-arms
-                            ctx
-                            env
-                            spmd-env
-                            scrut-ty
-                            scrut-class
-                            rest)]
-                        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-                    [(ResultTcSpmdEnv.Err message) (ResultTcUnit.Err message)])]
-                [(ResultTcEnv.Err message) (ResultTcUnit.Err message)]))]))]))
+                        env
+                        spmd-env
+                        scrut-ty
+                        scrut-class
+                        arms
+                        (+ index 1))]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                [(ResultTcSpmdEnv.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcEnv.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-masked-if-match
   [ctx : TcContext]
@@ -21839,54 +21872,61 @@
   [scrut-class : TcSpmdClass]
   [arms : AstMatchArmList]
   [class : TcSpmdClass]) : ResultTcSpmdExprListInfo
-  (match arms
-    [(AstMatchArmList.Nil)
-      (ResultTcSpmdExprListInfo.Ok (TcSpmdExprListInfo class spmd-env))]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(ResultTcEnv.Ok arm-env)
-                  (match (tc-spmd-match-bind-pattern-names
-                    arm-env
-                    spmd-env
-                    (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
-                    scrut-class)
-                    [(ResultTcSpmdEnv.Ok arm-spmd-env)
-                      (match (tc-spmd-expr ctx arm-env arm-spmd-env body)
-                        [(ResultTcSpmdExprInfo.Ok body-info)
-                          (match body-info
-                            [(TcSpmdExprInfo _ body-class body-env)
-                              (match (tc-spmd-match-arms
-                                ctx
-                                env
-                                spmd-env
-                                scrut-ty
-                                scrut-class
-                                rest
-                                (tc-spmd-merge-class class body-class))
-                                [(ResultTcSpmdExprListInfo.Ok rest-info)
-                                  (match rest-info
-                                    [(TcSpmdExprListInfo rest-class rest-env)
-                                      (ResultTcSpmdExprListInfo.Ok
-                                        (TcSpmdExprListInfo
-                                          rest-class
-                                          (tc-spmd-env-merge-classes
-                                            (tc-spmd-env-restore body-env mark)
-                                            rest-env)))])]
-                                [(ResultTcSpmdExprListInfo.Err message)
-                                  (ResultTcSpmdExprListInfo.Err message)])])]
-                        [(ResultTcSpmdExprInfo.Err message)
-                          (ResultTcSpmdExprListInfo.Err message)])]
-                    [(ResultTcSpmdEnv.Err message)
+  (tc-spmd-match-arms-at ctx env spmd-env scrut-ty scrut-class (& arms) class 0))
+
+(define (tc-spmd-match-arms-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrut-ty : AstType]
+  [scrut-class : TcSpmdClass]
+  [arms : (& arms AstMatchArmList)]
+  [class : TcSpmdClass]
+  [index : i64]) : ResultTcSpmdExprListInfo
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultTcSpmdExprListInfo.Ok (TcSpmdExprListInfo class spmd-env))
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(ResultTcEnv.Ok arm-env)
+              (match (tc-spmd-match-bind-pattern-names
+                arm-env
+                spmd-env
+                (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
+                scrut-class)
+                [(ResultTcSpmdEnv.Ok arm-spmd-env)
+                  (match (tc-spmd-expr ctx arm-env arm-spmd-env body)
+                    [(ResultTcSpmdExprInfo.Ok body-info)
+                      (match body-info
+                        [(TcSpmdExprInfo _ body-class body-env)
+                          (match (tc-spmd-match-arms-at
+                            ctx
+                            env
+                            spmd-env
+                            scrut-ty
+                            scrut-class
+                            arms
+                            (tc-spmd-merge-class class body-class)
+                            (+ index 1))
+                            [(ResultTcSpmdExprListInfo.Ok rest-info)
+                              (match rest-info
+                                [(TcSpmdExprListInfo rest-class rest-env)
+                                  (ResultTcSpmdExprListInfo.Ok
+                                    (TcSpmdExprListInfo
+                                      rest-class
+                                      (tc-spmd-env-merge-classes
+                                        (tc-spmd-env-restore body-env mark)
+                                        rest-env)))])]
+                            [(ResultTcSpmdExprListInfo.Err message)
+                              (ResultTcSpmdExprListInfo.Err message)])])]
+                    [(ResultTcSpmdExprInfo.Err message)
                       (ResultTcSpmdExprListInfo.Err message)])]
-                [(ResultTcEnv.Err message)
-                  (ResultTcSpmdExprListInfo.Err message)]))]))]))
+                [(ResultTcSpmdEnv.Err message)
+                  (ResultTcSpmdExprListInfo.Err message)])]
+            [(ResultTcEnv.Err message) (ResultTcSpmdExprListInfo.Err message)]))])))
 
 (define (tc-spmd-check-foreach-body-with-env
   [ctx : TcContext]
@@ -21988,18 +22028,21 @@
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
 
 (define (tc-spmd-scan-body-no-nested-arms [arms : AstMatchArmList]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [tail : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-spmd-scan-body-no-nested-spmd body)
-                [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-arms tail)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-spmd-scan-body-no-nested-arms-at (& arms) 0))
+
+(define (tc-spmd-scan-body-no-nested-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-spmd-scan-body-no-nested-spmd body)
+            [(ResultTcUnit.Ok)
+              (tc-spmd-scan-body-no-nested-arms-at arms (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-scan-body-no-nested-spmd [expr : AstExpr]) : ResultTcUnit
   (match expr
@@ -23532,15 +23575,20 @@
 (define (tc-pattern-list-add-bound-names
   [patterns : AstPatternList]
   [bound : TcStringList]) : TcStringList
-  (match patterns
-    [(AstPatternList.Nil) bound]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (tc-pattern-list-add-bound-names
-          rest
-          (tc-pattern-add-bound-names pattern bound)))]))
+  (tc-pattern-list-add-bound-names-at (& patterns) bound 0))
+
+(define (tc-pattern-list-add-bound-names-at
+  [patterns : (& patterns AstPatternList)]
+  [bound : TcStringList]
+  [index : i64]) : TcStringList
+  (if (>= index (ast-pattern-list-len patterns))
+    bound
+    (tc-pattern-list-add-bound-names-at
+      patterns
+      (tc-pattern-add-bound-names
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        bound)
+      (+ index 1))))
 
 (define (tc-let-binding-list-add-bound-names
   [bindings : AstLetBindingList]
@@ -23630,21 +23678,25 @@
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (or
-                (tc-expr-uses-free-name?
-                  body
-                  name
-                  (tc-pattern-add-bound-names pattern bound))
-                (tc-match-arms-use-free-name? rest name bound)))]))]))
+  (tc-match-arms-use-free-name-at? (& arms) name bound 0))
+
+(define (tc-match-arms-use-free-name-at?
+  [arms : (& arms AstMatchArmList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (or
+            (tc-expr-uses-free-name?
+              body
+              name
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-use-free-name-at? arms name bound (+ index 1))))])))
 
 (define (tc-expr-uses-free-name?
   [expr : AstExpr]
@@ -24103,21 +24155,25 @@
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (or
-                (tc-expr-sets-free-name?
-                  body
-                  name
-                  (tc-pattern-add-bound-names pattern bound))
-                (tc-match-arms-set-free-name? rest name bound)))]))]))
+  (tc-match-arms-set-free-name-at? (& arms) name bound 0))
+
+(define (tc-match-arms-set-free-name-at?
+  [arms : (& arms AstMatchArmList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (or
+            (tc-expr-sets-free-name?
+              body
+              name
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-set-free-name-at? arms name bound (+ index 1))))])))
 
 (define (tc-expr-sets-free-name?
   [expr : AstExpr]
@@ -24545,21 +24601,29 @@
   [arms : AstMatchArmList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (or
-                (tc-expr-result-uses-cleanup-owner?
-                  body
-                  owners
-                  (tc-pattern-add-bound-names pattern bound))
-                (tc-match-arms-result-use-cleanup-owner? rest owners bound)))]))]))
+  (tc-match-arms-result-use-cleanup-owner-at? (& arms) owners bound 0))
+
+(define (tc-match-arms-result-use-cleanup-owner-at?
+  [arms : (& arms AstMatchArmList)]
+  [owners : TcStringList]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (or
+            (tc-expr-result-uses-cleanup-owner?
+              body
+              owners
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-result-use-cleanup-owner-at?
+              arms
+              owners
+              bound
+              (+ index 1))))])))
 
 (define (tc-expr-result-uses-cleanup-owner?
   [expr : AstExpr]
@@ -27800,30 +27864,35 @@
   [env : TcTypeEnv]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (match patterns
-    [(AstPatternList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
-        [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])]
-    [(AstPatternList.Cons pattern rest-patterns)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest-patterns : AstPatternList (box-get rest-patterns)]
-        (match types
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (ty-node-get ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-bind-sub-pattern ctx env pattern ty)
-                [(ResultTcEnv.Ok next-env)
-                  (tc-bind-sub-pattern-list
-                    ctx
-                    next-env
-                    rest-patterns
-                    rest-types)]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultTcEnv.Err "typecheck: pattern arity mismatch")]))]))
+  (tc-bind-sub-pattern-list-at ctx env (& patterns) types 0))
+
+(define (tc-bind-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : (& patterns AstPatternList)]
+  [types : AstTypeList]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-pattern-list-len patterns))
+    (match types
+      [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
+      [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])
+    (match types
+      [(AstTypeList.Cons ty rest-types)
+        (let
+          [pattern : AstPattern
+            (ast-pattern-list-get patterns index (ast-pattern-fallback))]
+          [ty : AstType (ty-node-get ty)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          (match (tc-bind-sub-pattern ctx env pattern ty)
+            [(ResultTcEnv.Ok next-env)
+              (tc-bind-sub-pattern-list-at
+                ctx
+                next-env
+                patterns
+                rest-types
+                (+ index 1))]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+      [(AstTypeList.Nil) (ResultTcEnv.Err "typecheck: pattern arity mismatch")])))
 
 (define (tc-nominal-owner-context [ctx : TcContext] [owner-name : String]) : TcContext
   (if (tc-name-qualified? owner-name)
@@ -27911,16 +27980,14 @@
   [ctx : TcContext]
   [args : AstPatternList]
   [inner-ty : AstType]) : bool
-  (match args
-    [(AstPatternList.Cons inner rest-box)
-      (let
-        [inner : AstPattern (box-get inner)]
-        [rest : AstPatternList (box-get rest-box)]
-        (match rest
-          [(AstPatternList.Nil)
-            (tc-box-pattern-inner-supported? ctx inner inner-ty)]
-          [_ false]))]
-    [_ false]))
+  (let
+    [args-ref : (& args AstPatternList) (& args)]
+    (if (= (ast-pattern-list-len args-ref) 1)
+      (tc-box-pattern-inner-supported?
+        ctx
+        (ast-pattern-list-get args-ref 0 (ast-pattern-fallback))
+        inner-ty)
+      false)))
 
 (define (tc-box-pattern-inner-supported?
   [ctx : TcContext]
@@ -27946,23 +28013,18 @@
   [env : TcTypeEnv]
   [args : AstPatternList]
   [inner-ty : AstType]) : ResultTcEnv
-  (match args
-    [(AstPatternList.Cons inner rest-box)
+  (let
+    [args-ref : (& args AstPatternList) (& args)]
+    (if (= (ast-pattern-list-len args-ref) 1)
       (let
-        [inner : AstPattern (box-get inner)]
-        [rest : AstPatternList (box-get rest-box)]
-        (match rest
-          [(AstPatternList.Nil)
-            (if (tc-box-pattern-inner-supported? ctx inner inner-ty)
-              (tc-bind-sub-pattern ctx env inner inner-ty)
-              (ResultTcEnv.Err
-                "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns"))]
-          [_
-            (ResultTcEnv.Err
-              "typecheck: box pattern expects exactly one inner pattern")]))]
-    [_
+        [inner : AstPattern
+          (ast-pattern-list-get args-ref 0 (ast-pattern-fallback))]
+        (if (tc-box-pattern-inner-supported? ctx inner inner-ty)
+          (tc-bind-sub-pattern ctx env inner inner-ty)
+          (ResultTcEnv.Err
+            "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns")))
       (ResultTcEnv.Err
-        "typecheck: box pattern expects exactly one inner pattern")]))
+        "typecheck: box pattern expects exactly one inner pattern"))))
 
 (define (tc-struct-pattern-name-in-scrut-module
   [ctx : TcContext]
@@ -28054,30 +28116,35 @@
   [env : TcTypeEnv]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (match patterns
-    [(AstPatternList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
-        [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])]
-    [(AstPatternList.Cons pattern rest-patterns)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest-patterns : AstPatternList (box-get rest-patterns)]
-        (match types
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (ty-node-get ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-bind-struct-field-pattern ctx env pattern ty)
-                [(ResultTcEnv.Ok next-env)
-                  (tc-bind-struct-field-pattern-list
-                    ctx
-                    next-env
-                    rest-patterns
-                    rest-types)]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultTcEnv.Err "typecheck: pattern arity mismatch")]))]))
+  (tc-bind-struct-field-pattern-list-at ctx env (& patterns) types 0))
+
+(define (tc-bind-struct-field-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : (& patterns AstPatternList)]
+  [types : AstTypeList]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-pattern-list-len patterns))
+    (match types
+      [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
+      [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])
+    (match types
+      [(AstTypeList.Cons ty rest-types)
+        (let
+          [pattern : AstPattern
+            (ast-pattern-list-get patterns index (ast-pattern-fallback))]
+          [ty : AstType (ty-node-get ty)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          (match (tc-bind-struct-field-pattern ctx env pattern ty)
+            [(ResultTcEnv.Ok next-env)
+              (tc-bind-struct-field-pattern-list-at
+                ctx
+                next-env
+                patterns
+                rest-types
+                (+ index 1))]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+      [(AstTypeList.Nil) (ResultTcEnv.Err "typecheck: pattern arity mismatch")])))
 
 (define (tc-bind-struct-pattern
   [ctx : TcContext]
@@ -28216,31 +28283,37 @@
   [lifetime : String]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (match patterns
-    [(AstPatternList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
-        [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])]
-    [(AstPatternList.Cons pattern rest-patterns)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest-patterns : AstPatternList (box-get rest-patterns)]
-        (match types
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (ty-node-get ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)
-                [(ResultTcEnv.Ok next-env)
-                  (tc-bind-borrowed-sub-pattern-list
-                    ctx
-                    next-env
-                    lifetime
-                    rest-patterns
-                    rest-types)]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultTcEnv.Err "typecheck: pattern arity mismatch")]))]))
+  (tc-bind-borrowed-sub-pattern-list-at ctx env lifetime (& patterns) types 0))
+
+(define (tc-bind-borrowed-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [patterns : (& patterns AstPatternList)]
+  [types : AstTypeList]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-pattern-list-len patterns))
+    (match types
+      [(AstTypeList.Nil) (ResultTcEnv.Ok env)]
+      [_ (ResultTcEnv.Err "typecheck: pattern arity mismatch")])
+    (match types
+      [(AstTypeList.Cons ty rest-types)
+        (let
+          [pattern : AstPattern
+            (ast-pattern-list-get patterns index (ast-pattern-fallback))]
+          [ty : AstType (ty-node-get ty)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          (match (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)
+            [(ResultTcEnv.Ok next-env)
+              (tc-bind-borrowed-sub-pattern-list-at
+                ctx
+                next-env
+                lifetime
+                patterns
+                rest-types
+                (+ index 1))]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+      [(AstTypeList.Nil) (ResultTcEnv.Err "typecheck: pattern arity mismatch")])))
 
 (define (tc-bind-borrowed-variant-pattern
   [ctx : TcContext]
@@ -28358,7 +28431,7 @@
         enum-name
         (intern-str variant-name)
         enum-lifetimes
-        AstPatternList.Nil)]
+        (ast-pattern-list-new))]
     [(AstPattern.Variant variant-name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
@@ -28427,7 +28500,7 @@
             (intern-str enum-name)
             (intern-str variant-name)
             AstLifetimeList.Nil
-            AstPatternList.Nil
+            (ast-pattern-list-new)
             (tc-type-outer-regions scrut-ty))]
         [(AstPattern.Variant variant-name args-box)
           (let
@@ -28451,7 +28524,7 @@
             (intern-str enum-name)
             (intern-str variant-name)
             (box-get lifetimes)
-            AstPatternList.Nil
+            (ast-pattern-list-new)
             (tc-type-outer-regions scrut-ty))]
         [(AstPattern.Variant variant-name args-box)
           (let
@@ -28560,24 +28633,42 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [expected : AstType]) : ResultTcType
-  (match arms
-    [(AstMatchArmList.Nil)
-      (ResultTcType.Err "typecheck: match must have at least one arm")]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match (tc-match-arm-type-with-expected ctx env scrut-ty arm expected)
-          [(ResultTcType.Ok _)
-            (match rest
-              [(AstMatchArmList.Nil) (ResultTcType.Ok expected)]
-              [_
-                (tc-check-match-arm-types-with-expected
-                  ctx
-                  env
-                  scrut-ty
-                  rest
-                  expected)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]))
+  (let
+    [arms-ref : (& arms AstMatchArmList) (& arms)]
+    (if (= (ast-match-arm-list-len arms-ref) 0)
+      (ResultTcType.Err "typecheck: match must have at least one arm")
+      (tc-check-match-arm-types-with-expected-at
+        ctx
+        env
+        scrut-ty
+        arms-ref
+        expected
+        0))))
+
+(define (tc-check-match-arm-types-with-expected-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [expected : AstType]
+  [index : i64]) : ResultTcType
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultTcType.Ok expected)
+    (match (tc-match-arm-type-with-expected
+      ctx
+      env
+      scrut-ty
+      (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      expected)
+      [(ResultTcType.Ok _)
+        (tc-check-match-arm-types-with-expected-at
+          ctx
+          env
+          scrut-ty
+          arms
+          expected
+          (+ index 1))]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-match-rest-types
   [ctx : TcContext]
@@ -28585,22 +28676,38 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [want : AstType]) : ResultTcType
-  (match arms
-    [(AstMatchArmList.Nil) (ResultTcType.Ok want)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match (tc-match-arm-type-with-expected ctx env scrut-ty arm want)
-          [(ResultTcType.Ok _) (tc-match-rest-types ctx env scrut-ty rest want)]
-          [(ResultTcType.Err _)
-            (match (tc-match-arm-type ctx env scrut-ty arm)
-              [(ResultTcType.Ok got)
-                (match (tc-merge-branch-type want got)
-                  [(ResultTcType.Ok merged)
-                    (tc-match-rest-types ctx env scrut-ty rest merged)]
-                  [(ResultTcType.Err _)
-                    (ResultTcType.Err (tc-match-arm-merge-message want got))])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]))]))
+  (tc-match-rest-types-at ctx env scrut-ty (& arms) 0 want))
+
+(define (tc-match-rest-types-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [want : AstType]) : ResultTcType
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultTcType.Ok want)
+    (let
+      [arm : AstMatchArm
+        (ast-match-arm-list-get arms index (ast-match-arm-fallback))]
+      (match (tc-match-arm-type-with-expected ctx env scrut-ty arm want)
+        [(ResultTcType.Ok _)
+          (tc-match-rest-types-at ctx env scrut-ty arms (+ index 1) want)]
+        [(ResultTcType.Err _)
+          (match (tc-match-arm-type ctx env scrut-ty arm)
+            [(ResultTcType.Ok got)
+              (match (tc-merge-branch-type want got)
+                [(ResultTcType.Ok merged)
+                  (tc-match-rest-types-at
+                    ctx
+                    env
+                    scrut-ty
+                    arms
+                    (+ index 1)
+                    merged)]
+                [(ResultTcType.Err _)
+                  (ResultTcType.Err (tc-match-arm-merge-message want got))])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]))))
 
 (define (tc-check-match-arm-types-from-first
   [ctx : TcContext]
@@ -28609,65 +28716,98 @@
   [first-arm : AstMatchArm]
   [rest : AstMatchArmList]
   [first-ty : AstType]) : ResultTcType
-  (match rest
-    [(AstMatchArmList.Nil) (ResultTcType.Ok first-ty)]
-    [(AstMatchArmList.Cons second-arm remaining-box)
-      (let
-        [remaining : AstMatchArmList (box-get remaining-box)]
-        (match (tc-match-arm-type ctx env scrut-ty second-arm)
-          [(ResultTcType.Ok second-ty)
-            (match (tc-merge-branch-type first-ty second-ty)
-              [(ResultTcType.Ok merged)
-                (tc-match-rest-types ctx env scrut-ty remaining merged)]
-              [(ResultTcType.Err _)
-                (match (tc-match-arm-type-with-expected
-                  ctx
-                  env
-                  scrut-ty
-                  first-arm
-                  second-ty)
-                  [(ResultTcType.Ok _)
-                    (tc-match-rest-types ctx env scrut-ty remaining second-ty)]
-                  [(ResultTcType.Err _)
-                    (match (tc-match-arm-type-with-expected
-                      ctx
-                      env
-                      scrut-ty
-                      second-arm
-                      first-ty)
-                      [(ResultTcType.Ok _)
-                        (tc-match-rest-types
-                          ctx
-                          env
-                          scrut-ty
-                          remaining
-                          first-ty)]
-                      [(ResultTcType.Err _)
-                        (ResultTcType.Err
-                          (tc-match-arm-merge-message first-ty second-ty))])])])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]))
+  (tc-check-match-arm-types-from-first-at
+    ctx
+    env
+    scrut-ty
+    first-arm
+    (& rest)
+    0
+    first-ty))
+
+(define (tc-check-match-arm-types-from-first-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [first-arm : AstMatchArm]
+  [rest : (& rest AstMatchArmList)]
+  [index : i64]
+  [first-ty : AstType]) : ResultTcType
+  (if (>= index (ast-match-arm-list-len rest))
+    (ResultTcType.Ok first-ty)
+    (let
+      [second-arm : AstMatchArm
+        (ast-match-arm-list-get rest index (ast-match-arm-fallback))]
+      [remaining-index : i64 (+ index 1)]
+      (match (tc-match-arm-type ctx env scrut-ty second-arm)
+        [(ResultTcType.Ok second-ty)
+          (match (tc-merge-branch-type first-ty second-ty)
+            [(ResultTcType.Ok merged)
+              (tc-match-rest-types-at
+                ctx
+                env
+                scrut-ty
+                rest
+                remaining-index
+                merged)]
+            [(ResultTcType.Err _)
+              (match (tc-match-arm-type-with-expected
+                ctx
+                env
+                scrut-ty
+                first-arm
+                second-ty)
+                [(ResultTcType.Ok _)
+                  (tc-match-rest-types-at
+                    ctx
+                    env
+                    scrut-ty
+                    rest
+                    remaining-index
+                    second-ty)]
+                [(ResultTcType.Err _)
+                  (match (tc-match-arm-type-with-expected
+                    ctx
+                    env
+                    scrut-ty
+                    second-arm
+                    first-ty)
+                    [(ResultTcType.Ok _)
+                      (tc-match-rest-types-at
+                        ctx
+                        env
+                        scrut-ty
+                        rest
+                        remaining-index
+                        first-ty)]
+                    [(ResultTcType.Err _)
+                      (ResultTcType.Err
+                        (tc-match-arm-merge-message first-ty second-ty))])])])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-check-match-arm-types
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : ResultTcType
-  (match arms
-    [(AstMatchArmList.Nil)
-      (ResultTcType.Err "typecheck: match must have at least one arm")]
-    [(AstMatchArmList.Cons arm rest)
+  (let
+    [arms-ref : (& arms AstMatchArmList) (& arms)]
+    (if (= (ast-match-arm-list-len arms-ref) 0)
+      (ResultTcType.Err "typecheck: match must have at least one arm")
       (let
-        [rest : AstMatchArmList (box-get rest)]
+        [arm : AstMatchArm
+          (ast-match-arm-list-get arms-ref 0 (ast-match-arm-fallback))]
         (match (tc-match-arm-type ctx env scrut-ty arm)
           [(ResultTcType.Ok first-ty)
-            (tc-check-match-arm-types-from-first
+            (tc-check-match-arm-types-from-first-at
               ctx
               env
               scrut-ty
               arm
-              rest
+              arms-ref
+              1
               first-ty)]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]))
+          [(ResultTcType.Err message) (ResultTcType.Err message)])))))
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
   (intern-name-last-slash name))
@@ -29099,24 +29239,32 @@
   [ctx : TcContext]
   [patterns : AstPatternList]
   [types : AstTypeList]) : bool
-  (match patterns
-    [(AstPatternList.Nil)
-      (match types
-        [(AstTypeList.Nil) true]
-        [_ false])]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (match types
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (ty-node-get ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              (if (tc-sub-pattern-irrefutable? ctx pattern ty)
-                (tc-pattern-list-irrefutable? ctx rest rest-types)
-                false))]
-          [(AstTypeList.Nil) false]))]))
+  (tc-pattern-list-irrefutable-at? ctx (& patterns) types 0))
+
+(define (tc-pattern-list-irrefutable-at?
+  [ctx : TcContext]
+  [patterns : (& patterns AstPatternList)]
+  [types : AstTypeList]
+  [index : i64]) : bool
+  (if (>= index (ast-pattern-list-len patterns))
+    (match types
+      [(AstTypeList.Nil) true]
+      [_ false])
+    (match types
+      [(AstTypeList.Cons ty rest-types)
+        (let
+          [pattern : AstPattern
+            (ast-pattern-list-get patterns index (ast-pattern-fallback))]
+          [ty : AstType (ty-node-get ty)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          (if (tc-sub-pattern-irrefutable? ctx pattern ty)
+            (tc-pattern-list-irrefutable-at?
+              ctx
+              patterns
+              rest-types
+              (+ index 1))
+            false))]
+      [(AstTypeList.Nil) false])))
 
 (define (tc-pattern-covers-variant?
   [ctx : TcContext]
@@ -29144,16 +29292,26 @@
   [arms : AstMatchArmList]
   [enum-name : String]
   [variant-name : String]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern _)
-            (if (tc-pattern-covers-variant? ctx pattern enum-name variant-name)
-              true
-              (tc-match-arms-cover-variant? ctx rest enum-name variant-name))]))]))
+  (tc-match-arms-cover-variant-at? ctx (& arms) enum-name variant-name 0))
+
+(define (tc-match-arms-cover-variant-at?
+  [ctx : TcContext]
+  [arms : (& arms AstMatchArmList)]
+  [enum-name : String]
+  [variant-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern _)
+        (if (tc-pattern-covers-variant? ctx pattern enum-name variant-name)
+          true
+          (tc-match-arms-cover-variant-at?
+            ctx
+            arms
+            enum-name
+            variant-name
+            (+ index 1)))])))
 
 (define (tc-match-missing-variant-message [variant-name : String]) : String
   (string.append "typecheck: match missing arm for variant " variant-name))
@@ -29175,20 +29333,26 @@
   [arms : AstMatchArmList]
   [enum-name : String]
   [variant-name : String]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern _)
-            (if (tc-pattern-mentions-variant?
-              ctx
-              pattern
-              enum-name
-              variant-name)
-              true
-              (tc-match-arms-mention-variant? ctx rest enum-name variant-name))]))]))
+  (tc-match-arms-mention-variant-at? ctx (& arms) enum-name variant-name 0))
+
+(define (tc-match-arms-mention-variant-at?
+  [ctx : TcContext]
+  [arms : (& arms AstMatchArmList)]
+  [enum-name : String]
+  [variant-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern _)
+        (if (tc-pattern-mentions-variant? ctx pattern enum-name variant-name)
+          true
+          (tc-match-arms-mention-variant-at?
+            ctx
+            arms
+            enum-name
+            variant-name
+            (+ index 1)))])))
 
 (define (tc-enum-variants-exhaustive-ok
   [ctx : TcContext]
@@ -29216,47 +29380,60 @@
                     (tc-match-missing-variant-message variant-name)))))]))]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern _)
-            (match pattern
-              [(AstPattern.Wildcard) true]
-              [(AstPattern.Binding _) true]
-              [_ (tc-match-arms-have-catchall? rest)])]))]))
+  (tc-match-arms-have-catchall-at? (& arms) 0))
+
+(define (tc-match-arms-have-catchall-at?
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern _)
+        (match pattern
+          [(AstPattern.Wildcard) true]
+          [(AstPattern.Binding _) true]
+          [_ (tc-match-arms-have-catchall-at? arms (+ index 1))])])))
 
 (define (tc-match-arms-have-catchall-for-type?
   [ctx : TcContext]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern _)
-            (if (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern)
-              true
-              (tc-match-arms-have-catchall-for-type? ctx scrut-ty rest))]))]))
+  (tc-match-arms-have-catchall-for-type-at? ctx scrut-ty (& arms) 0))
+
+(define (tc-match-arms-have-catchall-for-type-at?
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern _)
+        (if (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern)
+          true
+          (tc-match-arms-have-catchall-for-type-at?
+            ctx
+            scrut-ty
+            arms
+            (+ index 1)))])))
 
 (define (tc-match-arms-cover-bool? [arms : AstMatchArmList] [want : bool]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern _)
-            (match pattern
-              [(AstPattern.Literal (AstLiteral.Bool value))
-                (if (= value want)
-                  true
-                  (tc-match-arms-cover-bool? rest want))]
-              [_ (tc-match-arms-cover-bool? rest want)])]))]))
+  (tc-match-arms-cover-bool-at? (& arms) want 0))
+
+(define (tc-match-arms-cover-bool-at?
+  [arms : (& arms AstMatchArmList)]
+  [want : bool]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern _)
+        (match pattern
+          [(AstPattern.Literal (AstLiteral.Bool value))
+            (if (= value want)
+              true
+              (tc-match-arms-cover-bool-at? arms want (+ index 1)))]
+          [_ (tc-match-arms-cover-bool-at? arms want (+ index 1))])])))
 
 (define (tc-match-pattern-catchall-for-type?
   [ctx : TcContext]
@@ -29325,21 +29502,26 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [seen-catchall : bool]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (if seen-catchall
-          (ResultTcUnit.Err
-            "typecheck: unreachable match arm after wildcard `_`")
-          (match arm
-            [(AstMatchArm.Arm pattern _)
-              (tc-match-arm-reachability-loop
-                ctx
-                scrut-ty
-                rest
-                (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern))])))]))
+  (tc-match-arm-reachability-loop-at ctx scrut-ty (& arms) seen-catchall 0))
+
+(define (tc-match-arm-reachability-loop-at
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [seen-catchall : bool]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (if seen-catchall
+      (ResultTcUnit.Err "typecheck: unreachable match arm after wildcard `_`")
+      (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm pattern _)
+          (tc-match-arm-reachability-loop-at
+            ctx
+            scrut-ty
+            arms
+            (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern)
+            (+ index 1))]))))
 
 (define (tc-match-arm-reachability-ok
   [ctx : TcContext]
@@ -32367,33 +32549,50 @@
   [seen : TcStringList]
   [template? : bool]
   [arms : AstMatchArmList]) : ResultTcUnit
-  (match arms
-    [(AstMatchArmList.Nil) ResultTcUnit.Ok]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (match (tc-comptime-purity-node-mode
+  (tc-comptime-purity-match-arms-mode-at
+    ctx
+    env
+    bound
+    chain
+    seen
+    template?
+    (& arms)
+    0))
+
+(define (tc-comptime-purity-match-arms-mode-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-match-arm-list-len arms))
+    ResultTcUnit.Ok
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (match (tc-comptime-purity-node-mode
+          ctx
+          env
+          (if template?
+            bound
+            (tc-pattern-add-bound-names pattern bound))
+          chain
+          seen
+          template?
+          body-box)
+          [(ResultTcUnit.Ok)
+            (tc-comptime-purity-match-arms-mode-at
               ctx
               env
-              (if template?
-                bound
-                (tc-pattern-add-bound-names pattern bound))
+              bound
               chain
               seen
               template?
-              body-box)
-              [(ResultTcUnit.Ok)
-                (tc-comptime-purity-match-arms-mode
-                  ctx
-                  env
-                  bound
-                  chain
-                  seen
-                  template?
-                  rest)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+              arms
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-comptime-purity-expr-mode
   [ctx : TcContext]
@@ -35718,51 +35917,57 @@
   [moved : TcMovedSet]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
-  (match arms
-    [(AstMatchArmList.Nil) (TcMoveResult.Ok moved)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [bound : TcStringList
-                (tc-move-pattern-bound-names ctx scrut-ty pattern)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(ResultTcEnv.Ok arm-env)
-                  (match (tc-move-check-expr
-                    ctx
-                    arm-env
-                    (tc-move-add-bound-names (tc-moved-clone locals) bound)
-                    (tc-move-remove-bound-root-states
+  (tc-move-check-arms-at ctx env locals loop-carried moved scrut-ty (& arms) 0))
+
+(define (tc-move-check-arms-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : TcMoveResult
+  (if (>= index (ast-match-arm-list-len arms))
+    (TcMoveResult.Ok moved)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          [bound : TcStringList
+            (tc-move-pattern-bound-names ctx scrut-ty pattern)]
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(ResultTcEnv.Ok arm-env)
+              (match (tc-move-check-expr
+                ctx
+                arm-env
+                (tc-move-add-bound-names (tc-moved-clone locals) bound)
+                (tc-move-remove-bound-root-states
+                  (tc-moved-clone loop-carried)
+                  bound)
+                (tc-move-remove-bound-root-states (tc-moved-clone moved) bound)
+                body)
+                [(TcMoveResult.Ok arm-moved)
+                  (let
+                    [visible-arm-moved : TcMovedSet
+                      (tc-moved-union
+                        moved
+                        (tc-move-remove-bound-root-states arm-moved bound))]
+                    (match (tc-move-check-arms-at
+                      ctx
+                      env
+                      (tc-moved-clone locals)
                       (tc-moved-clone loop-carried)
-                      bound)
-                    (tc-move-remove-bound-root-states
                       (tc-moved-clone moved)
-                      bound)
-                    body)
-                    [(TcMoveResult.Ok arm-moved)
-                      (let
-                        [visible-arm-moved : TcMovedSet
-                          (tc-moved-union
-                            moved
-                            (tc-move-remove-bound-root-states arm-moved bound))]
-                        (match (tc-move-check-arms
-                          ctx
-                          env
-                          (tc-moved-clone locals)
-                          (tc-moved-clone loop-carried)
-                          (tc-moved-clone moved)
-                          scrut-ty
-                          rest)
-                          [(TcMoveResult.Ok rest-moved)
-                            (TcMoveResult.Ok
-                              (tc-moved-union visible-arm-moved rest-moved))]
-                          [(TcMoveResult.Err message)
-                            (TcMoveResult.Err message)]))]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                [(ResultTcEnv.Err message) (TcMoveResult.Err message)]))]))]))
+                      scrut-ty
+                      arms
+                      (+ index 1))
+                      [(TcMoveResult.Ok rest-moved)
+                        (TcMoveResult.Ok
+                          (tc-moved-union visible-arm-moved rest-moved))]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(ResultTcEnv.Err message) (TcMoveResult.Err message)]))])))
 
 (define (tc-move-check-expr-id
   [ctx : TcContext]
@@ -38400,22 +38605,30 @@
   [env : TcTypeEnv]
   [arms : AstMatchArmList]
   [lifetime : String]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm _ body-box)
-          (if (tc-borrow-check-expr-stores-lifetime?
+  (tc-borrow-check-match-arms-store-lifetime-at? ctx env (& arms) lifetime 0))
+
+(define (tc-borrow-check-match-arms-store-lifetime-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arms : (& arms AstMatchArmList)]
+  [lifetime : String]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (if (tc-borrow-check-expr-stores-lifetime?
+          ctx
+          env
+          (ast-node-get body-box)
+          lifetime)
+          true
+          (tc-borrow-check-match-arms-store-lifetime-at?
             ctx
             env
-            (ast-node-get body-box)
-            lifetime)
-            true
-            (tc-borrow-check-match-arms-store-lifetime?
-              ctx
-              env
-              (box-get rest)
-              lifetime))])]))
+            arms
+            lifetime
+            (+ index 1)))])))
 
 (define (tc-borrow-check-expr-stores-lifetime?
   [ctx : TcContext]
@@ -38766,50 +38979,69 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
-  (match arms
-    [(AstMatchArmList.Nil) (TcBorrowCheckResult.Ok joined)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(ResultTcEnv.Ok arm-env)
-                  (match (tc-borrow-check-expr-loop
-                    ctx
-                    arm-env
-                    loop-env
-                    (tc-borrow-check-pattern-locals
-                      ctx
-                      scrut-ty
-                      pattern
-                      (tc-moved-clone locals))
-                    (tc-moved-clone borrowed)
-                    borrowed
-                    body)
-                    [(TcBorrowCheckResult.Ok arm-borrowed)
-                      (let
-                        [visible-arm-borrowed : TcMovedSet
-                          (tc-borrow-check-remove-root-states
-                            arm-borrowed
-                            (tc-borrow-check-pattern-bound-names
-                              ctx
-                              scrut-ty
-                              pattern))]
-                        (tc-borrow-check-arms-loop-join
+  (tc-borrow-check-arms-loop-join-at
+    ctx
+    env
+    loop-env
+    locals
+    borrowed
+    scrut-ty
+    (& arms)
+    joined
+    0))
+
+(define (tc-borrow-check-arms-loop-join-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [joined : TcMovedSet]
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (ast-match-arm-list-len arms))
+    (TcBorrowCheckResult.Ok joined)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(ResultTcEnv.Ok arm-env)
+              (match (tc-borrow-check-expr-loop
+                ctx
+                arm-env
+                loop-env
+                (tc-borrow-check-pattern-locals
+                  ctx
+                  scrut-ty
+                  pattern
+                  (tc-moved-clone locals))
+                (tc-moved-clone borrowed)
+                borrowed
+                body)
+                [(TcBorrowCheckResult.Ok arm-borrowed)
+                  (let
+                    [visible-arm-borrowed : TcMovedSet
+                      (tc-borrow-check-remove-root-states
+                        arm-borrowed
+                        (tc-borrow-check-pattern-bound-names
                           ctx
-                          env
-                          loop-env
-                          locals
-                          borrowed
                           scrut-ty
-                          rest
-                          (tc-moved-union joined visible-arm-borrowed)))]
-                    [(TcBorrowCheckResult.Err message)
-                      (TcBorrowCheckResult.Err message)])]
-                [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)]))]))]))
+                          pattern))]
+                    (tc-borrow-check-arms-loop-join-at
+                      ctx
+                      env
+                      loop-env
+                      locals
+                      borrowed
+                      scrut-ty
+                      arms
+                      (tc-moved-union joined visible-arm-borrowed)
+                      (+ index 1)))]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)]))])))
 
 (define (tc-borrow-check-arms-loop
   [ctx : TcContext]
@@ -39225,45 +39457,59 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
-  (match arms
-    [(AstMatchArmList.Nil) (TcBorrowCheckResult.Ok joined)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-              [(ResultTcEnv.Ok arm-env)
-                (match (tc-borrow-check-expr-id
-                  ctx
-                  arm-env
-                  (tc-borrow-check-pattern-locals
+  (tc-borrow-check-arms-join-at
+    ctx
+    env
+    locals
+    borrowed
+    scrut-ty
+    (& arms)
+    joined
+    0))
+
+(define (tc-borrow-check-arms-join-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [joined : TcMovedSet]
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (ast-match-arm-list-len arms))
+    (TcBorrowCheckResult.Ok joined)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+          [(ResultTcEnv.Ok arm-env)
+            (match (tc-borrow-check-expr-id
+              ctx
+              arm-env
+              (tc-borrow-check-pattern-locals
+                ctx
+                scrut-ty
+                pattern
+                (tc-moved-clone locals))
+              (tc-moved-clone borrowed)
+              body-box)
+              [(TcBorrowCheckResult.Ok arm-borrowed)
+                (let
+                  [visible-arm-borrowed : TcMovedSet
+                    (tc-borrow-check-remove-root-states
+                      arm-borrowed
+                      (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern))]
+                  (tc-borrow-check-arms-join-at
                     ctx
+                    env
+                    locals
+                    borrowed
                     scrut-ty
-                    pattern
-                    (tc-moved-clone locals))
-                  (tc-moved-clone borrowed)
-                  body-box)
-                  [(TcBorrowCheckResult.Ok arm-borrowed)
-                    (let
-                      [visible-arm-borrowed : TcMovedSet
-                        (tc-borrow-check-remove-root-states
-                          arm-borrowed
-                          (tc-borrow-check-pattern-bound-names
-                            ctx
-                            scrut-ty
-                            pattern))]
-                      (tc-borrow-check-arms-join
-                        ctx
-                        env
-                        locals
-                        borrowed
-                        scrut-ty
-                        rest
-                        (tc-moved-union joined visible-arm-borrowed)))]
-                  [(TcBorrowCheckResult.Err message)
-                    (TcBorrowCheckResult.Err message)])]
-              [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)])]))]))
+                    arms
+                    (tc-moved-union joined visible-arm-borrowed)
+                    (+ index 1)))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)])])))
 
 (define (tc-borrow-check-arms
   [ctx : TcContext]
@@ -42870,19 +43116,29 @@
   [patterns : AstPatternList]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (match patterns
-    [(AstPatternList.Nil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
-    [(AstPatternList.Cons head rest)
-      (match (macro-pattern-to-spanned-sexpr (box-get head) span origin)
-        [(ResultMacroSexpr.Ok shead)
-          (match (macro-pattern-list-to-spanned-sexpr
-            (box-get rest)
-            span
-            origin)
-            [(ResultMacroSexpr.Ok stail)
-              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+  (macro-pattern-list-to-spanned-sexpr-at (& patterns) 0 span origin))
+
+(define (macro-pattern-list-to-spanned-sexpr-at
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (if (>= index (ast-pattern-list-len patterns))
+    (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))
+    (match (macro-pattern-to-spanned-sexpr
+      (ast-pattern-list-get patterns index (ast-pattern-fallback))
+      span
+      origin)
+      [(ResultMacroSexpr.Ok shead)
+        (match (macro-pattern-list-to-spanned-sexpr-at
+          patterns
+          (+ index 1)
+          span
+          origin)
+          [(ResultMacroSexpr.Ok stail)
+            (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
 
 (define (macro-pattern-to-spanned-sexpr
   [pattern : AstPattern]
@@ -42946,19 +43202,29 @@
   [arms : AstMatchArmList]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (match arms
-    [(AstMatchArmList.Nil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
-    [(AstMatchArmList.Cons head rest)
-      (match (macro-match-arm-bracket head span origin)
-        [(ResultMacroSexpr.Ok shead)
-          (match (macro-match-arm-list-to-spanned-sexpr
-            (box-get rest)
-            span
-            origin)
-            [(ResultMacroSexpr.Ok stail)
-              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+  (macro-match-arm-list-to-spanned-sexpr-at (& arms) 0 span origin))
+
+(define (macro-match-arm-list-to-spanned-sexpr-at
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))
+    (match (macro-match-arm-bracket
+      (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      span
+      origin)
+      [(ResultMacroSexpr.Ok shead)
+        (match (macro-match-arm-list-to-spanned-sexpr-at
+          arms
+          (+ index 1)
+          span
+          origin)
+          [(ResultMacroSexpr.Ok stail)
+            (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
 
 (define (macro-let-binding-bracket
   [binding : AstLetBinding]
@@ -44082,20 +44348,43 @@
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : MacroHygienePatternList
-  (match patterns
-    [(AstPatternList.Nil)
-      (MacroHygienePatternList.PatternList AstPatternList.Nil env)]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (match (macro-hygiene-pattern pattern env macro-name depth)
-          [(MacroHygienePattern.Pattern npattern next-env)
-            (match (macro-hygiene-pattern-list rest next-env macro-name depth)
-              [(MacroHygienePatternList.PatternList nrest final-env)
-                (MacroHygienePatternList.PatternList
-                  (ast-pattern-cons npattern nrest)
-                  final-env)])]))]))
+  (let
+    [out : AstPatternList
+      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
+    [final-env : MacroHygieneEnv
+      (macro-hygiene-pattern-list-into
+        (& patterns)
+        0
+        env
+        macro-name
+        depth
+        (&mut out))]
+    (MacroHygienePatternList.PatternList out final-env)))
+
+(define (macro-hygiene-pattern-list-into
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [out : (&mut out AstPatternList)]) : MacroHygieneEnv
+  (if (>= index (ast-pattern-list-len patterns))
+    env
+    (match (macro-hygiene-pattern
+      (ast-pattern-list-get patterns index (ast-pattern-fallback))
+      env
+      macro-name
+      depth)
+      [(MacroHygienePattern.Pattern npattern next-env)
+        (begin
+          (ast-pattern-list-push out npattern)
+          (macro-hygiene-pattern-list-into
+            patterns
+            (+ index 1)
+            next-env
+            macro-name
+            depth
+            out))])))
 
 (define (macro-hygiene-pattern
   [pattern : AstPattern]
@@ -44211,22 +44500,43 @@
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : AstMatchArmList
-  (match arms
-    [(AstMatchArmList.Nil) AstMatchArmList.Nil]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (macro-hygiene-pattern pattern env macro-name depth)
-                [(MacroHygienePattern.Pattern npattern arm-env)
-                  (ast-match-arm-cons
-                    (ast-match-arm
-                      npattern
-                      (macro-hygiene-expr body arm-env macro-name depth))
-                    (macro-hygiene-arm-list rest env macro-name depth))]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (begin
+      (macro-hygiene-arm-list-into (& arms) 0 env macro-name depth (&mut out))
+      out)))
+
+(define (macro-hygiene-arm-list-into
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [out : (&mut out AstMatchArmList)]) : unit
+  (if (>= index (ast-match-arm-list-len arms))
+    unit
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (match (macro-hygiene-pattern pattern env macro-name depth)
+          [(MacroHygienePattern.Pattern npattern arm-env)
+            (begin
+              (ast-match-arm-list-push
+                out
+                (ast-match-arm
+                  npattern
+                  (macro-hygiene-expr
+                    (ast-node-get body-box)
+                    arm-env
+                    macro-name
+                    depth)))
+              (macro-hygiene-arm-list-into
+                arms
+                (+ index 1)
+                env
+                macro-name
+                depth
+                out))])])))
 
 (define (macro-hygiene-expr
   [expr : AstExpr]
@@ -48305,35 +48615,54 @@
   [depth : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : ResultMacroArms
-  (match arms
-    [(AstMatchArmList.Nil) (ResultMacroArms.Ok (AstMatchArmList.Nil))]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(ResultTcEnv.Ok arm-env)
-                  (match (macro-expand-expr ctx arm-env decls depth body)
-                    [(ResultMacroExpr.Ok nbody)
-                      (match (macro-expand-arms
-                        ctx
-                        env
-                        decls
-                        depth
-                        scrut-ty
-                        rest)
-                        [(ResultMacroArms.Ok nrest)
-                          (ResultMacroArms.Ok
-                            (ast-match-arm-cons
-                              (ast-match-arm pattern nbody)
-                              nrest))]
-                        [(ResultMacroArms.Err diag) (ResultMacroArms.Err diag)])]
-                    [(ResultMacroExpr.Err diag) (ResultMacroArms.Err diag)])]
-                [(ResultTcEnv.Err message)
-                  (ResultMacroArms.Err (box (tc-expr-diag body message)))]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (match (macro-expand-arms-into
+      ctx
+      env
+      decls
+      depth
+      scrut-ty
+      (& arms)
+      0
+      (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroArms.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroArms.Err diag)])))
+
+(define (macro-expand-arms-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [scrut-ty : AstType]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [out : (&mut out AstMatchArmList)]) : ResultMacroCheck
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultMacroCheck.Ok)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(ResultTcEnv.Ok arm-env)
+              (match (macro-expand-expr ctx arm-env decls depth body)
+                [(ResultMacroExpr.Ok nbody)
+                  (begin
+                    (ast-match-arm-list-push out (ast-match-arm pattern nbody))
+                    (macro-expand-arms-into
+                      ctx
+                      env
+                      decls
+                      depth
+                      scrut-ty
+                      arms
+                      (+ index 1)
+                      out))]
+                [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
+            [(ResultTcEnv.Err message)
+              (ResultMacroCheck.Err (box (tc-expr-diag body message)))]))])))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -49579,18 +49908,31 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match patterns
-    [(AstPatternList.Nil) refs]
-    [(AstPatternList.Cons head rest)
-      (macro-generated-surface-pattern-list-refs
-        (box-get rest)
+  (macro-generated-surface-pattern-list-refs-at
+    (& patterns)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-pattern-list-refs-at
+  [patterns : (& patterns AstPatternList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-pattern-list-len patterns))
+    refs
+    (macro-generated-surface-pattern-list-refs-at
+      patterns
+      aliases
+      (macro-generated-surface-pattern-refs
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
         aliases
-        (macro-generated-surface-pattern-refs
-          (box-get head)
-          aliases
-          refs
-          alias-qualified?)
-        alias-qualified?)]))
+        refs
+        alias-qualified?)
+      alias-qualified?
+      (+ index 1))))
 
 (define (macro-generated-surface-pattern-refs
   [pattern : AstPattern]
@@ -49667,24 +50009,37 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match arms
-    [(AstMatchArmList.Nil) refs]
-    [(AstMatchArmList.Cons arm rest)
-      (match arm
-        [(AstMatchArm.Arm pattern body)
-          (macro-generated-surface-match-arm-refs
-            (box-get rest)
+  (macro-generated-surface-match-arm-refs-at
+    (& arms)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-match-arm-refs-at
+  [arms : (& arms AstMatchArmList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-match-arm-list-len arms))
+    refs
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (macro-generated-surface-match-arm-refs-at
+          arms
+          aliases
+          (macro-generated-surface-expr-refs
+            (ast-node-get body)
             aliases
-            (macro-generated-surface-expr-refs
-              (ast-node-get body)
+            (macro-generated-surface-pattern-refs
+              pattern
               aliases
-              (macro-generated-surface-pattern-refs
-                pattern
-                aliases
-                refs
-                alias-qualified?)
+              refs
               alias-qualified?)
-            alias-qualified?)])]))
+            alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-resource-binding-refs
   [bindings : AstResourceBindingList]
@@ -51759,14 +52114,20 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (or
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (macro-node-uses-macro? ctx decls body-box)])
-        (macro-arms-use-macro? ctx decls (box-get rest)))]))
+  (macro-arms-use-macro-at? ctx decls (& arms) 0))
+
+(define (macro-arms-use-macro-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (or
+      (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm _ body-box)
+          (macro-node-uses-macro? ctx decls body-box)])
+      (macro-arms-use-macro-at? ctx decls arms (+ index 1)))))
 
 (define (macro-bindings-use-macro?
   [ctx : TcContext]
@@ -52008,18 +52369,20 @@
                 (macro-let-binding-list-might-fire? rest)))]))]))
 
 (define (macro-match-arms-might-fire? [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (or
-                (macro-expr-might-fire? body)
-                (macro-match-arms-might-fire? rest)))]))]))
+  (macro-match-arms-might-fire-at? (& arms) 0))
+
+(define (macro-match-arms-might-fire-at?
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (or
+            (macro-expr-might-fire? body)
+            (macro-match-arms-might-fire-at? arms (+ index 1))))])))
 
 (define (macro-resource-binding-list-might-fire?
   [bindings : AstResourceBindingList]) : bool
@@ -52428,17 +52791,23 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) true]
-    [(AstMatchArmList.Cons arm rest)
-      (and
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (macro-expr-safe-after-inert-splice?
-              ctx
-              decls
-              (ast-node-get body-box))])
-        (macro-match-arms-safe-after-inert-splice? ctx decls (box-get rest)))]))
+  (macro-match-arms-safe-after-inert-splice-at? ctx decls (& arms) 0))
+
+(define (macro-match-arms-safe-after-inert-splice-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    true
+    (and
+      (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm _ body-box)
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get body-box))])
+      (macro-match-arms-safe-after-inert-splice-at? ctx decls arms (+ index 1)))))
 
 (define (macro-expr-safe-after-inert-splice?
   [ctx : TcContext]
@@ -52813,13 +53182,17 @@
         (ctfe-exprs-have-type-literal? (box-get rest)))]))
 
 (define (ctfe-arms-have-type-literal? [arms : AstMatchArmList]) : bool
-  (match arms
-    [(AstMatchArmList.Nil) false]
-    [(AstMatchArmList.Cons arm rest)
-      (or
-        (match arm
-          [(AstMatchArm.Arm _ body-box) (ctfe-node-has-type-literal? body-box)])
-        (ctfe-arms-have-type-literal? (box-get rest)))]))
+  (ctfe-arms-have-type-literal-at? (& arms) 0))
+
+(define (ctfe-arms-have-type-literal-at?
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (or
+      (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm _ body-box) (ctfe-node-has-type-literal? body-box)])
+      (ctfe-arms-have-type-literal-at? arms (+ index 1)))))
 
 (define (ctfe-bindings-have-type-literal? [bindings : AstLetBindingList]) : bool
   (match bindings

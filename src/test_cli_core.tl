@@ -1109,18 +1109,22 @@
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match arms
-    [(AstMatchArmList.Nil) names]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (tltest-reach-mark-match-arms
-                rest
-                (tltest-reach-mark-expr body names)))]))]))
+  (tltest-reach-mark-match-arms-at (& arms) names 0))
+
+(define (tltest-reach-mark-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-match-arm-list-len arms))
+    names
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (tltest-reach-mark-match-arms-at
+            arms
+            (tltest-reach-mark-expr body names)
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-expr [expr : AstExpr] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match expr

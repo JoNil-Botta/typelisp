@@ -112,6 +112,10 @@
   (Ok AstMatchArmList SpecState)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultSpecMatchArmListBuild
+  (Ok SpecState)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultSpecArgs
   (Ok SpecValueList AstExprList SpecState)
   (Err (Box CompilerDiagnostic)))
@@ -138,6 +142,10 @@
 
 (defenum ResultSpecSubMatchArmList
   (Ok AstMatchArmList)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultSpecSubMatchArmListBuild
+  (Ok)
   (Err (Box CompilerDiagnostic)))
 
 (defenum GenMaybeEntry
@@ -349,15 +357,20 @@
 (define (spec-template-env-shadow-pattern-list
   [templates : SpecTemplateEnv]
   [patterns : AstPatternList]) : SpecTemplateEnv
-  (match patterns
-    [(AstPatternList.Nil) templates]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (spec-template-env-shadow-pattern-list
-          (spec-template-env-shadow-pattern templates pattern)
-          rest))]))
+  (spec-template-env-shadow-pattern-list-at templates (& patterns) 0))
+
+(define (spec-template-env-shadow-pattern-list-at
+  [templates : SpecTemplateEnv]
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]) : SpecTemplateEnv
+  (if (>= index (ast-pattern-list-len patterns))
+    templates
+    (spec-template-env-shadow-pattern-list-at
+      (spec-template-env-shadow-pattern
+        templates
+        (ast-pattern-list-get patterns index (ast-pattern-fallback)))
+      patterns
+      (+ index 1))))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (match decls
@@ -1655,15 +1668,20 @@
 (define (spec-value-subst-remove-pattern-list
   [subs : SpecValueSubst]
   [patterns : AstPatternList]) : SpecValueSubst
-  (match patterns
-    [(AstPatternList.Nil) subs]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (spec-value-subst-remove-pattern-list
-          (spec-value-subst-remove-pattern subs pattern)
-          rest))]))
+  (spec-value-subst-remove-pattern-list-at subs (& patterns) 0))
+
+(define (spec-value-subst-remove-pattern-list-at
+  [subs : SpecValueSubst]
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]) : SpecValueSubst
+  (if (>= index (ast-pattern-list-len patterns))
+    subs
+    (spec-value-subst-remove-pattern-list-at
+      (spec-value-subst-remove-pattern
+        subs
+        (ast-pattern-list-get patterns index (ast-pattern-fallback)))
+      patterns
+      (+ index 1))))
 
 (define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name : String]) : SpecTypeSubst
   (match subs
@@ -1724,15 +1742,20 @@
 (define (spec-type-subst-remove-pattern-list
   [subs : SpecTypeSubst]
   [patterns : AstPatternList]) : SpecTypeSubst
-  (match patterns
-    [(AstPatternList.Nil) subs]
-    [(AstPatternList.Cons pattern rest)
-      (let
-        [pattern : AstPattern (box-get pattern)]
-        [rest : AstPatternList (box-get rest)]
-        (spec-type-subst-remove-pattern-list
-          (spec-type-subst-remove-pattern subs pattern)
-          rest))]))
+  (spec-type-subst-remove-pattern-list-at subs (& patterns) 0))
+
+(define (spec-type-subst-remove-pattern-list-at
+  [subs : SpecTypeSubst]
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]) : SpecTypeSubst
+  (if (>= index (ast-pattern-list-len patterns))
+    subs
+    (spec-type-subst-remove-pattern-list-at
+      (spec-type-subst-remove-pattern
+        subs
+        (ast-pattern-list-get patterns index (ast-pattern-fallback)))
+      patterns
+      (+ index 1))))
 
 (define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
   (match ty
@@ -2015,31 +2038,42 @@
   [arms : AstMatchArmList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecMatchArmList
-  (match arms
-    [(AstMatchArmList.Nil)
-      (ResultSpecMatchArmList.Ok AstMatchArmList.Nil state)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (spec-rewrite-expr
-                body
-                (spec-template-env-shadow-pattern templates pattern)
-                state)
-                [(ResultSpecExpr.Ok rewritten-body body-state)
-                  (match (spec-rewrite-match-arms rest templates body-state)
-                    [(ResultSpecMatchArmList.Ok rewritten-rest rest-state)
-                      (ResultSpecMatchArmList.Ok
-                        (ast-match-arm-cons
-                          (ast-match-arm pattern rewritten-body)
-                          rewritten-rest)
-                        rest-state)]
-                    [(ResultSpecMatchArmList.Err diag)
-                      (ResultSpecMatchArmList.Err diag)])]
-                [(ResultSpecExpr.Err diag) (ResultSpecMatchArmList.Err diag)]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (match (spec-rewrite-match-arms-at (& arms) 0 templates state (&mut out))
+      [(ResultSpecMatchArmListBuild.Ok next-state)
+        (ResultSpecMatchArmList.Ok out next-state)]
+      [(ResultSpecMatchArmListBuild.Err diag) (ResultSpecMatchArmList.Err diag)])))
+
+(define (spec-rewrite-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [templates : SpecTemplateEnv]
+  [state : SpecState]
+  [out : (&mut out AstMatchArmList)]) : ResultSpecMatchArmListBuild
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultSpecMatchArmListBuild.Ok state)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (spec-rewrite-expr
+            body
+            (spec-template-env-shadow-pattern templates pattern)
+            state)
+            [(ResultSpecExpr.Ok rewritten-body body-state)
+              (begin
+                (ast-match-arm-list-push
+                  out
+                  (ast-match-arm pattern rewritten-body))
+                (spec-rewrite-match-arms-at
+                  arms
+                  (+ index 1)
+                  templates
+                  body-state
+                  out))]
+            [(ResultSpecExpr.Err diag) (ResultSpecMatchArmListBuild.Err diag)]))])))
 
 (define (spec-rewrite-specialized-call
   [template : SpecTemplate]
@@ -3829,29 +3863,36 @@
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
   [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
-  (match arms
-    [(AstMatchArmList.Nil) (ResultSpecSubMatchArmList.Ok AstMatchArmList.Nil)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (spec-substitute-values-expr
-                body
-                (spec-value-subst-remove-pattern subs pattern))
-                [(ResultSpecSubExpr.Ok rewritten-body)
-                  (match (spec-substitute-values-match-arms rest subs)
-                    [(ResultSpecSubMatchArmList.Ok rewritten-rest)
-                      (ResultSpecSubMatchArmList.Ok
-                        (ast-match-arm-cons
-                          (ast-match-arm pattern rewritten-body)
-                          rewritten-rest))]
-                    [(ResultSpecSubMatchArmList.Err diag)
-                      (ResultSpecSubMatchArmList.Err diag)])]
-                [(ResultSpecSubExpr.Err diag)
-                  (ResultSpecSubMatchArmList.Err diag)]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (match (spec-substitute-values-match-arms-at (& arms) 0 subs (&mut out))
+      [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
+      [(ResultSpecSubMatchArmListBuild.Err diag)
+        (ResultSpecSubMatchArmList.Err diag)])))
+
+(define (spec-substitute-values-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [subs : SpecValueSubst]
+  [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultSpecSubMatchArmListBuild.Ok)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (spec-substitute-values-expr
+            body
+            (spec-value-subst-remove-pattern subs pattern))
+            [(ResultSpecSubExpr.Ok rewritten-body)
+              (begin
+                (ast-match-arm-list-push
+                  out
+                  (ast-match-arm pattern rewritten-body))
+                (spec-substitute-values-match-arms-at arms (+ index 1) subs out))]
+            [(ResultSpecSubExpr.Err diag)
+              (ResultSpecSubMatchArmListBuild.Err diag)]))])))
 
 (define (spec-substitute-types-expr [expr : AstExpr] [subs : SpecTypeSubst]) : ResultSpecSubExpr
   (match expr
@@ -4635,29 +4676,36 @@
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]
   [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
-  (match arms
-    [(AstMatchArmList.Nil) (ResultSpecSubMatchArmList.Ok AstMatchArmList.Nil)]
-    [(AstMatchArmList.Cons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm.Arm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (spec-substitute-types-expr
-                body
-                (spec-type-subst-remove-pattern subs pattern))
-                [(ResultSpecSubExpr.Ok rewritten-body)
-                  (match (spec-substitute-types-match-arms rest subs)
-                    [(ResultSpecSubMatchArmList.Ok rewritten-rest)
-                      (ResultSpecSubMatchArmList.Ok
-                        (ast-match-arm-cons
-                          (ast-match-arm pattern rewritten-body)
-                          rewritten-rest))]
-                    [(ResultSpecSubMatchArmList.Err diag)
-                      (ResultSpecSubMatchArmList.Err diag)])]
-                [(ResultSpecSubExpr.Err diag)
-                  (ResultSpecSubMatchArmList.Err diag)]))]))]))
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+    (match (spec-substitute-types-match-arms-at (& arms) 0 subs (&mut out))
+      [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
+      [(ResultSpecSubMatchArmListBuild.Err diag)
+        (ResultSpecSubMatchArmList.Err diag)])))
+
+(define (spec-substitute-types-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [subs : SpecTypeSubst]
+  [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
+  (if (>= index (ast-match-arm-list-len arms))
+    (ResultSpecSubMatchArmListBuild.Ok)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (spec-substitute-types-expr
+            body
+            (spec-type-subst-remove-pattern subs pattern))
+            [(ResultSpecSubExpr.Ok rewritten-body)
+              (begin
+                (ast-match-arm-list-push
+                  out
+                  (ast-match-arm pattern rewritten-body))
+                (spec-substitute-types-match-arms-at arms (+ index 1) subs out))]
+            [(ResultSpecSubExpr.Err diag)
+              (ResultSpecSubMatchArmListBuild.Err diag)]))])))
 
 (define (spec-rewrite-decl
   [decl : AstDecl]

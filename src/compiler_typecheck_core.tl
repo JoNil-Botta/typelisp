@@ -49282,9 +49282,9 @@
     [(ResultMacroDeclExpansion.Ok collapsed _) collapsed]
     [(ResultMacroDeclExpansion.Err _) decls]))
 
-;; Alias-qualified hashmap imports only need declarations reachable from the
-;; members the importer names; keep generated imports and a local dependency
-;; closure so the module body remains replay-stable.
+;; Alias-qualified generated collection imports only need declarations reachable
+;; from the members the importer names; keep generated imports and a local
+;; dependency closure so the module body remains replay-stable.
 (defstruct MacroGeneratedSurfaceNameSet
   (map hashmap.StringI64Map))
 
@@ -50759,10 +50759,57 @@
   [identity : String]) : bool
   (or
     (tc-string-prefix? identity "stdlib.hashmap:hashmap(")
-    (string.eq macro-name "hashmap")
-    (if (tc-name-qualified? macro-name)
-      (string.eq (tc-qualified-name-base macro-name) "hashmap")
-      false)))
+    (tc-name-base-eq? macro-name "hashmap")))
+
+(define (macro-generated-surface-vector?
+  [module : String]
+  [macro-name : String]
+  [identity : String]) : bool
+  ;: Vector imports are common; start with the hot env/fs fanout that motivated
+  ;: #4130 so the closure pass cost stays bounded.
+  (and
+    (or (string.eq module "stdlib.env") (string.eq module "stdlib.fs"))
+    (or
+      (tc-string-prefix? identity "stdlib.vector:vector(")
+      (tc-name-base-eq? macro-name "vector"))))
+
+(define (macro-generated-surface-filtered?
+  [module : String]
+  [macro-name : String]
+  [identity : String]) : bool
+  (or
+    (macro-generated-surface-hashmap? macro-name identity)
+    (macro-generated-surface-vector? module macro-name identity)))
+
+(cfg
+  test
+  (test
+    macro-generated-surface-filter-recognizes-collection-identities
+    (begin
+      (test.assert-true
+        (macro-generated-surface-filtered?
+          "stdlib.hashmap_user"
+          "hashmap"
+          "stdlib.hashmap:hashmap(String i64)")
+        "generated hashmap imports should use surface filtering")
+      (test.assert-true
+        (macro-generated-surface-filtered?
+          "stdlib.env"
+          "vector"
+          "stdlib.vector:vector(String)")
+        "hot generated vector imports should use surface filtering")
+      (test.assert-false
+        (macro-generated-surface-filtered?
+          "stdlib.args"
+          "vector"
+          "stdlib.vector:vector(String)")
+        "non-hot generated vector imports should keep their full surface")
+      (test.assert-false
+        (macro-generated-surface-filtered?
+          "stdlib.other_user"
+          "other"
+          "stdlib.other:other(String)")
+        "unlisted generated imports should keep their full surface"))))
 
 (define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr
@@ -50806,7 +50853,7 @@
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
     [surface-body : AstDeclList
-      (if (macro-generated-surface-hashmap? macro-name identity)
+      (if (macro-generated-surface-filtered? module macro-name identity)
         (macro-generated-surface-filter
           orig-decls
           target-module

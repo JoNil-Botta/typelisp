@@ -32180,21 +32180,21 @@ tl_memchr:
           (compiler-backend-lower-mode-for-target
             target
             (CompilerBackendMode.Scalar)))]
-      [(ResultAstProgramDiagnostic.Err diag) (ErrCompilerLower diag)])))
+      [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerLower.Err diag)])))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-linux-with-spans program spans)]
-    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackend.Err diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
   (match (compiler-backend-lower-source-for-target src target)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-with-spans-for-target program spans target)]
-    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackend.Err diag)]))
 
 ;; #2357: inline-by-value aggregates are the always-on default lowering, so
 ;; emitting "in inline-aggregates mode" is just the ordinary target emit. The
@@ -32208,21 +32208,21 @@ tl_memchr:
 
 (define (compiler-backend-emit-source-object-image [src : String]) : ResultCompilerBackendObject
   (match (lower-compiler-source src)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-object-image-linux program spans)]
-    [(ErrCompilerLower diag) (ResultCompilerBackendObject.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackendObject.Err diag)]))
 
 (define (compiler-backend-emit-source-object-image-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendObject
   (match (compiler-backend-lower-source-for-target src target)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-object-image-target
         program
         target
         spans
         true)]
-    [(ErrCompilerLower diag) (ResultCompilerBackendObject.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackendObject.Err diag)]))
 
 (define (compiler-backend-string-prefix-at?
   [text : String]
@@ -32683,14 +32683,14 @@ tl_memchr:
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendPic
   (match (compiler-backend-lower-source-for-target src target)
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-backend-emit-program-pic-target-with-mode
         program
         target
         (CompilerBackendMode.Scalar)
         spans
         true)]
-    [(ErrCompilerLower diag) (ResultCompilerBackendPic.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackendPic.Err diag)]))
 
 (define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic
   (compiler-backend-emit-source-pic-for-target

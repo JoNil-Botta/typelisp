@@ -1377,7 +1377,7 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(OkCompilerLower program spans)
+          [(ResultCompilerLower.Ok program spans)
             (begin
               (cfg
                 compile-profile
@@ -1388,7 +1388,7 @@
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
                 (compiler-driver-lowered-from-active-pools program spans)))]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLower.Err diag)
             (begin
               (cfg
                 compile-profile
@@ -1420,7 +1420,7 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(OkCompilerLower program spans)
+          [(ResultCompilerLower.Ok program spans)
             (begin
               (cfg
                 compile-profile
@@ -1431,7 +1431,7 @@
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
                 (compiler-driver-lowered-from-active-pools program spans)))]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLower.Err diag)
             (begin
               (cfg
                 compile-profile
@@ -1472,7 +1472,7 @@
               stdlib-roots
               cfgs)
             pools)
-            [(OkCompilerLower program spans)
+            [(ResultCompilerLower.Ok program spans)
               (begin
                 (cfg
                   compile-profile
@@ -1485,7 +1485,7 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -1526,7 +1526,7 @@
               stdlib-roots
               cfgs)
             pools)
-            [(OkCompilerLower program spans)
+            [(ResultCompilerLower.Ok program spans)
               (begin
                 (cfg
                   compile-profile
@@ -1539,7 +1539,7 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -1873,9 +1873,9 @@
     (ast-program decls)
     paths
     (compiler-driver-lower-mode-for-target target mode))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
-    [(ErrCompilerLower diag) (ResultCompilerDriverLowered.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerDriverLowered.Err diag)]))
 
 (define (compiler-driver-emit-package-loaded-object-image
   [input-path : String]
@@ -1928,7 +1928,7 @@
           "typecheck-prefix-lower"
           stdlib-roots
           (compiler-driver-target-cfgs target (compiler-cfg-empty))))
-        [(OkCompilerLower program spans)
+        [(ResultCompilerLower.Ok program spans)
           (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
             input-path
             (compiler-driver-lowered-from-active-pools program spans)
@@ -1938,7 +1938,7 @@
             opt-level
             emit-entry
             crt-entry)]
-        [(ErrCompilerLower diag) (ResultCompilerDriver.Err diag)])]
+        [(ResultCompilerLower.Err diag) (ResultCompilerDriver.Err diag)])]
     [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg

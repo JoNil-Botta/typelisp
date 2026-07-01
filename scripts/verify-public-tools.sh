@@ -1743,7 +1743,11 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%r9), %r9'
+    if [ "$HOST_OS" = windows ]; then
+        SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%rdx), %rbx'
+    else
+        SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%r9), %r9'
+    fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"

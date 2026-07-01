@@ -379,6 +379,25 @@
 (define (compiler-backend-set-scalar-registers! [enabled : bool]) : unit
   (set! compiler-backend-scalar-registers-enabled enabled))
 
+(define compiler-backend-current-fn-win64 : bool
+  false)
+
+(define (compiler-backend-set-current-fn-abi! [abi : CompilerRegTargetAbi]) : unit
+  (set!
+    compiler-backend-current-fn-win64
+    (match abi
+      [(CompilerRegTargetAbi.Windows) true]
+      [_ false])))
+
+(define (compiler-backend-set-current-fn-linux!) : unit
+  (set! compiler-backend-current-fn-win64 false))
+
+(define (compiler-backend-set-current-fn-win64!) : unit
+  (set! compiler-backend-current-fn-win64 true))
+
+(define (compiler-backend-current-fn-win64?) : bool
+  compiler-backend-current-fn-win64)
+
 ;; Per-emission cache for interned user-symbol mangling. The generation guard
 ;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
 (define compiler-backend-user-symbol-cache-values : (Array String)
@@ -3478,6 +3497,11 @@
   [assignments : CompilerRegAssignmentList]) : bool
   (or
     (compiler-backend-plan-uses-reg? assignments "%rbx")
+    (and
+      (compiler-backend-current-fn-win64?)
+      (or
+        (compiler-backend-plan-uses-reg? assignments "%rsi")
+        (compiler-backend-plan-uses-reg? assignments "%rdi")))
     (compiler-backend-plan-uses-reg? assignments "%r12")
     (compiler-backend-plan-uses-reg? assignments "%r13")
     (compiler-backend-plan-uses-reg? assignments "%r14")
@@ -3492,9 +3516,15 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments)
-    (if (compiler-backend-plan-uses-reg? assignments "%rbx")
-      (+ vars 5)
-      (+ vars 4))
+    (if (compiler-backend-current-fn-win64?)
+      (cond
+        [(compiler-backend-plan-uses-reg? assignments "%rdi") (+ vars 7)]
+        [(compiler-backend-plan-uses-reg? assignments "%rsi") (+ vars 6)]
+        [(compiler-backend-plan-uses-reg? assignments "%rbx") (+ vars 5)]
+        [else (+ vars 4)])
+      (if (compiler-backend-plan-uses-reg? assignments "%rbx")
+        (+ vars 5)
+        (+ vars 4)))
     vars))
 
 ;; #2386: reserve a second var-region for the word1 stack slots of any group var
@@ -3884,17 +3914,19 @@
 ;; more such homes, `leaq slot, %rsp` plus pops is no larger than the movq loads.
 (define (compiler-backend-callee-save-pop-eligible?
   [assignments : CompilerRegAssignmentList]) : bool
-  (let
-    [r12 : bool (compiler-backend-plan-uses-reg? assignments "%r12")]
-    [r13 : bool (compiler-backend-plan-uses-reg? assignments "%r13")]
-    [r14 : bool (compiler-backend-plan-uses-reg? assignments "%r14")]
-    [r15 : bool (compiler-backend-plan-uses-reg? assignments "%r15")]
-    [rbx : bool (compiler-backend-plan-uses-reg? assignments "%rbx")]
-    (or
-      (and r12 r13 (not r14) (not r15) (not rbx))
-      (and r12 r13 r14 (not r15) (not rbx))
-      (and r12 r13 r14 r15 (not rbx))
-      (and r12 r13 r14 r15 rbx))))
+  (if (compiler-backend-current-fn-win64?)
+    false
+    (let
+      [r12 : bool (compiler-backend-plan-uses-reg? assignments "%r12")]
+      [r13 : bool (compiler-backend-plan-uses-reg? assignments "%r13")]
+      [r14 : bool (compiler-backend-plan-uses-reg? assignments "%r14")]
+      [r15 : bool (compiler-backend-plan-uses-reg? assignments "%r15")]
+      [rbx : bool (compiler-backend-plan-uses-reg? assignments "%rbx")]
+      (or
+        (and r12 r13 (not r14) (not r15) (not rbx))
+        (and r12 r13 r14 (not r15) (not rbx))
+        (and r12 r13 r14 r15 (not rbx))
+        (and r12 r13 r14 r15 rbx)))))
 
 (define (compiler-backend-callee-save-pop-start-idx
   [assignments : CompilerRegAssignmentList]) : i64
@@ -3931,6 +3963,24 @@
             (compiler-backend-emit-pop-callee-reg assignments "%r13")
             (compiler-backend-emit-pop-callee-reg assignments "%r12")))))))
 
+(define (compiler-backend-emit-save-win64-callee-regs
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (string.append
+      (compiler-backend-emit-save-callee-reg assignments vars "%rsi" 5)
+      (compiler-backend-emit-save-callee-reg assignments vars "%rdi" 6))
+    ""))
+
+(define (compiler-backend-emit-restore-win64-callee-regs
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (string.append
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rdi" 6)
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rsi" 5))
+    ""))
+
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
@@ -3942,7 +3992,9 @@
         (compiler-backend-emit-save-callee-reg assignments vars "%r14" 2)
         (string.append
           (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)
-          (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4))))))
+          (string.append
+            (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4)
+            (compiler-backend-emit-save-win64-callee-regs assignments vars)))))))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -3950,14 +4002,24 @@
   (if (compiler-backend-callee-save-pop-eligible? assignments)
     (compiler-backend-emit-restore-callee-regs-pop assignments vars)
     (string.append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
+      (compiler-backend-emit-restore-win64-callee-regs assignments vars)
       (string.append
-        (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
+        (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
         (string.append
-          (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+          (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
           (string.append
-            (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
-            (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))))
+            (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+            (string.append
+              (compiler-backend-emit-restore-callee-reg
+                assignments
+                vars
+                "%r13"
+                1)
+              (compiler-backend-emit-restore-callee-reg
+                assignments
+                vars
+                "%r12"
+                0))))))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label
@@ -22830,12 +22892,12 @@
         [_ra-grp-mask : unit
           (compiler-reg-set-group-class-masks!
             (struct-get program-index group-word-class-masks))]
+        [fn-abi : CompilerRegTargetAbi (compiler-backend-regalloc-abi target)]
+        [_fn-abi : unit (compiler-backend-set-current-fn-abi! fn-abi)]
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar-for-abi
-                (compiler-backend-regalloc-abi target)
-                walk-func)
+              (compiler-reg-plan-function-scalar-for-abi fn-abi walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
         [call-save-enabled : bool
@@ -22876,7 +22938,8 @@
             call-save-blocks)]
         [loop-split-rewrite : CompilerRegCallSaveRewrite
           (if call-save-enabled
-            (compiler-reg-loop-split-rewrite-blocks
+            (compiler-reg-loop-split-rewrite-blocks-for-abi
+              fn-abi
               loop-split-func
               call-save-blocks
               call-save-vars

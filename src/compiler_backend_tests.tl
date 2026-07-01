@@ -3416,6 +3416,17 @@
               (CompilerRegLocation.Register "%rbx"))
             CompilerRegAssignmentList.Nil))))))
 
+(define (compiler-backend-win64-callee-save-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rsi"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%rdi"))
+        CompilerRegAssignmentList.Nil))))
+
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -3433,6 +3444,7 @@
 
 (define (compiler-backend-callee-save-pop-epilogue-ok?) : bool
   (let
+    [_abi : unit (compiler-backend-set-current-fn-linux!)]
     [one : CompilerRegAssignmentList
       (compiler-backend-callee-save-assignments1)]
     [two : CompilerRegAssignmentList
@@ -3475,6 +3487,27 @@
         (compiler-backend-string-contains? shared "    popq %rbx\n"))
       (compiler-backend-string-contains? shared "    leave\n    ret\n")
       (not (string.eq shared "")))))
+
+(define (compiler-backend-win64-callee-save-homes-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-win64-callee-save-assignments)]
+    [save : String (compiler-backend-emit-save-callee-regs assignments 3)]
+    [restore : String (compiler-backend-emit-restore-callee-regs assignments 3)]
+    [ok : bool
+      (and
+        (compiler-backend-plan-uses-callee-regs? assignments)
+        (= (compiler-backend-frame-slots 3 assignments) 10)
+        (string.eq
+          save
+          "    movq %r12, -32(%rbp)\n    movq %rsi, -72(%rbp)\n    movq %rdi, -80(%rbp)\n")
+        (string.eq
+          restore
+          "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
+        (not (compiler-backend-string-contains? restore "popq")))]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -5500,16 +5533,26 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-callee-save-source)
-    (CompilerBackendTarget.Windows))
-    [(ResultCompilerBackend.Ok asm)
-      (and
-        (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
-        ;; Runtime shims may use callee-saved registers internally; this check
-        ;; covers user-function allocation, where `%r12` must not be selected.
-        (not (compiler-backend-string-contains? asm "    movq %r12, -")))]
-    [(ResultCompilerBackend.Err _) false]))
+  (begin
+    (compiler-backend-set-scalar-registers! true)
+    (match (compiler-backend-emit-source-for-target
+      (compiler-backend-callee-save-source)
+      (CompilerBackendTarget.Windows))
+      [(ResultCompilerBackend.Ok asm)
+        (let
+          [ok : bool
+            (and
+              (compiler-backend-string-contains? asm "heavy:\n")
+              (not (compiler-backend-string-contains? asm ".seh_pushreg")))]
+          (begin
+            (compiler-backend-set-scalar-registers! false)
+            (compiler-backend-set-current-fn-linux!)
+            ok))]
+      [(ResultCompilerBackend.Err _)
+        (begin
+          (compiler-backend-set-scalar-registers! false)
+          (compiler-backend-set-current-fn-linux!)
+          false)])))
 
 (define (compiler-backend-target-windows-runtime-ok?) : bool
   (match (compiler-backend-emit-program-for-target
@@ -12956,7 +12999,8 @@
       (and
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
-        (compiler-backend-callee-save-pop-epilogue-ok?))
+        (compiler-backend-callee-save-pop-epilogue-ok?)
+        (compiler-backend-win64-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and
         (compiler-backend-phi-parallel-copy-ok?)

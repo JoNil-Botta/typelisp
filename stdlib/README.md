@@ -292,13 +292,21 @@ use.
   sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render
-  helper used by the borrowed companion. Import it with
-  `(import "stdlib/text_buf.tl")`.
+  helper used by the borrowed companion. Its declarations are emitted from
+  `text_buf_family.tl`; import it with `(import "stdlib/text_buf.tl")`.
 - `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
   borrowed-chunk companion surface. Import it with
   `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
   `text_buf.tl` while the compatibility surface keeps owned chunk storage, but
-  adapts to the owned render helper at explicit materialization boundaries.
+  both surfaces are emitted from `text_buf_family.tl` and adapt to the owned
+  render helper at explicit materialization boundaries.
+- `text_buf_family.tl`: declaration-emitting generator source for the owned
+  `TextBuf` and borrowed `TextBufBorrowed` families. It is imported by the
+  public text-buffer modules rather than by ordinary callers.
+  This is the reference pattern for flat compatibility twins that cannot yet
+  become generated module imports: keep the stable public modules as thin shells,
+  splice shared declarations from one `: Decls` generator, and leave only
+  caller-site compatibility macros or inline tests in the shell.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`, with `I64Vec` preserved as the compatibility template and
   `StringVec` added as the first non-i64 stdlib instantiation. Both provide
@@ -584,6 +592,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/test.tl")
 (import "stdlib/time.tl")
 (import "stdlib/text_buf.tl")
+(import "stdlib/text_buf_family.tl")
 (import "stdlib/vector_slice.tl")
 ```
 

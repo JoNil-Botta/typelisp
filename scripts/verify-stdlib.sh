@@ -213,6 +213,7 @@ thread.tl
 time.tl
 text_buf.tl
 text_buf_borrowed.tl
+text_buf_family.tl
 vector.tl
 vector_slice.tl
 EOF

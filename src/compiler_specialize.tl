@@ -4849,23 +4849,22 @@
             (let
               [decl-path : String
                 (gen-path-list-head-or path-cursor fallback-path)]
-              (begin
-                (match (spec-rewrite-decl decl templates cur-state)
-                  [(ResultSpecDecl.Ok maybe-decl decl-state)
-                    (begin
-                      (set! cur-state decl-state)
-                      (match maybe-decl
-                        [(SpecMaybeDecl.None) unit]
-                        [(SpecMaybeDecl.Some rewritten-decl)
-                          (begin
-                            (ast-decl-list-push (&mut out) rewritten-decl)
-                            (ast-decl-path-list-push (&mut out-paths) decl-path))])
-                      (set! decl-cursor (box-get rest))
-                      (set! path-cursor (gen-path-list-tail path-cursor)))]
-                  [(ResultSpecDecl.Err diag)
-                    (begin
-                      (set! result (ResultSpecDeclsWithPaths.Err diag))
-                      (set! done true))])))]))
+              (match (spec-rewrite-decl decl templates cur-state)
+                [(ResultSpecDecl.Ok maybe-decl decl-state)
+                  (begin
+                    (set! cur-state decl-state)
+                    (match maybe-decl
+                      [(SpecMaybeDecl.None) unit]
+                      [(SpecMaybeDecl.Some rewritten-decl)
+                        (begin
+                          (ast-decl-list-push (&mut out) rewritten-decl)
+                          (ast-decl-path-list-push (&mut out-paths) decl-path))])
+                    (set! decl-cursor (box-get rest))
+                    (set! path-cursor (gen-path-list-tail path-cursor)))]
+                [(ResultSpecDecl.Err diag)
+                  (begin
+                    (set! result (ResultSpecDeclsWithPaths.Err diag))
+                    (set! done true))]))]))
       result)))
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList

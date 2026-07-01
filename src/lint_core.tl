@@ -618,6 +618,23 @@
     [(AstExpr.Begin exprs) (lint-expr-list-has-return? exprs)]
     [_ false]))
 
+;: True when `expr` is the remainder of an else-`if` ladder whose then arms
+;: and terminal else all exit via return, break, or continue.
+(define (lint-all-exit-ladder-tail? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-all-exit-ladder-tail? inner))]
+    [(AstExpr.If _ then-branch-box else-branch-box)
+      (let
+        [then-branch : AstExpr (ast-node-get then-branch-box)]
+        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        (and
+          (lint-return-branch? then-branch)
+          (lint-all-exit-ladder-tail? else-branch)))]
+    [_ (lint-return-branch? expr)]))
+
 (define (lint-side-effect-branch? [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -6711,6 +6728,8 @@
     [else-unit : bool (lint-unit-expr? else-branch)]
     [then-return : bool (lint-return-branch? then-branch)]
     [else-return : bool (lint-return-branch? else-branch)]
+    [all-exit-ladder : bool
+      (and then-return (lint-all-exit-ladder-tail? else-branch))]
     [cond-not : bool (lint-not-call? cond)]
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
     (cond
@@ -6748,6 +6767,15 @@
       ;; descends the else-chain (walking each cond/then) without
       ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
       ;; rule is active.
+      [(and (>= ladder threshold) all-exit-ladder)
+        (lint-walk-ladder
+          (AstExpr.If
+            (ast-node-push cond)
+            (ast-node-push then-branch)
+            (ast-node-push else-branch))
+          threshold
+          tail-return-path
+          acc)]
       [(>= ladder threshold)
         (lint-walk-ladder
           (AstExpr.If
@@ -7554,6 +7582,18 @@
     [return-chain3 : i64
       (ast-expr-if vx (ast-expr-if vx (ast-expr-if vx one one) one) one)]
     [return-one : i64 (ast-expr-return one)]
+    [break-expr : i64 (ast-expr-break)]
+    [continue-expr : i64 (ast-expr-continue)]
+    [all-return-ladder3 : i64
+      (ast-expr-if
+        vx
+        return-one
+        (ast-expr-if vx return-one (ast-expr-if vx return-one return-one)))]
+    [all-loop-exit-ladder3 : i64
+      (ast-expr-if
+        vx
+        break-expr
+        (ast-expr-if vx continue-expr (ast-expr-if vx break-expr continue-expr)))]
     [guard-ladder3 : i64
       (ast-expr-if
         vx
@@ -7818,6 +7858,24 @@
         1)
         unit
         (io.panic "lint: 2-deep ladder should be flagged at threshold 2"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            all-return-ladder3
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: all-return ladder should not be ladder-flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            all-loop-exit-ladder3
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: break/continue ladder should not be ladder-flagged"))
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=

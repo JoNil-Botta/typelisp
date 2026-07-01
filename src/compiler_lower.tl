@@ -3179,35 +3179,42 @@
   [args : AstExprList]
   [subst : LowerSpmdInlineSubst]
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
+  (lower-spmd-inline-build-subst-at ctx params (& args) 0 subst origin))
+
+(define (lower-spmd-inline-build-subst-at
+  [ctx : TcContext]
+  [params : AstParamList]
+  [args : (& args AstExprList)]
+  [arg-index : i64]
+  [subst : LowerSpmdInlineSubst]
+  [origin : AstExpr]) : ResultLowerSpmdInlineSubst
   (match params
     [(AstParamList.Nil)
-      (match args
-        [(AstExprList.Nil) (ResultLowerSpmdInlineSubst.Ok subst)]
-        [_
-          (ResultLowerSpmdInlineSubst.Err
-            (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))])]
+      (if (= arg-index (ast-expr-list-len args))
+        (ResultLowerSpmdInlineSubst.Ok subst)
+        (ResultLowerSpmdInlineSubst.Err
+          (box (lower-diagnostic-at-expr origin "lower: arity mismatch"))))]
     [(AstParamList.Cons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
-        (match args
-          [(AstExprList.Cons arg rest-args)
-            (let
-              [arg : AstExpr (lower-context-expr-get ctx arg)]
-              [rest-args : AstExprList (box-get rest-args)]
-              (match param
-                [(AstParam.Param param-name _ _)
-                  (lower-spmd-inline-build-subst
-                    ctx
-                    rest-params
-                    rest-args
-                    (lower-spmd-inline-subst-cons
-                      (intern-str param-name)
-                      arg
-                      subst)
-                    origin)]))]
-          [(AstExprList.Nil)
-            (ResultLowerSpmdInlineSubst.Err
-              (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))]))]))
+        (if (< arg-index (ast-expr-list-len args))
+          (let
+            [arg-id : i64 (ast-expr-list-get args arg-index 0)]
+            [arg : AstExpr (lower-context-expr-get ctx arg-id)]
+            (match param
+              [(AstParam.Param param-name _ _)
+                (lower-spmd-inline-build-subst-at
+                  ctx
+                  rest-params
+                  args
+                  (+ arg-index 1)
+                  (lower-spmd-inline-subst-cons
+                    (intern-str param-name)
+                    arg
+                    subst)
+                  origin)]))
+          (ResultLowerSpmdInlineSubst.Err
+            (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))))]))
 
 (define (lower-spmd-inline-arg-subst
   [ctx : TcContext]
@@ -3228,29 +3235,51 @@
   [exprs : AstExprList]
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerStringSet]) : ResultLowerAstExprList
-  (match exprs
-    [(AstExprList.Nil) (ResultLowerAstExprList.Ok AstExprList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (lower-context-expr-get ctx head)]
-        [rest : AstExprList (box-get rest)]
-        (match (lower-spmd-inline-expr ctx env type-env head subst shadowed)
-          [(ResultLowerAstExpr.Ok rewritten-head)
-            (match (lower-spmd-inline-expr-list
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    (match (lower-spmd-inline-expr-list-into
+      ctx
+      env
+      type-env
+      (& exprs)
+      0
+      subst
+      shadowed
+      (&mut out))
+      [(ResultLowerAstExprList.Ok _) (ResultLowerAstExprList.Ok out)]
+      [(ResultLowerAstExprList.Err diag) (ResultLowerAstExprList.Err diag)])))
+
+(define (lower-spmd-inline-expr-list-into
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]
+  [out : (&mut out AstExprList)]) : ResultLowerAstExprList
+  (if (>= index (ast-expr-list-len exprs))
+    (ResultLowerAstExprList.Ok (ast-expr-list-new))
+    (let
+      [head-id : i64 (ast-expr-list-get exprs index 0)]
+      [head : AstExpr (lower-context-expr-get ctx head-id)]
+      (match (lower-spmd-inline-expr ctx env type-env head subst shadowed)
+        [(ResultLowerAstExpr.Ok rewritten-head)
+          (begin
+            (ast-expr-list-push
+              out
+              (lower-context-expr-push ctx rewritten-head))
+            (lower-spmd-inline-expr-list-into
               ctx
               env
               type-env
-              rest
+              exprs
+              (+ index 1)
               subst
-              shadowed)
-              [(ResultLowerAstExprList.Ok rewritten-rest)
-                (ResultLowerAstExprList.Ok
-                  (ast-expr-cons
-                    (lower-context-expr-push ctx rewritten-head)
-                    rewritten-rest))]
-              [(ResultLowerAstExprList.Err diag)
-                (ResultLowerAstExprList.Err diag)])]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExprList.Err diag)]))]))
+              shadowed
+              out))]
+        [(ResultLowerAstExpr.Err diag) (ResultLowerAstExprList.Err diag)]))))
 
 (define (lower-spmd-inline-let-bindings
   [ctx : TcContext]
@@ -4320,17 +4349,25 @@
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : AstExprList]) : LowerReachState
-  (match exprs
-    [(AstExprList.Nil) state]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (lower-reach-expr-list
-          all-functions
-          names
-          (lower-reach-expr all-functions names state expr)
-          rest))]))
+  (lower-reach-expr-list-at all-functions names state (& exprs) 0))
+
+(define (lower-reach-expr-list-at
+  [all-functions : hashmap.StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : LowerReachState
+  (if (>= index (ast-expr-list-len exprs))
+    state
+    (let
+      [expr-id : i64 (ast-expr-list-get exprs index 0)]
+      [expr : AstExpr (ast-node-get expr-id)]
+      (lower-reach-expr-list-at
+        all-functions
+        names
+        (lower-reach-expr all-functions names state expr)
+        exprs
+        (+ index 1)))))
 
 (define (lower-reach-let-bindings
   [all-functions : hashmap.StringI64Map]
@@ -4412,19 +4449,29 @@
   [able : CloneNameSet]
   [roots : CloneNameList]
   [exprs : AstExprList]) : CloneNameList
-  (match exprs
-    [(AstExprList.Nil) roots]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (tc-context-expr-get ctx expr)]
-        [rest : AstExprList (box-get rest)]
-        (lower-clone-roots-expr-list
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots expr)
-          rest))]))
+  (lower-clone-roots-expr-list-at ctx env decls able roots (& exprs) 0))
+
+(define (lower-clone-roots-expr-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-expr-list-len exprs))
+    roots
+    (let
+      [expr-id : i64 (ast-expr-list-get exprs index 0)]
+      [expr : AstExpr (tc-context-expr-get ctx expr-id)]
+      (lower-clone-roots-expr-list-at
+        ctx
+        env
+        decls
+        able
+        (lower-clone-roots-expr ctx env decls able roots expr)
+        exprs
+        (+ index 1)))))
 
 (define (lower-clone-roots-bind-let
   [ctx : TcContext]
@@ -4568,33 +4615,22 @@
             (cbi.compiler-builtin-lower-clone-id? lookup-id)
             (not bound)
             (not (lower-top-level-value-defined? ctx lookup-name)))
-            (match args
-              [(AstExprList.Cons _ rest)
-                (let
-                  [rest : AstExprList (box-get rest)]
-                  (match rest
-                    [(AstExprList.Nil)
-                      (match (tc-expr
-                        ctx
-                        env
-                        (tc-context-expr-get
-                          ctx
-                          (ast-expr-call-with-pools
-                            (tc-context-pools ctx)
-                            (ast-node-pool-context-expr-push
-                              (tc-context-pools ctx)
-                              callee)
-                            args)))
-                        [(ResultTcType.Ok clone-ty)
-                          (lower-clone-root-add-type
-                            ctx
-                            decls
-                            able
-                            walked
-                            clone-ty)]
-                        [(ResultTcType.Err _) walked])]
-                    [_ walked]))]
-              [_ walked])
+            (if (= (ast-expr-list-len (& args)) 1)
+              (match (tc-expr
+                ctx
+                env
+                (tc-context-expr-get
+                  ctx
+                  (ast-expr-call-with-pools
+                    (tc-context-pools ctx)
+                    (ast-node-pool-context-expr-push
+                      (tc-context-pools ctx)
+                      callee)
+                    args)))
+                [(ResultTcType.Ok clone-ty)
+                  (lower-clone-root-add-type ctx decls able walked clone-ty)]
+                [(ResultTcType.Err _) walked])
+              walked)
             walked))]
       [_ walked])))
 
@@ -6822,14 +6858,26 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [exprs : AstExprList]) : hashmap.I64I64Map
-  (match exprs
-    [(AstExprList.Nil) used]
-    [(AstExprList.Cons expr rest)
-      (lower-used-types-add-expr-list
+  (lower-used-types-add-expr-list-at pools used module (& exprs) 0))
+
+(define (lower-used-types-add-expr-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-expr-list-len exprs))
+    used
+    (lower-used-types-add-expr-list-at
+      pools
+      (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-expr-id pools used module expr)
+        used
         module
-        (box-get rest))]))
+        (ast-expr-list-get exprs index 0))
+      module
+      exprs
+      (+ index 1))))
 
 (define (lower-used-types-add-pattern
   [pools : AstNodePoolContext]
@@ -10345,22 +10393,14 @@
           (if (and
             (lower-string-concat-builtin-name? (intern-str name))
             (lower-builtin-call-available? ctx env (intern-str name)))
-            (match args
-              [(AstExprList.Cons left tail)
-                (let
-                  [left : AstExpr (tc-context-expr-get ctx left)]
-                  [tail : AstExprList (box-get tail)]
-                  (match tail
-                    [(AstExprList.Cons right rest)
-                      (let
-                        [right : AstExpr (tc-context-expr-get ctx right)]
-                        [rest : AstExprList (box-get rest)]
-                        (match rest
-                          [(AstExprList.Nil)
-                            (LowerMaybeStringConcatCall.Some left right)]
-                          [_ (LowerMaybeStringConcatCall.No)]))]
-                    [_ (LowerMaybeStringConcatCall.No)]))]
-              [_ (LowerMaybeStringConcatCall.No)])
+            (if (= (ast-expr-list-len (& args)) 2)
+              (let
+                [left : AstExpr
+                  (tc-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+                [right : AstExpr
+                  (tc-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
+                (LowerMaybeStringConcatCall.Some left right))
+              (LowerMaybeStringConcatCall.No))
             (LowerMaybeStringConcatCall.No))]
         [_ (LowerMaybeStringConcatCall.No)])]
     [_ (LowerMaybeStringConcatCall.No)]))
@@ -10374,7 +10414,7 @@
   (if (<= remaining 2)
     (ast-expr-cons
       (ast-node-push left)
-      (ast-expr-cons (ast-node-push right) AstExprList.Nil))
+      (ast-expr-cons (ast-node-push right) (ast-expr-list-new)))
     (match (lower-string-concat-call-parts ctx env right)
       [(LowerMaybeStringConcatCall.Some nested-left nested-right)
         (ast-expr-cons
@@ -10388,7 +10428,7 @@
       [(LowerMaybeStringConcatCall.No)
         (ast-expr-cons
           (ast-node-push left)
-          (ast-expr-cons (ast-node-push right) AstExprList.Nil))])))
+          (ast-expr-cons (ast-node-push right) (ast-expr-list-new)))])))
 
 (define (lower-string-concat-runtime-name [count : i64]) : String
   (cond
@@ -10405,35 +10445,54 @@
   [exprs : AstExprList]
   [acc : CompilerIrValueList]
   [count : i64]) : ResultLowerStringValues
-  (match exprs
-    [(AstExprList.Nil) (ResultLowerStringValues.Ok state acc count)]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (tc-context-expr-get ctx expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (lower-expr ctx state env type-env expr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr expr-state value expr-ty)
-                (if (lower-string-handle-type? ctx expr-ty)
-                  (match (lower-string-fields expr-state value)
-                    [(LowerStringFields.Fields field-state ptr len)
-                      (lower-string-concat-values-rev
-                        ctx
-                        field-state
-                        env
-                        type-env
-                        rest
-                        (compiler-ir-value-cons
-                          len
-                          (compiler-ir-value-cons ptr acc))
-                        (+ count 1))])
-                  (ResultLowerStringValues.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        expr
-                        "lower: string-concat requires String"))))])]
-          [(ResultLowerExpr.Err message) (ResultLowerStringValues.Err message)]))]))
+  (lower-string-concat-values-rev-at
+    ctx
+    state
+    env
+    type-env
+    (& exprs)
+    0
+    acc
+    count))
+
+(define (lower-string-concat-values-rev-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [acc : CompilerIrValueList]
+  [count : i64]) : ResultLowerStringValues
+  (if (>= index (ast-expr-list-len exprs))
+    (ResultLowerStringValues.Ok state acc count)
+    (let
+      [expr : AstExpr
+        (tc-context-expr-get ctx (ast-expr-list-get exprs index 0))]
+      (match (lower-expr ctx state env type-env expr)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr expr-state value expr-ty)
+              (if (lower-string-handle-type? ctx expr-ty)
+                (match (lower-string-fields expr-state value)
+                  [(LowerStringFields.Fields field-state ptr len)
+                    (lower-string-concat-values-rev-at
+                      ctx
+                      field-state
+                      env
+                      type-env
+                      exprs
+                      (+ index 1)
+                      (compiler-ir-value-cons
+                        len
+                        (compiler-ir-value-cons ptr acc))
+                      (+ count 1))])
+                (ResultLowerStringValues.Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      expr
+                      "lower: string-concat requires String"))))])]
+        [(ResultLowerExpr.Err message) (ResultLowerStringValues.Err message)]))))
 
 (define (lower-string-concat-exprs
   [ctx : TcContext]
@@ -15464,54 +15523,42 @@
         (lower-arena-builtin-symbol-id name-id)
         CompilerIrValueList.Nil
         result-ty)
-      (match args
-        [(AstExprList.Cons arg tail)
-          (let
-            [arg : AstExpr (ast-node-get arg)]
-            [tail : AstExprList (box-get tail)]
-            (match tail
-              [(AstExprList.Nil)
-                (match (lower-expr ctx state env type-env arg)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr arg-state arg-value arg-ty)
-                        (match (lower-cast-value
-                          arg-state
-                          arg-value
-                          arg-ty
-                          (AstType.I64))
-                          [(LowerExpr.Expr cast-state cast-value _)
-                            (lower-runtime-call-values
-                              cast-state
-                              (lower-arena-builtin-symbol-id name-id)
-                              (compiler-ir-value-cons
-                                cast-value
-                                CompilerIrValueList.Nil)
-                              result-ty)])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-              [_
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: arena builtin expects one argument")))]))]
-        [_
-          (ResultLowerExpr.Err
-            (box (lower-diagnostic "lower: arena builtin expects one argument")))]))))
+      (if (= (ast-expr-list-len (& args)) 1)
+        (let
+          [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          (match (lower-expr ctx state env type-env arg)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr arg-state arg-value arg-ty)
+                  (match (lower-cast-value
+                    arg-state
+                    arg-value
+                    arg-ty
+                    (AstType.I64))
+                    [(LowerExpr.Expr cast-state cast-value _)
+                      (lower-runtime-call-values
+                        cast-state
+                        (lower-arena-builtin-symbol-id name-id)
+                        (compiler-ir-value-cons
+                          cast-value
+                          CompilerIrValueList.Nil)
+                        result-ty)])])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic "lower: arena builtin expects one argument")))))))
 
 (define (lower-tls-current-arena-read-call
   [state : LowerState]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Nil)
-      (lower-runtime-call-values
-        state
-        "tl_tls_current_arena_load"
-        CompilerIrValueList.Nil
-        result-ty)]
-    [_
-      (ResultLowerExpr.Err
-        (box (lower-diagnostic "lower: tls-current-arena expects no arguments")))]))
+  (if (= (ast-expr-list-len (& args)) 0)
+    (lower-runtime-call-values
+      state
+      "tl_tls_current_arena_load"
+      CompilerIrValueList.Nil
+      result-ty)
+    (ResultLowerExpr.Err
+      (box (lower-diagnostic "lower: tls-current-arena expects no arguments")))))
 
 (define (lower-tls-current-arena-set-call
   [ctx : TcContext]
@@ -15520,41 +15567,25 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons arg-node rest-box)
-      (let
-        [arg : AstExpr (ast-node-get arg-node)]
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (lower-expr ctx state env type-env arg)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr arg-state arg-value arg-ty)
-                    (match (lower-cast-value
-                      arg-state
-                      arg-value
-                      arg-ty
-                      (AstType.I64))
-                      [(LowerExpr.Expr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          "tl_tls_current_arena_store"
-                          (compiler-ir-value-cons
-                            cast-value
-                            CompilerIrValueList.Nil)
-                          result-ty)])])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_
-            (ResultLowerExpr.Err
-              (box
-                (lower-diagnostic
-                  "lower: tls-current-arena-set! expects exactly one argument")))]))]
-    [_
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            "lower: tls-current-arena-set! expects exactly one argument")))]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty (AstType.I64))
+                [(LowerExpr.Expr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    "tl_tls_current_arena_store"
+                    (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
+                    result-ty)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic
+          "lower: tls-current-arena-set! expects exactly one argument")))))
 
 (define (lower-tls-current-arena-call
   [ctx : TcContext]
@@ -16418,63 +16449,60 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerCallArgs
-  (match args
-    [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil)
-          (ResultLowerCallArgs.Ok
-            state
-            CompilerIrValueList.Nil
-            (lower-arg-writeback-list-empty))]
-        [_
-          (ResultLowerCallArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(AstExprList.Cons arg rest-args)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (lower-call-arg-as
-                ctx
-                state
-                env
-                type-env
-                arg
-                expected
-                arg-ty)
-                [(ResultLowerCallArg.Ok lowered-arg)
-                  (match lowered-arg
-                    [(LowerCallArg.Arg arg-state value maybe-writeback)
-                      (match (lower-call-args-as
-                        ctx
-                        arg-state
-                        env
-                        type-env
-                        rest-args
-                        rest-types)
-                        [(ResultLowerCallArgs.Ok
-                            rest-state
-                            rest-values
-                            rest-writebacks)
-                          (ResultLowerCallArgs.Ok
-                            rest-state
-                            (compiler-ir-value-cons value rest-values)
-                            (lower-call-arg-writebacks-add-maybe
-                              rest-writebacks
-                              maybe-writeback))]
-                        [(ResultLowerCallArgs.Err message)
-                          (ResultLowerCallArgs.Err message)])])]
-                [(ResultLowerCallArg.Err message)
-                  (ResultLowerCallArgs.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultLowerCallArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+  (lower-call-args-as-at ctx state env type-env (& args) 0 types))
+
+(define (lower-call-args-as-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [arg-index : i64]
+  [types : AstTypeList]) : ResultLowerCallArgs
+  (match types
+    [(AstTypeList.Nil)
+      (if (= arg-index (ast-expr-list-len args))
+        (ResultLowerCallArgs.Ok
+          state
+          CompilerIrValueList.Nil
+          (lower-arg-writeback-list-empty))
+        (ResultLowerCallArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(AstTypeList.Cons expected rest-types)
+      (if (< arg-index (ast-expr-list-len args))
+        (let
+          [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
+          [expected : AstType (tc-context-type-get ctx expected)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          [arg-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx expected))]
+          (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
+            [(ResultLowerCallArg.Ok lowered-arg)
+              (match lowered-arg
+                [(LowerCallArg.Arg arg-state value maybe-writeback)
+                  (match (lower-call-args-as-at
+                    ctx
+                    arg-state
+                    env
+                    type-env
+                    args
+                    (+ arg-index 1)
+                    rest-types)
+                    [(ResultLowerCallArgs.Ok
+                        rest-state
+                        rest-values
+                        rest-writebacks)
+                      (ResultLowerCallArgs.Ok
+                        rest-state
+                        (compiler-ir-value-cons value rest-values)
+                        (lower-call-arg-writebacks-add-maybe
+                          rest-writebacks
+                          maybe-writeback))]
+                    [(ResultLowerCallArgs.Err message)
+                      (ResultLowerCallArgs.Err message)])])]
+            [(ResultLowerCallArg.Err message) (ResultLowerCallArgs.Err message)]))
+        (ResultLowerCallArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]))
 
 (define (lower-apply-arg-writeback
   [ctx : TcContext]
@@ -16526,58 +16554,62 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerArgs
-  (match args
-    [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(AstExprList.Cons arg rest-args)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (tc-call-effective-arg-expr ctx type-env arg expected)
-                [(ResultTcExpr.Ok effective-arg)
-                  (match (lower-expr-expected
-                    ctx
-                    state
-                    env
-                    type-env
-                    effective-arg
-                    arg-ty
-                    arg)
-                    [(ResultLowerExpr.Ok lowered)
-                      (match lowered
-                        [(LowerExpr.Expr arg-state value _)
-                          (match (lower-args-as
-                            ctx
-                            arg-state
-                            env
-                            type-env
-                            rest-args
-                            rest-types)
-                            [(ResultLowerArgs.Ok rest-state rest-values)
-                              (ResultLowerArgs.Ok
-                                rest-state
-                                (compiler-ir-value-cons value rest-values))]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerArgs.Err message)])]
-                [(ResultTcExpr.Err message)
-                  (ResultLowerArgs.Err
-                    (box (lower-diagnostic-at-expr arg message)))]))]
-          [(AstTypeList.Nil)
-            (ResultLowerArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+  (lower-args-as-at ctx state env type-env (& args) 0 types))
+
+(define (lower-args-as-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [arg-index : i64]
+  [types : AstTypeList]) : ResultLowerArgs
+  (match types
+    [(AstTypeList.Nil)
+      (if (= arg-index (ast-expr-list-len args))
+        (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(AstTypeList.Cons expected rest-types)
+      (if (< arg-index (ast-expr-list-len args))
+        (let
+          [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
+          [expected : AstType (tc-context-type-get ctx expected)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          [arg-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx expected))]
+          (match (tc-call-effective-arg-expr ctx type-env arg expected)
+            [(ResultTcExpr.Ok effective-arg)
+              (match (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                effective-arg
+                arg-ty
+                arg)
+                [(ResultLowerExpr.Ok lowered)
+                  (match lowered
+                    [(LowerExpr.Expr arg-state value _)
+                      (match (lower-args-as-at
+                        ctx
+                        arg-state
+                        env
+                        type-env
+                        args
+                        (+ arg-index 1)
+                        rest-types)
+                        [(ResultLowerArgs.Ok rest-state rest-values)
+                          (ResultLowerArgs.Ok
+                            rest-state
+                            (compiler-ir-value-cons value rest-values))]
+                        [(ResultLowerArgs.Err message)
+                          (ResultLowerArgs.Err message)])])]
+                [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)])]
+            [(ResultTcExpr.Err message)
+              (ResultLowerArgs.Err (box (lower-diagnostic-at-expr arg message)))]))
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]))
 
 (define (lower-call-type-list-has-mut-ref-formal?
   [ctx : TcContext]
@@ -17249,7 +17281,7 @@
   [ctx : TcContext]
   [types : AstTypeList]) : AstExprList
   (match types
-    [(AstTypeList.Nil) AstExprList.Nil]
+    [(AstTypeList.Nil) (ast-expr-list-new)]
     [(AstTypeList.Cons head rest)
       (let
         [head : AstType (tc-context-type-get ctx head)]
@@ -17260,7 +17292,7 @@
 
 (define (lower-init-expr-list-repeat [ty : AstType] [count : i64]) : AstExprList
   (if (<= count 0)
-    AstExprList.Nil
+    (ast-expr-list-new)
     (ast-expr-cons
       (ast-expr-init ty)
       (lower-init-expr-list-repeat ty (- count 1)))))
@@ -17671,7 +17703,7 @@
                   type-env
                   lookup-name
                   handle
-                  AstExprList.Nil
+                  (ast-expr-list-new)
                   expr-ty)]
               [_ (lower-function-value-or-var ctx state env name expr-ty)])]
           [(ResultAstTypeList.Err _)
@@ -17784,25 +17816,15 @@
                 [(cbi.compiler-builtin-lower-string-ref-call-id? name)
                   (ResultTcType.Ok (AstType.Char))]
                 [(cbi.compiler-builtin-lower-clone-id? name)
-                  (match args
-                    [(AstExprList.Cons arg tail)
-                      (let
-                        [arg : AstExpr (ast-node-get arg)]
-                        [tail : AstExprList (box-get tail)]
-                        (match tail
-                          [(AstExprList.Nil)
-                            (lower-expr-result-type-fast
-                              ctx
-                              env
-                              type-env
-                              type-cache
-                              arg)]
-                          [_
-                            (ResultTcType.Err
-                              "lower: call result type is not fast-pathable")]))]
-                    [_
-                      (ResultTcType.Err
-                        "lower: call result type is not fast-pathable")])]
+                  (if (= (ast-expr-list-len (& args)) 1)
+                    (lower-expr-result-type-fast
+                      ctx
+                      env
+                      type-env
+                      type-cache
+                      (ast-node-get (ast-expr-list-get (& args) 0 0)))
+                    (ResultTcType.Err
+                      "lower: call result type is not fast-pathable"))]
                 [else (ResultTcType.Err message)])
               (ResultTcType.Err message))]))]
     [(AstExpr.Lambda lambda-box)
@@ -17931,17 +17953,16 @@
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [exprs : AstExprList]) : ResultTcType
-  (match exprs
-    [(AstExprList.Nil) (ResultTcType.Ok (AstType.Unit))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (lower-expr-result-type-fast ctx env type-env type-cache expr)]
-          [_
-            (lower-expr-list-result-type-fast ctx env type-env type-cache rest)]))]))
+  (let
+    [len : i64 (ast-expr-list-len (& exprs))]
+    (if (= len 0)
+      (ResultTcType.Ok (AstType.Unit))
+      (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        (ast-node-get (ast-expr-list-get (& exprs) (- len 1) 0))))))
 
 (define (lower-pattern-list-bind-local-names
   [env : sym_i64_env.SymI64Env]
@@ -20434,54 +20455,73 @@
   [values : AstExprList]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (match values
-    [(AstExprList.Nil) (ResultLowerState.Ok state)]
-    [(AstExprList.Cons value rest-values)
-      (let
-        [value : AstExpr (ast-node-get value)]
-        [rest-values : AstExprList (box-get rest-values)]
-        (match types
-          [(AstTypeList.Nil)
-            (ResultLowerState.Err
-              (box (lower-diagnostic "lower: tuple arity mismatch")))]
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (tc-context-type-get ctx ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              [offset : i64
-                (lower-align-up cursor (lower-type-align ctx resolved))]
-              [size : i64 (lower-type-size ctx resolved)]
-              (match (lower-expr-expected
-                ctx
-                state
-                env
-                type-env
-                value
-                resolved
-                value)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr elem-state elem-value _)
-                      (lower-tuple-store-elems
+  (lower-tuple-store-elems-at
+    ctx
+    state
+    env
+    type-env
+    base
+    (& values)
+    0
+    types
+    cursor))
+
+(define (lower-tuple-store-elems-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : (& values AstExprList)]
+  [value-index : i64]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (if (>= value-index (ast-expr-list-len values))
+    (ResultLowerState.Ok state)
+    (match types
+      [(AstTypeList.Nil)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: tuple arity mismatch")))]
+      [(AstTypeList.Cons ty rest-types)
+        (let
+          [value : AstExpr
+            (ast-node-get (ast-expr-list-get values value-index 0))]
+          [ty : AstType (tc-context-type-get ctx ty)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (match (lower-expr-expected
+            ctx
+            state
+            env
+            type-env
+            value
+            resolved
+            value)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr elem-state elem-value _)
+                  (lower-tuple-store-elems-at
+                    ctx
+                    (if (> size 0)
+                      (lower-store-inline-value-at-offset
                         ctx
-                        (if (> size 0)
-                          (lower-store-inline-value-at-offset
-                            ctx
-                            elem-state
-                            base
-                            offset
-                            elem-value
-                            resolved
-                            size)
-                          elem-state)
-                        env
-                        type-env
+                        elem-state
                         base
-                        rest-values
-                        rest-types
-                        (+ offset size))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))]))]))
+                        offset
+                        elem-value
+                        resolved
+                        size)
+                      elem-state)
+                    env
+                    type-env
+                    base
+                    values
+                    (+ value-index 1)
+                    rest-types
+                    (+ offset size))])]
+            [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))])))
 
 ;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
 ;; element types, store each element at its field offset, and return the storage
@@ -20533,87 +20573,104 @@
   [elem-ty : AstType]
   [elem-size : i64]
   [offset : i64]) : ResultLowerState
-  (match values
-    [(AstExprList.Nil) (ResultLowerState.Ok state)]
-    [(AstExprList.Cons value rest-values)
-      (let
-        [value : AstExpr (ast-node-get value)]
-        [rest-values : AstExprList (box-get rest-values)]
-        (if (> elem-size 0)
-          (match (lower-direct-store-rhs-at-offset
-            ctx
-            state
-            env
-            type-env
-            base
-            offset
-            value
-            elem-ty
-            value)
-            [(LowerMaybeDirectStore.Store elem-state)
-              (lower-array-literal-store-elems
-                ctx
-                elem-state
-                env
-                type-env
-                base
-                rest-values
-                elem-ty
-                elem-size
-                (+ offset elem-size))]
-            [(LowerMaybeDirectStore.Err message) (ResultLowerState.Err message)]
-            [(LowerMaybeDirectStore.No)
-              (match (lower-expr-expected
-                ctx
-                state
-                env
-                type-env
-                value
-                elem-ty
-                value)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr elem-state elem-value _)
-                      (lower-array-literal-store-elems
+  (lower-array-literal-store-elems-at
+    ctx
+    state
+    env
+    type-env
+    base
+    (& values)
+    0
+    elem-ty
+    elem-size
+    offset))
+
+(define (lower-array-literal-store-elems-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : (& values AstExprList)]
+  [value-index : i64]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [offset : i64]) : ResultLowerState
+  (if (>= value-index (ast-expr-list-len values))
+    (ResultLowerState.Ok state)
+    (let
+      [value : AstExpr (ast-node-get (ast-expr-list-get values value-index 0))]
+      (if (> elem-size 0)
+        (match (lower-direct-store-rhs-at-offset
+          ctx
+          state
+          env
+          type-env
+          base
+          offset
+          value
+          elem-ty
+          value)
+          [(LowerMaybeDirectStore.Store elem-state)
+            (lower-array-literal-store-elems-at
+              ctx
+              elem-state
+              env
+              type-env
+              base
+              values
+              (+ value-index 1)
+              elem-ty
+              elem-size
+              (+ offset elem-size))]
+          [(LowerMaybeDirectStore.Err message) (ResultLowerState.Err message)]
+          [(LowerMaybeDirectStore.No)
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              value
+              elem-ty
+              value)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr elem-state elem-value _)
+                    (lower-array-literal-store-elems-at
+                      ctx
+                      (lower-store-inline-value-at-offset
                         ctx
-                        (lower-store-inline-value-at-offset
-                          ctx
-                          elem-state
-                          base
-                          offset
-                          elem-value
-                          elem-ty
-                          elem-size)
-                        env
-                        type-env
+                        elem-state
                         base
-                        rest-values
+                        offset
+                        elem-value
                         elem-ty
-                        elem-size
-                        (+ offset elem-size))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-          (match (lower-expr-expected
-            ctx
-            state
-            env
-            type-env
-            value
-            elem-ty
-            value)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr elem-state _ _)
-                  (lower-array-literal-store-elems
-                    ctx
-                    elem-state
-                    env
-                    type-env
-                    base
-                    rest-values
-                    elem-ty
-                    elem-size
-                    (+ offset elem-size))])]
-            [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))]))
+                        elem-size)
+                      env
+                      type-env
+                      base
+                      values
+                      (+ value-index 1)
+                      elem-ty
+                      elem-size
+                      (+ offset elem-size))])]
+              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
+        (match (lower-expr-expected ctx state env type-env value elem-ty value)
+          [(ResultLowerExpr.Ok lowered)
+            (match lowered
+              [(LowerExpr.Expr elem-state _ _)
+                (lower-array-literal-store-elems-at
+                  ctx
+                  elem-state
+                  env
+                  type-env
+                  base
+                  values
+                  (+ value-index 1)
+                  elem-ty
+                  elem-size
+                  (+ offset elem-size))])]
+          [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))))
 
 ;; Lower `(array v0 v1 ...)`: reserve inline storage for `count` elements of the
 ;; element type, store each element at `index * elem-size`, and return the
@@ -21718,172 +21775,182 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerArgs
-  (match args
-    [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
-    [(AstExprList.Cons arg rest-args)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr arg-state value _)
-                      (match (lower-c-abi-aggregate-class
+  (lower-c-abi-args-as-at ctx state env type-env (& args) 0 types))
+
+(define (lower-c-abi-args-as-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [arg-index : i64]
+  [types : AstTypeList]) : ResultLowerArgs
+  (match types
+    [(AstTypeList.Nil)
+      (if (= arg-index (ast-expr-list-len args))
+        (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(AstTypeList.Cons expected rest-types)
+      (if (< arg-index (ast-expr-list-len args))
+        (let
+          [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
+          [expected : AstType (tc-context-type-get ctx expected)]
+          [rest-types : AstTypeList (box-get rest-types)]
+          [arg-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx expected))]
+          (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr arg-state value _)
+                  (match (lower-c-abi-aggregate-class
+                    ctx
+                    (lower-state-mode arg-state)
+                    arg-ty)
+                    [(LowerCAbiAggregate.No)
+                      (match (lower-c-abi-args-as-at
                         ctx
-                        (lower-state-mode arg-state)
-                        arg-ty)
-                        [(LowerCAbiAggregate.No)
-                          (match (lower-c-abi-args-as
+                        arg-state
+                        env
+                        type-env
+                        args
+                        (+ arg-index 1)
+                        rest-types)
+                        [(ResultLowerArgs.Ok rest-state rest-values)
+                          (ResultLowerArgs.Ok
+                            rest-state
+                            (compiler-ir-value-cons value rest-values))]
+                        [(ResultLowerArgs.Err message)
+                          (ResultLowerArgs.Err message)])]
+                    [(LowerCAbiAggregate.Integer scalar-ty size)
+                      ;; #2386: a register-resident aggregate is carried as a
+                      ;; single-word scalar -- `value` is already the word the C
+                      ;; ABI wants in a register, so pass it directly. Any other
+                      ;; aggregate (a memory-backed value, e.g. a mixed
+                      ;; int/float sub-word struct) is a pointer, so load the
+                      ;; scalar out of it. Gate on the same residency predicate
+                      ;; that chose the value representation -- not on `size`,
+                      ;; since mixed sub-word float structs can still be
+                      ;; memory-backed at 8 bytes.
+                      (match (if (lower-type-register-resident? ctx arg-ty)
+                        (lower-c-abi-register-resident-to-scalar
+                          ctx
+                          arg-state
+                          value
+                          arg-ty
+                          scalar-ty)
+                        (lower-load-at-offset arg-state value 0 scalar-ty))
+                        [(LowerExpr.Expr scalar-state scalar-value _)
+                          (match (lower-c-abi-args-as-at
                             ctx
-                            arg-state
+                            scalar-state
                             env
                             type-env
-                            rest-args
-                            rest-types)
-                            [(ResultLowerArgs.Ok rest-state rest-values)
-                              (ResultLowerArgs.Ok
-                                rest-state
-                                (compiler-ir-value-cons value rest-values))]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Integer scalar-ty size)
-                          ;; #2386: a register-resident aggregate is carried as a
-                          ;; single-word scalar -- `value` is already the word the C
-                          ;; ABI wants in a register, so pass it directly. Any other
-                          ;; aggregate (a memory-backed value, e.g. a mixed
-                          ;; int/float sub-word struct) is a
-                          ;; pointer, so load the scalar out of it. Gate on the same
-                          ;; residency predicate that chose the value representation
-                          ;; -- not on `size`, since mixed sub-word float
-                          ;; structs can still be memory-backed at 8 bytes.
-                          (match (if (lower-type-register-resident? ctx arg-ty)
-                            (lower-c-abi-register-resident-to-scalar
-                              ctx
-                              arg-state
-                              value
-                              arg-ty
-                              scalar-ty)
-                            (lower-load-at-offset arg-state value 0 scalar-ty))
-                            [(LowerExpr.Expr scalar-state scalar-value _)
-                              (match (lower-c-abi-args-as
-                                ctx
-                                scalar-state
-                                env
-                                type-env
-                                rest-args
-                                rest-types)
-                                [(ResultLowerArgs.Ok rest-state rest-values)
-                                  (ResultLowerArgs.Ok
-                                    rest-state
-                                    (compiler-ir-value-cons
-                                      scalar-value
-                                      rest-values))]
-                                [(ResultLowerArgs.Err message)
-                                  (ResultLowerArgs.Err message)])])]
-                        [(LowerCAbiAggregate.Register slots _)
-                          (match (lower-c-abi-register-arg-slot-values
-                            ctx
-                            arg-state
-                            value
-                            arg-ty
-                            slots)
-                            [(ResultLowerArgs.Ok slot-state slot-values)
-                              (match (lower-c-abi-args-as
-                                ctx
-                                slot-state
-                                env
-                                type-env
-                                rest-args
-                                rest-types)
-                                [(ResultLowerArgs.Ok rest-state rest-values)
-                                  (ResultLowerArgs.Ok
-                                    rest-state
-                                    (lower-value-list-append
-                                      slot-values
-                                      rest-values))]
-                                [(ResultLowerArgs.Err message)
-                                  (ResultLowerArgs.Err message)])]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Memory size)
-                          ;; The backend consumes size/unit markers and copies the aggregate to %rsp.
-                          (match (lower-c-abi-args-as
-                            ctx
-                            arg-state
-                            env
-                            type-env
-                            rest-args
+                            args
+                            (+ arg-index 1)
                             rest-types)
                             [(ResultLowerArgs.Ok rest-state rest-values)
                               (ResultLowerArgs.Ok
                                 rest-state
                                 (compiler-ir-value-cons
-                                  value
-                                  (compiler-ir-value-cons
-                                    (CompilerIrValue.I64 size)
-                                    (compiler-ir-value-cons
-                                      (CompilerIrValue.Unit)
-                                      rest-values))))]
+                                  scalar-value
+                                  rest-values))]
+                            [(ResultLowerArgs.Err message)
+                              (ResultLowerArgs.Err message)])])]
+                    [(LowerCAbiAggregate.Register slots _)
+                      (match (lower-c-abi-register-arg-slot-values
+                        ctx
+                        arg-state
+                        value
+                        arg-ty
+                        slots)
+                        [(ResultLowerArgs.Ok slot-state slot-values)
+                          (match (lower-c-abi-args-as-at
+                            ctx
+                            slot-state
+                            env
+                            type-env
+                            args
+                            (+ arg-index 1)
+                            rest-types)
+                            [(ResultLowerArgs.Ok rest-state rest-values)
+                              (ResultLowerArgs.Ok
+                                rest-state
+                                (lower-value-list-append
+                                  slot-values
+                                  rest-values))]
                             [(ResultLowerArgs.Err message)
                               (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.ByRef _)
-                          ;; The ABI argument is the address of the copied
-                          ;; object, not the aggregate itself. Type the value as
-                          ;; u64 so direct extern-call register assignment does
-                          ;; not reclassify this pointer as a multi-word group.
-                          (match (lower-copy-inline-aggregate-to-heap-as
-                            ctx
-                            arg-state
-                            value
-                            arg-ty
-                            (AstType.U64))
-                            [(ResultLowerExpr.Ok copied)
-                              (match copied
-                                [(LowerExpr.Expr copy-state copy-value _)
-                                  (match (lower-c-abi-args-as
-                                    ctx
-                                    copy-state
-                                    env
-                                    type-env
-                                    rest-args
-                                    rest-types)
-                                    [(ResultLowerArgs.Ok rest-state rest-values)
-                                      (ResultLowerArgs.Ok
-                                        rest-state
-                                        (compiler-ir-value-cons
-                                          copy-value
-                                          rest-values))]
-                                    [(ResultLowerArgs.Err message)
-                                      (ResultLowerArgs.Err message)])])]
-                            [(ResultLowerExpr.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Unsupported message)
-                          (ResultLowerArgs.Err
-                            (box (lower-diagnostic-at-expr arg message)))]
-                        [(LowerCAbiAggregate.Sret _)
-                          (ResultLowerArgs.Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                arg
-                                (lower-c-abi-unsupported-message
-                                  (lower-state-mode arg-state)
-                                  arg-ty))))])])]
-                [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultLowerArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+                        [(ResultLowerArgs.Err message)
+                          (ResultLowerArgs.Err message)])]
+                    [(LowerCAbiAggregate.Memory size)
+                      ;; The backend consumes size/unit markers and copies the aggregate to %rsp.
+                      (match (lower-c-abi-args-as-at
+                        ctx
+                        arg-state
+                        env
+                        type-env
+                        args
+                        (+ arg-index 1)
+                        rest-types)
+                        [(ResultLowerArgs.Ok rest-state rest-values)
+                          (ResultLowerArgs.Ok
+                            rest-state
+                            (compiler-ir-value-cons
+                              value
+                              (compiler-ir-value-cons
+                                (CompilerIrValue.I64 size)
+                                (compiler-ir-value-cons
+                                  (CompilerIrValue.Unit)
+                                  rest-values))))]
+                        [(ResultLowerArgs.Err message)
+                          (ResultLowerArgs.Err message)])]
+                    [(LowerCAbiAggregate.ByRef _)
+                      ;; The ABI argument is the address of the copied object,
+                      ;; not the aggregate itself. Type the value as u64 so
+                      ;; direct extern-call register assignment does not
+                      ;; reclassify this pointer as a multi-word group.
+                      (match (lower-copy-inline-aggregate-to-heap-as
+                        ctx
+                        arg-state
+                        value
+                        arg-ty
+                        (AstType.U64))
+                        [(ResultLowerExpr.Ok copied)
+                          (match copied
+                            [(LowerExpr.Expr copy-state copy-value _)
+                              (match (lower-c-abi-args-as-at
+                                ctx
+                                copy-state
+                                env
+                                type-env
+                                args
+                                (+ arg-index 1)
+                                rest-types)
+                                [(ResultLowerArgs.Ok rest-state rest-values)
+                                  (ResultLowerArgs.Ok
+                                    rest-state
+                                    (compiler-ir-value-cons
+                                      copy-value
+                                      rest-values))]
+                                [(ResultLowerArgs.Err message)
+                                  (ResultLowerArgs.Err message)])])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerArgs.Err message)])]
+                    [(LowerCAbiAggregate.Unsupported message)
+                      (ResultLowerArgs.Err
+                        (box (lower-diagnostic-at-expr arg message)))]
+                    [(LowerCAbiAggregate.Sret _)
+                      (ResultLowerArgs.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            arg
+                            (lower-c-abi-unsupported-message
+                              (lower-state-mode arg-state)
+                              arg-ty))))])])]
+            [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]))
 
 (define (lower-c-abi-register-arg-slot-values-from
   [ctx : TcContext]
@@ -22837,55 +22904,13 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons str tail)
-      (let
-        [str : AstExpr (ast-node-get str)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons start rest1)
-            (let
-              [start : AstExpr (ast-node-get start)]
-              [rest1 : AstExprList (box-get rest1)]
-              (match rest1
-                [(AstExprList.Cons len rest2)
-                  (let
-                    [len : AstExpr (ast-node-get len)]
-                    [rest2 : AstExprList (box-get rest2)]
-                    (match rest2
-                      [(AstExprList.Nil)
-                        (lower-substring ctx state env type-env str start len)]
-                      [_
-                        (lower-direct-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]))]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+  (if (= (ast-expr-list-len (& args)) 3)
+    (let
+      [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [start : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [len : AstExpr (ast-node-get (ast-expr-list-get (& args) 2 0))]
+      (lower-substring ctx state env type-env str start len))
+    (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 (define (lower-string-concat-call
   [ctx : TcContext]
@@ -22896,40 +22921,12 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons left tail)
-      (let
-        [left : AstExpr (ast-node-get left)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons right rest)
-            (let
-              [right : AstExpr (ast-node-get right)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (lower-string-concat ctx state env type-env left right)]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+  (if (= (ast-expr-list-len (& args)) 2)
+    (let
+      [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (lower-string-concat ctx state env type-env left right))
+    (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 (define (lower-string-runtime-call
   [ctx : TcContext]
@@ -22974,51 +22971,30 @@
   [expected-ty : AstType]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (lower-expr ctx state env type-env arg)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr arg-state arg-value arg-ty)
-                    (match (lower-cast-value
-                      arg-state
-                      arg-value
-                      arg-ty
-                      expected-ty)
-                      [(LowerExpr.Expr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          runtime-name
-                          (compiler-ir-value-cons
-                            cast-value
-                            CompilerIrValueList.Nil)
-                          result-ty)])])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              fallback-name
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        fallback-name
-        args
-        result-ty
-        origin)]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty expected-ty)
+                [(LowerExpr.Expr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    runtime-name
+                    (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
+                    result-ty)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (lower-direct-call
+      ctx
+      state
+      env
+      type-env
+      fallback-name
+      args
+      result-ty
+      origin)))
 
 (define (lower-one-string-object-runtime-call
   [ctx : TcContext]
@@ -23523,52 +23499,37 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (lower-expr ctx state env type-env arg)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr arg-state arg-value arg-ty)
-                    (if (lower-string-handle-type? ctx arg-ty)
-                      (match (lower-string-fields arg-state arg-value)
-                        [(LowerStringFields.Fields fields-state ptr len)
-                          (ResultLowerExpr.Ok
-                            (lower-inline-string-to-int-fields
-                              fields-state
-                              ptr
-                              len
-                              result-ty))])
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            arg
-                            "lower: string->int requires String"))))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "__tl_string_to_int"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "__tl_string_to_int"
-        args
-        result-ty
-        origin)]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value arg-ty)
+              (if (lower-string-handle-type? ctx arg-ty)
+                (match (lower-string-fields arg-state arg-value)
+                  [(LowerStringFields.Fields fields-state ptr len)
+                    (ResultLowerExpr.Ok
+                      (lower-inline-string-to-int-fields
+                        fields-state
+                        ptr
+                        len
+                        result-ty))])
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      arg
+                      "lower: string->int requires String"))))])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (lower-direct-call
+      ctx
+      state
+      env
+      type-env
+      "__tl_string_to_int"
+      args
+      result-ty
+      origin)))
 
 (define (lower-int-to-string-call
   [ctx : TcContext]
@@ -23578,51 +23539,30 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (lower-expr ctx state env type-env arg)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr arg-state arg-value arg-ty)
-                    (match (lower-cast-value
-                      arg-state
-                      arg-value
-                      arg-ty
-                      (AstType.I64))
-                      [(LowerExpr.Expr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          "tl_int_to_string"
-                          (compiler-ir-value-cons
-                            cast-value
-                            CompilerIrValueList.Nil)
-                          result-ty)])])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "string.int->string"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "string.int->string"
-        args
-        result-ty
-        origin)]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty (AstType.I64))
+                [(LowerExpr.Expr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    "tl_int_to_string"
+                    (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
+                    result-ty)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (lower-direct-call
+      ctx
+      state
+      env
+      type-env
+      "string.int->string"
+      args
+      result-ty
+      origin)))
 
 (define (lower-string-eq-call
   [ctx : TcContext]
@@ -23632,82 +23572,49 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons left tail)
-      (let
-        [left : AstExpr (ast-node-get left)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons right rest)
-            (let
-              [right : AstExpr (ast-node-get right)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (match (lower-expr ctx state env type-env left)
-                    [(ResultLowerExpr.Ok lowered-left)
-                      (match lowered-left
-                        [(LowerExpr.Expr left-state left-value _)
-                          (match (lower-expr ctx left-state env type-env right)
-                            [(ResultLowerExpr.Ok lowered-right)
-                              (match lowered-right
-                                [(LowerExpr.Expr right-state right-value _)
-                                  (match (lower-string-fields
-                                    right-state
-                                    left-value)
-                                    [(LowerStringFields.Fields
-                                        left-fields-state
-                                        left-ptr
-                                        left-len)
-                                      (match (lower-string-fields
-                                        left-fields-state
-                                        right-value)
-                                        [(LowerStringFields.Fields
-                                            done-fields-state
-                                            right-ptr
-                                            right-len)
-                                          (ResultLowerExpr.Ok
-                                            (lower-inline-string-eq-fields
-                                              done-fields-state
-                                              left-ptr
-                                              left-len
-                                              right-ptr
-                                              right-len
-                                              result-ty))])])])]
-                            [(ResultLowerExpr.Err message)
-                              (ResultLowerExpr.Err message)])])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "__tl_string_eq"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "__tl_string_eq"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "__tl_string_eq"
-        args
-        result-ty
-        origin)]))
+  (if (= (ast-expr-list-len (& args)) 2)
+    (let
+      [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (lower-expr ctx state env type-env left)
+        [(ResultLowerExpr.Ok lowered-left)
+          (match lowered-left
+            [(LowerExpr.Expr left-state left-value _)
+              (match (lower-expr ctx left-state env type-env right)
+                [(ResultLowerExpr.Ok lowered-right)
+                  (match lowered-right
+                    [(LowerExpr.Expr right-state right-value _)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields.Fields
+                            left-fields-state
+                            left-ptr
+                            left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
+                            [(LowerStringFields.Fields
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (ResultLowerExpr.Ok
+                                (lower-inline-string-eq-fields
+                                  done-fields-state
+                                  left-ptr
+                                  left-len
+                                  right-ptr
+                                  right-len
+                                  result-ty))])])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (lower-direct-call
+      ctx
+      state
+      env
+      type-env
+      "__tl_string_eq"
+      args
+      result-ty
+      origin)))
 
 (define (lower-bootstrap-runtime-call
   [ctx : TcContext]
@@ -23748,40 +23655,12 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons str tail)
-      (let
-        [str : AstExpr (ast-node-get str)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons index rest)
-            (let
-              [index : AstExpr (ast-node-get index)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (lower-string-ref ctx state env type-env str index)]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+  (if (= (ast-expr-list-len (& args)) 2)
+    (let
+      [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (lower-string-ref ctx state env type-env str index))
+    (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 (define (lower-module-lookup-name [ctx : TcContext] [name : String]) : String
   (let
@@ -24016,7 +23895,7 @@
                     dst
                     variant-name
                     handle
-                    AstExprList.Nil
+                    (ast-expr-list-new)
                     result-ty))]
               [_ (LowerMaybeDirectStore.No)])]
           [(ResultAstTypeList.Err message)
@@ -24452,29 +24331,17 @@
                         [(and
                             builtin-available
                             (cbi.compiler-builtin-lower-clone-id? name-id))
-                          (match args
-                            [(AstExprList.Cons arg tail)
-                              (let
-                                [arg : AstExpr (ast-node-get arg)]
-                                [tail : AstExprList (box-get tail)]
-                                (match tail
-                                  [(AstExprList.Nil)
-                                    (lower-clone-call
-                                      ctx
-                                      state
-                                      env
-                                      type-env
-                                      arg)]
-                                  [_
-                                    (ResultLowerExpr.Err
-                                      (box
-                                        (lower-diagnostic
-                                          "lower: clone expects one argument")))]))]
-                            [_
-                              (ResultLowerExpr.Err
-                                (box
-                                  (lower-diagnostic
-                                    "lower: clone expects one argument")))])]
+                          (if (= (ast-expr-list-len (& args)) 1)
+                            (lower-clone-call
+                              ctx
+                              state
+                              env
+                              type-env
+                              (ast-node-get (ast-expr-list-get (& args) 0 0)))
+                            (ResultLowerExpr.Err
+                              (box
+                                (lower-diagnostic
+                                  "lower: clone expects one argument"))))]
                         [(and
                             builtin-available
                             (lower-arena-builtin-id? name-id))
@@ -24579,66 +24446,52 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons arr tail)
-      (let
-        [arr : AstExpr (ast-node-get arr)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (lower-expr-result-type-fast
-              ctx
-              env
-              type-env
-              (lower-state-type-cache state)
-              arr)
-              [(ResultTcType.Ok arr-ty)
-                (lower-array-length-with-type
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin
-                  arr
-                  arr-ty)]
-              [(ResultTcType.Err _)
-                (match (tc-expr ctx type-env arr)
-                  [(ResultTcType.Ok arr-ty)
-                    (lower-array-length-with-type
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin
-                      arr
-                      arr-ty)]
-                  [(ResultTcType.Err _)
-                    (lower-direct-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)])])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (let
+      [arr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        arr)
+        [(ResultTcType.Ok arr-ty)
+          (lower-array-length-with-type
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin
+            arr
+            arr-ty)]
+        [(ResultTcType.Err _)
+          (match (tc-expr ctx type-env arr)
+            [(ResultTcType.Ok arr-ty)
+              (lower-array-length-with-type
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin
+                arr
+                arr-ty)]
+            [(ResultTcType.Err _)
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)])]))
+    (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 (define (lower-array-length-with-type
   [ctx : TcContext]
@@ -24956,79 +24809,56 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons leaf tail)
-      (let
-        [leaf : AstExpr (ast-node-get leaf)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons subleaf rest)
-            (let
-              [subleaf : AstExpr (ast-node-get subleaf)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
+  (if (= (ast-expr-list-len (& args)) 2)
+    (let
+      [leaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [subleaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (lower-integer-expr-with-expected-or-actual
+        ctx
+        state
+        env
+        type-env
+        leaf
+        (AstType.I64)
+        "lower: cpuid leaf must be integer")
+        [(ResultLowerExpr.Ok leaf-lowered)
+          (match leaf-lowered
+            [(LowerExpr.Expr leaf-state leaf-value leaf-ty)
+              (match (lower-cast-value
+                leaf-state
+                leaf-value
+                leaf-ty
+                (AstType.I64))
+                [(LowerExpr.Expr leaf-i-state leaf-i-value _)
                   (match (lower-integer-expr-with-expected-or-actual
                     ctx
-                    state
+                    leaf-i-state
                     env
                     type-env
-                    leaf
+                    subleaf
                     (AstType.I64)
-                    "lower: cpuid leaf must be integer")
-                    [(ResultLowerExpr.Ok leaf-lowered)
-                      (match leaf-lowered
-                        [(LowerExpr.Expr leaf-state leaf-value leaf-ty)
+                    "lower: cpuid subleaf must be integer")
+                    [(ResultLowerExpr.Ok subleaf-lowered)
+                      (match subleaf-lowered
+                        [(LowerExpr.Expr subleaf-state subleaf-value subleaf-ty)
                           (match (lower-cast-value
-                            leaf-state
-                            leaf-value
-                            leaf-ty
+                            subleaf-state
+                            subleaf-value
+                            subleaf-ty
                             (AstType.I64))
-                            [(LowerExpr.Expr leaf-i-state leaf-i-value _)
-                              (match (lower-integer-expr-with-expected-or-actual
+                            [(LowerExpr.Expr subleaf-i-state subleaf-i-value _)
+                              (lower-cpuid-tuple-values
                                 ctx
-                                leaf-i-state
-                                env
-                                type-env
-                                subleaf
-                                (AstType.I64)
-                                "lower: cpuid subleaf must be integer")
-                                [(ResultLowerExpr.Ok subleaf-lowered)
-                                  (match subleaf-lowered
-                                    [(LowerExpr.Expr
-                                        subleaf-state
-                                        subleaf-value
-                                        subleaf-ty)
-                                      (match (lower-cast-value
-                                        subleaf-state
-                                        subleaf-value
-                                        subleaf-ty
-                                        (AstType.I64))
-                                        [(LowerExpr.Expr
-                                            subleaf-i-state
-                                            subleaf-i-value
-                                            _)
-                                          (lower-cpuid-tuple-values
-                                            ctx
-                                            subleaf-i-state
-                                            leaf-i-value
-                                            subleaf-i-value
-                                            result-ty
-                                            origin)])])]
-                                [(ResultLowerExpr.Err message)
-                                  (ResultLowerExpr.Err message)])])])]
+                                subleaf-i-state
+                                leaf-i-value
+                                subleaf-i-value
+                                result-ty
+                                origin)])])]
                     [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)])]
-                [_
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic "lower: cpuid expects two arguments")))]))]
-          [_
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic "lower: cpuid expects two arguments")))]))]
-    [_
-      (ResultLowerExpr.Err
-        (box (lower-diagnostic "lower: cpuid expects two arguments")))]))
+                      (ResultLowerExpr.Err message)])])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box (lower-diagnostic "lower: cpuid expects two arguments")))))
 
 (define (lower-xgetbv-call
   [ctx : TcContext]
@@ -25037,23 +24867,16 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons index tail)
-      (let
-        [index : AstExpr (ast-node-get index)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil) (lower-xgetbv ctx state env type-env index)]
-          [_
-            (ResultLowerExpr.Err
-              (box
-                (lower-diagnostic-at-expr
-                  origin
-                  "lower: xgetbv expects one argument")))]))]
-    [_
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic-at-expr origin "lower: xgetbv expects one argument")))]))
+  (if (= (ast-expr-list-len (& args)) 1)
+    (lower-xgetbv
+      ctx
+      state
+      env
+      type-env
+      (ast-node-get (ast-expr-list-get (& args) 0 0)))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic-at-expr origin "lower: xgetbv expects one argument")))))
 
 ;; Small emit helpers: allocate a fresh var, emit one instruction, and return a
 ;; `LowerExpr` carrying the updated state plus the result value. These flatten
@@ -25349,22 +25172,19 @@
   [result-ty : AstType]
   [origin : AstExpr]
   [tail : AstExprList]) : ResultLowerExpr
-  (match tail
-    [(AstExprList.Nil)
-      (lower-atomic-pointer-emit-update
-        ctx
-        state
-        name
-        ptr
-        value
-        elem-ty
-        result-ty
-        origin)]
-    [_
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            "lower: atomic update expects exactly two arguments")))]))
+  (if (= (ast-expr-list-len (& tail)) 0)
+    (lower-atomic-pointer-emit-update
+      ctx
+      state
+      name
+      ptr
+      value
+      elem-ty
+      result-ty
+      origin)
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic "lower: atomic update expects exactly two arguments")))))
 
 (define (lower-atomic-pointer-cas-tail
   [ctx : TcContext]
@@ -25378,45 +25198,34 @@
   [result-ty : AstType]
   [origin : AstExpr]
   [tail : AstExprList]) : ResultLowerExpr
-  (match tail
-    [(AstExprList.Cons new-node tail2)
-      (let
-        [new-value : AstExpr (ast-node-get new-node)]
-        [tail2 : AstExprList (box-get tail2)]
-        (match tail2
-          [(AstExprList.Nil)
-            (match (lower-expr-expected
-              ctx
-              state
-              env
-              type-env
-              new-value
-              elem-ty
-              new-value)
-              [(ResultLowerExpr.Ok new-lowered)
-                (match new-lowered
-                  [(LowerExpr.Expr new-state new-ir _)
-                    (lower-atomic-pointer-emit-cas
-                      ctx
-                      new-state
-                      name
-                      ptr
-                      expected
-                      new-ir
-                      elem-ty
-                      result-ty
-                      origin)])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_
-            (ResultLowerExpr.Err
-              (box
-                (lower-diagnostic
-                  "lower: atomic-cas! expects exactly three arguments")))]))]
-    [_
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            "lower: atomic-cas! expects exactly three arguments")))]))
+  (if (= (ast-expr-list-len (& tail)) 1)
+    (let
+      [new-value : AstExpr (ast-node-get (ast-expr-list-get (& tail) 0 0))]
+      (match (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        new-value
+        elem-ty
+        new-value)
+        [(ResultLowerExpr.Ok new-lowered)
+          (match new-lowered
+            [(LowerExpr.Expr new-state new-ir _)
+              (lower-atomic-pointer-emit-cas
+                ctx
+                new-state
+                name
+                ptr
+                expected
+                new-ir
+                elem-ty
+                result-ty
+                origin)])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic "lower: atomic-cas! expects exactly three arguments")))))
 
 (define (lower-atomic-pointer-nonload-call
   [ctx : TcContext]
@@ -25429,46 +25238,44 @@
   [tail0 : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match tail0
-    [(AstExprList.Cons value-node tail1)
-      (let
-        [value : AstExpr (ast-node-get value-node)]
-        [tail1 : AstExprList (box-get tail1)]
-        (match (lower-expr-expected ctx state env type-env value elem-ty value)
-          [(ResultLowerExpr.Ok value-lowered)
-            (match value-lowered
-              [(LowerExpr.Expr value-state value-ir _)
-                (if (lower-atomic-pointer-cas-name? name)
-                  (lower-atomic-pointer-cas-tail
-                    ctx
-                    value-state
-                    env
-                    type-env
-                    name
-                    ptr
-                    value-ir
-                    elem-ty
-                    result-ty
-                    origin
-                    tail1)
-                  (lower-atomic-pointer-update-tail
-                    ctx
-                    value-state
-                    name
-                    ptr
-                    value-ir
-                    elem-ty
-                    result-ty
-                    origin
-                    tail1))])]
-          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
-    [_
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            (if (lower-atomic-pointer-cas-name? name)
-              "lower: atomic-cas! expects exactly three arguments"
-              "lower: atomic update expects exactly two arguments"))))]))
+  (if (> (ast-expr-list-len (& tail0)) 0)
+    (let
+      [value : AstExpr (ast-node-get (ast-expr-list-get (& tail0) 0 0))]
+      [tail1 : AstExprList (ast-expr-list-tail-from-ref (& tail0) 1)]
+      (match (lower-expr-expected ctx state env type-env value elem-ty value)
+        [(ResultLowerExpr.Ok value-lowered)
+          (match value-lowered
+            [(LowerExpr.Expr value-state value-ir _)
+              (if (lower-atomic-pointer-cas-name? name)
+                (lower-atomic-pointer-cas-tail
+                  ctx
+                  value-state
+                  env
+                  type-env
+                  name
+                  ptr
+                  value-ir
+                  elem-ty
+                  result-ty
+                  origin
+                  tail1)
+                (lower-atomic-pointer-update-tail
+                  ctx
+                  value-state
+                  name
+                  ptr
+                  value-ir
+                  elem-ty
+                  result-ty
+                  origin
+                  tail1))])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic
+          (if (lower-atomic-pointer-cas-name? name)
+            "lower: atomic-cas! expects exactly three arguments"
+            "lower: atomic update expects exactly two arguments"))))))
 
 (define (lower-atomic-pointer-call-with-elem
   [ctx : TcContext]
@@ -25487,21 +25294,19 @@
       (match ptr-lowered
         [(LowerExpr.Expr ptr-state ptr-ir _)
           (if (lower-atomic-pointer-load-name? name)
-            (match tail0
-              [(AstExprList.Nil)
-                (lower-atomic-pointer-emit-load
-                  ctx
-                  ptr-state
-                  name
-                  ptr-ir
-                  elem-ty
-                  result-ty
-                  origin)]
-              [_
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: atomic-load expects exactly one argument")))])
+            (if (= (ast-expr-list-len (& tail0)) 0)
+              (lower-atomic-pointer-emit-load
+                ctx
+                ptr-state
+                name
+                ptr-ir
+                elem-ty
+                result-ty
+                origin)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    "lower: atomic-load expects exactly one argument"))))
             (lower-atomic-pointer-nonload-call
               ctx
               ptr-state
@@ -25524,41 +25329,38 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprList.Cons ptr-node tail0)
-      (let
-        [ptr : AstExpr (ast-node-get ptr-node)]
-        [tail0 : AstExprList (box-get tail0)]
-        (match (tc-expr ctx type-env ptr)
-          [(ResultTcType.Ok ptr-ty)
-            (match (lower-atomic-pointer-elem ctx name ptr-ty)
-              [(ResultTcType.Ok elem-ty)
-                (lower-atomic-pointer-call-with-elem
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  ptr
-                  ptr-ty
-                  elem-ty
-                  tail0
-                  result-ty
-                  origin)]
-              [(ResultTcType.Err message)
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic-at-expr ptr message)))])]
-          [(ResultTcType.Err message)
-            (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ptr message)))]))]
-    [(AstExprList.Nil)
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic
-            (if (lower-atomic-pointer-load-name? name)
-              "lower: atomic-load expects exactly one argument"
-              (if (lower-atomic-pointer-cas-name? name)
-                "lower: atomic-cas! expects exactly three arguments"
-                "lower: atomic update expects exactly two arguments")))))]))
+  (if (> (ast-expr-list-len (& args)) 0)
+    (let
+      [ptr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [tail0 : AstExprList (ast-expr-list-tail-from-ref (& args) 1)]
+      (match (tc-expr ctx type-env ptr)
+        [(ResultTcType.Ok ptr-ty)
+          (match (lower-atomic-pointer-elem ctx name ptr-ty)
+            [(ResultTcType.Ok elem-ty)
+              (lower-atomic-pointer-call-with-elem
+                ctx
+                state
+                env
+                type-env
+                name
+                ptr
+                ptr-ty
+                elem-ty
+                tail0
+                result-ty
+                origin)]
+            [(ResultTcType.Err message)
+              (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ptr message)))])]
+        [(ResultTcType.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ptr message)))]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic
+          (if (lower-atomic-pointer-load-name? name)
+            "lower: atomic-load expects exactly one argument"
+            (if (lower-atomic-pointer-cas-name? name)
+              "lower: atomic-cas! expects exactly three arguments"
+              "lower: atomic update expects exactly two arguments")))))))
 
 (define (lower-atomic-load-symbol? [symbol : String]) : bool
   (or
@@ -25742,72 +25544,53 @@
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [elem-ty : AstType (lower-atomic-elem-type symbol)]
-    (match args
-      [(AstExprList.Cons array-node tail0)
-        (let
-          [array : AstExpr (ast-node-get array-node)]
-          [tail0 : AstExprList (box-get tail0)]
-          (match tail0
-            [(AstExprList.Cons index-node tail1)
-              (let
-                [index : AstExpr (ast-node-get index-node)]
-                [tail1 : AstExprList (box-get tail1)]
-                (if (lower-atomic-load-symbol? symbol)
-                  (match tail1
-                    [(AstExprList.Nil)
-                      (lower-atomic-call-load
-                        ctx
-                        state
-                        env
-                        type-env
-                        symbol
-                        array
-                        index
-                        elem-ty
-                        result-ty
-                        origin)]
-                    [_
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic
-                            "lower: atomic load expects two arguments")))])
-                  (match tail1
-                    [(AstExprList.Cons value-node tail2)
-                      (let
-                        [value : AstExpr (ast-node-get value-node)]
-                        [tail2 : AstExprList (box-get tail2)]
-                        (match tail2
-                          [(AstExprList.Nil)
-                            (lower-atomic-call-update
-                              ctx
-                              state
-                              env
-                              type-env
-                              symbol
-                              array
-                              index
-                              value
-                              elem-ty
-                              result-ty
-                              origin)]
-                          [_
-                            (ResultLowerExpr.Err
-                              (box
-                                (lower-diagnostic
-                                  "lower: atomic update expects three arguments")))]))]
-                    [(AstExprList.Nil)
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic
-                            "lower: atomic update expects three arguments")))])))]
-            [(AstExprList.Nil)
-              (ResultLowerExpr.Err
-                (box
-                  (lower-diagnostic
-                    "lower: atomic helper expects at least two arguments")))]))]
-      [(AstExprList.Nil)
+    (let
+      [count : i64 (ast-expr-list-len (& args))]
+      (if (= count 0)
         (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: atomic helper expects arguments")))])))
+          (box (lower-diagnostic "lower: atomic helper expects arguments")))
+        (if (= count 1)
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic
+                "lower: atomic helper expects at least two arguments")))
+          (let
+            [array : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+            [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+            (if (lower-atomic-load-symbol? symbol)
+              (if (= count 2)
+                (lower-atomic-call-load
+                  ctx
+                  state
+                  env
+                  type-env
+                  symbol
+                  array
+                  index
+                  elem-ty
+                  result-ty
+                  origin)
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic
+                      "lower: atomic load expects two arguments"))))
+              (if (= count 3)
+                (lower-atomic-call-update
+                  ctx
+                  state
+                  env
+                  type-env
+                  symbol
+                  array
+                  index
+                  (ast-node-get (ast-expr-list-get (& args) 2 0))
+                  elem-ty
+                  result-ty
+                  origin)
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic
+                      "lower: atomic update expects three arguments")))))))))))
 
 ;; Fixed arrays are inline element storage. Bounds check against the static
 ;; length, then Gep directly from the array handle without loading dynamic-array
@@ -27925,26 +27708,39 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
-  (match args
-    [(AstExprList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest : AstExprList (box-get rest)]
-        (match (lower-expr ctx state env type-env arg)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr arg-state value value-ty)
-                (match (lower-cast-value arg-state value value-ty (AstType.I64))
-                  [(LowerExpr.Expr cast-state cast-value _)
-                    (match (lower-syscall-args ctx cast-state env type-env rest)
-                      [(ResultLowerArgs.Ok rest-state rest-values)
-                        (ResultLowerArgs.Ok
-                          rest-state
-                          (compiler-ir-value-cons cast-value rest-values))]
-                      [(ResultLowerArgs.Err message)
-                        (ResultLowerArgs.Err message)])])])]
-          [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))]))
+  (lower-syscall-args-at ctx state env type-env (& args) 0))
+
+(define (lower-syscall-args-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [index : i64]) : ResultLowerArgs
+  (if (>= index (ast-expr-list-len args))
+    (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state value value-ty)
+              (match (lower-cast-value arg-state value value-ty (AstType.I64))
+                [(LowerExpr.Expr cast-state cast-value _)
+                  (match (lower-syscall-args-at
+                    ctx
+                    cast-state
+                    env
+                    type-env
+                    args
+                    (+ index 1))
+                    [(ResultLowerArgs.Ok rest-state rest-values)
+                      (ResultLowerArgs.Ok
+                        rest-state
+                        (compiler-ir-value-cons cast-value rest-values))]
+                    [(ResultLowerArgs.Err message)
+                      (ResultLowerArgs.Err message)])])])]
+        [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
 
 (define (lower-syscall
   [ctx : TcContext]
@@ -27973,23 +27769,30 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
-  (match args
-    [(AstExprList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest : AstExprList (box-get rest)]
-        (match (lower-expr ctx state env type-env arg)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr arg-state value _)
-                (match (lower-args ctx arg-state env type-env rest)
-                  [(ResultLowerArgs.Ok rest-state rest-values)
-                    (ResultLowerArgs.Ok
-                      rest-state
-                      (compiler-ir-value-cons value rest-values))]
-                  [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])]
-          [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))]))
+  (lower-args-at ctx state env type-env (& args) 0))
+
+(define (lower-args-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [index : i64]) : ResultLowerArgs
+  (if (>= index (ast-expr-list-len args))
+    (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state value _)
+              (match (lower-args-at ctx arg-state env type-env args (+ index 1))
+                [(ResultLowerArgs.Ok rest-state rest-values)
+                  (ResultLowerArgs.Ok
+                    rest-state
+                    (compiler-ir-value-cons value rest-values))]
+                [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
 
 (define (lower-let-binding-type
   [ctx : TcContext]
@@ -28265,29 +28068,42 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : ResultLowerExpr
-  (match exprs
-    [(AstExprList.Nil)
+  (lower-begin-at ctx state env type-env (& exprs) 0))
+
+(define (lower-begin-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultLowerExpr
+  (let
+    [len : i64 (ast-expr-list-len exprs)]
+    (if (>= index len)
       (ResultLowerExpr.Ok
-        (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))]
-    [(AstExprList.Cons expr rest)
+        (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
       (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil) (lower-expr ctx state env type-env expr)]
-          [_
-            (match (lower-expr ctx state env type-env expr)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr next-state _ expr-ty)
-                    (if (tc-never-type? expr-ty)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          next-state
-                          CompilerIrValue.Unit
-                          (AstType.Never)))
-                      (lower-begin ctx next-state env type-env rest))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))]))
+        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        (if (= (+ index 1) len)
+          (lower-expr ctx state env type-env expr)
+          (match (lower-expr ctx state env type-env expr)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr next-state _ expr-ty)
+                  (if (tc-never-type? expr-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        next-state
+                        CompilerIrValue.Unit
+                        (AstType.Never)))
+                    (lower-begin-at
+                      ctx
+                      next-state
+                      env
+                      type-env
+                      exprs
+                      (+ index 1)))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))))
 
 (define (lower-begin-expected
   [ctx : TcContext]
@@ -28296,36 +28112,44 @@
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
   [expected-ty : AstType]) : ResultLowerExpr
-  (match exprs
-    [(AstExprList.Nil)
+  (lower-begin-expected-at ctx state env type-env (& exprs) 0 expected-ty))
+
+(define (lower-begin-expected-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (let
+    [len : i64 (ast-expr-list-len exprs)]
+    (if (>= index len)
       (ResultLowerExpr.Ok
-        (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))]
-    [(AstExprList.Cons expr rest)
+        (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
       (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (lower-expr-expected ctx state env type-env expr expected-ty expr)]
-          [_
-            (match (lower-expr ctx state env type-env expr)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr next-state _ expr-ty)
-                    (if (tc-never-type? expr-ty)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          next-state
-                          CompilerIrValue.Unit
-                          (AstType.Never)))
-                      (lower-begin-expected
-                        ctx
+        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        (if (= (+ index 1) len)
+          (lower-expr-expected ctx state env type-env expr expected-ty expr)
+          (match (lower-expr ctx state env type-env expr)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr next-state _ expr-ty)
+                  (if (tc-never-type? expr-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
                         next-state
-                        env
-                        type-env
-                        rest
-                        expected-ty))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))]))
+                        CompilerIrValue.Unit
+                        (AstType.Never)))
+                    (lower-begin-expected-at
+                      ctx
+                      next-state
+                      env
+                      type-env
+                      exprs
+                      (+ index 1)
+                      expected-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))))
 
 (define (lower-with-arena
   [ctx : TcContext]
@@ -29176,10 +29000,10 @@
                             (AstBinOp.Add)
                             (ast-node-push (AstExpr.Var (intern index)))
                             (ast-node-push (AstExpr.Literal (ast-lit-int 1)))))
-                        (AstExprList.Nil))))))
+                        (ast-expr-list-new))))))
               (ast-expr-cons
                 (ast-node-push (AstExpr.Var (lower-spmd-reduce-acc-id)))
-                (AstExprList.Nil)))))))))
+                (ast-expr-list-new)))))))))
 
 ;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
 ;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
@@ -29368,8 +29192,8 @@
                                 (ast-node-push (AstExpr.Var (intern index)))
                                 (ast-node-push
                                   (AstExpr.Literal (ast-lit-int 1)))))
-                            (AstExprList.Nil))))))))
-              (AstExprList.Nil))))))))
+                            (ast-expr-list-new))))))))
+              (ast-expr-list-new))))))))
 
 (define (lower-spmd-scan
   [ctx : TcContext]
@@ -29947,29 +29771,47 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [exprs : AstExprList]) : i64
-  (match exprs
-    [(AstExprList.Nil) 0]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            expr)
-          (lower-masked-vector-expr-list-lanes-with-locals
-            ctx
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            rest)))]))
+  (lower-masked-vector-expr-list-lanes-with-locals-at
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-lanes-with-locals-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : i64
+  (if (>= expr-index (ast-expr-list-len exprs))
+    0
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs expr-index 0))]
+      (lower-masked-vector-lanes-merge
+        (lower-masked-vector-expr-lanes-with-locals
+          ctx
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          expr)
+        (lower-masked-vector-expr-list-lanes-with-locals-at
+          ctx
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          exprs
+          (+ expr-index 1))))))
 
 (define (lower-masked-vector-let-bindings-locals
   [ctx : TcContext]
@@ -30717,29 +30559,45 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            expr)
-          (lower-masked-vector-expr-list-has-varying-if-with-locals?
-            ctx
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            rest)))]))
+  (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-masked-vector-body-has-varying-if-with-locals?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
   [ctx : TcContext]
@@ -31072,26 +30930,45 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (ast-node-get expr))
-        (lower-masked-vector-expr-list-has-varying-while-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (box-get rest)))]))
+  (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-masked-vector-body-has-varying-while-with-locals?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
   [ctx : TcContext]
@@ -31380,26 +31257,45 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (ast-node-get expr))
-        (lower-masked-vector-expr-list-has-varying-match-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (box-get rest)))]))
+  (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
+        ctx
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
   [ctx : TcContext]
@@ -31819,24 +31715,41 @@
   [index : String]
   [enum-locals : LowerStringSet]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (ast-node-get expr))
-        (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (box-get rest)))]))
+  (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
+    ctx
+    env
+    type-env
+    index
+    enum-locals
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        ctx
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
+        ctx
+        env
+        type-env
+        index
+        enum-locals
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
   [ctx : TcContext]
@@ -32116,25 +32029,37 @@
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or
-          (lower-masked-vector-body-has-bool-array-lane?
-            ctx
-            env
-            type-env
-            index
-            expr)
-          (lower-masked-vector-expr-list-has-bool-array-lane?
-            ctx
-            env
-            type-env
-            index
-            rest)))]))
+  (lower-masked-vector-expr-list-has-bool-array-lane-at?
+    ctx
+    env
+    type-env
+    index
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-has-bool-array-lane-at?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-masked-vector-body-has-bool-array-lane?
+        ctx
+        env
+        type-env
+        index
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-has-bool-array-lane-at?
+        ctx
+        env
+        type-env
+        index
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane?
   [ctx : TcContext]
@@ -32341,15 +32266,37 @@
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : LowerArrayVarSet
-  (match exprs
-    [(AstExprList.Nil) (lower-array-var-set-empty)]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (lower-array-var-set-merge
-          (lower-masked-vector-array-vars ctx env type-env index expr)
-          (lower-masked-vector-expr-list-array-vars ctx env type-env index rest)))]))
+  (lower-masked-vector-expr-list-array-vars-at
+    ctx
+    env
+    type-env
+    index
+    (& exprs)
+    0))
+
+(define (lower-masked-vector-expr-list-array-vars-at
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : LowerArrayVarSet
+  (if (>= expr-index (ast-expr-list-len exprs))
+    (lower-array-var-set-empty)
+    (lower-array-var-set-merge
+      (lower-masked-vector-array-vars
+        ctx
+        env
+        type-env
+        index
+        (ast-node-get (ast-expr-list-get exprs expr-index 0)))
+      (lower-masked-vector-expr-list-array-vars-at
+        ctx
+        env
+        type-env
+        index
+        exprs
+        (+ expr-index 1)))))
 
 (define (lower-masked-vector-match-arms-array-vars
   [ctx : TcContext]
@@ -32518,15 +32465,17 @@
           (lower-match-arms-have-array-read-at? arms (+ index 1)))])))
 
 (define (lower-vector-expr-list-has-array-read? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [inner : AstExpr (ast-node-get expr)]
-        [next : AstExprList (box-get rest)]
-        (or
-          (lower-vector-body-has-array-read? inner)
-          (lower-vector-expr-list-has-array-read? next)))]))
+  (lower-vector-expr-list-has-array-read-at? (& exprs) 0))
+
+(define (lower-vector-expr-list-has-array-read-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-vector-body-has-array-read?
+        (ast-node-get (ast-expr-list-get exprs index 0)))
+      (lower-vector-expr-list-has-array-read-at? exprs (+ index 1)))))
 
 (define (lower-vector-let-bindings-have-array-read?
   [bindings : AstLetBindingList]) : bool
@@ -32626,15 +32575,17 @@
     [_ false]))
 
 (define (lower-vector-expr-list-has-spmd-shuffle? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [inner : AstExpr (ast-node-get expr)]
-        [next : AstExprList (box-get rest)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? inner)
-          (lower-vector-expr-list-has-spmd-shuffle? next)))]))
+  (lower-vector-expr-list-has-spmd-shuffle-at? (& exprs) 0))
+
+(define (lower-vector-expr-list-has-spmd-shuffle-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-vector-body-has-spmd-shuffle?
+        (ast-node-get (ast-expr-list-get exprs index 0)))
+      (lower-vector-expr-list-has-spmd-shuffle-at? exprs (+ index 1)))))
 
 (define (lower-vector-let-bindings-have-spmd-shuffle?
   [bindings : AstLetBindingList]) : bool
@@ -32741,15 +32692,25 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [inner : AstExpr (ast-node-get expr)]
-        [next : AstExprList (box-get rest)]
-        (or
-          (lower-vector-body-has-atomic-call? ctx type-env inner)
-          (lower-vector-expr-list-has-atomic-call? ctx type-env next)))]))
+  (lower-vector-expr-list-has-atomic-call-at? ctx type-env (& exprs) 0))
+
+(define (lower-vector-expr-list-has-atomic-call-at?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-vector-body-has-atomic-call?
+        ctx
+        type-env
+        (ast-node-get (ast-expr-list-get exprs index 0)))
+      (lower-vector-expr-list-has-atomic-call-at?
+        ctx
+        type-env
+        exprs
+        (+ index 1)))))
 
 (define (lower-vector-let-bindings-have-atomic-call?
   [ctx : TcContext]
@@ -32830,12 +32791,17 @@
     [_ false]))
 
 (define (lower-spmd-expr-list-has-mul? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (or
-        (lower-spmd-expr-has-mul? (ast-node-get expr))
-        (lower-spmd-expr-list-has-mul? (box-get rest)))]))
+  (lower-spmd-expr-list-has-mul-at? (& exprs) 0))
+
+(define (lower-spmd-expr-list-has-mul-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-spmd-expr-has-mul?
+        (ast-node-get (ast-expr-list-get exprs index 0)))
+      (lower-spmd-expr-list-has-mul-at? exprs (+ index 1)))))
 
 (define (lower-spmd-let-bindings-have-mul? [bindings : AstLetBindingList]) : bool
   (match bindings
@@ -35461,44 +35427,65 @@
   [active-mask : CompilerIrValue]
   [lanes : i64]
   [exprs : AstExprList]) : ResultLowerExpr
-  (match exprs
-    [(AstExprList.Nil)
-      (ResultLowerExpr.Ok
-        (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          expr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr next-state value ty)
-                (match rest
-                  [(AstExprList.Nil)
-                    (ResultLowerExpr.Ok (LowerExpr.Expr next-state value ty))]
-                  [_
-                    (lower-avx512-masked-begin
-                      ctx
-                      next-state
-                      env
-                      type-env
-                      lane-locals
-                      index
-                      index-var
-                      active-mask
-                      lanes
-                      rest)])])]
-          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]))
+  (lower-avx512-masked-begin-at
+    ctx
+    state
+    env
+    type-env
+    lane-locals
+    index
+    index-var
+    active-mask
+    lanes
+    (& exprs)
+    0))
+
+(define (lower-avx512-masked-begin-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : ResultLowerExpr
+  (if (>= expr-index (ast-expr-list-len exprs))
+    (ResultLowerExpr.Ok
+      (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs expr-index 0))]
+      (match (lower-avx512-masked-expr
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr next-state value ty)
+              (if (= (+ expr-index 1) (ast-expr-list-len exprs))
+                (ResultLowerExpr.Ok (LowerExpr.Expr next-state value ty))
+                (lower-avx512-masked-begin-at
+                  ctx
+                  next-state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  exprs
+                  (+ expr-index 1)))])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))
 
 (define (lower-avx512-masked-select-result-supported?
   [state : LowerState]
@@ -39335,15 +39322,14 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil) (lower-tail-expr-candidate? state env expr)]
-          [_ (lower-tail-begin-candidate? state env rest)]))]))
+  (let
+    [len : i64 (ast-expr-list-len (& exprs))]
+    (if (= len 0)
+      false
+      (lower-tail-expr-candidate?
+        state
+        env
+        (ast-node-get (ast-expr-list-get (& exprs) (- len 1) 0))))))
 
 (define (lower-tail-match-arms-candidate?
   [state : LowerState]
@@ -39480,12 +39466,16 @@
   (lower-rvo-expr-has-early-return? (ast-node-get id)))
 
 (define (lower-rvo-expr-list-has-early-return? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons head rest)
-      (or
-        (lower-rvo-node-has-early-return? head)
-        (lower-rvo-expr-list-has-early-return? (box-get rest)))]))
+  (lower-rvo-expr-list-has-early-return-at? (& exprs) 0))
+
+(define (lower-rvo-expr-list-has-early-return-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-rvo-node-has-early-return? (ast-expr-list-get exprs index 0))
+      (lower-rvo-expr-list-has-early-return-at? exprs (+ index 1)))))
 
 (define (lower-rvo-let-bindings-have-early-return?
   [bindings : AstLetBindingList]) : bool
@@ -39759,12 +39749,21 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : bool
-  (match args
-    [(AstExprList.Nil) true]
-    [(AstExprList.Cons arg rest)
-      (and
-        (lower-rvo-arg-cannot-alias-sret? ctx type-env (ast-node-get arg))
-        (lower-rvo-args-cannot-alias-sret? ctx type-env (box-get rest)))]))
+  (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args) 0))
+
+(define (lower-rvo-args-cannot-alias-sret-at?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len args))
+    true
+    (and
+      (lower-rvo-arg-cannot-alias-sret?
+        ctx
+        type-env
+        (ast-node-get (ast-expr-list-get args index 0)))
+      (lower-rvo-args-cannot-alias-sret-at? ctx type-env args (+ index 1)))))
 
 (define (lower-rvo-callee-has-early-return?
   [state : LowerState]
@@ -40130,31 +40129,46 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-expr ctx type-env expr)
-          [(ResultTcType.Ok ty)
-            (or
-              (and
-                (lower-type-contains-inline-aggregate? ctx ty)
-                (not (lower-tail-call-safe-param-aggregate-arg? state env expr)))
-              (lower-expr-list-contains-unsafe-inline-aggregate?
-                ctx
-                state
-                env
-                type-env
-                rest))]
-          [(ResultTcType.Err _)
-            (lower-expr-list-contains-unsafe-inline-aggregate?
+  (lower-expr-list-contains-unsafe-inline-aggregate-at?
+    ctx
+    state
+    env
+    type-env
+    (& exprs)
+    0))
+
+(define (lower-expr-list-contains-unsafe-inline-aggregate-at?
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-expr ctx type-env expr)
+        [(ResultTcType.Ok ty)
+          (or
+            (and
+              (lower-type-contains-inline-aggregate? ctx ty)
+              (not (lower-tail-call-safe-param-aggregate-arg? state env expr)))
+            (lower-expr-list-contains-unsafe-inline-aggregate-at?
               ctx
               state
               env
               type-env
-              rest)]))]))
+              exprs
+              (+ index 1)))]
+        [(ResultTcType.Err _)
+          (lower-expr-list-contains-unsafe-inline-aggregate-at?
+            ctx
+            state
+            env
+            type-env
+            exprs
+            (+ index 1))]))))
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : TcContext]
@@ -40296,36 +40310,45 @@
   [exprs : AstExprList]
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
-  (match exprs
-    [(AstExprList.Nil)
+  (lower-tail-begin-at ctx state env type-env (& exprs) 0 ret-ty sret-var))
+
+(define (lower-tail-begin-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
+  (let
+    [len : i64 (ast-expr-list-len exprs)]
+    (if (>= index len)
       (ResultLowerState.Ok
         (lower-state-emit
           state
           (CompilerIrInstr.Return
-            (lower-return-maybe CompilerIrValue.Unit ret-ty))))]
-    [(AstExprList.Cons expr rest)
+            (lower-return-maybe CompilerIrValue.Unit ret-ty))))
       (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (lower-tail-expr ctx state env type-env expr ret-ty sret-var)]
-          [_
-            (match (lower-expr ctx state env type-env expr)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr next-state _ expr-ty)
-                    (if (tc-never-type? expr-ty)
-                      (ResultLowerState.Ok next-state)
-                      (lower-tail-begin
-                        ctx
-                        next-state
-                        env
-                        type-env
-                        rest
-                        ret-ty
-                        sret-var))])]
-              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])]))]))
+        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        (if (= (+ index 1) len)
+          (lower-tail-expr ctx state env type-env expr ret-ty sret-var)
+          (match (lower-expr ctx state env type-env expr)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr next-state _ expr-ty)
+                  (if (tc-never-type? expr-ty)
+                    (ResultLowerState.Ok next-state)
+                    (lower-tail-begin-at
+                      ctx
+                      next-state
+                      env
+                      type-env
+                      exprs
+                      (+ index 1)
+                      ret-ty
+                      sret-var))])]
+            [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))))))
 
 (define (lower-tail-if
   [ctx : TcContext]
@@ -41849,7 +41872,7 @@
       (ast-expr-struct-get
         (ast-node-push (AstExpr.Var (intern value-name)))
         field-name)
-      AstExprList.Nil)))
+      (ast-expr-list-new))))
 
 (define (lower-struct-cleanup-field-exprs
   [ctx : TcContext]
@@ -41925,7 +41948,7 @@
       ctx
       value-name
       fields
-      AstExprList.Nil)
+      (ast-expr-list-new))
       [(ResultAstExprList.Ok exprs)
         (let
           [params : AstParamList
@@ -41933,9 +41956,9 @@
               (ast-param value-name struct-ty false)
               AstParamList.Nil)]
           [body : AstExpr
-            (match exprs
-              [(AstExprList.Nil) (AstExpr.Literal AstLiteral.Unit)]
-              [_ (AstExpr.Begin exprs)])]
+            (if (= (ast-expr-list-len (& exprs)) 0)
+              (AstExpr.Literal AstLiteral.Unit)
+              (AstExpr.Begin exprs))]
           (lower-function-escaping
             ctx
             top-env
@@ -43835,12 +43858,16 @@
   (lower-source-expr-has-import-call? (ast-node-get id)))
 
 (define (lower-source-expr-list-has-import-call? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons head rest)
-      (or
-        (lower-source-node-has-import-call? head)
-        (lower-source-expr-list-has-import-call? (box-get rest)))]))
+  (lower-source-expr-list-has-import-call-at? (& exprs) 0))
+
+(define (lower-source-expr-list-has-import-call-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (lower-source-node-has-import-call? (ast-expr-list-get exprs index 0))
+      (lower-source-expr-list-has-import-call-at? exprs (+ index 1)))))
 
 (define (lower-source-let-bindings-have-import-call?
   [bindings : AstLetBindingList]) : bool
@@ -54177,7 +54204,7 @@
           (AstType.I64)
           (ast-expr-call
             (ast-node-push (AstExpr.Var (intern "helper")))
-            AstExprList.Nil))
+            (ast-expr-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn
             "helper"
@@ -54235,7 +54262,7 @@
             (AstType.Expr)
             (ast-expr-call
               (ast-node-push (AstExpr.Var (intern "macro-only-helper")))
-              AstExprList.Nil))
+              (ast-expr-list-new)))
           AstDeclList.Nil)))))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-program) : AstProgram

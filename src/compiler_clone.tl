@@ -450,7 +450,7 @@
   (ast-expr-call-with-pools
     pools
     (clone-expr-push pools (AstExpr.Var (intern "clone")))
-    (ast-expr-cons inner AstExprList.Nil)))
+    (ast-expr-cons inner (ast-expr-list-new))))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
@@ -470,7 +470,7 @@
   [count : i64]
   [i : i64]) : AstExprList
   (if (>= i count)
-    AstExprList.Nil
+    (ast-expr-list-new)
     (ast-expr-cons
       (clone-call-expr
         pools
@@ -523,7 +523,7 @@
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : AstExprList
   (if (>= index (ast-field-def-list-len fields))
-    AstExprList.Nil
+    (ast-expr-list-new)
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def fname _ _)
         (ast-expr-cons
@@ -692,7 +692,7 @@
   (ast-expr-call-with-pools
     pools
     (clone-expr-push pools (AstExpr.Var (intern nil-ctor)))
-    AstExprList.Nil))
+    (ast-expr-list-new)))
 
 (define (clone-list-tail-next-expr
   [pools : AstNodePoolContext]
@@ -757,8 +757,8 @@
               head-expr
               (ast-expr-cons
                 (clone-list-tail-acc-expr pools boxed-tail)
-                AstExprList.Nil)))
-          AstExprList.Nil)))))
+                (ast-expr-list-new))))
+          (ast-expr-list-new))))))
 
 ;; (match x [(Nil) acc] [(Cons h t) (fn t (Cons head-expr acc))])
 (define (clone-list-fold-body
@@ -841,8 +841,8 @@
             (AstExpr.Var (intern (clone-list-acc-name type-name))))
           (ast-expr-cons
             (clone-expr-push pools (AstExpr.Var (intern "x")))
-            (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprList.Nil)))
-        (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprList.Nil)))))
+            (ast-expr-cons (clone-nil-expr pools nil-ctor) (ast-expr-list-new))))
+        (ast-expr-cons (clone-nil-expr pools nil-ctor) (ast-expr-list-new))))))
 
 ;; Emit the clone helper(s) for one clone-able enum: three tail-recursive
 ;; functions for a list shape, otherwise the single naive match-reconstruct.
@@ -931,12 +931,23 @@
     [pools : AstNodePoolContext]
     [exprs : AstExprList]
     [want : String]) : i64
-    (match exprs
-      [(AstExprList.Nil) 0]
-      [(AstExprList.Cons head rest)
-        (+
-          (clone-test-expr-name-count pools head want)
-          (clone-test-expr-list-name-count pools (box-get rest) want))])))
+    (clone-test-expr-list-name-count-at pools (& exprs) want 0)))
+
+(cfg
+  test
+  (define (clone-test-expr-list-name-count-at
+    [pools : AstNodePoolContext]
+    [exprs : (& exprs AstExprList)]
+    [want : String]
+    [index : i64]) : i64
+    (if (>= index (ast-expr-list-len exprs))
+      0
+      (+
+        (clone-test-expr-name-count
+          pools
+          (ast-expr-list-get exprs index 0)
+          want)
+        (clone-test-expr-list-name-count-at pools exprs want (+ index 1))))))
 
 (cfg
   test

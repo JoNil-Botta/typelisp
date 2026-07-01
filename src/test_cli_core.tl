@@ -641,10 +641,12 @@
           (ast-node-push
             (AstExpr.Literal (ast-lit-int (string.string-length text))))
           (AstType.I32))
-        AstExprList.Nil))))
+        (ast-expr-list-new)))))
 
 (define (tltest-call-expr [name : String]) : i64
-  (ast-expr-call (ast-node-push (AstExpr.Var (intern name))) AstExprList.Nil))
+  (ast-expr-call
+    (ast-node-push (AstExpr.Var (intern name)))
+    (ast-expr-list-new)))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string.eq path "")
@@ -684,7 +686,7 @@
         (ast-expr-cast
           (ast-expr-ptr-to-int (ast-node-push (AstExpr.Var (intern "buf"))))
           (AstType.I64))
-        AstExprList.Nil))))
+        (ast-expr-list-new)))))
 
 (define (tltest-linux-write-syscall) : i64
   (ast-node-push
@@ -703,8 +705,8 @@
                   (ast-expr-cast
                     (ast-node-push (AstExpr.Var (intern "n")))
                     (AstType.I64))
-                  AstExprList.Nil)))))
-        AstExprList.Nil))))
+                  (ast-expr-list-new))))))
+        (ast-expr-list-new)))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
@@ -752,7 +754,7 @@
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int -12)))
         (AstType.I32))
-      AstExprList.Nil)))
+      (ast-expr-list-new))))
 
 (define (tltest-windows-write-file-call) : i64
   (ast-expr-call
@@ -767,7 +769,7 @@
             (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstType.I32))))
             (ast-expr-cons
               (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
-              AstExprList.Nil)))))))
+              (ast-expr-list-new))))))))
 
 (define (tltest-windows-write-body) : i64
   (ast-expr-let
@@ -824,10 +826,10 @@
             (ast-expr-cons
               (ast-expr-string-data
                 (ast-node-push (AstExpr.Var (intern "text"))))
-              AstExprList.Nil)))
+              (ast-expr-list-new))))
         (ast-expr-cons
           (ast-node-push (AstExpr.Var (intern "n")))
-          AstExprList.Nil)))))
+          (ast-expr-list-new))))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
   (ast-decl-def-fn
@@ -840,7 +842,7 @@
           (tltest-print-runtime-write-call)
           (ast-expr-cons
             (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
-            AstExprList.Nil))))))
+            (ast-expr-list-new)))))))
 
 (define (tltest-program-with-print-runtime
   [program : AstProgram]
@@ -911,7 +913,7 @@
         (tltest-print-expr (tltest-summary-line count))
         (ast-expr-cons
           (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
-          AstExprList.Nil)))))
+          (ast-expr-list-new))))))
 
 (define (tltest-test-decls-onto
   [tests : (Array InlineTest)]
@@ -1063,13 +1065,20 @@
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match exprs
-    [(AstExprList.Nil) names]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names)))]))
+  (tltest-reach-mark-expr-list-at exprs names 0))
+
+(define (tltest-reach-mark-expr-list-at
+  [exprs : AstExprList]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-expr-list-len (& exprs)))
+    names
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get (& exprs) index 0))]
+      (tltest-reach-mark-expr-list-at
+        exprs
+        (tltest-reach-mark-expr head names)
+        (+ index 1)))))
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
@@ -2262,10 +2271,11 @@
       (ast-node-push
         (AstExpr.Begin
           (ast-expr-cons
-            (ast-expr-with-scratch (ast-expr-cons unit-expr AstExprList.Nil))
+            (ast-expr-with-scratch
+              (ast-expr-cons unit-expr (ast-expr-list-new)))
             (ast-expr-cons
               (tltest-call-expr "tl_bytes_view_from_str_parts")
-              (ast-expr-cons unit-expr AstExprList.Nil)))))]
+              (ast-expr-cons unit-expr (ast-expr-list-new))))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_runtime_helper"
@@ -2332,7 +2342,9 @@
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
-          (ast-expr-cons lambda-expr (ast-expr-cons unit-expr AstExprList.Nil))))]
+          (ast-expr-cons
+            lambda-expr
+            (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_lambda_helper"
@@ -2392,7 +2404,7 @@
         (AstExpr.Begin
           (ast-expr-cons
             (tltest-call-expr "substring")
-            (ast-expr-cons unit-expr AstExprList.Nil))))]
+            (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_substring_helper"
@@ -2617,7 +2629,11 @@
 
 (define (tltest-generated-wrapper [item : String] [decl : AstDecl]) : AstDecl
   (ast-decl-comptime-decl-with-meta
-    (AstGeneratedDeclMeta.Some "tltest-generated" item AstExprList.Nil "tltest")
+    (AstGeneratedDeclMeta.Some
+      "tltest-generated"
+      item
+      (ast-expr-list-new)
+      "tltest")
     decl))
 
 (define (tltest-generated-reachability-self-test?) : bool

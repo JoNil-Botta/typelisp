@@ -71,8 +71,9 @@ walkers, and any path-alignment logic change together.
 | `AstLetBindingList` | `src/compiler_ast_types.tl:359` | `AstLetBindingList.Nil` / `AstLetBindingList.Cons` | Ordered sequential bindings; bind/check/lower in order. | Hot. | `convert-to-generated-vector` | #3427. |
 | `AstResourceBindingList` | `src/compiler_ast_types.tl:366` | `AstResourceBindingList.Nil` / `AstResourceBindingList.Cons` | Ordered resource cleanup bindings. | Cold/moderate. | `convert-to-generated-vector` | #3427. |
 | `AstMatchArmList` | `src/compiler_ast_types.tl:373` | `AstMatchArmList.Nil` / `AstMatchArmList.Cons` | Ordered match arms; first-match semantics. | Hot in match-heavy code. | `convert-to-generated-vector` | #3427. |
-| `AstExprList` | `src/compiler_ast_types.tl:1518` | `AstExprList.Nil` / `AstExprList.Cons` | Ordered call/body/tuple/array exprs; frequent traversal and count. | Very hot. | `convert-to-generated-vector` | #3427. |
-| `AstExprClauseList` | `src/compiler_ast_types.tl:1526` | `AstExprClauseList.Nil` / `AstExprClauseList.Cons` | Ordered macro clause pairs. | Moderate in macro-heavy code. | `convert-to-generated-vector` | #3427. |
+| `AstExprList` | `src/compiler_ast_types.tl:1724` | generated vector family (`ast-expr-list-*`) | Ordered call/body/tuple/array exprs; frequent traversal and count. | Very hot. | `converted-to-generated-vector` | #4180. |
+| `AstExprClauseList` | `src/compiler_ast_types.tl:1734` | generated vector family (`ast-expr-clause-list-*`) | Ordered macro clause pairs. | Moderate in macro-heavy code. | `converted-to-generated-vector` | #4180. |
+| `AstExprBindingClauseList` | `src/compiler_ast_types.tl:1747` | generated vector family (`ast-expr-binding-clause-list-*`) | Ordered macro binding clauses. | Moderate in macro-heavy code. | `converted-to-generated-vector` | #4180. |
 | `AstDispatchVariantList` | `src/compiler_ast_types.tl:1572` | `AstDispatchVariantNil` / `AstDispatchVariantCons` | Ordered dispatch variants. | Cold. | `keep-persistent-cons` | Revisit only if dispatch metadata grows. |
 | `AstDeclList` | `src/compiler_ast_types.tl:1604` | `AstDeclNil` / `AstDeclCons` | Ordered declarations; prefix cache, symbol, typecheck, lower passes. | Very hot. | `convert-to-generated-vector` | #3427; migrate with `AstDeclPathList`. |
 | `AstDeclPathList` | `src/compiler_ast_types.tl:1608` | `AstDeclPathNil` / `AstDeclPathCons` | Parallel ordered paths for `AstDeclList`; lockstep traversal. | Hot wherever loaded programs are checked/lowered. | `convert-to-generated-vector` | #3427; must migrate with `AstDeclList`. |
@@ -133,7 +134,7 @@ inline aggregate recursion. They are not production storage families.
 | `AstTypeList` fixtures | `src/compiler_typecheck.tl:1945`, `1987` | `AstTypeList.Nil` / `AstTypeList.Cons` | Source-literal mirrors for inline layout tests. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
 | `CtfeEnv` fixture | `src/compiler_typecheck.tl:1966` | `CtfeEnv.Nil` / `CtfeEnv.Cons` | Source-literal CTFE metadata layout fixture. | Test only. | `not-a-cons-migration-target` | Production CTFE family is outside #2565. |
 | `AstPatternList` fixture | `src/compiler_typecheck.tl:1993` | `AstPatternList.Nil` / `AstPatternList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
-| `AstExprList` fixture | `src/compiler_typecheck.tl:2001` | `AstExprList.Nil` / `AstExprList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
+| `FixtureExprList` fixture | `src/compiler_typecheck.tl:2001` | `FixtureExprList.Nil` / `FixtureExprList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production expression-list families handled in #4180. |
 | `FormatCstList` fixture | `src/compiler_typecheck.tl:2027` | `FmtCstNil` / `FmtCstCons` | Source-literal formatter layout fixture. | Test only. | `not-a-cons-migration-target` | Production formatter family is outside #2565. |
 
 ## Conversion Rules

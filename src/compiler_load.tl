@@ -7778,7 +7778,7 @@
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
     [meta : AstGeneratedDeclMeta
-      (AstGeneratedDeclMeta.Some "gen" "generated-fn" AstExprList.Nil "")]
+      (AstGeneratedDeclMeta.Some "gen" "generated-fn" (ast-expr-list-new) "")]
     [inner : AstDecl
       (ast-decl-def-fn
         "generated-fn"
@@ -7804,9 +7804,7 @@
                     (and
                       (string.eq generator "gen")
                       (string.eq item "generated-fn")
-                      (match arg-keys
-                        [(AstExprList.Nil) true]
-                        [_ false]))]
+                      (= (ast-expr-list-len (& arg-keys)) 0))]
                   [_ false])
                 (match template
                   [(AstDecl.Extern name _ _ _)

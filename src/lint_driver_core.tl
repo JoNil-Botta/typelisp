@@ -925,12 +925,20 @@
 (define (selfhost-lint-dead-expr-list-refs
   [exprs : AstExprList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match exprs
-    [(AstExprList.Nil) refs]
-    [(AstExprList.Cons head rest)
-      (selfhost-lint-dead-expr-list-refs
-        (box-get rest)
-        (selfhost-lint-dead-expr-refs (ast-node-get head) refs))]))
+  (selfhost-lint-dead-expr-list-refs-from exprs refs 0))
+
+(define (selfhost-lint-dead-expr-list-refs-from
+  [exprs : AstExprList]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-expr-list-len (& exprs)))
+    refs
+    (selfhost-lint-dead-expr-list-refs-from
+      exprs
+      (selfhost-lint-dead-expr-refs
+        (ast-node-get (ast-expr-list-get (& exprs) index 0))
+        refs)
+      (+ index 1))))
 
 (define (selfhost-lint-dead-let-binding-refs
   [bindings : AstLetBindingList]

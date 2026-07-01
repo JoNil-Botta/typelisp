@@ -1719,17 +1719,21 @@
       id
       node)))
 
-(defenum AstExprList
-  (Nil)
-  (Cons i64 (Box AstExprList)))
+(comptime-decl
+  (:generated vector-family AstExprList "i64")
+  (defstruct AstExprList
+    (slots (Array i64))
+    (len i64)))
 
 (defstruct AstExprClause
   (first i64)
   (second i64))
 
-(defenum AstExprClauseList
-  (Nil)
-  (Cons AstExprClause (Box AstExprClauseList)))
+(comptime-decl
+  (:generated vector-family AstExprClauseList "AstExprClause")
+  (defstruct AstExprClauseList
+    (slots (Array AstExprClause))
+    (len i64)))
 
 (defstruct AstExprBindingClause
   (name i64)
@@ -1738,9 +1742,11 @@
   (init i64)
   (span AstSourceSpan))
 
-(defenum AstExprBindingClauseList
-  (Nil)
-  (Cons AstExprBindingClause (Box AstExprBindingClauseList)))
+(comptime-decl
+  (:generated vector-family AstExprBindingClauseList "AstExprBindingClause")
+  (defstruct AstExprBindingClauseList
+    (slots (Array AstExprBindingClause))
+    (len i64)))
 
 (defenum AstMaybeModuleName
   (No)
@@ -2393,14 +2399,247 @@
       (ast-match-arm-list-append-from (&mut out) (& rest) 0)
       out)))
 
+(comptime-decl
+  (:generated vector-family ast-expr-list-with-capacity "i64")
+  (define (ast-expr-list-with-capacity [capacity : i64]) : AstExprList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstExprList (array.make-array i64 cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-new "i64")
+  (define (ast-expr-list-new) : AstExprList
+    (ast-expr-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-len "i64")
+  (define (ast-expr-list-len [v : (& v AstExprList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-capacity "i64")
+  (define (ast-expr-list-capacity [v : (& v AstExprList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-empty? "i64")
+  (define (ast-expr-list-empty? [v : (& v AstExprList)]) : bool
+    (= (ast-expr-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-get "i64")
+  (define (ast-expr-list-get
+    [v : (& v AstExprList)]
+    [index : i64]
+    [fallback : i64]) : i64
+    (if (and (>= index 0) (< index (ast-expr-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-copy-range "i64")
+  (define (ast-expr-list-copy-range
+    [dst : (&mut dst (Array i64))]
+    [src : (& src (Array i64))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-expr-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-grow "i64")
+  (define (ast-expr-list-grow [v : (&mut v AstExprList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array i64) (array.make-array i64 new-cap)]
+      (begin
+        (ast-expr-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-list-push "i64")
+  (define (ast-expr-list-push [v : (&mut v AstExprList)] [value : i64]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-expr-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-expr-list-append-from
+  [out : (&mut out AstExprList)]
+  [items : (& items AstExprList)]
+  [index : i64]) : unit
+  (if (>= index (ast-expr-list-len items))
+    unit
+    (begin
+      (ast-expr-list-push out (ast-expr-list-get items index 0))
+      (ast-expr-list-append-from out items (+ index 1)))))
+
+(define (ast-expr-list-tail [items : AstExprList]) : AstExprList
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (- (ast-expr-list-len (& items)) 1))]
+    (begin
+      (ast-expr-list-append-from (&mut out) (& items) 1)
+      out)))
+
+(define (ast-expr-list-tail-from-ref
+  [items : (& items AstExprList)]
+  [index : i64]) : AstExprList
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (- (ast-expr-list-len items) index))]
+    (begin
+      (ast-expr-list-append-from (&mut out) items index)
+      out)))
+
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
-  (AstExprList.Cons head (box rest)))
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (+ 1 (ast-expr-list-len (& rest))))]
+    (begin
+      (ast-expr-list-push (&mut out) head)
+      (ast-expr-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-expr-clause [first : i64] [second : i64]) : AstExprClause
   (AstExprClause first second))
 
+(define (ast-expr-clause-fallback) : AstExprClause
+  (AstExprClause 0 0))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-with-capacity "AstExprClause")
+  (define (ast-expr-clause-list-with-capacity [capacity : i64]) : AstExprClauseList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstExprClauseList (array.make-array AstExprClause cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-new "AstExprClause")
+  (define (ast-expr-clause-list-new) : AstExprClauseList
+    (ast-expr-clause-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-len "AstExprClause")
+  (define (ast-expr-clause-list-len [v : (& v AstExprClauseList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-capacity "AstExprClause")
+  (define (ast-expr-clause-list-capacity [v : (& v AstExprClauseList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-empty? "AstExprClause")
+  (define (ast-expr-clause-list-empty? [v : (& v AstExprClauseList)]) : bool
+    (= (ast-expr-clause-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-get "AstExprClause")
+  (define (ast-expr-clause-list-get
+    [v : (& v AstExprClauseList)]
+    [index : i64]
+    [fallback : AstExprClause]) : AstExprClause
+    (if (and (>= index 0) (< index (ast-expr-clause-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-copy-range "AstExprClause")
+  (define (ast-expr-clause-list-copy-range
+    [dst : (&mut dst (Array AstExprClause))]
+    [src : (& src (Array AstExprClause))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-expr-clause-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-grow "AstExprClause")
+  (define (ast-expr-clause-list-grow [v : (&mut v AstExprClauseList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstExprClause) (array.make-array AstExprClause new-cap)]
+      (begin
+        (ast-expr-clause-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-clause-list-push "AstExprClause")
+  (define (ast-expr-clause-list-push
+    [v : (&mut v AstExprClauseList)]
+    [value : AstExprClause]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-expr-clause-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-expr-clause-list-append-from
+  [out : (&mut out AstExprClauseList)]
+  [items : (& items AstExprClauseList)]
+  [index : i64]) : unit
+  (if (>= index (ast-expr-clause-list-len items))
+    unit
+    (begin
+      (ast-expr-clause-list-push
+        out
+        (ast-expr-clause-list-get items index (ast-expr-clause-fallback)))
+      (ast-expr-clause-list-append-from out items (+ index 1)))))
+
+(define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
+  (let
+    [out : AstExprClauseList
+      (ast-expr-clause-list-with-capacity
+        (- (ast-expr-clause-list-len (& items)) 1))]
+    (begin
+      (ast-expr-clause-list-append-from (&mut out) (& items) 1)
+      out)))
+
 (define (ast-expr-clause-cons [head : AstExprClause] [rest : AstExprClauseList]) : AstExprClauseList
-  (AstExprClauseList.Cons head (box rest)))
+  (let
+    [out : AstExprClauseList
+      (ast-expr-clause-list-with-capacity
+        (+ 1 (ast-expr-clause-list-len (& rest))))]
+    (begin
+      (ast-expr-clause-list-push (&mut out) head)
+      (ast-expr-clause-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-expr-binding-clause
   [name : String]
@@ -2418,10 +2657,136 @@
   [span : AstSourceSpan]) : AstExprBindingClause
   (AstExprBindingClause name has-type ty init span))
 
+(define (ast-expr-binding-clause-fallback) : AstExprBindingClause
+  (AstExprBindingClause 0 false 0 0 (AstSourceSpan 0 0 0 0)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-with-capacity "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-with-capacity [capacity : i64]) : AstExprBindingClauseList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstExprBindingClauseList (array.make-array AstExprBindingClause cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-new "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-new) : AstExprBindingClauseList
+    (ast-expr-binding-clause-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-len "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-len
+    [v : (& v AstExprBindingClauseList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-capacity "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-capacity
+    [v : (& v AstExprBindingClauseList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-empty? "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-empty?
+    [v : (& v AstExprBindingClauseList)]) : bool
+    (= (ast-expr-binding-clause-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-get "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-get
+    [v : (& v AstExprBindingClauseList)]
+    [index : i64]
+    [fallback : AstExprBindingClause]) : AstExprBindingClause
+    (if (and (>= index 0) (< index (ast-expr-binding-clause-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-copy-range "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-copy-range
+    [dst : (&mut dst (Array AstExprBindingClause))]
+    [src : (& src (Array AstExprBindingClause))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-expr-binding-clause-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-grow "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-grow
+    [v : (&mut v AstExprBindingClauseList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstExprBindingClause)
+        (array.make-array AstExprBindingClause new-cap)]
+      (begin
+        (ast-expr-binding-clause-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-expr-binding-clause-list-push "AstExprBindingClause")
+  (define (ast-expr-binding-clause-list-push
+    [v : (&mut v AstExprBindingClauseList)]
+    [value : AstExprBindingClause]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-expr-binding-clause-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-expr-binding-clause-list-append-from
+  [out : (&mut out AstExprBindingClauseList)]
+  [items : (& items AstExprBindingClauseList)]
+  [index : i64]) : unit
+  (if (>= index (ast-expr-binding-clause-list-len items))
+    unit
+    (begin
+      (ast-expr-binding-clause-list-push
+        out
+        (ast-expr-binding-clause-list-get
+          items
+          index
+          (ast-expr-binding-clause-fallback)))
+      (ast-expr-binding-clause-list-append-from out items (+ index 1)))))
+
+(define (ast-expr-binding-clause-list-tail [items : AstExprBindingClauseList]) : AstExprBindingClauseList
+  (let
+    [out : AstExprBindingClauseList
+      (ast-expr-binding-clause-list-with-capacity
+        (- (ast-expr-binding-clause-list-len (& items)) 1))]
+    (begin
+      (ast-expr-binding-clause-list-append-from (&mut out) (& items) 1)
+      out)))
+
 (define (ast-expr-binding-clause-cons
   [head : AstExprBindingClause]
   [rest : AstExprBindingClauseList]) : AstExprBindingClauseList
-  (AstExprBindingClauseList.Cons head (box rest)))
+  (let
+    [out : AstExprBindingClauseList
+      (ast-expr-binding-clause-list-with-capacity
+        (+ 1 (ast-expr-binding-clause-list-len (& rest))))]
+    (begin
+      (ast-expr-binding-clause-list-push (&mut out) head)
+      (ast-expr-binding-clause-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
   (ast-node-push (AstExpr.Spanned inner span)))
@@ -3890,15 +4255,28 @@
       (ast-compaction-remap-match-arm-list-into remap (& arms) 0 (&mut out))
       out)))
 
+(define (ast-compaction-remap-expr-list-into
+  [remap : AstProgramCompactionRemap]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprList)]) : unit
+  (if (>= index (ast-expr-list-len exprs))
+    unit
+    (begin
+      (ast-expr-list-push
+        out
+        (ast-compaction-remap-expr-id remap (ast-expr-list-get exprs index 0)))
+      (ast-compaction-remap-expr-list-into remap exprs (+ index 1) out))))
+
 (define (ast-compaction-remap-expr-list
   [remap : AstProgramCompactionRemap]
   [exprs : AstExprList]) : AstExprList
-  (match exprs
-    [(AstExprList.Nil) AstExprList.Nil]
-    [(AstExprList.Cons head rest)
-      (AstExprList.Cons
-        (ast-compaction-remap-expr-id remap head)
-        (box (ast-compaction-remap-expr-list remap (box-get rest))))]))
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    (begin
+      (ast-compaction-remap-expr-list-into remap (& exprs) 0 (&mut out))
+      out)))
 
 (define (ast-compaction-remap-expr
   [remap : AstProgramCompactionRemap]
@@ -4966,7 +5344,8 @@
     [two : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 2)))]
     [begin-expr : i64
       (ast-node-push
-        (AstExpr.Begin (ast-expr-cons one (ast-expr-cons two AstExprList.Nil))))]
+        (AstExpr.Begin
+          (ast-expr-cons one (ast-expr-cons two (ast-expr-list-new)))))]
     [bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "x" (AstMaybeType.No) begin-expr)

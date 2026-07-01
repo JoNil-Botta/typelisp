@@ -198,6 +198,7 @@ struct/enum fields, and (optionally) `let` bindings.
 ;; Control flow
 (if (< answer 100) "small" "large")
 (while (> answer 0) (set! answer (- answer 1)))
+(while true (if (< answer 0) (break) unit) (set! answer (- answer 1)))
 (begin (print 1) (print 2) 0)
 (begin (when (< answer 0) (return 0)) answer)
 

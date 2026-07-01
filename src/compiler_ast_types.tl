@@ -496,6 +496,10 @@
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.
   (Return i64)
+  ;; Loop-local early exits for scalar `while` loops. Both are zero-operand
+  ;; forms and have the internal `never` type.
+  (Break)
+  (Continue)
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
   (PtrNull AstType)
@@ -2319,6 +2323,12 @@
 (define (ast-expr-return [inner : i64]) : i64
   (ast-node-push (AstExpr.Return inner)))
 
+(define (ast-expr-break) : i64
+  (ast-node-push (AstExpr.Break)))
+
+(define (ast-expr-continue) : i64
+  (ast-node-push (AstExpr.Continue)))
+
 (define (ast-expr-ptr-null-check [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrNullCheck ptr)))
 
@@ -2736,6 +2746,12 @@
 
 (define (ast-expr-return-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.Return inner)))
+
+(define (ast-expr-break-with-pools [pools : AstNodePoolContext]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.Break)))
+
+(define (ast-expr-continue-with-pools [pools : AstNodePoolContext]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.Continue)))
 
 (define (ast-expr-ptr-null-check-with-pools
   [pools : AstNodePoolContext]
@@ -3710,6 +3726,8 @@
       (AstExpr.Try (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Return inner)
       (AstExpr.Return (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Break) AstExpr.Break]
+    [(AstExpr.Continue) AstExpr.Continue]
     [(AstExpr.PtrNull ty)
       (AstExpr.PtrNull (ast-compaction-remap-type remap ty))]
     [(AstExpr.PtrNullCheck ptr)
@@ -4022,6 +4040,8 @@
     [(AstExpr.SpmdProgramCount) 70]
     [(AstExpr.Try _) 29]
     [(AstExpr.Return _) 48]
+    [(AstExpr.Break) 72]
+    [(AstExpr.Continue) 73]
     [(AstExpr.PtrNull _) 30]
     [(AstExpr.PtrNullCheck _) 31]
     [(AstExpr.WithResource _) 33]

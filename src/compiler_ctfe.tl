@@ -1112,6 +1112,8 @@
     [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
     [(AstExpr.Try _) "try"]
     [(AstExpr.Return _) "return"]
+    [(AstExpr.Break) "break"]
+    [(AstExpr.Continue) "continue"]
     [(AstExpr.PtrNull _) "ptr-null"]
     [(AstExpr.PtrNullCheck _) "ptr-null?"]
     [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
@@ -8752,6 +8754,16 @@
               (AstType.Expr)
               next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(AstExpr.Break)
+      (ResultCtfeQuoteExpr.Ok
+        (ast-expr-break-with-pools (ctfe-env-pools env))
+        (AstType.Expr)
+        fuel)]
+    [(AstExpr.Continue)
+      (ResultCtfeQuoteExpr.Ok
+        (ast-expr-continue-with-pools (ctfe-env-pools env))
+        (AstType.Expr)
+        fuel)]
     [(AstExpr.Init maybe-ty)
       (match (ctfe-quote-maybe-type maybe-ty env expr fuel)
         [(ResultCtfeQuoteMaybeType.Ok quoted-ty next-fuel)
@@ -10004,6 +10016,14 @@
               [b-inner : AstExpr (ctfe-ast-get env b-inner-box)]
               (ctfe-expr-eq-in-env env a-inner b-inner))]
           [_ false]))]
+    [(AstExpr.Break)
+      (match b
+        [(AstExpr.Break) true]
+        [_ false])]
+    [(AstExpr.Continue)
+      (match b
+        [(AstExpr.Continue) true]
+        [_ false])]
     [(AstExpr.PtrNull a-ty)
       (match b
         [(AstExpr.PtrNull b-ty) (ctfe-type-eq-in-env env a-ty b-ty)]

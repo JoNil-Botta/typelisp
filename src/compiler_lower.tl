@@ -449,6 +449,13 @@
   (Ok LowerResourceBindings)
   (Err (Box CompilerDiagnostic)))
 
+(defenum LowerLoopTarget
+  (Target String String))
+
+(defenum ResultLowerLoopTarget
+  (Ok LowerLoopTarget)
+  (Err (Box CompilerDiagnostic)))
+
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
@@ -5010,6 +5017,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExpr.Break) roots]
+    [(AstExpr.Continue) roots]
     [(AstExpr.PtrNull _) roots]
     [(AstExpr.PtrNullCheck value-box)
       (let
@@ -5720,6 +5729,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
+    [(AstExpr.Break) state]
+    [(AstExpr.Continue) state]
     [(AstExpr.PtrNull _) state]
     [(AstExpr.PtrNullCheck value-box)
       (let
@@ -7151,6 +7162,8 @@
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Return inner-box)
       (lower-used-types-add-expr-id pools used module inner-box)]
+    [(AstExpr.Break) used]
+    [(AstExpr.Continue) used]
     [(AstExpr.PtrNull ty) (lower-used-types-add-type pools used module ty)]
     [(AstExpr.PtrNullCheck value-box)
       (lower-used-types-add-expr-id pools used module value-box)]
@@ -14518,6 +14531,243 @@
     env
     type-env))
 
+(define (lower-loop-target-type
+  [break-label : String]
+  [continue-label : String]) : AstType
+  (AstType.Tuple
+    (box
+      (ast-type-cons
+        (AstType.Var (intern break-label))
+        (ast-type-cons (AstType.Var (intern continue-label)) AstTypeList.Nil)))))
+
+(define (lower-enter-loop-target
+  [type-env : TcTypeEnv]
+  [break-label : String]
+  [continue-label : String]) : TcTypeEnv
+  (tc-bind-id
+    type-env
+    (tc-loop-target-id)
+    (lower-loop-target-type break-label continue-label)))
+
+(define (lower-loop-target-missing [origin : AstExpr] [form : String]) : ResultLowerLoopTarget
+  (ResultLowerLoopTarget.Err
+    (box
+      (lower-diagnostic-at-expr
+        origin
+        (string.append
+          "typecheck: "
+          (string.append form " requires enclosing scalar while"))))))
+
+(define (lower-loop-target-malformed [origin : AstExpr]) : ResultLowerLoopTarget
+  (ResultLowerLoopTarget.Err
+    (box (lower-diagnostic-at-expr origin "lower: malformed loop target"))))
+
+(define (lower-current-loop-target-from-types
+  [origin : AstExpr]
+  [break-ty : AstType]
+  [continue-ty : AstType]) : ResultLowerLoopTarget
+  (match break-ty
+    [(AstType.Var break-name)
+      (match continue-ty
+        [(AstType.Var continue-name)
+          (ResultLowerLoopTarget.Ok
+            (LowerLoopTarget.Target
+              (intern-str break-name)
+              (intern-str continue-name)))]
+        [_ (lower-loop-target-malformed origin)])]
+    [_ (lower-loop-target-malformed origin)]))
+
+(define (lower-current-loop-target
+  [ctx : TcContext]
+  [origin : AstExpr]
+  [type-env : TcTypeEnv]
+  [form : String]) : ResultLowerLoopTarget
+  (match (tc-env-marker-type type-env (tc-loop-target-id))
+    [(AstMaybeType.Some ty)
+      (match ty
+        [(AstType.Tuple types-box)
+          (match (box-get types-box)
+            [(AstTypeList.Cons break-ty rest-box)
+              (let
+                [break-ty : AstType (tc-context-type-get ctx break-ty)]
+                [rest : AstTypeList (box-get rest-box)]
+                (match rest
+                  [(AstTypeList.Cons continue-ty end-box)
+                    (let
+                      [continue-ty : AstType
+                        (tc-context-type-get ctx continue-ty)]
+                      [end : AstTypeList (box-get end-box)]
+                      (match end
+                        [(AstTypeList.Nil)
+                          (lower-current-loop-target-from-types
+                            origin
+                            break-ty
+                            continue-ty)]
+                        [_ (lower-loop-target-malformed origin)]))]
+                  [_ (lower-loop-target-malformed origin)]))]
+            [_ (lower-loop-target-malformed origin)])]
+        [_ (lower-loop-target-missing origin form)])]
+    [(AstMaybeType.No) (lower-loop-target-missing origin form)]))
+
+(define (lower-emit-active-loop-exits-with
+  [ctx : TcContext]
+  [cleanup-marker-id : i64]
+  [region-reset-marker-id : i64]
+  [loop-target-id : i64]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (let
+    [cur-env : TcTypeEnv type-env]
+    [cur-state : LowerState state]
+    [result : ResultLowerState
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: internal active-loop-exits walk")))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-env
+          [(TcTypeEnv.Nil)
+            (begin
+              (set! result (ResultLowerState.Ok cur-state))
+              (set! done true))]
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
+          [(TcTypeEnv.Bind key ty rest)
+            (begin
+              ;; lint-allow: nested-if-ladder
+              (if (= key loop-target-id)
+                (begin
+                  (set! result (ResultLowerState.Ok cur-state))
+                  (set! done true))
+                (if (= key cleanup-marker-id)
+                  (match ty
+                    [(AstType.Tuple types)
+                      (match (box-get types)
+                        [(AstTypeList.Cons hidden-ty type-rest)
+                          (let
+                            [hidden-ty : AstType
+                              (tc-context-type-get ctx hidden-ty)]
+                            [type-rest : AstTypeList (box-get type-rest)]
+                            (match hidden-ty
+                              [(AstType.Var hidden-name)
+                                (match type-rest
+                                  [(AstTypeList.Cons cleanup-ty end)
+                                    (let
+                                      [cleanup-ty : AstType
+                                        (tc-context-type-get ctx cleanup-ty)]
+                                      [end : AstTypeList (box-get end)]
+                                      (match cleanup-ty
+                                        [(AstType.Var cleanup-name)
+                                          (match end
+                                            [(AstTypeList.Nil)
+                                              (match (lower-emit-cleanup-call
+                                                cur-state
+                                                env
+                                                (intern-str hidden-name)
+                                                (intern-str cleanup-name))
+                                                [(ResultLowerState.Ok
+                                                    next-state)
+                                                  (set! cur-state next-state)]
+                                                [(ResultLowerState.Err message)
+                                                  (begin
+                                                    (set!
+                                                      result
+                                                      (ResultLowerState.Err
+                                                        message))
+                                                    (set! done true))])]
+                                            [_ unit])]
+                                        [_ unit]))]
+                                  [_ unit])]
+                              [_ unit]))]
+                        [_ unit])]
+                    [_ unit])
+                  (if (= key region-reset-marker-id)
+                    (match ty
+                      [(AstType.Var hidden-name)
+                        (match (lower-emit-region-reset
+                          cur-state
+                          env
+                          (intern-str hidden-name))
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
+                      [(AstType.Tuple types)
+                        (match (box-get types)
+                          [(AstTypeList.Cons hidden-ty end)
+                            (let
+                              [hidden-ty : AstType
+                                (tc-context-type-get ctx hidden-ty)]
+                              [end : AstTypeList (box-get end)]
+                              (match hidden-ty
+                                [(AstType.Var hidden-name)
+                                  (match end
+                                    [(AstTypeList.Nil)
+                                      (match (lower-emit-arena-restore
+                                        cur-state
+                                        env
+                                        (intern-str hidden-name))
+                                        [(ResultLowerState.Ok next-state)
+                                          (set! cur-state next-state)]
+                                        [(ResultLowerState.Err message)
+                                          (begin
+                                            (set!
+                                              result
+                                              (ResultLowerState.Err message))
+                                            (set! done true))])]
+                                    [_ unit])]
+                                [_ unit]))]
+                          [_ unit])]
+                      [_ unit])
+                    unit)))
+              (if done
+                unit
+                (set! cur-env (box-get rest))))]))
+      result)))
+
+(define (lower-emit-active-loop-exits
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (lower-emit-active-loop-exits-with
+    ctx
+    (lower-cleanup-marker-id)
+    (lower-region-reset-marker-id)
+    (tc-loop-target-id)
+    state
+    env
+    type-env))
+
+(define (lower-loop-control-form
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [origin : AstExpr]
+  [form : String]) : ResultLowerExpr
+  (match (lower-current-loop-target ctx origin type-env form)
+    [(ResultLowerLoopTarget.Ok target)
+      (match target
+        [(LowerLoopTarget.Target break-label continue-label)
+          (match (lower-emit-active-loop-exits ctx state env type-env)
+            [(ResultLowerState.Ok exit-state)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-emit-at-expr
+                    exit-state
+                    (CompilerIrInstr.Jump
+                      (if (string.eq form "break")
+                        break-label
+                        continue-label))
+                    origin)
+                  CompilerIrValue.Unit
+                  (AstType.Never)))]
+            [(ResultLowerState.Err message) (ErrLowerExpr message)])])]
+    [(ResultLowerLoopTarget.Err message) (ErrLowerExpr message)]))
+
 (define (lower-emit-active-cleanups-with
   [ctx : TcContext]
   [cleanup-marker-id : i64]
@@ -18885,6 +19135,10 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lower-return-form ctx state env type-env value origin))]
+    [(AstExpr.Break)
+      (lower-loop-control-form ctx state env type-env origin "break")]
+    [(AstExpr.Continue)
+      (lower-loop-control-form ctx state env type-env origin "continue")]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars and unsupported CTFE forms surface as lower errors.
@@ -28454,7 +28708,15 @@
                                   body-label
                                   exit-label))
                               body-label)]
-                          (match (lower-expr ctx body-start env type-env body)
+                          (match (lower-expr
+                            ctx
+                            body-start
+                            env
+                            (lower-enter-loop-target
+                              type-env
+                              exit-label
+                              header-label)
+                            body)
                             [(OkLowerExpr body-lowered)
                               (match body-lowered
                                 [(LowerExpr body-state _ body-ty)

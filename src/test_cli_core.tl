@@ -1391,6 +1391,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(AstExpr.Break) names]
+    [(AstExpr.Continue) names]
     [(AstExpr.PtrNull _) names]
     [(AstExpr.PtrNullCheck inner-box)
       (let

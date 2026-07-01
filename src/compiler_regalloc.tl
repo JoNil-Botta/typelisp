@@ -342,15 +342,15 @@
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
-    "%rax"
+    "%r9"
     (compiler-reg-string-cons
       "%rcx"
       (compiler-reg-string-cons
         "%rdx"
         (compiler-reg-string-cons
-          "%r8"
+          "%rax"
           (compiler-reg-string-cons
-            "%r9"
+            "%r8"
             (compiler-reg-string-cons
               "%r10"
               (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))

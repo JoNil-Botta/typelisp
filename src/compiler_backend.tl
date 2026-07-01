@@ -7899,6 +7899,28 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])))))
 
+(define (compiler-backend-scratch-reg-free?
+  [candidate : String]
+  [dst-home : String]
+  [lhs-reg : String]
+  [rhs-reg : String]) : bool
+  (and
+    (not (string.eq candidate dst-home))
+    (not (string.eq candidate lhs-reg))
+    (not (string.eq candidate rhs-reg))))
+
+(define (compiler-backend-binop-staging-scratch
+  [dst-home : String]
+  [lhs-reg : String]
+  [rhs-reg : String]) : String
+  (cond
+    [(compiler-backend-scratch-reg-free? "%r8" dst-home lhs-reg rhs-reg) "%r8"]
+    [(compiler-backend-scratch-reg-free? "%r10" dst-home lhs-reg rhs-reg)
+      "%r10"]
+    [(compiler-backend-scratch-reg-free? "%r11" dst-home lhs-reg rhs-reg)
+      "%r11"]
+    [else "%rax"]))
+
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -8019,7 +8041,10 @@
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     rhs
-                    "%r8")
+                    (compiler-backend-binop-staging-scratch
+                      dst-home
+                      lhs-reg
+                      rhs-reg))
                     [(ResultCompilerBackend.Ok rhs-asm)
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
@@ -8034,7 +8059,12 @@
                                 (str_cat.str-cat
                                   "    "
                                   mnem
-                                  " %r8, "
+                                  " "
+                                  (compiler-backend-binop-staging-scratch
+                                    dst-home
+                                    lhs-reg
+                                    rhs-reg)
+                                  ", "
                                   dst-home
                                   "\n"))))]
                         [(ResultCompilerBackend.Err message)

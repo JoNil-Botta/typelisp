@@ -1915,12 +1915,17 @@
     [_ true]))
 
 (define (compiler-symbol-path-list-repeat [decls : AstDeclList] [path : String]) : AstDeclPathList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (ast-decl-path-list-new)]
-    [(AstDeclListStep.Cons _ rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (ast-decl-path-cons path (compiler-symbol-path-list-repeat rest path)))]))
+  (let
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity (ast-decl-list-len (& decls)))]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-decl-path-list-push (&mut out) path)
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-symbol-path-at-index
   [decls : AstDeclList]

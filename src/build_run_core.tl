@@ -464,24 +464,14 @@
     [(AstDeclListStep.Nil) inputs]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
+        [rest : AstDeclList rest]
+        (match (ast-decl-unwrapped decl)
           [(AstDecl.Extern _ _ metadata _)
-            (let
-              [metadata-items : AstExternLinkInputList
-                (ast-extern-metadata-link-inputs metadata)]
-              (source-tool-link-inputs-from-decls
-                rest
-                (source-tool-link-inputs-add-ast-list
-                  inputs
-                  (& metadata-items)
-                  0)))]
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (source-tool-link-inputs-from-decls
-                (ast-decl-cons inner rest)
-                inputs))]
+            (source-tool-link-inputs-from-decls
+              rest
+              (source-tool-link-inputs-add-ast-list
+                inputs
+                (ast-extern-metadata-link-inputs metadata)))]
           [_ (source-tool-link-inputs-from-decls rest inputs)]))]))
 
 (define (source-tool-link-inputs-for-source

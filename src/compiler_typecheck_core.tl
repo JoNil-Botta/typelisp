@@ -7466,34 +7466,41 @@
     [(AstMaybeType.Some ty) (tc-type-contains-reference? ty)]))
 
 (define (tc-param-list-contains-reference? [params : AstParamList]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (or
-              (tc-type-contains-reference? ty)
-              (tc-param-list-contains-reference? rest))]))]))
+  (tc-param-list-contains-reference-at? (& params) 0))
+
+(define (tc-param-list-contains-reference-at?
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (or
+          (tc-type-contains-reference? ty)
+          (tc-param-list-contains-reference-at? params (+ index 1)))])))
 
 (define (tc-param-list-reference-return-lifetimes-into
   [ctx : TcContext]
   [params : AstParamList]
   [out : TcStringList]) : TcStringList
-  (match params
-    [(AstParamList.Nil) out]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty _)
-            (tc-param-list-reference-return-lifetimes-into
-              ctx
-              rest
-              (tc-type-collect-reference-lifetimes-into
-                (tc-resolve-type ctx ty)
-                (tc-string-list-add out (intern-str name))))]))]))
+  (tc-param-list-reference-return-lifetimes-at ctx (& params) 0 out))
+
+(define (tc-param-list-reference-return-lifetimes-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [out : TcStringList]) : TcStringList
+  (if (>= index (ast-param-list-len params))
+    out
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _)
+        (tc-param-list-reference-return-lifetimes-at
+          ctx
+          params
+          (+ index 1)
+          (tc-type-collect-reference-lifetimes-into
+            (tc-resolve-type ctx ty)
+            (tc-string-list-add out (intern-str name))))])))
 
 (define (tc-reference-return-lifetimes-allowed?
   [ctx : TcContext]
@@ -8387,17 +8394,10 @@
       (and
         (string.eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.I64))
-        (match params
-          [(AstParamList.Cons param rest)
-            (let
-              [rest : AstParamList (box-get rest)]
-              (match param
-                [(AstParam.Param _ text _)
-                  (and
-                    (tc-str-ref-type? (tc-resolve-type ctx text))
-                    (match rest
-                      [(AstParamList.Nil) true]
-                      [_ false]))]))]
+        (= (ast-param-list-len (& params)) 1)
+        (match (ast-param-list-get (& params) 0 (ast-param-fallback))
+          [(AstParam.Param _ text _)
+            (tc-str-ref-type? (tc-resolve-type ctx text))]
           [_ false]))]
     [_ false]))
 
@@ -8410,27 +8410,15 @@
       (and
         (string.eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Char))
-        (match params
-          [(AstParamList.Cons text-param rest1)
-            (let
-              [rest1 : AstParamList (box-get rest1)]
-              (match rest1
-                [(AstParamList.Cons index-param rest2)
-                  (let
-                    [rest2 : AstParamList (box-get rest2)]
-                    (match text-param
-                      [(AstParam.Param _ text _)
-                        (match index-param
-                          [(AstParam.Param _ index _)
-                            (and
-                              (tc-str-ref-type? (tc-resolve-type ctx text))
-                              (tc-type-eq
-                                (tc-resolve-type ctx index)
-                                (AstType.I64))
-                              (match rest2
-                                [(AstParamList.Nil) true]
-                                [_ false]))])]))]
-                [_ false]))]
+        (= (ast-param-list-len (& params)) 2)
+        (match (ast-param-list-get (& params) 0 (ast-param-fallback))
+          [(AstParam.Param _ text _)
+            (match (ast-param-list-get (& params) 1 (ast-param-fallback))
+              [(AstParam.Param _ index _)
+                (and
+                  (tc-str-ref-type? (tc-resolve-type ctx text))
+                  (tc-type-eq (tc-resolve-type ctx index) (AstType.I64)))]
+              [_ false])]
           [_ false]))]
     [_ false]))
 
@@ -8443,25 +8431,15 @@
       (and
         (string.eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Bool))
-        (match params
-          [(AstParamList.Cons left-param rest1)
-            (let
-              [rest1 : AstParamList (box-get rest1)]
-              (match rest1
-                [(AstParamList.Cons right-param rest2)
-                  (let
-                    [rest2 : AstParamList (box-get rest2)]
-                    (match left-param
-                      [(AstParam.Param _ left _)
-                        (match right-param
-                          [(AstParam.Param _ right _)
-                            (and
-                              (tc-str-ref-type? (tc-resolve-type ctx left))
-                              (tc-str-ref-type? (tc-resolve-type ctx right))
-                              (match rest2
-                                [(AstParamList.Nil) true]
-                                [_ false]))])]))]
-                [_ false]))]
+        (= (ast-param-list-len (& params)) 2)
+        (match (ast-param-list-get (& params) 0 (ast-param-fallback))
+          [(AstParam.Param _ left _)
+            (match (ast-param-list-get (& params) 1 (ast-param-fallback))
+              [(AstParam.Param _ right _)
+                (and
+                  (tc-str-ref-type? (tc-resolve-type ctx left))
+                  (tc-str-ref-type? (tc-resolve-type ctx right)))]
+              [_ false])]
           [_ false]))]
     [_ false]))
 
@@ -8474,25 +8452,15 @@
       (and
         (string.eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.String))
-        (match params
-          [(AstParamList.Cons left-param rest1)
-            (let
-              [rest1 : AstParamList (box-get rest1)]
-              (match rest1
-                [(AstParamList.Cons right-param rest2)
-                  (let
-                    [rest2 : AstParamList (box-get rest2)]
-                    (match left-param
-                      [(AstParam.Param _ left _)
-                        (match right-param
-                          [(AstParam.Param _ right _)
-                            (and
-                              (tc-str-ref-type? (tc-resolve-type ctx left))
-                              (tc-str-ref-type? (tc-resolve-type ctx right))
-                              (match rest2
-                                [(AstParamList.Nil) true]
-                                [_ false]))])]))]
-                [_ false]))]
+        (= (ast-param-list-len (& params)) 2)
+        (match (ast-param-list-get (& params) 0 (ast-param-fallback))
+          [(AstParam.Param _ left _)
+            (match (ast-param-list-get (& params) 1 (ast-param-fallback))
+              [(AstParam.Param _ right _)
+                (and
+                  (tc-str-ref-type? (tc-resolve-type ctx left))
+                  (tc-str-ref-type? (tc-resolve-type ctx right)))]
+              [_ false])]
           [_ false]))]
     [_ false]))
 
@@ -10227,41 +10195,48 @@
 (define (tc-source-param-list-policy-ok
   [ctx : TcContext]
   [params : AstParamList]) : ResultTcUnit
-  (match params
-    [(AstParamList.Nil) ResultTcUnit.Ok]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (match (tc-source-type-policy-ok ctx ty)
-              [(ResultTcUnit.Ok) (tc-source-param-list-policy-ok ctx rest)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-source-param-list-policy-ok-at ctx (& params) 0))
+
+(define (tc-source-param-list-policy-ok-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-param-list-len params))
+    ResultTcUnit.Ok
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (match (tc-source-type-policy-ok ctx ty)
+          [(ResultTcUnit.Ok)
+            (tc-source-param-list-policy-ok-at ctx params (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-source-macro-param-list-policy-ok
   [ctx : TcContext]
   [params : AstMacroParamList]) : ResultTcUnit
-  (match params
-    [(AstMacroParamList.Nil) ResultTcUnit.Ok]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param _ ty variadic)
-            (if (tc-macro-type-param-kind? ty)
-              (if variadic
-                (ResultTcUnit.Err
-                  "typecheck: type macro operand cannot be variadic")
-                (tc-source-macro-param-list-policy-ok ctx rest))
-              (if (tc-macro-module-param-kind? ty)
-                (if variadic
-                  (ResultTcUnit.Err
-                    "typecheck: Module macro operand cannot be variadic")
-                  (tc-source-macro-param-list-policy-ok ctx rest))
-                (match (tc-source-type-policy-ok ctx ty)
-                  [(ResultTcUnit.Ok)
-                    (tc-source-macro-param-list-policy-ok ctx rest)]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]))]))
+  (tc-source-macro-param-list-policy-ok-at ctx (& params) 0))
+
+(define (tc-source-macro-param-list-policy-ok-at
+  [ctx : TcContext]
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-macro-param-list-len params))
+    ResultTcUnit.Ok
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty variadic)
+        (if (tc-macro-type-param-kind? ty)
+          (if variadic
+            (ResultTcUnit.Err
+              "typecheck: type macro operand cannot be variadic")
+            (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
+          (if (tc-macro-module-param-kind? ty)
+            (if variadic
+              (ResultTcUnit.Err
+                "typecheck: Module macro operand cannot be variadic")
+              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
+            (match (tc-source-type-policy-ok ctx ty)
+              [(ResultTcUnit.Ok)
+                (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))])))
 
 (define (tc-macro-result-name? [ty : AstType] [upper : String] [lower : String]) : bool
   (match ty
@@ -13046,8 +13021,8 @@
     [deep : TcTypeEnv
       (tc-type-env-bind-many env (+ (* (tc-local-cache-threshold) 2) 8))]
     (and
-      (tc-lambda-captures-reference? deep AstParamList.Nil body)
-      (match (tc-check-lambda-region-captures deep AstParamList.Nil body)
+      (tc-lambda-captures-reference? deep (ast-param-list-new) body)
+      (match (tc-check-lambda-region-captures deep (ast-param-list-new) body)
         [(ResultTcUnit.Err message)
           (string.eq
             message
@@ -13055,7 +13030,7 @@
         [_ false])
       (match (tc-check-lambda-region-captures-allow-refs
         deep
-        AstParamList.Nil
+        (ast-param-list-new)
         body)
         [(ResultTcUnit.Ok) true]
         [_ false]))))
@@ -13165,53 +13140,51 @@
 
 (define (tc-param-type-list-into
   [ctx : TcContext]
-  [params : AstParamList]
+  [params : (& params AstParamList)]
+  [index : i64]
   [out : (&mut out AstTypeList)]) : unit
-  (match params
-    [(AstParamList.Nil) unit]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (begin
-              (ast-type-list-push
-                out
-                (ast-node-pool-reader-type-push (tc-resolve-type ctx ty)))
-              (tc-param-type-list-into ctx rest out))]))]))
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param _ ty _)
+          (ast-type-list-push
+            out
+            (ast-node-pool-reader-type-push (tc-resolve-type ctx ty)))])
+      (tc-param-type-list-into ctx params (+ index 1) out))))
 
 (define (tc-param-type-list [ctx : TcContext] [params : AstParamList]) : AstTypeList
   (let
-    [out : AstTypeList (ast-type-list-new)]
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-param-list-len (& params)))]
     (begin
-      (tc-param-type-list-into ctx params (&mut out))
+      (tc-param-type-list-into ctx (& params) 0 (&mut out))
       out)))
 
 (define (tc-macro-param-type-list-into
   [ctx : TcContext]
-  [params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
+  [index : i64]
   [out : (&mut out AstTypeList)]) : unit
-  (match params
-    [(AstMacroParamList.Nil) unit]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param _ ty _)
-            (begin
-              (ast-type-list-push
-                out
-                (ast-node-pool-reader-type-push
-                  (tc-resolve-type ctx (tc-macro-signature-type ty))))
-              (tc-macro-param-type-list-into ctx rest out))]))]))
+  (if (>= index (ast-macro-param-list-len params))
+    unit
+    (begin
+      (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+        [(AstMacroParam.Param _ ty _)
+          (ast-type-list-push
+            out
+            (ast-node-pool-reader-type-push
+              (tc-resolve-type ctx (tc-macro-signature-type ty))))])
+      (tc-macro-param-type-list-into ctx params (+ index 1) out))))
 
 (define (tc-macro-param-type-list
   [ctx : TcContext]
   [params : AstMacroParamList]) : AstTypeList
   (let
-    [out : AstTypeList (ast-type-list-new)]
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-macro-param-list-len (& params)))]
     (begin
-      (tc-macro-param-type-list-into ctx params (&mut out))
+      (tc-macro-param-type-list-into ctx (& params) 0 (&mut out))
       out)))
 
 (define (tc-type-list-ref [types : AstTypeList] [index : i64]) : ResultTcType
@@ -13279,126 +13252,140 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : AstParamList]) : TcTypeEnv
-  (match params
-    [(AstParamList.Nil) env]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty _)
-            (tc-bind-params
-              ctx
-              (tc-bind-id env name (tc-resolve-type ctx ty))
-              rest)]))]))
+  (tc-bind-params-at ctx env (& params) 0))
+
+(define (tc-bind-params-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params AstParamList)]
+  [index : i64]) : TcTypeEnv
+  (if (>= index (ast-param-list-len params))
+    env
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _)
+        (tc-bind-params-at
+          ctx
+          (tc-bind-id env name (tc-resolve-type ctx ty))
+          params
+          (+ index 1))])))
 
 (define (tc-bind-macro-params
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : AstMacroParamList]) : TcTypeEnv
-  (match params
-    [(AstMacroParamList.Nil) env]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param name ty variadic)
-            (tc-bind-macro-params
-              ctx
-              (tc-bind-id
-                env
-                name
-                (cond
-                  [(tc-macro-type-param-kind? ty) (AstType.Expr)]
-                  [(tc-macro-module-param-kind? ty) (AstType.String)]
-                  [(and
-                      variadic
-                      (tc-macro-expr-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (tc-macro-expr-clause-list-type)]
-                  [(and
-                      variadic
-                      (tc-macro-expr-binding-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (tc-macro-expr-binding-clause-list-type)]
-                  [(tc-macro-expr-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (tc-macro-expr-clause-type)]
-                  [(tc-macro-expr-binding-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (tc-macro-expr-binding-clause-type)]
-                  [variadic (AstType.ExprList)]
-                  [else (AstType.Expr)]))
-              rest)]))]))
+  (tc-bind-macro-params-at ctx env (& params) 0))
+
+(define (tc-bind-macro-params-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : TcTypeEnv
+  (if (>= index (ast-macro-param-list-len params))
+    env
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name ty variadic)
+        (tc-bind-macro-params-at
+          ctx
+          (tc-bind-id
+            env
+            name
+            (cond
+              [(tc-macro-type-param-kind? ty) (AstType.Expr)]
+              [(tc-macro-module-param-kind? ty) (AstType.String)]
+              [(and
+                  variadic
+                  (tc-macro-expr-clause-type?
+                    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                (tc-macro-expr-clause-list-type)]
+              [(and
+                  variadic
+                  (tc-macro-expr-binding-clause-type?
+                    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                (tc-macro-expr-binding-clause-list-type)]
+              [(tc-macro-expr-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                (tc-macro-expr-clause-type)]
+              [(tc-macro-expr-binding-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                (tc-macro-expr-binding-clause-type)]
+              [variadic (AstType.ExprList)]
+              [else (AstType.Expr)]))
+          params
+          (+ index 1))])))
 
 (define (tc-ctfe-env-extend-macro-params
   [ctx : TcContext]
   [env : CtfeEnv]
   [params : AstMacroParamList]) : CtfeEnv
-  (match params
-    [(AstMacroParamList.Nil) env]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param name ty variadic)
-            (tc-ctfe-env-extend-macro-params
-              ctx
-              (ctfe-env-extend
-                env
-                (intern-str name)
-                (cond
-                  [(tc-macro-type-param-kind? ty)
-                    (CompilerCtfeValue.Type (AstType.Var name))]
-                  [(tc-macro-module-param-kind? ty)
-                    (CompilerCtfeValue.String "")]
-                  [(and
-                      variadic
-                      (tc-macro-expr-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CompilerCtfeValue.ExprClauseList AstExprClauseList.Nil)]
-                  [(and
-                      variadic
-                      (tc-macro-expr-binding-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CompilerCtfeValue.ExprBindingClauseList
-                      AstExprBindingClauseList.Nil)]
-                  [variadic (CompilerCtfeValue.ExprList AstExprList.Nil)]
-                  [(tc-macro-expr-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (CompilerCtfeValue.ExprClause
-                      (ast-expr-clause
-                        (ast-node-pool-context-expr-push
-                          (tc-context-pools ctx)
-                          (AstExpr.Var
-                            (intern (string.append (intern-str name) "$first"))))
-                        (ast-node-pool-context-expr-push
-                          (tc-context-pools ctx)
-                          (AstExpr.Var
-                            (intern (string.append (intern-str name) "$second"))))))]
-                  [(tc-macro-expr-binding-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (let
-                      [unit-expr : i64
-                        (ast-node-pool-context-expr-push
-                          (tc-context-pools ctx)
-                          (AstExpr.Literal (AstLiteral.Unit)))]
-                      (CompilerCtfeValue.ExprBindingClause
-                        (ast-expr-binding-clause-id
-                          name
-                          false
-                          unit-expr
-                          (ast-node-pool-context-expr-push
-                            (tc-context-pools ctx)
-                            (AstExpr.Var
-                              (intern (string.append (intern-str name) "$init"))))
-                          (AstSourceSpan 0 0 0 0))))]
-                  [else
-                    (CompilerCtfeValue.Expr
+  (tc-ctfe-env-extend-macro-params-at ctx env (& params) 0))
+
+(define (tc-ctfe-env-extend-macro-params-at
+  [ctx : TcContext]
+  [env : CtfeEnv]
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : CtfeEnv
+  (if (>= index (ast-macro-param-list-len params))
+    env
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name ty variadic)
+        (tc-ctfe-env-extend-macro-params-at
+          ctx
+          (ctfe-env-extend
+            env
+            (intern-str name)
+            (cond
+              [(tc-macro-type-param-kind? ty)
+                (CompilerCtfeValue.Type (AstType.Var name))]
+              [(tc-macro-module-param-kind? ty) (CompilerCtfeValue.String "")]
+              [(and
+                  variadic
+                  (tc-macro-expr-clause-type?
+                    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                (CompilerCtfeValue.ExprClauseList AstExprClauseList.Nil)]
+              [(and
+                  variadic
+                  (tc-macro-expr-binding-clause-type?
+                    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                (CompilerCtfeValue.ExprBindingClauseList
+                  AstExprBindingClauseList.Nil)]
+              [variadic (CompilerCtfeValue.ExprList AstExprList.Nil)]
+              [(tc-macro-expr-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                (CompilerCtfeValue.ExprClause
+                  (ast-expr-clause
+                    (ast-node-pool-context-expr-push
+                      (tc-context-pools ctx)
+                      (AstExpr.Var
+                        (intern (string.append (intern-str name) "$first"))))
+                    (ast-node-pool-context-expr-push
+                      (tc-context-pools ctx)
+                      (AstExpr.Var
+                        (intern (string.append (intern-str name) "$second"))))))]
+              [(tc-macro-expr-binding-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                (let
+                  [unit-expr : i64
+                    (ast-node-pool-context-expr-push
+                      (tc-context-pools ctx)
+                      (AstExpr.Literal (AstLiteral.Unit)))]
+                  (CompilerCtfeValue.ExprBindingClause
+                    (ast-expr-binding-clause-id
+                      name
+                      false
+                      unit-expr
                       (ast-node-pool-context-expr-push
                         (tc-context-pools ctx)
-                        (AstExpr.Var name))
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
-              rest)]))]))
+                        (AstExpr.Var
+                          (intern (string.append (intern-str name) "$init"))))
+                      (AstSourceSpan 0 0 0 0))))]
+              [else
+                (CompilerCtfeValue.Expr
+                  (ast-node-pool-context-expr-push
+                    (tc-context-pools ctx)
+                    (AstExpr.Var name))
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
+          params
+          (+ index 1))])))
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
   (match a
@@ -18136,13 +18123,12 @@
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
-          (match params
-            [(AstParamList.Nil)
-              (tc-thread-safe-spawn-captured-owner-regions
-                env
-                params
-                (ast-node-get body-box))]
-            [_ TcStringList.Nil])])]
+          (if (= (ast-param-list-len (& params)) 0)
+            (tc-thread-safe-spawn-captured-owner-regions
+              env
+              params
+              (ast-node-get body-box))
+            TcStringList.Nil)])]
     [_ TcStringList.Nil]))
 
 (define (tc-check-thread-safe-spawn-direct-lambda-arg
@@ -18154,20 +18140,18 @@
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
-          (match params
-            [(AstParamList.Nil)
-              (tc-check-thread-safe-spawn-captures
+          (if (= (ast-param-list-len (& params)) 0)
+            (tc-check-thread-safe-spawn-captures
+              spawn-name
+              ctx
+              env
+              params
+              (ast-node-get body-box))
+            (ResultTcUnit.Err
+              (str_cat.str-cat
+                "typecheck: "
                 spawn-name
-                ctx
-                env
-                params
-                (ast-node-get body-box))]
-            [_
-              (ResultTcUnit.Err
-                (str_cat.str-cat
-                  "typecheck: "
-                  spawn-name
-                  " requires a direct nullary lambda argument so captures can be checked"))])])]
+                " requires a direct nullary lambda argument so captures can be checked")))])]
     [_
       (ResultTcUnit.Err
         (str_cat.str-cat
@@ -20989,62 +20973,80 @@
   [params : AstParamList]
   [args : AstExprList]
   [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
-  (match params
-    [(AstParamList.Nil)
-      (match args
-        [(AstExprList.Nil)
-          (ResultTcSpmdInlineCallState.Ok
-            (TcSpmdInlineCallState
-              caller-spmd-env
-              helper-env
-              helper-spmd-env
-              seen-class))]
-        [_ (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")])]
-    [(AstParamList.Cons param rest-params)
-      (let
-        [rest-params : AstParamList (box-get rest-params)]
-        (match args
-          [(AstExprList.Cons arg rest-args)
-            (let
-              [arg : AstExpr (ast-node-get arg)]
-              [rest-args : AstExprList (box-get rest-args)]
-              (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
-                [(ResultTcSpmdExprInfo.Ok arg-info)
-                  (match arg-info
-                    [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
-                      (match param
-                        [(AstParam.Param param-name param-ty _)
-                          (let
-                            [bound-ty : AstType
-                              (tc-resolve-type helper-ctx param-ty)]
-                            (if (and
-                              (tc-spmd-varying? arg-class)
-                              (not
-                                (tc-spmd-varying-value-type-supported? bound-ty)))
-                              (ResultTcSpmdInlineCallState.Err
-                                (string.append
-                                  "typecheck: SPMD inline helper varying parameter type is not supported: "
-                                  (tc-type-render
-                                    (tc-type-strip-region bound-ty))))
-                              (tc-spmd-inline-helper-bind-args
-                                ctx
-                                caller-env
-                                next-caller-spmd-env
-                                helper-ctx
-                                (tc-bind-id helper-env param-name bound-ty)
-                                (tc-spmd-env-bind
-                                  helper-spmd-env
-                                  (intern-str param-name)
-                                  bound-ty
-                                  arg-class
-                                  TcSpmdScope.Local)
-                                rest-params
-                                rest-args
-                                (tc-spmd-merge-class seen-class arg-class))))])])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdInlineCallState.Err message)]))]
-          [(AstExprList.Nil)
-            (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")]))]))
+  (tc-spmd-inline-helper-bind-args-at
+    ctx
+    caller-env
+    caller-spmd-env
+    helper-ctx
+    helper-env
+    helper-spmd-env
+    (& params)
+    0
+    args
+    seen-class))
+
+(define (tc-spmd-inline-helper-bind-args-at
+  [ctx : TcContext]
+  [caller-env : TcTypeEnv]
+  [caller-spmd-env : TcSpmdEnv]
+  [helper-ctx : TcContext]
+  [helper-env : TcTypeEnv]
+  [helper-spmd-env : TcSpmdEnv]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [args : AstExprList]
+  [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
+  (if (>= index (ast-param-list-len params))
+    (match args
+      [(AstExprList.Nil)
+        (ResultTcSpmdInlineCallState.Ok
+          (TcSpmdInlineCallState
+            caller-spmd-env
+            helper-env
+            helper-spmd-env
+            seen-class))]
+      [_ (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")])
+    (match args
+      [(AstExprList.Cons arg rest-args)
+        (let
+          [arg : AstExpr (ast-node-get arg)]
+          [rest-args : AstExprList (box-get rest-args)]
+          (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
+            [(ResultTcSpmdExprInfo.Ok arg-info)
+              (match arg-info
+                [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
+                  (match (ast-param-list-get params index (ast-param-fallback))
+                    [(AstParam.Param param-name param-ty _)
+                      (let
+                        [bound-ty : AstType
+                          (tc-resolve-type helper-ctx param-ty)]
+                        (if (and
+                          (tc-spmd-varying? arg-class)
+                          (not (tc-spmd-varying-value-type-supported? bound-ty)))
+                          (ResultTcSpmdInlineCallState.Err
+                            (string.append
+                              "typecheck: SPMD inline helper varying parameter type is not supported: "
+                              (tc-type-render (tc-type-strip-region bound-ty))))
+                          (tc-spmd-inline-helper-bind-args-at
+                            ctx
+                            caller-env
+                            next-caller-spmd-env
+                            helper-ctx
+                            (tc-bind-id helper-env param-name bound-ty)
+                            (tc-spmd-env-bind
+                              helper-spmd-env
+                              (intern-str param-name)
+                              bound-ty
+                              arg-class
+                              TcSpmdScope.Local)
+                            params
+                            (+ index 1)
+                            rest-args
+                            (tc-spmd-merge-class seen-class arg-class))))])])]
+            [(ResultTcSpmdExprInfo.Err message)
+              (ResultTcSpmdInlineCallState.Err message)]))]
+      [(AstExprList.Nil)
+        (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")])))
 
 (define (tc-spmd-inline-helper-body
   [ctx : TcContext]
@@ -23788,16 +23790,20 @@
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
   [bound : TcStringList]) : TcStringList
-  (match params
-    [(AstParamList.Nil) bound]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name _ _)
-            (tc-param-list-add-bound-names
-              rest
-              (tc-string-list-add bound (intern-str name)))]))]))
+  (tc-param-list-add-bound-names-at (& params) 0 bound))
+
+(define (tc-param-list-add-bound-names-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [bound : TcStringList]) : TcStringList
+  (if (>= index (ast-param-list-len params))
+    bound
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (tc-param-list-add-bound-names-at
+          params
+          (+ index 1)
+          (tc-string-list-add bound (intern-str name)))])))
 
 (define (tc-param-bound-names [params : AstParamList]) : TcStringList
   (tc-param-list-add-bound-names params TcStringList.Nil))
@@ -32577,16 +32583,20 @@
 (define (tc-macro-param-list-add-bound-names
   [params : AstMacroParamList]
   [bound : TcStringList]) : TcStringList
-  (match params
-    [(AstMacroParamList.Nil) bound]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param name _ _)
-            (tc-macro-param-list-add-bound-names
-              rest
-              (tc-string-list-add bound (intern-str name)))]))]))
+  (tc-macro-param-list-add-bound-names-at (& params) 0 bound))
+
+(define (tc-macro-param-list-add-bound-names-at
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [bound : TcStringList]) : TcStringList
+  (if (>= index (ast-macro-param-list-len params))
+    bound
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name _ _)
+        (tc-macro-param-list-add-bound-names-at
+          params
+          (+ index 1)
+          (tc-string-list-add bound (intern-str name)))])))
 
 (define (tc-macro-param-bound-names [params : AstMacroParamList]) : TcStringList
   (tc-macro-param-list-add-bound-names params TcStringList.Nil))
@@ -33741,16 +33751,18 @@
     body))
 
 (define (tc-macro-param-list-needs-call-context? [params : AstMacroParamList]) : bool
-  (match params
-    [(AstMacroParamList.Nil) false]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (if (or
-            (tc-macro-type-param-kind? ty)
-            (tc-macro-module-param-kind? ty))
-            true
-            (tc-macro-param-list-needs-call-context? (box-get rest)))])]))
+  (tc-macro-param-list-needs-call-context-at? (& params) 0))
+
+(define (tc-macro-param-list-needs-call-context-at?
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-macro-param-list-len params))
+    false
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (if (or (tc-macro-type-param-kind? ty) (tc-macro-module-param-kind? ty))
+          true
+          (tc-macro-param-list-needs-call-context-at? params (+ index 1)))])))
 
 (define (tc-check-comptime-decl-purity
   [ctx : TcContext]
@@ -34736,14 +34748,20 @@
 ;; parameter list. Only these are tracked as movable places; enum constructors,
 ;; globals, and function references share the variable syntax but are never moved.
 (define (tc-move-params-locals [params : AstParamList] [acc : TcMovedSet]) : TcMovedSet
-  (match params
-    [(AstParamList.Nil) acc]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name _ _)
-            (tc-move-params-locals rest (tc-moved-add acc (intern-str name)))]))]))
+  (tc-move-params-locals-at (& params) 0 acc))
+
+(define (tc-move-params-locals-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [acc : TcMovedSet]) : TcMovedSet
+  (if (>= index (ast-param-list-len params))
+    acc
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (tc-move-params-locals-at
+          params
+          (+ index 1)
+          (tc-moved-add acc (intern-str name)))])))
 
 (define (tc-move-after-consuming-projection
   [ctx : TcContext]
@@ -41579,106 +41597,136 @@
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
-  (match params
-    [(AstMacroParamList.Nil)
-      (match args
-        [(AstExprList.Nil) (ResultGenKey.Ok "" fuel)]
-        [(AstExprList.Cons head _)
-          (ResultGenKey.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                (ast-node-get head)
-                "macro call has too many arguments")))])]
-    [(AstMacroParamList.Cons param rest-params)
-      (let
-        [rest-params : AstMacroParamList (box-get rest-params)]
-        (match param
-          [(AstMacroParam.Param _ ty variadic)
-            (if variadic
-              (cond
-                [(tc-macro-type-param-kind? ty)
-                  (ResultGenKey.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "typecheck: type macro operand cannot be variadic")))]
-                [(tc-macro-module-param-kind? ty)
-                  (ResultGenKey.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "typecheck: Module macro operand cannot be variadic")))]
-                [(macro-identity-syntax-param-type? ctx fallback-module ty)
-                  (macro-identity-key-param-exprs
-                    ctx
-                    fallback-module
-                    ty
-                    args
-                    env
-                    fuel
-                    call-expr)]
-                [else (macro-identity-key-string-exprs args env fuel)])
-              (match args
-                [(AstExprList.Nil)
-                  (ResultGenKey.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "macro call has too few arguments")))]
-                [(AstExprList.Cons head rest-args)
-                  (let
-                    [head-expr : AstExpr (ast-node-get head)]
-                    [rest-args : AstExprList (box-get rest-args)]
-                    (match (if (tc-macro-type-param-kind? ty)
-                      (match (macro-type-arg-with-fallback
-                        ctx
-                        decls
-                        fallback-module
-                        head-expr)
-                        [(ResultMacroTypeArg.Ok resolved-ty)
-                          (ResultGenKey.Ok
-                            (str_cat.str-cat
-                              "type_"
-                              (ctfe-type-key resolved-ty))
-                            fuel)]
-                        [(ResultMacroTypeArg.Err diag) (ResultGenKey.Err diag)])
-                      (if (tc-macro-module-param-kind? ty)
-                        (match (macro-module-strategy-arg-with-fallback
-                          ctx
-                          fallback-module
-                          head-expr)
-                          [(ResultMacroModuleArg.Ok module)
-                            (ResultGenKey.Ok
-                              (str_cat.str-cat
-                                "module_"
-                                (spec-string-key module))
-                              fuel)]
-                          [(ResultMacroModuleArg.Err diag)
-                            (ResultGenKey.Err diag)])
-                        (macro-identity-key-param-expr
-                          ctx
-                          fallback-module
-                          ty
-                          head-expr
-                          env
-                          fuel
-                          call-expr)))
-                      [(ResultGenKey.Ok head-key head-fuel)
-                        (match (macro-identity-key-params
-                          ctx
-                          decls
-                          fallback-module
-                          rest-params
-                          rest-args
-                          env
-                          head-fuel
-                          call-expr)
-                          [(ResultGenKey.Ok tail tail-fuel)
-                            (ResultGenKey.Ok
-                              (macro-identity-key-join head-key tail)
-                              tail-fuel)]
-                          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
-                      [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))]))]))
+  (macro-identity-key-params-at
+    ctx
+    decls
+    fallback-module
+    (& params)
+    0
+    args
+    env
+    fuel
+    call-expr))
+
+(define (macro-identity-key-fixed-param
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [fallback-module : String]
+  [ty : AstType]
+  [head-expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (cond
+    [(tc-macro-type-param-kind? ty)
+      (match (macro-type-arg-with-fallback ctx decls fallback-module head-expr)
+        [(ResultMacroTypeArg.Ok resolved-ty)
+          (ResultGenKey.Ok
+            (str_cat.str-cat "type_" (ctfe-type-key resolved-ty))
+            fuel)]
+        [(ResultMacroTypeArg.Err diag) (ResultGenKey.Err diag)])]
+    [(tc-macro-module-param-kind? ty)
+      (match (macro-module-strategy-arg-with-fallback
+        ctx
+        fallback-module
+        head-expr)
+        [(ResultMacroModuleArg.Ok module)
+          (ResultGenKey.Ok
+            (str_cat.str-cat "module_" (spec-string-key module))
+            fuel)]
+        [(ResultMacroModuleArg.Err diag) (ResultGenKey.Err diag)])]
+    [else
+      (macro-identity-key-param-expr
+        ctx
+        fallback-module
+        ty
+        head-expr
+        env
+        fuel
+        call-expr)]))
+
+(define (macro-identity-key-params-at
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [fallback-module : String]
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (if (>= index (ast-macro-param-list-len params))
+    (match args
+      [(AstExprList.Nil) (ResultGenKey.Ok "" fuel)]
+      [(AstExprList.Cons head _)
+        (ResultGenKey.Err
+          (box
+            (ctfe-diagnostic-at-expr
+              (ast-node-get head)
+              "macro call has too many arguments")))])
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty variadic)
+        (if variadic
+          (cond
+            [(tc-macro-type-param-kind? ty)
+              (ResultGenKey.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "typecheck: type macro operand cannot be variadic")))]
+            [(tc-macro-module-param-kind? ty)
+              (ResultGenKey.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "typecheck: Module macro operand cannot be variadic")))]
+            [(macro-identity-syntax-param-type? ctx fallback-module ty)
+              (macro-identity-key-param-exprs
+                ctx
+                fallback-module
+                ty
+                args
+                env
+                fuel
+                call-expr)]
+            [else (macro-identity-key-string-exprs args env fuel)])
+          (match args
+            [(AstExprList.Nil)
+              (ResultGenKey.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro call has too few arguments")))]
+            [(AstExprList.Cons head rest-args)
+              (let
+                [head-expr : AstExpr (ast-node-get head)]
+                [rest-args : AstExprList (box-get rest-args)]
+                (match (macro-identity-key-fixed-param
+                  ctx
+                  decls
+                  fallback-module
+                  ty
+                  head-expr
+                  env
+                  fuel
+                  call-expr)
+                  [(ResultGenKey.Ok head-key head-fuel)
+                    (match (macro-identity-key-params-at
+                      ctx
+                      decls
+                      fallback-module
+                      params
+                      (+ index 1)
+                      rest-args
+                      env
+                      head-fuel
+                      call-expr)
+                      [(ResultGenKey.Ok tail tail-fuel)
+                        (ResultGenKey.Ok
+                          (macro-identity-key-join head-key tail)
+                          tail-fuel)]
+                      [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+                  [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))])))
 
 (define (macro-module-identity
   [ctx : TcContext]
@@ -42237,13 +42285,18 @@
         (macro-generated-fingerprint-bool comptime?))]))
 
 (define (macro-generated-fingerprint-param-list [params : AstParamList]) : String
-  (match params
-    [(AstParamList.Nil) "params:nil"]
-    [(AstParamList.Cons head rest)
-      (macro-generated-fingerprint-join
-        "params:cons"
-        (macro-generated-fingerprint-param head)
-        (macro-generated-fingerprint-param-list (box-get rest)))]))
+  (macro-generated-fingerprint-param-list-at (& params) 0))
+
+(define (macro-generated-fingerprint-param-list-at
+  [params : (& params AstParamList)]
+  [index : i64]) : String
+  (if (>= index (ast-param-list-len params))
+    "params:nil"
+    (macro-generated-fingerprint-join
+      "params:cons"
+      (macro-generated-fingerprint-param
+        (ast-param-list-get params index (ast-param-fallback)))
+      (macro-generated-fingerprint-param-list-at params (+ index 1)))))
 
 (define (macro-generated-fingerprint-macro-param [param : AstMacroParam]) : String
   (match param
@@ -42256,13 +42309,18 @@
 
 (define (macro-generated-fingerprint-macro-param-list
   [params : AstMacroParamList]) : String
-  (match params
-    [(AstMacroParamList.Nil) "macro-params:nil"]
-    [(AstMacroParamList.Cons head rest)
-      (macro-generated-fingerprint-join
-        "macro-params:cons"
-        (macro-generated-fingerprint-macro-param head)
-        (macro-generated-fingerprint-macro-param-list (box-get rest)))]))
+  (macro-generated-fingerprint-macro-param-list-at (& params) 0))
+
+(define (macro-generated-fingerprint-macro-param-list-at
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : String
+  (if (>= index (ast-macro-param-list-len params))
+    "macro-params:nil"
+    (macro-generated-fingerprint-join
+      "macro-params:cons"
+      (macro-generated-fingerprint-macro-param
+        (ast-macro-param-list-get params index (ast-macro-param-fallback)))
+      (macro-generated-fingerprint-macro-param-list-at params (+ index 1)))))
 
 (define (macro-generated-fingerprint-field-cleanup [cleanup : AstFieldCleanup]) : String
   (match cleanup
@@ -43134,17 +43192,28 @@
   [ctx : TcContext]
   [definition-module : String]
   [params : AstMacroParamList]) : bool
-  (match params
-    [(AstMacroParamList.Nil) true]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (and
-            (not (macro-identity-syntax-param-type? ctx definition-module ty))
-            (macro-generated-identity-shortcut-safe-params?
-              ctx
-              definition-module
-              (box-get rest)))])]))
+  (macro-generated-identity-shortcut-safe-params-at?
+    ctx
+    definition-module
+    (& params)
+    0))
+
+(define (macro-generated-identity-shortcut-safe-params-at?
+  [ctx : TcContext]
+  [definition-module : String]
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-macro-param-list-len params))
+    true
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (and
+          (not (macro-identity-syntax-param-type? ctx definition-module ty))
+          (macro-generated-identity-shortcut-safe-params-at?
+            ctx
+            definition-module
+            params
+            (+ index 1)))])))
 
 (define (macro-expr-list-with-head-symbol
   [name : String]
@@ -44721,24 +44790,30 @@
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : MacroHygieneParams
-  (match params
-    [(AstParamList.Nil) (MacroHygieneParams.Params AstParamList.Nil env)]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty comptime?)
-            (match (macro-hygiene-bind-name
-              env
+  (macro-hygiene-param-list-at (& params) 0 env macro-name depth))
+
+(define (macro-hygiene-param-list-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygieneParams
+  (if (>= index (ast-param-list-len params))
+    (MacroHygieneParams.Params (ast-param-list-new) env)
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty comptime?)
+        (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
+          [(MacroHygieneName.Name renamed next-env)
+            (match (macro-hygiene-param-list-at
+              params
+              (+ index 1)
+              next-env
               macro-name
-              depth
-              (intern-str name))
-              [(MacroHygieneName.Name renamed next-env)
-                (match (macro-hygiene-param-list rest next-env macro-name depth)
-                  [(MacroHygieneParams.Params nrest final-env)
-                    (MacroHygieneParams.Params
-                      (ast-param-cons (ast-param renamed ty comptime?) nrest)
-                      final-env)])])]))]))
+              depth)
+              [(MacroHygieneParams.Params nrest final-env)
+                (MacroHygieneParams.Params
+                  (ast-param-cons (ast-param renamed ty comptime?) nrest)
+                  final-env)])])])))
 
 (define (macro-hygiene-pattern-list
   [patterns : AstPatternList]
@@ -47237,64 +47312,84 @@
   [env : CtfeEnv]
   [capture-expr-types : bool]
   [call-expr : AstExpr]) : ResultMacroEnv
-  (match params
-    [(AstMacroParamList.Nil)
-      (match args
-        [(AstExprList.Nil) (ResultMacroEnv.Ok env)]
-        [_
-          (ResultMacroEnv.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                call-expr
-                "macro call has too many arguments")))])]
-    [(AstMacroParamList.Cons param rest-params)
-      (let
-        [rest-params : AstMacroParamList (box-get rest-params)]
-        (match param
-          [(AstMacroParam.Param pname pty variadic)
-            (if variadic
-              (macro-bind-variadic-param
-                ctx
-                type-env
-                fallback-module
-                pname
-                pty
-                args
-                env)
-              (match args
-                [(AstExprList.Nil)
-                  (ResultMacroEnv.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "macro call has too few arguments")))]
-                [(AstExprList.Cons arg rest-args)
-                  (let
-                    [arg-expr : AstExpr (ast-node-get arg)]
-                    [rest-args : AstExprList (box-get rest-args)]
-                    (match (macro-bind-fixed-param
+  (macro-bind-params-at
+    ctx
+    decls
+    fallback-module
+    type-env
+    (& params)
+    0
+    args
+    env
+    capture-expr-types
+    call-expr))
+
+(define (macro-bind-params-at
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [fallback-module : String]
+  [type-env : TcTypeEnv]
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [capture-expr-types : bool]
+  [call-expr : AstExpr]) : ResultMacroEnv
+  (if (>= index (ast-macro-param-list-len params))
+    (match args
+      [(AstExprList.Nil) (ResultMacroEnv.Ok env)]
+      [_
+        (ResultMacroEnv.Err
+          (box
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "macro call has too many arguments")))])
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param pname pty variadic)
+        (if variadic
+          (macro-bind-variadic-param
+            ctx
+            type-env
+            fallback-module
+            pname
+            pty
+            args
+            env)
+          (match args
+            [(AstExprList.Nil)
+              (ResultMacroEnv.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro call has too few arguments")))]
+            [(AstExprList.Cons arg rest-args)
+              (let
+                [arg-expr : AstExpr (ast-node-get arg)]
+                [rest-args : AstExprList (box-get rest-args)]
+                (match (macro-bind-fixed-param
+                  ctx
+                  decls
+                  fallback-module
+                  type-env
+                  pname
+                  pty
+                  arg
+                  arg-expr
+                  capture-expr-types
+                  env)
+                  [(ResultMacroEnv.Ok next-env)
+                    (macro-bind-params-at
                       ctx
                       decls
                       fallback-module
                       type-env
-                      pname
-                      pty
-                      arg
-                      arg-expr
+                      params
+                      (+ index 1)
+                      rest-args
+                      next-env
                       capture-expr-types
-                      env)
-                      [(ResultMacroEnv.Ok next-env)
-                        (macro-bind-params
-                          ctx
-                          decls
-                          fallback-module
-                          type-env
-                          rest-params
-                          rest-args
-                          next-env
-                          capture-expr-types
-                          call-expr)]
-                      [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))]))]))]))
+                      call-expr)]
+                  [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))]))])))
 
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
@@ -47450,7 +47545,8 @@
   [param : AstMacroParam]
   [head : i64]
   [rest-args : AstExprList]
-  [rest-params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
+  [next-index : i64]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
   (match param
@@ -47461,25 +47557,32 @@
           args)
         (ast-expr-cons
           (macro-generated-import-type-arg ty head env)
-          (macro-generated-import-type-args rest-params rest-args env)))]))
+          (macro-generated-import-type-args-at params next-index rest-args env)))]))
 
 (define (macro-generated-import-type-args
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
-  (match params
-    [(AstMacroParamList.Nil) args]
-    [(AstMacroParamList.Cons param rest-params-box)
-      (match args
-        [(AstExprList.Nil) AstExprList.Nil]
-        [(AstExprList.Cons head rest-args-box)
-          (macro-generated-import-type-args-for-param
-            param
-            head
-            (box-get rest-args-box)
-            (box-get rest-params-box)
-            args
-            env)])]))
+  (macro-generated-import-type-args-at (& params) 0 args env))
+
+(define (macro-generated-import-type-args-at
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]) : AstExprList
+  (if (>= index (ast-macro-param-list-len params))
+    args
+    (match args
+      [(AstExprList.Nil) AstExprList.Nil]
+      [(AstExprList.Cons head rest-args-box)
+        (macro-generated-import-type-args-for-param
+          (ast-macro-param-list-get params index (ast-macro-param-fallback))
+          head
+          (box-get rest-args-box)
+          params
+          (+ index 1)
+          args
+          env)])))
 
 (define (macro-rewrite-generated-import-call-with-decl
   [func-box : i64]
@@ -47767,7 +47870,7 @@
   (ast-param name ty false))
 
 (define (macro-vf-param-list1 [a : AstParam]) : AstParamList
-  (ast-param-cons a AstParamList.Nil))
+  (ast-param-cons a (ast-param-list-new)))
 
 (define (macro-vf-param-list2 [a : AstParam] [b : AstParam]) : AstParamList
   (ast-param-cons a (macro-vf-param-list1 b)))
@@ -47898,7 +48001,7 @@
   [vec-name : String]) : AstDecl
   (ast-decl-def-fn
     new-name
-    AstParamList.Nil
+    (ast-param-list-new)
     (macro-vf-vec-ty vec-name)
     (macro-vf-call1 with-capacity-name (macro-vf-lit-i64 4))))
 
@@ -50293,32 +50396,58 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match params
-    [(AstParamList.Nil) refs]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param _ ty _)
-          (macro-generated-surface-param-list-refs
-            (box-get rest)
-            aliases
-            (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
-            alias-qualified?)])]))
+  (macro-generated-surface-param-list-refs-at
+    (& params)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-param-list-refs-at
+  [params : (& params AstParamList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-param-list-len params))
+    refs
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (macro-generated-surface-param-list-refs-at
+          params
+          aliases
+          (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-macro-param-list-refs
   [params : AstMacroParamList]
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match params
-    [(AstMacroParamList.Nil) refs]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (macro-generated-surface-macro-param-list-refs
-            (box-get rest)
-            aliases
-            (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
-            alias-qualified?)])]))
+  (macro-generated-surface-macro-param-list-refs-at
+    (& params)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-macro-param-list-refs-at
+  [params : (& params AstMacroParamList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-macro-param-list-len params))
+    refs
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (macro-generated-surface-macro-param-list-refs-at
+          params
+          aliases
+          (macro-generated-surface-type-refs ty aliases refs alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-pattern-list-refs
   [patterns : AstPatternList]
@@ -54396,7 +54525,7 @@
     (ast-decl-cons
       (ast-decl-def-fn
         "generated_inert_value"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
       AstDeclList.Nil)))

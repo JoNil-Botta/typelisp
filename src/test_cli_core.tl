@@ -675,7 +675,7 @@
     (ast-param "fd" (AstType.I32) false)
     (ast-param-cons
       (ast-param "buf" (ast-ty-ptr (AstType.U8)) false)
-      (ast-param-cons (ast-param "n" (AstType.I32) false) AstParamList.Nil))))
+      (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new)))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast-node-push
@@ -811,7 +811,7 @@
 (define (tltest-print-param-list) : AstParamList
   (ast-param-cons
     (ast-param "text" (AstType.String) false)
-    (ast-param-cons (ast-param "n" (AstType.I32) false) AstParamList.Nil)))
+    (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new))))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
@@ -931,7 +931,7 @@
             (ast-decl-cons
               (ast-decl-def-fn
                 private-name
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.Unit)
                 body)
               out))]))))
@@ -954,7 +954,7 @@
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn
     "main"
-    AstParamList.Nil
+    (ast-param-list-new)
     (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
@@ -2163,7 +2163,7 @@
     [dep-fn : AstDecl
       (ast-decl-def-fn
         "eq"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Bool)
         (ast-node-push (AstExpr.Literal (AstLiteral.Bool true))))]
     [source-import : AstDecl
@@ -2216,7 +2216,7 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
@@ -2268,13 +2268,13 @@
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [str-view-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-str-view"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [helper-body : i64
@@ -2288,7 +2288,7 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_runtime_helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 17 1 17 1)]
@@ -2343,11 +2343,11 @@
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [lambda-expr : i64
-      (ast-expr-lambda AstParamList.Nil AstMaybeType.No unit-expr)]
+      (ast-expr-lambda (ast-param-list-new) AstMaybeType.No unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2355,7 +2355,7 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_lambda_helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 18 1 18 1)]
@@ -2403,7 +2403,7 @@
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [helper-body : i64
@@ -2415,7 +2415,7 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_substring_helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 19 1 19 1)]
@@ -2463,7 +2463,7 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
@@ -2568,25 +2568,25 @@
     [dep-decl : AstDecl
       (ast-decl-def-fn
         dep-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (tltest-call-expr dep-name))]
     [eq-dep-decl : AstDecl
       (ast-decl-def-fn
         eq-dep-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [eq-decl : AstDecl
       (ast-decl-def-fn
         eq-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (tltest-call-expr eq-dep-name))]
     [span : AstSourceSpan (AstSourceSpan 13 1 13 1)]
@@ -2649,7 +2649,7 @@
         dep-name
         (ast-decl-def-fn
           dep-name
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [live-decl : AstDecl
@@ -2657,7 +2657,7 @@
         live-name
         (ast-decl-def-fn
           live-name
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.Unit)
           (tltest-call-expr dep-name)))]
     [dead-decl : AstDecl
@@ -2665,7 +2665,7 @@
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
@@ -2717,13 +2717,13 @@
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [ordinary-decl : AstDecl
       (ast-decl-def-fn
         ordinary-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
@@ -2768,13 +2768,13 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [macro-decl : AstDecl
       (ast-decl-def-macro
         macro-name
-        AstMacroParamList.Nil
+        (ast-macro-param-list-new)
         (AstType.Expr)
         (ast-expr-quasiquote (tltest-call-expr helper-name)))]
     [span : AstSourceSpan (AstSourceSpan 31 1 31 1)]

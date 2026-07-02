@@ -7975,8 +7975,15 @@
       ", ")
     (string.string-append lhs "\n")))
 
+;; M-F: absolute loads take the compact spelling when the value fits a signed
+;; 32-bit immediate (movl/movq via emit-load-i64-immediate; the xorl-for-zero
+;; case never reaches here -- every divmod caller filters zero first, and flags
+;; are never live across an emitted op). `movabsq` in the output is therefore
+;; textually reserved for genuine 64-bit constants.
 (define (compiler-backend-emit-load-i64-absolute [n : i64] [reg : String]) : String
-  (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n"))
+  (if (compiler-backend-imm32? n)
+    (compiler-backend-emit-load-i64-immediate n reg)
+    (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n")))
 
 (define (compiler-backend-signed-min-value [ty : AstType]) : i64
   (let
@@ -8292,6 +8299,747 @@
               (set! done true)))))
       (CompilerBackendSignedDivMagic (+ q2 (cast 1 : u64)) (- p 64)))))
 
+;; ===========================================================================
+;; M-F: loop-hoisted divmod magic constants.
+;;
+;; The strength-reduced constant divmod expansion materialises its 64-bit magic
+;; reciprocal (`movabsq $magic, scratch`) at EVERY site, so a `% C` inside a hot
+;; loop pays one movabsq per iteration (clang keeps the magic in a register
+;; across the loop). The magic constant is emission-internal -- it never exists
+;; in the IR -- so neither the optimiser's LICM nor the allocator can hoist it.
+;; This pass gives it a loop-scoped register at the EMISSION-PLAN level:
+;;
+;;   * candidate loops: natural loops [h..le] (compiler-reg-preheader-loop-ends)
+;;     on the FINAL emitted IR that are LEAF (no call/syscall/tail-call in any
+;;     region block), side-entry-free, and whose single out-of-loop predecessor
+;;     P lies before the loop and ends in an unconditional Jump to the header
+;;     (the M-E preheader shape);
+;;   * sites: constant divmods in the region whose expansion takes the signed or
+;;     unsigned MAGIC path (size-8, safe literal, not a power of two, not
+;;     high-bit); deduplicated by magic VALUE (e.g. `/10` and `%10` share one);
+;;   * register: first of {r8, r9, rsi, rdi} (the M-G2b shadow set: rax/rdx/rcx
+;;     are div/shift-fixed, r10/r11 stay the scavenger's) whose segment-precise
+;;     occupancy is FREE over the whole hull [P-start .. region-end] -- checked
+;;     against the same fresh final-IR intervals the scavenge occupancy is built
+;;     from, so the hoist never displaces or fights an allocated value. No free
+;;     register -> no hoist -> byte-identical output;
+;;   * realisation: `movabsq $magic, R` is injected as raw text right after P's
+;;     label (once per loop entry); each site's emission point is recorded and
+;;     the divmod emitters read R instead of materialising (the recorded magic
+;;     value is re-checked at the site -- a mismatch falls back to the load);
+;;   * protection: a synthetic (register-homed, region-spanning) interval is
+;;     appended to the scavenge-occupancy inputs, so every scavenged scratch in
+;;     the region avoids R; the site's own dividend/mask/magic scratch picks
+;;     additionally exclude R so even an emergency pick cannot alias it.
+;;
+;; Linux scalar-opt2 text path only (rsi/rdi are CSRs on Win64).
+;; ===========================================================================
+
+(defenum CompilerBackendMagicHome
+  (CompilerBackendNoMagicHome)
+  (CompilerBackendMagicHomeReg String i64))
+
+;; Synthetic occupancy entries for the scavenge context: count + per-entry
+;; register / start point / end point.
+(defenum CompilerBackendConstHoistSynth
+  (CompilerBackendConstHoistSynth i64 (Array String) (Array i64) (Array i64)))
+
+(define compiler-backend-const-hoist-site-count : i64
+  0)
+(define compiler-backend-const-hoist-site-points : (Array i64)
+  (make-array i64 1))
+(define compiler-backend-const-hoist-site-regs : (Array String)
+  (make-array String 1))
+(define compiler-backend-const-hoist-site-magics : (Array i64)
+  (make-array i64 1))
+(define compiler-backend-const-hoist-inject-count : i64
+  0)
+(define compiler-backend-const-hoist-inject-labels : (Array String)
+  (make-array String 1))
+(define compiler-backend-const-hoist-inject-texts : (Array String)
+  (make-array String 1))
+;; true = inject BEFORE the label (the header-is-entry-block case: the load
+;; goes at prologue end, so back edges re-enter after it); false = after the
+;; label (a dedicated preheader block).
+(define compiler-backend-const-hoist-inject-pres : (Array bool)
+  (make-array bool 1))
+
+(define (compiler-backend-const-hoist-site-cap) : i64
+  64)
+
+(define (compiler-backend-const-hoist-synth-cap) : i64
+  16)
+
+(define (compiler-backend-const-hoist-disable!) : CompilerBackendConstHoistSynth
+  (begin
+    (set! compiler-backend-const-hoist-site-count 0)
+    (set! compiler-backend-const-hoist-inject-count 0)
+    (CompilerBackendConstHoistSynth
+      0
+      (make-array String 1)
+      (make-array i64 1)
+      (make-array i64 1))))
+
+;; Registers eligible to carry a hoisted magic across a leaf loop region.
+(define (compiler-backend-const-hoist-candidate-regs) : CompilerRegStringList
+  (compiler-reg-string-cons "%r8"
+    (compiler-reg-string-cons "%r9"
+      (compiler-reg-string-cons "%rsi"
+        (compiler-reg-string-cons "%rdi" CompilerRegStringNil)))))
+
+;; The register carrying this site's hoisted magic, or "" when the site has no
+;; hoist or the recorded value does not match the magic this expansion computed
+;; (defensive: a mismatch means the plan and the emitter disagree -- fall back
+;; to the in-place load rather than read a wrong constant).
+(define (compiler-backend-magic-home-reg
+  [hoist : CompilerBackendMagicHome]
+  [magic : u64]) : String
+  (match hoist
+    [(CompilerBackendNoMagicHome) ""]
+    [(CompilerBackendMagicHomeReg reg expect)
+      (if (= expect (cast magic : i64))
+        reg
+        "")]))
+
+(define (compiler-backend-magic-home-reg-name
+  [hoist : CompilerBackendMagicHome]) : String
+  (match hoist
+    [(CompilerBackendNoMagicHome) ""]
+    [(CompilerBackendMagicHomeReg reg _) reg]))
+
+;; Site lookup keyed by the current emission point (the same drift-proof
+;; coordinate the scavenger queries occupancy with).
+(define (compiler-backend-const-hoist-here) : CompilerBackendMagicHome
+  (if (= compiler-backend-const-hoist-site-count 0)
+    (CompilerBackendNoMagicHome)
+    (let
+      [point : i64
+        (*
+          2
+          (-
+            compiler-backend-emit-instr-post-base
+            compiler-backend-emit-current-count))]
+      [i : i64 0]
+      [found : i64 (- 0 1)]
+      (begin
+        (while (< i compiler-backend-const-hoist-site-count)
+          (begin
+            (if (= (array-ref compiler-backend-const-hoist-site-points i) point)
+              (set! found i)
+              unit)
+            (set! i (+ i 1))))
+        (if (< found 0)
+          (CompilerBackendNoMagicHome)
+          (CompilerBackendMagicHomeReg
+            (array-ref compiler-backend-const-hoist-site-regs found)
+            (array-ref compiler-backend-const-hoist-site-magics found)))))))
+
+;; All injection text registered for this block label (the preheader constant
+;; loads): `pre` = true selects the before-label entries (header-is-entry-block
+;; loops; the load lands at prologue end so back edges re-enter after it),
+;; false the after-label entries (dedicated preheader blocks).
+(define (compiler-backend-const-hoist-injection-from
+  [label : String]
+  [pre : bool]
+  [i : i64]) : String
+  (if (>= i compiler-backend-const-hoist-inject-count)
+    ""
+    (if (and
+      (string-eq (array-ref compiler-backend-const-hoist-inject-labels i) label)
+      (if pre
+        (array-ref compiler-backend-const-hoist-inject-pres i)
+        (not (array-ref compiler-backend-const-hoist-inject-pres i))))
+      (string.string-append
+        (array-ref compiler-backend-const-hoist-inject-texts i)
+        (compiler-backend-const-hoist-injection-from label pre (+ i 1)))
+      (compiler-backend-const-hoist-injection-from label pre (+ i 1)))))
+
+(define (compiler-backend-const-hoist-injection-for
+  [label : String]
+  [pre : bool]) : String
+  (if (= compiler-backend-const-hoist-inject-count 0)
+    ""
+    (compiler-backend-const-hoist-injection-from label pre 0)))
+
+;; The magic constant (as i64 bits) the constant-divmod expansion will
+;; materialise for a signed 64-bit divisor, or 0 when that divisor does not
+;; take the magic path (0 is never a valid magic).
+(define (compiler-backend-const-hoist-signed-magic [d : i64]) : i64
+  (if (or (= d 1) (= d (- 0 1)) (= d (compiler-backend-i64-min-value)))
+    0
+    (let
+      [abs-d : i64
+        (if (< d 0)
+          (- 0 d)
+          d)]
+      (if (compiler-backend-u64-power-of-two? (cast abs-d : u64))
+        0
+        (cast
+          (struct-get (compiler-backend-signed-divisor-magic abs-d) magic)
+          : i64)))))
+
+(define (compiler-backend-const-hoist-unsigned-magic [d : u64]) : i64
+  (if (or
+    (compiler-backend-u64-power-of-two? d)
+    (compiler-backend-u64-high-bit? d))
+    0
+    (match (compiler-backend-unsigned-divisor-magic d)
+      [(CompilerBackendUnsignedDivMagicRoundUp magic _) (cast magic : i64)]
+      [(CompilerBackendUnsignedDivMagicRoundDown magic _) (cast magic : i64)]
+      [(CompilerBackendNoUnsignedDivMagic) 0])))
+
+(define (compiler-backend-const-hoist-divmod-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) true]
+    [(IrBinMod) true]
+    [(IrBinSafeDiv) true]
+    [(IrBinSafeMod) true]
+    [_ false]))
+
+;; The magic this instruction's emission will need, or 0 (not a magic site).
+;; Mirrors compiler-backend-constant-divmod-asm's dispatch exactly.
+(define (compiler-backend-const-hoist-instr-magic [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrBinOp _ op _ rhs ty)
+      (if (compiler-backend-const-hoist-divmod-op? op)
+        (match (compiler-backend-value-as-i64 rhs)
+          [(CompilerBackendSomeI64 n)
+            (if (and
+              (= (compiler-backend-type-size ty) 8)
+              (compiler-backend-divmod-safe-literal-i64? n ty))
+              (if (compiler-backend-type-signed? ty)
+                (compiler-backend-const-hoist-signed-magic n)
+                (compiler-backend-const-hoist-unsigned-magic (cast n : u64)))
+              0)]
+          [(CompilerBackendNoI64) 0])
+        0)]
+    [_ 0]))
+
+;; Any block outside [h..le] branching to a block strictly inside (h..le]?
+(define (compiler-backend-const-hoist-succs-inside?
+  [ids : hashmap.StringI64Map]
+  [succs : CompilerLiveLabelSet]
+  [h : i64]
+  [le : i64]) : bool
+  (match succs
+    [(CompilerLiveLabelNil) false]
+    [(CompilerLiveLabelCons label rest)
+      (match (hashmap.string-i64-map-get ids label)
+        [(hashmap.StringI64MapFound q)
+          (if (and (> q h) (<= q le))
+            true
+            (compiler-backend-const-hoist-succs-inside?
+              ids
+              (box-get rest)
+              h
+              le))]
+        [(hashmap.StringI64MapMissing)
+          (compiler-backend-const-hoist-succs-inside?
+            ids
+            (box-get rest)
+            h
+            le)])]))
+
+(define (compiler-backend-const-hoist-side-entry?
+  [orig : (Array CompilerIrBlock)]
+  [ids : hashmap.StringI64Map]
+  [h : i64]
+  [le : i64]) : bool
+  (let
+    [n : i64 (array-length orig)]
+    [p : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< p n) (not found))
+        (begin
+          (if (or (< p h) (> p le))
+            (set!
+              found
+              (compiler-backend-const-hoist-succs-inside?
+                ids
+                (compiler-live-block-successors (array-ref orig p))
+                h
+                le))
+            unit)
+          (set! p (+ p 1))))
+      found)))
+
+(define (compiler-backend-const-hoist-region-leaf?
+  [orig : (Array CompilerIrBlock)]
+  [h : i64]
+  [le : i64]) : bool
+  (let
+    [i : i64 h]
+    [clean : bool true]
+    (begin
+      (while (and (<= i le) clean)
+        (begin
+          (match (array-ref orig i)
+            [(IrBlock _ instrs)
+              (if (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)
+                (set! clean false)
+                unit)])
+          (set! i (+ i 1))))
+      clean)))
+
+;; "" unless the block's terminator is an unconditional Jump; else its target.
+(define (compiler-backend-const-hoist-jump-target [block : CompilerIrBlock]) : String
+  (match block
+    [(IrBlock _ instrs)
+      (let
+        [c : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (<= c 0)
+          ""
+          (match (compiler-ir-instr-seq-ref instrs (- c 1))
+            [(IrInstrJump label) label]
+            [_ ""])))]))
+
+(define (compiler-backend-const-hoist-block-label [block : CompilerIrBlock]) : String
+  (match block
+    [(IrBlock label _) label]))
+
+;; Is `point` already recorded as a hoisted site?
+(define (compiler-backend-const-hoist-point-recorded?
+  [points : (Array i64)]
+  [count : i64]
+  [point : i64]) : bool
+  (let
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i count) (not found))
+        (begin
+          (if (= (array-ref points i) point)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+;; Filter the candidate list: drop registers already reserved by an earlier
+;; hoist whose synthetic span overlaps [lo, hi].
+(define (compiler-backend-const-hoist-free-candidates
+  [cands : CompilerRegStringList]
+  [synth-regs : (Array String)]
+  [synth-lo : (Array i64)]
+  [synth-hi : (Array i64)]
+  [synth-count : i64]
+  [lo : i64]
+  [hi : i64]) : CompilerRegStringList
+  (match cands
+    [(CompilerRegStringNil) CompilerRegStringNil]
+    [(CompilerRegStringCons reg rest)
+      (let
+        [i : i64 0]
+        [taken : bool false]
+        (begin
+          (while (and (< i synth-count) (not taken))
+            (begin
+              (if (and
+                (string-eq (array-ref synth-regs i) reg)
+                (<= (array-ref synth-lo i) hi)
+                (>= (array-ref synth-hi i) lo))
+                (set! taken true)
+                unit)
+              (set! i (+ i 1))))
+          (if taken
+            (compiler-backend-const-hoist-free-candidates
+              (box-get rest)
+              synth-regs
+              synth-lo
+              synth-hi
+              synth-count
+              lo
+              hi)
+            (compiler-reg-string-cons
+              reg
+              (compiler-backend-const-hoist-free-candidates
+                (box-get rest)
+                synth-regs
+                synth-lo
+                synth-hi
+                synth-count
+                lo
+                hi)))))]))
+
+;; Cheap prescan: any magic-path constant divmod anywhere in the function?
+(define (compiler-backend-const-hoist-any-magic?
+  [orig : (Array CompilerIrBlock)]) : bool
+  (let
+    [n : i64 (array-length orig)]
+    [b : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< b n) (not found))
+        (begin
+          (match (array-ref orig b)
+            [(IrBlock _ instrs)
+              (let
+                [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+                [count : i64 (struct-get instrs len)]
+                [k : i64 0]
+                (while (and (< k count) (not found))
+                  (begin
+                    (if (=
+                      (compiler-backend-const-hoist-instr-magic
+                        (array-ref slots k))
+                      0)
+                      unit
+                      (set! found true))
+                    (set! k (+ k 1)))))])
+          (set! b (+ b 1))))
+      found)))
+
+;; Build the per-function hoist plan over the FINAL emitted IR (the exact
+;; blocks, assignments and fresh intervals the scavenge occupancy uses).
+;; Installs the site/injection globals and returns the synthetic occupancy
+;; entries for the scavenge context.
+(define (compiler-backend-const-hoist-build!
+  [blocks : CompilerIrBlockList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalList]
+  [vars : i64]) : CompilerBackendConstHoistSynth
+  (let
+    [empty : CompilerBackendConstHoistSynth
+      (compiler-backend-const-hoist-disable!)]
+    [cons-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-force-cons blocks)]
+    [count : i64 (compiler-ir-block-list-count cons-blocks)]
+    (if (<= count 1)
+      empty
+      (let
+        [orig : (Array CompilerIrBlock)
+          (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+        (if (not (compiler-backend-const-hoist-any-magic? orig))
+          empty
+          (let
+            [ids : hashmap.StringI64Map
+              (compiler-reg-loop-depth-block-ids
+                cons-blocks
+                (hashmap.string-i64-map-with-capacity
+                  (compiler-reg-bits-map-capacity count))
+                0)]
+            [loop-ends : (Array i64)
+              (compiler-reg-preheader-loop-ends cons-blocks count)]
+            [points : (Array i64)
+              (compiler-reg-loop-phi-mb-block-points orig)]
+            [interval-index : CompilerRegIntervalIndex
+              (compiler-reg-interval-index-build intervals vars)]
+            [site-cap : i64 (compiler-backend-const-hoist-site-cap)]
+            [synth-cap : i64 (compiler-backend-const-hoist-synth-cap)]
+            [site-points : (Array i64) (make-array i64 site-cap)]
+            [site-regs : (Array String) (make-array String site-cap)]
+            [site-magics : (Array i64) (make-array i64 site-cap)]
+            [site-count : i64 0]
+            [inject-labels : (Array String) (make-array String synth-cap)]
+            [inject-texts : (Array String) (make-array String synth-cap)]
+            [inject-pres : (Array bool) (make-array bool synth-cap)]
+            [inject-count : i64 0]
+            [synth-regs : (Array String) (make-array String synth-cap)]
+            [synth-lo : (Array i64) (make-array i64 synth-cap)]
+            [synth-hi : (Array i64) (make-array i64 synth-cap)]
+            [synth-count : i64 0]
+            ;; per-loop scratch: candidate site points/magics (before register
+            ;; assignment), sized by the global cap
+            [loop-points : (Array i64) (make-array i64 site-cap)]
+            [loop-magics : (Array i64) (make-array i64 site-cap)]
+            [h : i64 0]
+            (begin
+              (while (< h count)
+                (let
+                  [le : i64 (array-ref loop-ends h)]
+                  (begin
+                    (if (and
+                      (>= le h)
+                      (< synth-count synth-cap)
+                      (compiler-backend-const-hoist-region-leaf? orig h le))
+                      (let
+                        [h-label : String
+                          (compiler-backend-const-hoist-block-label
+                            (array-ref orig h))]
+                        [p : i64
+                          (compiler-reg-preheader-scan-outside-preds
+                            orig
+                            h
+                            le
+                            h-label
+                            count
+                            0
+                            (- 0 1))]
+                        ;; Two qualifying shapes:
+                        ;;  * h > 0 with a single out-of-loop predecessor P
+                        ;;    (P < h, ends in Jump h): inject AFTER P's label;
+                        ;;  * h = 0 (opt-tailrec loops: the header IS the entry
+                        ;;    block) with NO out-of-loop predecessor at all:
+                        ;;    inject BEFORE block 0's label = at prologue end,
+                        ;;    executed once per call; back edges re-enter after
+                        ;;    it.
+                        (if (and
+                          (if (= h 0)
+                            (= p (- 0 1))
+                            (and
+                              (>= p 0)
+                              (< p h)
+                              (string-eq
+                                (compiler-backend-const-hoist-jump-target
+                                  (array-ref orig p))
+                                h-label)))
+                          (not
+                            (compiler-backend-const-hoist-side-entry?
+                              orig
+                              ids
+                              h
+                              le)))
+                          ;; qualifying loop: collect its unclaimed magic sites
+                          (let
+                            [loop-count : i64 0]
+                            [b : i64 h]
+                            [lo : i64
+                              (if (= h 0)
+                                0
+                                (array-ref points p))]
+                            [hi : i64 (array-ref points (+ le 1))]
+                            [inject-label : String
+                              (if (= h 0)
+                                h-label
+                                (compiler-backend-const-hoist-block-label
+                                  (array-ref orig p)))]
+                            [inject-pre : bool (= h 0)]
+                            (begin
+                              (while (<= b le)
+                                (begin
+                                  (match (array-ref orig b)
+                                    [(IrBlock _ instrs)
+                                      (let
+                                        [slots : (Array CompilerIrInstr)
+                                          (struct-get instrs slots)]
+                                        [icount : i64 (struct-get instrs len)]
+                                        [k : i64 0]
+                                        (while (< k icount)
+                                          (let
+                                            [magic : i64
+                                              (compiler-backend-const-hoist-instr-magic
+                                                (array-ref slots k))]
+                                            [point : i64
+                                              (+
+                                                (array-ref points b)
+                                                (* 2 k))]
+                                            (begin
+                                              (if (and
+                                                (not (= magic 0))
+                                                (< loop-count site-cap)
+                                                (not
+                                                  (compiler-backend-const-hoist-point-recorded?
+                                                    site-points
+                                                    site-count
+                                                    point)))
+                                                (begin
+                                                  (array-set!
+                                                    loop-points
+                                                    loop-count
+                                                    point)
+                                                  (array-set!
+                                                    loop-magics
+                                                    loop-count
+                                                    magic)
+                                                  (set!
+                                                    loop-count
+                                                    (+ loop-count 1)))
+                                                unit)
+                                              (set! k (+ k 1))))))])
+                                  (set! b (+ b 1))))
+                              ;; assign registers per distinct magic value
+                              (let
+                                [g : i64 0]
+                                (while (< g loop-count)
+                                  (let
+                                    [magic : i64 (array-ref loop-magics g)]
+                                    ;; first occurrence of this magic?
+                                    [first : bool
+                                      (let
+                                        [j : i64 0]
+                                        [seen : bool false]
+                                        (begin
+                                          (while (< j g)
+                                            (begin
+                                              (if (=
+                                                (array-ref loop-magics j)
+                                                magic)
+                                                (set! seen true)
+                                                unit)
+                                              (set! j (+ j 1))))
+                                          (not seen)))]
+                                    (begin
+                                      (if (and
+                                        first
+                                        (< synth-count synth-cap)
+                                        (< inject-count synth-cap))
+                                        (match (compiler-reg-loop-split-first-register
+                                          (compiler-backend-const-hoist-free-candidates
+                                            (compiler-backend-const-hoist-candidate-regs)
+                                            synth-regs
+                                            synth-lo
+                                            synth-hi
+                                            synth-count
+                                            lo
+                                            hi)
+                                          assignments
+                                          interval-index
+                                          (compiler-reg-loop-split-region-interval
+                                            (- 0 1)
+                                            lo
+                                            hi)
+                                          (- 0 1))
+                                          [(CompilerRegNoString) unit]
+                                          [(CompilerRegSomeString reg)
+                                            (begin
+                                              ;; synthetic occupancy entry
+                                              (array-set!
+                                                synth-regs
+                                                synth-count
+                                                reg)
+                                              (array-set! synth-lo synth-count lo)
+                                              (array-set! synth-hi synth-count hi)
+                                              (set! synth-count (+ synth-count 1))
+                                              ;; preheader injection
+                                              (array-set!
+                                                inject-labels
+                                                inject-count
+                                                inject-label)
+                                              (array-set!
+                                                inject-texts
+                                                inject-count
+                                                (compiler-backend-emit-load-i64-absolute
+                                                  magic
+                                                  reg))
+                                              (array-set!
+                                                inject-pres
+                                                inject-count
+                                                inject-pre)
+                                              (set!
+                                                inject-count
+                                                (+ inject-count 1))
+                                              ;; every site of this magic in the loop
+                                              (let
+                                                [j : i64 g]
+                                                (while (< j loop-count)
+                                                  (begin
+                                                    (if (and
+                                                      (=
+                                                        (array-ref loop-magics j)
+                                                        magic)
+                                                      (< site-count site-cap))
+                                                      (begin
+                                                        (array-set!
+                                                          site-points
+                                                          site-count
+                                                          (array-ref
+                                                            loop-points
+                                                            j))
+                                                        (array-set!
+                                                          site-regs
+                                                          site-count
+                                                          reg)
+                                                        (array-set!
+                                                          site-magics
+                                                          site-count
+                                                          magic)
+                                                        (set!
+                                                          site-count
+                                                          (+ site-count 1)))
+                                                      unit)
+                                                    (set! j (+ j 1)))))
+                                              unit)])
+                                        unit)
+                                      (set! g (+ g 1))))))))
+                          unit))
+                      unit)
+                    (set! h (+ h 1)))))
+              ;; commit
+              (set! compiler-backend-const-hoist-site-count site-count)
+              (set! compiler-backend-const-hoist-site-points site-points)
+              (set! compiler-backend-const-hoist-site-regs site-regs)
+              (set! compiler-backend-const-hoist-site-magics site-magics)
+              (set! compiler-backend-const-hoist-inject-count inject-count)
+              (set! compiler-backend-const-hoist-inject-labels inject-labels)
+              (set! compiler-backend-const-hoist-inject-texts inject-texts)
+              (set! compiler-backend-const-hoist-inject-pres inject-pres)
+              (CompilerBackendConstHoistSynth
+                synth-count
+                synth-regs
+                synth-lo
+                synth-hi))))))))
+
+(define (compiler-backend-const-hoist-extend-vars
+  [synth : CompilerBackendConstHoistSynth]
+  [vars : i64]) : i64
+  (match synth
+    [(CompilerBackendConstHoistSynth n _ _ _) (+ vars n)]))
+
+(define (compiler-backend-const-hoist-extend-assignments-from
+  [regs : (Array String)]
+  [n : i64]
+  [i : i64]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (if (>= i n)
+    assignments
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment
+        (+ vars i)
+        (CompilerRegRegister (array-ref regs i)))
+      (compiler-backend-const-hoist-extend-assignments-from
+        regs
+        n
+        (+ i 1)
+        vars
+        assignments))))
+
+(define (compiler-backend-const-hoist-extend-assignments
+  [synth : CompilerBackendConstHoistSynth]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (match synth
+    [(CompilerBackendConstHoistSynth n regs _ _)
+      (compiler-backend-const-hoist-extend-assignments-from
+        regs
+        n
+        0
+        vars
+        assignments)]))
+
+(define (compiler-backend-const-hoist-extend-intervals-from
+  [lo : (Array i64)]
+  [hi : (Array i64)]
+  [n : i64]
+  [i : i64]
+  [vars : i64]
+  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (if (>= i n)
+    intervals
+    (compiler-reg-interval-cons
+      (CompilerRegInterval (+ vars i) (array-ref lo i) (array-ref hi i))
+      (compiler-backend-const-hoist-extend-intervals-from
+        lo
+        hi
+        n
+        (+ i 1)
+        vars
+        intervals))))
+
+(define (compiler-backend-const-hoist-extend-intervals
+  [synth : CompilerBackendConstHoistSynth]
+  [vars : i64]
+  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (match synth
+    [(CompilerBackendConstHoistSynth n _ lo hi)
+      (compiler-backend-const-hoist-extend-intervals-from
+        lo
+        hi
+        n
+        0
+        vars
+        intervals)]))
+
 (define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
   (if (= shift 0)
     ""
@@ -8317,19 +9065,31 @@
       reg
       "\n")))
 
+;; M-F: an imm32 divisor folds directly into the 3-operand imul
+;; (`imulq $d, q, scratch`), eliminating the constant materialisation mov
+;; entirely (clang's shape for `x % smallC`). Wider divisors keep the
+;; load+imul pair. Both compute scratch = q*d with identical 64-bit
+;; wraparound semantics.
 (define (compiler-backend-divmod-remainder-from-quotient-reg
   [divisor : u64]
   [quotient-reg : String]
   [scratch-reg : String]
   [dividend-reg : String]) : String
   (string-append
-    (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
+    (if (compiler-backend-imm32? (cast divisor : i64))
+      (str_cat.str-cat
+        "    imulq $"
+        (string.int->string (cast divisor : i64))
+        ", "
+        quotient-reg
+        ", "
+        scratch-reg
+        "\n")
+      (string-append
+        (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
+        (str_cat.str-cat "    imulq " quotient-reg ", " scratch-reg "\n")))
     (str-cat
-      "    imulq "
-      quotient-reg
-      ", "
-      scratch-reg
-      "\n    movq "
+      "    movq "
       dividend-reg
       ", %rax\n    subq "
       scratch-reg
@@ -8355,9 +9115,15 @@
     (if want-remainder
       (if (= mask (cast 0 : u64))
         "    xorq %rax, %rax\n"
-        (string-append
-          (compiler-backend-emit-load-u64-absolute mask scratch-reg)
-          (str-cat "    andq " scratch-reg ", %rax\n")))
+        ;; M-F: imm32 masks use the immediate form (no constant mov).
+        (if (compiler-backend-imm32? (cast mask : i64))
+          (str_cat.str-cat
+            "    andq $"
+            (string.int->string (cast mask : i64))
+            ", %rax\n")
+          (string-append
+            (compiler-backend-emit-load-u64-absolute mask scratch-reg)
+            (str-cat "    andq " scratch-reg ", %rax\n"))))
       (compiler-backend-divmod-shift-rax "shr" shift))))
 
 (define (compiler-backend-unsigned-high-bit-divmod-asm
@@ -8391,23 +9157,35 @@
   [divisor : u64]
   [want-remainder : bool]
   [scratch-reg : String]
-  [dividend-reg : String]) : CompilerBackendMaybeAsm
+  [dividend-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (match (compiler-backend-unsigned-divisor-magic divisor)
     [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
       (let
+        ;; M-F: a loop-hoisted magic is already resident in `home` -- skip the
+        ;; materialisation and read it in place (mulq/addq only READ it).
+        [home : String (compiler-backend-magic-home-reg hoist magic)]
+        [magic-load : String
+          (if (string-eq home "")
+            (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+            "")]
+        [magic-src : String
+          (if (string-eq home "")
+            scratch-reg
+            home)]
         [quotient-asm : String
           (if want-remainder
             (string-append
               (str-cat "    movq %rax, " dividend-reg "\n")
               (string-append
-                (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+                magic-load
                 (string-append
-                  (str-cat "    mulq " scratch-reg "\n")
+                  (str-cat "    mulq " magic-src "\n")
                   (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
             (string-append
-              (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+              magic-load
               (string-append
-                (str-cat "    mulq " scratch-reg "\n    movq %rdx, %rax\n")
+                (str-cat "    mulq " magic-src "\n    movq %rdx, %rax\n")
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
         (CompilerBackendSomeAsm
           (if want-remainder
@@ -8421,28 +9199,37 @@
             quotient-asm)))]
     [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
       (let
+        [home : String (compiler-backend-magic-home-reg hoist magic)]
+        [magic-load : String
+          (if (string-eq home "")
+            (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+            "")]
+        [magic-src : String
+          (if (string-eq home "")
+            scratch-reg
+            home)]
         [quotient-asm : String
           (if want-remainder
             (string-append
               (str-cat "    movq %rax, " dividend-reg "\n")
               (string-append
-                (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+                magic-load
                 (string-append
                   (str-cat
                     "    mulq "
-                    scratch-reg
+                    magic-src
                     "\n    addq "
-                    scratch-reg
+                    magic-src
                     ", %rax\n    adcq $0, %rdx\n")
                   (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
             (string-append
-              (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+              magic-load
               (string-append
                 (str-cat
                   "    mulq "
-                  scratch-reg
+                  magic-src
                   "\n    addq "
-                  scratch-reg
+                  magic-src
                   ", %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n")
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
         (CompilerBackendSomeAsm
@@ -8478,16 +9265,19 @@
           mask-reg
           "\n")
         (string-append
-          (compiler-backend-emit-load-u64-absolute mask scratch-reg)
-          (string-append
-            (str-cat
-              "    andq "
-              scratch-reg
+          ;; M-F: imm32 masks use the immediate form (no constant mov).
+          (if (compiler-backend-imm32? (cast mask : i64))
+            (str_cat.str-cat
+              "    andq $"
+              (string.int->string (cast mask : i64))
               ", "
               mask-reg
-              "\n    addq "
-              mask-reg
-              ", %rax\n")
+              "\n")
+            (string-append
+              (compiler-backend-emit-load-u64-absolute mask scratch-reg)
+              (str-cat "    andq " scratch-reg ", " mask-reg "\n")))
+          (string-append
+            (str-cat "    addq " mask-reg ", %rax\n")
             (compiler-backend-divmod-shift-rax "sar" shift))))]
     (if want-remainder
       (string.string-append
@@ -8506,21 +9296,33 @@
   [want-remainder : bool]
   [scratch-reg : String]
   [dividend-reg : String]
-  [mask-reg : String]) : String
+  [mask-reg : String]
+  [hoist : CompilerBackendMagicHome]) : String
   (let
     [plan : CompilerBackendSignedDivMagic
       (compiler-backend-signed-divisor-magic divisor)]
     [magic : u64 (struct-get plan magic)]
     [shift : i64 (struct-get plan shift)]
+    ;; M-F: a loop-hoisted magic is already resident in `home` -- skip the
+    ;; materialisation and read it in place (imulq only READS it).
+    [home : String (compiler-backend-magic-home-reg hoist magic)]
+    [magic-load : String
+      (if (string-eq home "")
+        (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+        "")]
+    [magic-src : String
+      (if (string-eq home "")
+        scratch-reg
+        home)]
     [quotient-asm : String
       (if want-remainder
         (str-cat
           "    movq %rax, "
           dividend-reg
           "\n"
-          (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+          magic-load
           "    imulq "
-          scratch-reg
+          magic-src
           "\n"
           (if (compiler-backend-u64-high-bit? magic)
             (str-cat "    addq " dividend-reg ", %rdx\n")
@@ -8539,9 +9341,9 @@
           "    movq %rax, "
           dividend-reg
           "\n"
-          (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+          magic-load
           "    imulq "
-          scratch-reg
+          magic-src
           "\n    movq %rdx, %rax\n"
           (if (compiler-backend-u64-high-bit? magic)
             (str-cat "    addq " dividend-reg ", %rax\n")
@@ -8573,7 +9375,8 @@
   [want-remainder : bool]
   [scratch-reg : String]
   [dividend-reg : String]
-  [mask-reg : String]) : CompilerBackendMaybeAsm
+  [mask-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (if (= divisor 1)
     (CompilerBackendSomeAsm
       (if want-remainder
@@ -8603,13 +9406,15 @@
               want-remainder
               scratch-reg
               dividend-reg
-              mask-reg)))))))
+              mask-reg
+              hoist)))))))
 
 (define (compiler-backend-unsigned-constant-divmod-strength-asm
   [divisor : u64]
   [want-remainder : bool]
   [scratch-reg : String]
-  [dividend-reg : String]) : CompilerBackendMaybeAsm
+  [dividend-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (if (compiler-backend-u64-power-of-two? divisor)
     (CompilerBackendSomeAsm
       (compiler-backend-unsigned-power-divmod-asm
@@ -8620,7 +9425,8 @@
       divisor
       want-remainder
       scratch-reg
-      dividend-reg)))
+      dividend-reg
+      hoist)))
 
 (define (compiler-backend-constant-divmod-unguarded-asm
   [n : i64]
@@ -8641,7 +9447,8 @@
   [want-remainder : bool]
   [scratch-reg : String]
   [dividend-reg : String]
-  [mask-reg : String]) : CompilerBackendMaybeAsm
+  [mask-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (cond
     [(not (compiler-backend-divmod-safe-literal-i64? n ty))
       (CompilerBackendNoAsm)]
@@ -8660,7 +9467,8 @@
           want-remainder
           scratch-reg
           dividend-reg
-          mask-reg)
+          mask-reg
+          hoist)
           [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
           [(CompilerBackendNoAsm)
             (CompilerBackendSomeAsm
@@ -8686,7 +9494,8 @@
             divisor
             want-remainder
             scratch-reg
-            dividend-reg)
+            dividend-reg
+            hoist)
             [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
             [(CompilerBackendNoAsm)
               (CompilerBackendSomeAsm
@@ -8702,14 +9511,16 @@
   [want-remainder : bool]
   [scratch-reg : String]
   [dividend-reg : String]
-  [mask-reg : String]) : CompilerBackendMaybeAsm
+  [mask-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (match (compiler-backend-constant-divmod-asm
     n
     ty
     want-remainder
     scratch-reg
     dividend-reg
-    mask-reg)
+    mask-reg
+    hoist)
     [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
     [(CompilerBackendNoAsm)
       (if (and
@@ -8729,7 +9540,8 @@
   [ty : AstType]
   [scratch-reg : String]
   [dividend-reg : String]
-  [mask-reg : String]) : CompilerBackendMaybeAsm
+  [mask-reg : String]
+  [hoist : CompilerBackendMagicHome]) : CompilerBackendMaybeAsm
   (match op
     [(IrBinDiv)
       (match (compiler-backend-value-as-i64 rhs)
@@ -8740,7 +9552,8 @@
             false
             scratch-reg
             dividend-reg
-            mask-reg)]
+            mask-reg
+            hoist)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinMod)
       (match (compiler-backend-value-as-i64 rhs)
@@ -8751,7 +9564,8 @@
             true
             scratch-reg
             dividend-reg
-            mask-reg)]
+            mask-reg
+            hoist)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinSafeDiv)
       (match (compiler-backend-value-as-i64 rhs)
@@ -8762,7 +9576,8 @@
             false
             scratch-reg
             dividend-reg
-            mask-reg)]
+            mask-reg
+            hoist)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinSafeMod)
       (match (compiler-backend-value-as-i64 rhs)
@@ -8773,38 +9588,56 @@
             true
             scratch-reg
             dividend-reg
-            mask-reg)]
+            mask-reg
+            hoist)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [_ (CompilerBackendNoAsm)]))
 
 ;; Scavenge the 3 constant-divmod scratch (magic constant, saved-dividend,
 ;; sign-mask) off dst's def point, then emit. The temps reserve the magic pick
-;; plus each other so all three are mutually distinct.
+;; plus each other so all three are mutually distinct. M-F: when this site's
+;; magic is loop-hoisted into a register R, every scratch pick additionally
+;; excludes R (so not even an emergency pick can alias the resident magic) and
+;; the magic emitters read R instead of materialising.
 (define (compiler-backend-binop-literal-divmod-asm-dst
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
   [dst : i64]) : CompilerBackendMaybeAsm
   (let
+    [hoist : CompilerBackendMagicHome (compiler-backend-const-hoist-here)]
+    [hoist-reg : String (compiler-backend-magic-home-reg-name hoist)]
+    [op-excl : (Array String)
+      (compiler-backend-binop-scavenge-exclude-for-op op)]
     [magic : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-binop-scavenge-exclude-for-op op)
-        5
+        (if (string-eq hoist-reg "")
+          op-excl
+          (compiler-backend-scavenge-exclude-append op-excl 5 hoist-reg))
+        (if (string-eq hoist-reg "") 5 6)
         "%r8")]
+    [dividend-excl : (Array String)
+      (compiler-backend-divmod-dividend-exclude magic)]
     [dividend : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-divmod-dividend-exclude magic)
-        5
+        (if (string-eq hoist-reg "")
+          dividend-excl
+          (compiler-backend-scavenge-exclude-append dividend-excl 5 hoist-reg))
+        (if (string-eq hoist-reg "") 5 6)
         "%r10")]
+    [mask-excl : (Array String)
+      (compiler-backend-divmod-mask-exclude magic dividend)]
     [mask : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-divmod-mask-exclude magic dividend)
-        6
+        (if (string-eq hoist-reg "")
+          mask-excl
+          (compiler-backend-scavenge-exclude-append mask-excl 6 hoist-reg))
+        (if (string-eq hoist-reg "") 6 7)
         "%r9")]
-    (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask)))
+    (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask hoist)))
 
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
@@ -8829,7 +9662,16 @@
         (compiler-backend-divmod-mask-exclude magic dividend)
         6
         "%r9")]
-    (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask)))
+    ;; Tail-return position: never inside a hoisted loop region (a loop body
+    ;; has no Ret), so no site lookup here.
+    (compiler-backend-binop-literal-divmod-asm
+      op
+      rhs
+      ty
+      magic
+      dividend
+      mask
+      (CompilerBackendNoMagicHome))))
 
 (define (compiler-backend-shift-count-width [ty : AstType]) : i64
   (* (compiler-backend-type-size ty) 8))
@@ -10734,13 +11576,16 @@
         (compiler-backend-divmod-mask-exclude scav-rhs scav-dividend)
         6
         "%r9")]
+    ;; Stack-only path (empty-assignments gate) -- const-hoist never plans
+    ;; sites here, so no magic home lookup.
     (match (compiler-backend-binop-literal-divmod-asm
       op
       rhs
       operand-ty
       scav-rhs
       scav-dividend
-      scav-mask)
+      scav-mask
+      (CompilerBackendNoMagicHome))
       [(CompilerBackendSomeAsm op-asm)
         (OkCompilerBackend (string.string-append op-asm store))]
       [(CompilerBackendNoAsm)
@@ -27930,10 +28775,16 @@
         [(OkCompilerBackend body)
           (OkCompilerBackend
             (str_cat.str-cat
+              ;; M-F: loop-hoisted constant loads registered for this block.
+              ;; Before-label entries (header-is-entry-block loops) land at
+              ;; prologue end, once per call; after-label entries run at a
+              ;; dedicated preheader's start, once per loop entry. "" for
+              ;; every other block.
+              (compiler-backend-const-hoist-injection-for label true)
               (compiler-backend-asm-label function label)
               ":\n"
-              body
-              ""))]
+              (compiler-backend-const-hoist-injection-for label false)
+              body))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
@@ -30900,17 +31751,43 @@
             params
             emit-blocks-list
             program-index)]
+        ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
+        ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
+        ;; so a hoist register is provably free over its whole loop region and
+        ;; the synthetic entries below keep every scavenge away from it.
+        ;; Linux scalar-opt2 text path only; empty plan = byte-identical.
+        [const-hoist-synth : CompilerBackendConstHoistSynth
+          (if (and
+            call-save-enabled
+            (compiler-backend-target-linux? target)
+            (not identity-tail-forwarder?))
+            (compiler-backend-const-hoist-build!
+              emit-blocks-list
+              assignments
+              scavenge-intervals
+              remat-vars)
+            (compiler-backend-const-hoist-disable!))]
         [_scavenge-install-ctx
           : unit
           ;; Use remat-vars (the FULL var count the assignments are sized for), NOT
           ;; slot-vars (the compacted stack-slot count): register-homed vars keep
           ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
           ;; free-register query would false-free their registers (e.g. a pooled %r8
-          ;; holding a register var).
+          ;; holding a register var). M-F appends its synthetic loop-region
+          ;; reservations (register-homed pseudo-vars) so scavenging avoids the
+          ;; hoisted-constant registers inside their regions.
           (compiler-backend-scavenge-install-ctx-from-intervals!
-            remat-vars
-            assignments
-            scavenge-intervals)]
+            (compiler-backend-const-hoist-extend-vars
+              const-hoist-synth
+              remat-vars)
+            (compiler-backend-const-hoist-extend-assignments
+              const-hoist-synth
+              remat-vars
+              assignments)
+            (compiler-backend-const-hoist-extend-intervals
+              const-hoist-synth
+              remat-vars
+              scavenge-intervals))]
         [_scavenge-self-check : unit
           (cfg
             scavenge-self-check

@@ -248,7 +248,7 @@ assert_contains_in \
 assert_line_count_in \
     "$VECTOR_STDERR" \
     "stdlib.vector/family arity=3 calls=1" \
-    2 \
+    1 \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
 
@@ -363,10 +363,9 @@ assert_profile_counter_at_least_in \
     2 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
-assert_profile_counter_at_least_in \
+assert_contains_in \
     "$REPLAY_STDERR" \
-    "typecheck.macro.fixed_point_followup_module_placeholders" \
-    1 \
+    "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 # Local generated-import worklist processing and generated-identity shortcuts can

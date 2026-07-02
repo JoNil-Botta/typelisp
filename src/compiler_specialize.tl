@@ -112,6 +112,10 @@
   (Ok AstLetBindingList SpecState)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultSpecLetBindingListBuild
+  (Ok SpecState)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultSpecMatchArmList
   (Ok AstMatchArmList SpecState)
   (Err (Box CompilerDiagnostic)))
@@ -146,6 +150,10 @@
 
 (defenum ResultSpecSubLetBindingList
   (Ok AstLetBindingList)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultSpecSubLetBindingListBuild
+  (Ok)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubMatchArmList
@@ -341,16 +349,20 @@
 (define (spec-template-env-shadow-let-binding-names
   [templates : SpecTemplateEnv]
   [bindings : AstLetBindingList]) : SpecTemplateEnv
-  (match bindings
-    [(AstLetBindingList.Nil) templates]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (spec-template-env-shadow-let-binding-names
-              (spec-template-env-shadow-name templates (intern-str name))
-              rest)]))]))
+  (spec-template-env-shadow-let-binding-names-at templates (& bindings) 0))
+
+(define (spec-template-env-shadow-let-binding-names-at
+  [templates : SpecTemplateEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : SpecTemplateEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    templates
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (spec-template-env-shadow-let-binding-names-at
+          (spec-template-env-shadow-name templates (intern-str name))
+          bindings
+          (+ index 1))])))
 
 (define (spec-template-env-shadow-pattern
   [templates : SpecTemplateEnv]
@@ -1677,16 +1689,20 @@
 (define (spec-value-subst-remove-let-binding-names
   [subs : SpecValueSubst]
   [bindings : AstLetBindingList]) : SpecValueSubst
-  (match bindings
-    [(AstLetBindingList.Nil) subs]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (spec-value-subst-remove-let-binding-names
-              (spec-value-subst-remove-name subs (intern-str name))
-              rest)]))]))
+  (spec-value-subst-remove-let-binding-names-at subs (& bindings) 0))
+
+(define (spec-value-subst-remove-let-binding-names-at
+  [subs : SpecValueSubst]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : SpecValueSubst
+  (if (>= index (ast-let-binding-list-len bindings))
+    subs
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (spec-value-subst-remove-let-binding-names-at
+          (spec-value-subst-remove-name subs (intern-str name))
+          bindings
+          (+ index 1))])))
 
 (define (spec-value-subst-remove-pattern
   [subs : SpecValueSubst]
@@ -1757,16 +1773,20 @@
 (define (spec-type-subst-remove-let-binding-names
   [subs : SpecTypeSubst]
   [bindings : AstLetBindingList]) : SpecTypeSubst
-  (match bindings
-    [(AstLetBindingList.Nil) subs]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (spec-type-subst-remove-let-binding-names
-              (spec-type-subst-remove-name subs (intern-str name))
-              rest)]))]))
+  (spec-type-subst-remove-let-binding-names-at subs (& bindings) 0))
+
+(define (spec-type-subst-remove-let-binding-names-at
+  [subs : SpecTypeSubst]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : SpecTypeSubst
+  (if (>= index (ast-let-binding-list-len bindings))
+    subs
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (spec-type-subst-remove-let-binding-names-at
+          (spec-type-subst-remove-name subs (intern-str name))
+          bindings
+          (+ index 1))])))
 
 (define (spec-type-subst-remove-pattern
   [subs : SpecTypeSubst]
@@ -2093,31 +2113,46 @@
   [bindings : AstLetBindingList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecLetBindingList
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultSpecLetBindingList.Ok AstLetBindingList.Nil state)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name ty value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (match (spec-rewrite-expr value templates state)
-                [(ResultSpecExpr.Ok rewritten-value value-state)
-                  (match (spec-rewrite-let-bindings
-                    rest
-                    (spec-template-env-shadow-name templates (intern-str name))
-                    value-state)
-                    [(ResultSpecLetBindingList.Ok rewritten-rest rest-state)
-                      (ResultSpecLetBindingList.Ok
-                        (ast-let-binding-cons
-                          (ast-let-binding-id name ty rewritten-value)
-                          rewritten-rest)
-                        rest-state)]
-                    [(ResultSpecLetBindingList.Err diag)
-                      (ResultSpecLetBindingList.Err diag)])]
-                [(ResultSpecExpr.Err diag) (ResultSpecLetBindingList.Err diag)]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (spec-rewrite-let-bindings-at
+      (& bindings)
+      0
+      templates
+      state
+      (&mut out))
+      [(ResultSpecLetBindingListBuild.Ok next-state)
+        (ResultSpecLetBindingList.Ok out next-state)]
+      [(ResultSpecLetBindingListBuild.Err diag)
+        (ResultSpecLetBindingList.Err diag)])))
+
+(define (spec-rewrite-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [templates : SpecTemplateEnv]
+  [state : SpecState]
+  [out : (&mut out AstLetBindingList)]) : ResultSpecLetBindingListBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultSpecLetBindingListBuild.Ok state)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name ty value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (match (spec-rewrite-expr value templates state)
+            [(ResultSpecExpr.Ok rewritten-value value-state)
+              (begin
+                (ast-let-binding-list-push
+                  out
+                  (ast-let-binding-id name ty rewritten-value))
+                (spec-rewrite-let-bindings-at
+                  bindings
+                  (+ index 1)
+                  (spec-template-env-shadow-name templates (intern-str name))
+                  value-state
+                  out))]
+            [(ResultSpecExpr.Err diag) (ResultSpecLetBindingListBuild.Err diag)]))])))
 
 (define (spec-rewrite-match-arms
   [arms : AstMatchArmList]
@@ -3929,30 +3964,44 @@
 (define (spec-substitute-values-let-bindings
   [bindings : AstLetBindingList]
   [subs : SpecValueSubst]) : ResultSpecSubLetBindingList
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultSpecSubLetBindingList.Ok AstLetBindingList.Nil)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name ty value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (match (spec-substitute-values-expr value subs)
-                [(ResultSpecSubExpr.Ok rewritten-value)
-                  (match (spec-substitute-values-let-bindings
-                    rest
-                    (spec-value-subst-remove-name subs (intern-str name)))
-                    [(ResultSpecSubLetBindingList.Ok rewritten-rest)
-                      (ResultSpecSubLetBindingList.Ok
-                        (ast-let-binding-cons
-                          (ast-let-binding-id name ty rewritten-value)
-                          rewritten-rest))]
-                    [(ResultSpecSubLetBindingList.Err diag)
-                      (ResultSpecSubLetBindingList.Err diag)])]
-                [(ResultSpecSubExpr.Err diag)
-                  (ResultSpecSubLetBindingList.Err diag)]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (spec-substitute-values-let-bindings-at
+      (& bindings)
+      0
+      subs
+      (&mut out))
+      [(ResultSpecSubLetBindingListBuild.Ok)
+        (ResultSpecSubLetBindingList.Ok out)]
+      [(ResultSpecSubLetBindingListBuild.Err diag)
+        (ResultSpecSubLetBindingList.Err diag)])))
+
+(define (spec-substitute-values-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [subs : SpecValueSubst]
+  [out : (&mut out AstLetBindingList)]) : ResultSpecSubLetBindingListBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultSpecSubLetBindingListBuild.Ok)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name ty value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (match (spec-substitute-values-expr value subs)
+            [(ResultSpecSubExpr.Ok rewritten-value)
+              (begin
+                (ast-let-binding-list-push
+                  out
+                  (ast-let-binding-id name ty rewritten-value))
+                (spec-substitute-values-let-bindings-at
+                  bindings
+                  (+ index 1)
+                  (spec-value-subst-remove-name subs (intern-str name))
+                  out))]
+            [(ResultSpecSubExpr.Err diag)
+              (ResultSpecSubLetBindingListBuild.Err diag)]))])))
 
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
@@ -4745,33 +4794,47 @@
 (define (spec-substitute-types-let-bindings
   [bindings : AstLetBindingList]
   [subs : SpecTypeSubst]) : ResultSpecSubLetBindingList
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultSpecSubLetBindingList.Ok AstLetBindingList.Nil)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name ty value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (match (spec-substitute-types-expr value subs)
-                [(ResultSpecSubExpr.Ok rewritten-value)
-                  (match (spec-substitute-types-let-bindings
-                    rest
-                    (spec-type-subst-remove-name subs (intern-str name)))
-                    [(ResultSpecSubLetBindingList.Ok rewritten-rest)
-                      (ResultSpecSubLetBindingList.Ok
-                        (ast-let-binding-cons
-                          (ast-let-binding-id
-                            name
-                            (spec-substitute-maybe-type ty subs)
-                            rewritten-value)
-                          rewritten-rest))]
-                    [(ResultSpecSubLetBindingList.Err diag)
-                      (ResultSpecSubLetBindingList.Err diag)])]
-                [(ResultSpecSubExpr.Err diag)
-                  (ResultSpecSubLetBindingList.Err diag)]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (spec-substitute-types-let-bindings-at
+      (& bindings)
+      0
+      subs
+      (&mut out))
+      [(ResultSpecSubLetBindingListBuild.Ok)
+        (ResultSpecSubLetBindingList.Ok out)]
+      [(ResultSpecSubLetBindingListBuild.Err diag)
+        (ResultSpecSubLetBindingList.Err diag)])))
+
+(define (spec-substitute-types-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [subs : SpecTypeSubst]
+  [out : (&mut out AstLetBindingList)]) : ResultSpecSubLetBindingListBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultSpecSubLetBindingListBuild.Ok)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name ty value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (match (spec-substitute-types-expr value subs)
+            [(ResultSpecSubExpr.Ok rewritten-value)
+              (begin
+                (ast-let-binding-list-push
+                  out
+                  (ast-let-binding-id
+                    name
+                    (spec-substitute-maybe-type ty subs)
+                    rewritten-value))
+                (spec-substitute-types-let-bindings-at
+                  bindings
+                  (+ index 1)
+                  (spec-type-subst-remove-name subs (intern-str name))
+                  out))]
+            [(ResultSpecSubExpr.Err diag)
+              (ResultSpecSubLetBindingListBuild.Err diag)]))])))
 
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]

@@ -963,16 +963,22 @@
 (define (selfhost-lint-dead-let-binding-refs
   [bindings : AstLetBindingList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match bindings
-    [(AstLetBindingList.Nil) refs]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ maybe-ty init)
-          (selfhost-lint-dead-let-binding-refs
-            (box-get rest)
-            (selfhost-lint-dead-expr-refs
-              (ast-node-get init)
-              (selfhost-lint-dead-maybe-type-refs maybe-ty refs)))])]))
+  (selfhost-lint-dead-let-binding-refs-at (& bindings) refs 0))
+
+(define (selfhost-lint-dead-let-binding-refs-at
+  [bindings : (& bindings AstLetBindingList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-let-binding-list-len bindings))
+    refs
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init)
+        (selfhost-lint-dead-let-binding-refs-at
+          bindings
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get init)
+            (selfhost-lint-dead-maybe-type-refs maybe-ty refs))
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-match-arm-refs
   [arms : AstMatchArmList]
@@ -997,16 +1003,25 @@
 (define (selfhost-lint-dead-resource-binding-refs
   [bindings : AstResourceBindingList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match bindings
-    [(AstResourceBindingList.Nil) refs]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ init cleanup)
-          (selfhost-lint-dead-resource-binding-refs
-            (box-get rest)
-            (selfhost-lint-dead-expr-refs
-              (ast-node-get cleanup)
-              (selfhost-lint-dead-expr-refs (ast-node-get init) refs)))])]))
+  (selfhost-lint-dead-resource-binding-refs-at (& bindings) refs 0))
+
+(define (selfhost-lint-dead-resource-binding-refs-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-resource-binding-list-len bindings))
+    refs
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (selfhost-lint-dead-resource-binding-refs-at
+          bindings
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get cleanup)
+            (selfhost-lint-dead-expr-refs (ast-node-get init) refs))
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-expr-refs
   [expr : AstExpr]

@@ -1023,8 +1023,16 @@
   (Ok AstLetBindingList i64)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultCtfeQuoteLetBindingsBuild
+  (Ok i64)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultCtfeQuoteResourceBindings
   (Ok AstResourceBindingList i64)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultCtfeQuoteResourceBindingsBuild
+  (Ok i64)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuotePattern
@@ -5970,30 +5978,36 @@
   [body : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match bindings
-    [(AstLetBindingList.Nil) (compiler-ctfe-eval body env fuel)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty value-expr-box)
-            (let
-              [value-expr : AstExpr (ctfe-ast-get env value-expr-box)]
-              (match (compiler-ctfe-eval value-expr env fuel)
-                [(ResultCtfe.Ok value value-fuel)
-                  (ctfe-eval-let
-                    rest
-                    body
-                    (ctfe-env-extend-typed
-                      env
-                      (intern-str name)
-                      value
-                      (ctfe-binding-type
-                        maybe-ty
-                        (ctfe-cast-source-type value-expr value env)
-                        env))
-                    value-fuel)]
-                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))]))]))
+  (ctfe-eval-let-at (& bindings) 0 body env fuel))
+
+(define (ctfe-eval-let-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [body : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (>= index (ast-let-binding-list-len bindings))
+    (compiler-ctfe-eval body env fuel)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty value-expr-box)
+        (let
+          [value-expr : AstExpr (ctfe-ast-get env value-expr-box)]
+          (match (compiler-ctfe-eval value-expr env fuel)
+            [(ResultCtfe.Ok value value-fuel)
+              (ctfe-eval-let-at
+                bindings
+                (+ index 1)
+                body
+                (ctfe-env-extend-typed
+                  env
+                  (intern-str name)
+                  value
+                  (ctfe-binding-type
+                    maybe-ty
+                    (ctfe-cast-source-type value-expr value env)
+                    env))
+                value-fuel)]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))])))
 
 ;; Evaluate a `begin` to the value of its last expression; an empty body is
 ;; unit.
@@ -7229,83 +7243,118 @@
   [env : CtfeEnv]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteLetBindings
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultCtfeQuoteLetBindings.Ok AstLetBindingList.Nil fuel)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ctfe-ast-get env init-box)]
-              (match (ctfe-quote-maybe-type maybe-ty env init fuel)
-                [(ResultCtfeQuoteMaybeType.Ok quoted-ty type-fuel)
-                  (match (ctfe-quote-expr init env type-fuel quasiquote)
-                    [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
-                      (match (ctfe-quote-let-binding-list
-                        rest
-                        env
-                        init-fuel
-                        quasiquote)
-                        [(ResultCtfeQuoteLetBindings.Ok quoted-rest rest-fuel)
-                          (ResultCtfeQuoteLetBindings.Ok
-                            (ast-let-binding-cons
-                              (ast-let-binding-id
-                                (ctfe-quote-name-id env name)
-                                quoted-ty
-                                quoted-init)
-                              quoted-rest)
-                            rest-fuel)]
-                        [(ResultCtfeQuoteLetBindings.Err diag)
-                          (ResultCtfeQuoteLetBindings.Err diag)])]
-                    [(ResultCtfeQuoteExpr.Err diag)
-                      (ResultCtfeQuoteLetBindings.Err diag)])]
-                [(ResultCtfeQuoteMaybeType.Err diag)
-                  (ResultCtfeQuoteLetBindings.Err diag)]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (ctfe-quote-let-binding-list-into
+      (& bindings)
+      0
+      env
+      fuel
+      quasiquote
+      (&mut out))
+      [(ResultCtfeQuoteLetBindingsBuild.Ok out-fuel)
+        (ResultCtfeQuoteLetBindings.Ok out out-fuel)]
+      [(ResultCtfeQuoteLetBindingsBuild.Err diag)
+        (ResultCtfeQuoteLetBindings.Err diag)])))
+
+(define (ctfe-quote-let-binding-list-into
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]
+  [out : (&mut out AstLetBindingList)]) : ResultCtfeQuoteLetBindingsBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultCtfeQuoteLetBindingsBuild.Ok fuel)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ctfe-ast-get env init-box)]
+          (match (ctfe-quote-maybe-type maybe-ty env init fuel)
+            [(ResultCtfeQuoteMaybeType.Ok quoted-ty type-fuel)
+              (match (ctfe-quote-expr init env type-fuel quasiquote)
+                [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
+                  (begin
+                    (ast-let-binding-list-push
+                      out
+                      (ast-let-binding-id
+                        (ctfe-quote-name-id env name)
+                        quoted-ty
+                        quoted-init))
+                    (ctfe-quote-let-binding-list-into
+                      bindings
+                      (+ index 1)
+                      env
+                      init-fuel
+                      quasiquote
+                      out))]
+                [(ResultCtfeQuoteExpr.Err diag)
+                  (ResultCtfeQuoteLetBindingsBuild.Err diag)])]
+            [(ResultCtfeQuoteMaybeType.Err diag)
+              (ResultCtfeQuoteLetBindingsBuild.Err diag)]))])))
 
 (define (ctfe-quote-resource-binding-list
   [bindings : AstResourceBindingList]
   [env : CtfeEnv]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteResourceBindings
-  (match bindings
-    [(AstResourceBindingList.Nil)
-      (ResultCtfeQuoteResourceBindings.Ok AstResourceBindingList.Nil fuel)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box cleanup-box)
-            (let
-              [init : AstExpr (ctfe-ast-get env init-box)]
-              [cleanup : AstExpr (ctfe-ast-get env cleanup-box)]
-              (match (ctfe-quote-expr init env fuel quasiquote)
-                [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
-                  (match (ctfe-quote-expr cleanup env init-fuel quasiquote)
-                    [(ResultCtfeQuoteExpr.Ok quoted-cleanup _ cleanup-fuel)
-                      (match (ctfe-quote-resource-binding-list
-                        rest
-                        env
-                        cleanup-fuel
-                        quasiquote)
-                        [(ResultCtfeQuoteResourceBindings.Ok
-                            quoted-rest
-                            rest-fuel)
-                          (ResultCtfeQuoteResourceBindings.Ok
-                            (ast-resource-binding-cons
-                              (ast-resource-binding-id
-                                (ctfe-quote-name-id env name)
-                                quoted-init
-                                quoted-cleanup)
-                              quoted-rest)
-                            rest-fuel)]
-                        [(ResultCtfeQuoteResourceBindings.Err diag)
-                          (ResultCtfeQuoteResourceBindings.Err diag)])]
-                    [(ResultCtfeQuoteExpr.Err diag)
-                      (ResultCtfeQuoteResourceBindings.Err diag)])]
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (ast-resource-binding-list-len (& bindings)))]
+    (match (ctfe-quote-resource-binding-list-into
+      (& bindings)
+      0
+      env
+      fuel
+      quasiquote
+      (&mut out))
+      [(ResultCtfeQuoteResourceBindingsBuild.Ok out-fuel)
+        (ResultCtfeQuoteResourceBindings.Ok out out-fuel)]
+      [(ResultCtfeQuoteResourceBindingsBuild.Err diag)
+        (ResultCtfeQuoteResourceBindings.Err diag)])))
+
+(define (ctfe-quote-resource-binding-list-into
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]
+  [out : (&mut out AstResourceBindingList)]) : ResultCtfeQuoteResourceBindingsBuild
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (ResultCtfeQuoteResourceBindingsBuild.Ok fuel)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (let
+          [init : AstExpr (ctfe-ast-get env init-box)]
+          [cleanup : AstExpr (ctfe-ast-get env cleanup-box)]
+          (match (ctfe-quote-expr init env fuel quasiquote)
+            [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
+              (match (ctfe-quote-expr cleanup env init-fuel quasiquote)
+                [(ResultCtfeQuoteExpr.Ok quoted-cleanup _ cleanup-fuel)
+                  (begin
+                    (ast-resource-binding-list-push
+                      out
+                      (ast-resource-binding-id
+                        (ctfe-quote-name-id env name)
+                        quoted-init
+                        quoted-cleanup))
+                    (ctfe-quote-resource-binding-list-into
+                      bindings
+                      (+ index 1)
+                      env
+                      cleanup-fuel
+                      quasiquote
+                      out))]
                 [(ResultCtfeQuoteExpr.Err diag)
-                  (ResultCtfeQuoteResourceBindings.Err diag)]))]))]))
+                  (ResultCtfeQuoteResourceBindingsBuild.Err diag)])]
+            [(ResultCtfeQuoteExpr.Err diag)
+              (ResultCtfeQuoteResourceBindingsBuild.Err diag)]))])))
 
 (define (ctfe-quote-arm-list
   [arms : AstMatchArmList]
@@ -8610,22 +8659,23 @@
   [env : CtfeEnv]
   [a : AstLetBindingList]
   [b : AstLetBindingList]) : bool
-  (match a
-    [(AstLetBindingList.Nil)
-      (match b
-        [(AstLetBindingList.Nil) true]
-        [_ false])]
-    [(AstLetBindingList.Cons a-head a-tail)
-      (let
-        [a-tail : AstLetBindingList (box-get a-tail)]
-        (match b
-          [(AstLetBindingList.Cons b-head b-tail)
-            (let
-              [b-tail : AstLetBindingList (box-get b-tail)]
-              (and
-                (ctfe-let-binding-eq-in-env env a-head b-head)
-                (ctfe-let-binding-list-eq-in-env env a-tail b-tail)))]
-          [_ false]))]))
+  (and
+    (= (ast-let-binding-list-len (& a)) (ast-let-binding-list-len (& b)))
+    (ctfe-let-binding-list-eq-in-env-at env (& a) (& b) 0)))
+
+(define (ctfe-let-binding-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstLetBindingList)]
+  [b : (& b AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len a))
+    true
+    (and
+      (ctfe-let-binding-eq-in-env
+        env
+        (ast-let-binding-list-get a index (ast-let-binding-fallback))
+        (ast-let-binding-list-get b index (ast-let-binding-fallback)))
+      (ctfe-let-binding-list-eq-in-env-at env a b (+ index 1)))))
 
 (define (ctfe-resource-binding-eq-in-env
   [env : CtfeEnv]
@@ -8651,22 +8701,25 @@
   [env : CtfeEnv]
   [a : AstResourceBindingList]
   [b : AstResourceBindingList]) : bool
-  (match a
-    [(AstResourceBindingList.Nil)
-      (match b
-        [(AstResourceBindingList.Nil) true]
-        [_ false])]
-    [(AstResourceBindingList.Cons a-head a-tail)
-      (let
-        [a-tail : AstResourceBindingList (box-get a-tail)]
-        (match b
-          [(AstResourceBindingList.Cons b-head b-tail)
-            (let
-              [b-tail : AstResourceBindingList (box-get b-tail)]
-              (and
-                (ctfe-resource-binding-eq-in-env env a-head b-head)
-                (ctfe-resource-binding-list-eq-in-env env a-tail b-tail)))]
-          [_ false]))]))
+  (and
+    (=
+      (ast-resource-binding-list-len (& a))
+      (ast-resource-binding-list-len (& b)))
+    (ctfe-resource-binding-list-eq-in-env-at env (& a) (& b) 0)))
+
+(define (ctfe-resource-binding-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstResourceBindingList)]
+  [b : (& b AstResourceBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len a))
+    true
+    (and
+      (ctfe-resource-binding-eq-in-env
+        env
+        (ast-resource-binding-list-get a index (ast-resource-binding-fallback))
+        (ast-resource-binding-list-get b index (ast-resource-binding-fallback)))
+      (ctfe-resource-binding-list-eq-in-env-at env a b (+ index 1)))))
 
 (define (ctfe-match-arm-eq-in-env
   [env : CtfeEnv]
@@ -10613,13 +10666,13 @@
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding "x" (AstMaybeType.Some (AstType.U64)) u64-max)
-          AstLetBindingList.Nil)
+          (ast-let-binding-list-new))
         (ast-expr-cast u64-var (AstType.F64)))]
     [untyped-let-u64-max-f64 : i64
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding "x" (AstMaybeType.No) u64-max)
-          AstLetBindingList.Nil)
+          (ast-let-binding-list-new))
         (ast-expr-cast u64-var (AstType.F64)))]
     [match-u64-var : i64 (ast-node-push (AstExpr.Var (intern "m")))]
     [match-u64-max-f64 : i64

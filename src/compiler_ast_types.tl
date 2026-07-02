@@ -376,16 +376,20 @@
 (defenum AstLetBinding
   (Binding i64 AstMaybeType i64))
 
-(defenum AstLetBindingList
-  (Nil)
-  (Cons AstLetBinding (Box AstLetBindingList)))
+(comptime-decl
+  (:generated vector-family AstLetBindingList "AstLetBinding")
+  (defstruct AstLetBindingList
+    (slots (Array AstLetBinding))
+    (len i64)))
 
 (defenum AstResourceBinding
   (Binding i64 i64 i64))
 
-(defenum AstResourceBindingList
-  (Nil)
-  (Cons AstResourceBinding (Box AstResourceBindingList)))
+(comptime-decl
+  (:generated vector-family AstResourceBindingList "AstResourceBinding")
+  (defstruct AstResourceBindingList
+    (slots (Array AstResourceBinding))
+    (len i64)))
 
 (defenum AstMatchArm
   (Arm AstPattern i64))
@@ -3067,8 +3071,112 @@
   [value : i64]) : AstLetBinding
   (AstLetBinding.Binding name maybe-ty value))
 
+(define (ast-let-binding-fallback) : AstLetBinding
+  (AstLetBinding.Binding 0 (AstMaybeType.No) 0))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-with-capacity "AstLetBinding")
+  (define (ast-let-binding-list-with-capacity [capacity : i64]) : AstLetBindingList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstLetBindingList (array.make-array AstLetBinding cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-new "AstLetBinding")
+  (define (ast-let-binding-list-new) : AstLetBindingList
+    (ast-let-binding-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-len "AstLetBinding")
+  (define (ast-let-binding-list-len [v : (& v AstLetBindingList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-empty? "AstLetBinding")
+  (define (ast-let-binding-list-empty? [v : (& v AstLetBindingList)]) : bool
+    (= (ast-let-binding-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-get "AstLetBinding")
+  (define (ast-let-binding-list-get
+    [v : (& v AstLetBindingList)]
+    [index : i64]
+    [fallback : AstLetBinding]) : AstLetBinding
+    (if (and (>= index 0) (< index (ast-let-binding-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-copy-range "AstLetBinding")
+  (define (ast-let-binding-list-copy-range
+    [dst : (&mut dst (Array AstLetBinding))]
+    [src : (& src (Array AstLetBinding))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-let-binding-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-grow "AstLetBinding")
+  (define (ast-let-binding-list-grow [v : (&mut v AstLetBindingList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstLetBinding) (array.make-array AstLetBinding new-cap)]
+      (begin
+        (ast-let-binding-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-let-binding-list-push "AstLetBinding")
+  (define (ast-let-binding-list-push
+    [v : (&mut v AstLetBindingList)]
+    [value : AstLetBinding]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-let-binding-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-let-binding-list-append-from
+  [out : (&mut out AstLetBindingList)]
+  [items : (& items AstLetBindingList)]
+  [index : i64]) : unit
+  (if (>= index (ast-let-binding-list-len items))
+    unit
+    (begin
+      (ast-let-binding-list-push
+        out
+        (ast-let-binding-list-get items index (ast-let-binding-fallback)))
+      (ast-let-binding-list-append-from out items (+ index 1)))))
+
 (define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
-  (AstLetBindingList.Cons head (box rest)))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (+ 1 (ast-let-binding-list-len (& rest))))]
+    (begin
+      (ast-let-binding-list-push (&mut out) head)
+      (ast-let-binding-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding.Binding (ci.intern name) init cleanup))
@@ -3076,10 +3184,118 @@
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding.Binding name init cleanup))
 
+(define (ast-resource-binding-fallback) : AstResourceBinding
+  (AstResourceBinding.Binding 0 0 0))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-with-capacity "AstResourceBinding")
+  (define (ast-resource-binding-list-with-capacity [capacity : i64]) : AstResourceBindingList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstResourceBindingList (array.make-array AstResourceBinding cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-new "AstResourceBinding")
+  (define (ast-resource-binding-list-new) : AstResourceBindingList
+    (ast-resource-binding-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-len "AstResourceBinding")
+  (define (ast-resource-binding-list-len [v : (& v AstResourceBindingList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-empty? "AstResourceBinding")
+  (define (ast-resource-binding-list-empty? [v : (& v AstResourceBindingList)]) : bool
+    (= (ast-resource-binding-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-get "AstResourceBinding")
+  (define (ast-resource-binding-list-get
+    [v : (& v AstResourceBindingList)]
+    [index : i64]
+    [fallback : AstResourceBinding]) : AstResourceBinding
+    (if (and (>= index 0) (< index (ast-resource-binding-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-copy-range "AstResourceBinding")
+  (define (ast-resource-binding-list-copy-range
+    [dst : (&mut dst (Array AstResourceBinding))]
+    [src : (& src (Array AstResourceBinding))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-resource-binding-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-grow "AstResourceBinding")
+  (define (ast-resource-binding-list-grow [v : (&mut v AstResourceBindingList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstResourceBinding)
+        (array.make-array AstResourceBinding new-cap)]
+      (begin
+        (ast-resource-binding-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-resource-binding-list-push "AstResourceBinding")
+  (define (ast-resource-binding-list-push
+    [v : (&mut v AstResourceBindingList)]
+    [value : AstResourceBinding]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-resource-binding-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-resource-binding-list-append-from
+  [out : (&mut out AstResourceBindingList)]
+  [items : (& items AstResourceBindingList)]
+  [index : i64]) : unit
+  (if (>= index (ast-resource-binding-list-len items))
+    unit
+    (begin
+      (ast-resource-binding-list-push
+        out
+        (ast-resource-binding-list-get
+          items
+          index
+          (ast-resource-binding-fallback)))
+      (ast-resource-binding-list-append-from out items (+ index 1)))))
+
 (define (ast-resource-binding-cons
   [head : AstResourceBinding]
   [rest : AstResourceBindingList]) : AstResourceBindingList
-  (AstResourceBindingList.Cons head (box rest)))
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (+ 1 (ast-resource-binding-list-len (& rest))))]
+    (begin
+      (ast-resource-binding-list-push (&mut out) head)
+      (ast-resource-binding-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-match-arm [pattern : AstPattern] [body : i64]) : AstMatchArm
   (AstMatchArm.Arm pattern body))
@@ -5117,12 +5333,36 @@
 (define (ast-compaction-remap-let-binding-list
   [remap : AstProgramCompactionRemap]
   [bindings : AstLetBindingList]) : AstLetBindingList
-  (match bindings
-    [(AstLetBindingList.Nil) AstLetBindingList.Nil]
-    [(AstLetBindingList.Cons binding rest)
-      (AstLetBindingList.Cons
-        (ast-compaction-remap-let-binding remap binding)
-        (box (ast-compaction-remap-let-binding-list remap (box-get rest))))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (begin
+      (ast-compaction-remap-let-binding-list-into
+        remap
+        (& bindings)
+        0
+        (&mut out))
+      out)))
+
+(define (ast-compaction-remap-let-binding-list-into
+  [remap : AstProgramCompactionRemap]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [out : (&mut out AstLetBindingList)]) : unit
+  (if (>= index (ast-let-binding-list-len bindings))
+    unit
+    (begin
+      (ast-let-binding-list-push
+        out
+        (ast-compaction-remap-let-binding
+          remap
+          (ast-let-binding-list-get bindings index (ast-let-binding-fallback))))
+      (ast-compaction-remap-let-binding-list-into
+        remap
+        bindings
+        (+ index 1)
+        out))))
 
 (define (ast-compaction-remap-resource-binding
   [remap : AstProgramCompactionRemap]
@@ -5137,12 +5377,39 @@
 (define (ast-compaction-remap-resource-binding-list
   [remap : AstProgramCompactionRemap]
   [bindings : AstResourceBindingList]) : AstResourceBindingList
-  (match bindings
-    [(AstResourceBindingList.Nil) AstResourceBindingList.Nil]
-    [(AstResourceBindingList.Cons binding rest)
-      (AstResourceBindingList.Cons
-        (ast-compaction-remap-resource-binding remap binding)
-        (box (ast-compaction-remap-resource-binding-list remap (box-get rest))))]))
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (ast-resource-binding-list-len (& bindings)))]
+    (begin
+      (ast-compaction-remap-resource-binding-list-into
+        remap
+        (& bindings)
+        0
+        (&mut out))
+      out)))
+
+(define (ast-compaction-remap-resource-binding-list-into
+  [remap : AstProgramCompactionRemap]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]
+  [out : (&mut out AstResourceBindingList)]) : unit
+  (if (>= index (ast-resource-binding-list-len bindings))
+    unit
+    (begin
+      (ast-resource-binding-list-push
+        out
+        (ast-compaction-remap-resource-binding
+          remap
+          (ast-resource-binding-list-get
+            bindings
+            index
+            (ast-resource-binding-fallback))))
+      (ast-compaction-remap-resource-binding-list-into
+        remap
+        bindings
+        (+ index 1)
+        out))))
 
 (define (ast-compaction-remap-match-arm
   [remap : AstProgramCompactionRemap]
@@ -6220,22 +6487,17 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (and
-              (match bindings
-                [(AstLetBindingList.Cons binding rest-box)
+              (= (ast-let-binding-list-len (& bindings)) 1)
+              (match (ast-let-binding-list-get
+                (& bindings)
+                0
+                (ast-let-binding-fallback))
+                [(AstLetBinding.Binding name _ init-box)
                   (let
-                    [rest : AstLetBindingList (box-get rest-box)]
+                    [init : AstExpr (ast-node-get init-box)]
                     (and
-                      (match rest
-                        [(AstLetBindingList.Nil) true]
-                        [_ false])
-                      (match binding
-                        [(AstLetBinding.Binding name _ init-box)
-                          (let
-                            [init : AstExpr (ast-node-get init-box)]
-                            (and
-                              (= name (ci.intern "x"))
-                              (compiler-ast-begin-expr? init)))]
-                        [_ false])))]
+                      (= name (ci.intern "x"))
+                      (compiler-ast-begin-expr? init)))]
                 [_ false])
               (match body
                 [(AstExpr.If cond-box then-box else-box)
@@ -6276,7 +6538,7 @@
     [bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "x" (AstMaybeType.No) begin-expr)
-        AstLetBindingList.Nil)]
+        (ast-let-binding-list-new))]
     [tuple-pattern : AstPattern
       (ast-pat-tuple
         (ast-pattern-cons

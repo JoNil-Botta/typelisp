@@ -1773,18 +1773,26 @@
   [bindings : AstLetBindingList]
   [alias : String]
   [module-name : String]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ maybe-ty init)
-            (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
-              true
-              (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
-                true
-                (lint-let-bindings-use-import? rest alias module-name)))]))]))
+  (lint-let-bindings-use-import-at? (& bindings) alias module-name 0))
+
+(define (lint-let-bindings-use-import-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init)
+        (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
+          true
+          (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
+            true
+            (lint-let-bindings-use-import-at?
+              bindings
+              alias
+              module-name
+              (+ index 1))))])))
 
 (define (lint-match-arms-use-import?
   [arms : AstMatchArmList]
@@ -1811,21 +1819,29 @@
   [bindings : AstResourceBindingList]
   [alias : String]
   [module-name : String]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init cleanup)
-            (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
-              true
-              (if (lint-expr-uses-import?
-                (ast-node-get cleanup)
-                alias
-                module-name)
-                true
-                (lint-resource-bindings-use-import? rest alias module-name)))]))]))
+  (lint-resource-bindings-use-import-at? (& bindings) alias module-name 0))
+
+(define (lint-resource-bindings-use-import-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
+          true
+          (if (lint-expr-uses-import? (ast-node-get cleanup) alias module-name)
+            true
+            (lint-resource-bindings-use-import-at?
+              bindings
+              alias
+              module-name
+              (+ index 1))))])))
 
 (define (lint-expr-uses-import?
   [expr : AstExpr]
@@ -3004,31 +3020,36 @@
 (define (lint-copy-on-update-let-bindings
   [bindings : AstLetBindingList]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name maybe-ty init)
-          (let
-            [after-init : LintCopyOnUpdateState
-              (lint-copy-on-update-expr
-                (ast-node-get init)
-                state
-                (lint-no-effect-span (ast-node-get init)))]
-            [type-name : String
-              (lint-copy-on-update-local-type-from-binding
-                after-init
-                maybe-ty
-                init)]
-            [with-local : LintCopyOnUpdateState
-              (lint-copy-on-update-state-with
-                after-init
-                (lint-copy-on-update-local-add
-                  (struct-get after-init locals)
-                  (intern-str name)
-                  type-name)
-                (struct-get after-init findings))]
-            (lint-copy-on-update-let-bindings (box-get rest) with-local))])]))
+  (lint-copy-on-update-let-bindings-at (& bindings) state 0))
+
+(define (lint-copy-on-update-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintCopyOnUpdateState]
+  [index : i64]) : LintCopyOnUpdateState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init)
+        (let
+          [after-init : LintCopyOnUpdateState
+            (lint-copy-on-update-expr
+              (ast-node-get init)
+              state
+              (lint-no-effect-span (ast-node-get init)))]
+          [type-name : String
+            (lint-copy-on-update-local-type-from-binding
+              after-init
+              maybe-ty
+              init)]
+          [with-local : LintCopyOnUpdateState
+            (lint-copy-on-update-state-with
+              after-init
+              (lint-copy-on-update-local-add
+                (struct-get after-init locals)
+                (intern-str name)
+                type-name)
+              (struct-get after-init findings))]
+          (lint-copy-on-update-let-bindings-at bindings with-local (+ index 1)))])))
 
 (define (lint-copy-on-update-let
   [bindings : AstLetBindingList]
@@ -3067,20 +3088,29 @@
 (define (lint-copy-on-update-resource-bindings
   [bindings : AstResourceBindingList]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ init cleanup)
-          (lint-copy-on-update-resource-bindings
-            (box-get rest)
+  (lint-copy-on-update-resource-bindings-at (& bindings) state 0))
+
+(define (lint-copy-on-update-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [state : LintCopyOnUpdateState]
+  [index : i64]) : LintCopyOnUpdateState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (lint-copy-on-update-resource-bindings-at
+          bindings
+          (lint-copy-on-update-expr
+            (ast-node-get cleanup)
             (lint-copy-on-update-expr
-              (ast-node-get cleanup)
-              (lint-copy-on-update-expr
-                (ast-node-get init)
-                state
-                (lint-no-effect-span (ast-node-get init)))
-              (lint-no-effect-span (ast-node-get cleanup))))])]))
+              (ast-node-get init)
+              state
+              (lint-no-effect-span (ast-node-get init)))
+            (lint-no-effect-span (ast-node-get cleanup)))
+          (+ index 1))])))
 
 (define (lint-copy-on-update-expr
   [expr : AstExpr]
@@ -3733,23 +3763,29 @@
 (define (lint-single-element-array-let-bindings
   [bindings : AstLetBindingList]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name maybe-ty init)
-          (let
-            [after-init : LintSingleElementArrayState
-              (lint-single-element-array-expr (ast-node-get init) state)]
-            [after-binding : LintSingleElementArrayState
-              (lint-single-element-array-add-local-if-candidate
-                name
-                maybe-ty
-                init
-                after-init)]
-            (lint-single-element-array-let-bindings
-              (box-get rest)
-              after-binding))])]))
+  (lint-single-element-array-let-bindings-at (& bindings) state 0))
+
+(define (lint-single-element-array-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintSingleElementArrayState]
+  [index : i64]) : LintSingleElementArrayState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init)
+        (let
+          [after-init : LintSingleElementArrayState
+            (lint-single-element-array-expr (ast-node-get init) state)]
+          [after-binding : LintSingleElementArrayState
+            (lint-single-element-array-add-local-if-candidate
+              name
+              maybe-ty
+              init
+              after-init)]
+          (lint-single-element-array-let-bindings-at
+            bindings
+            after-binding
+            (+ index 1)))])))
 
 (define (lint-single-element-array-match-arms
   [arms : AstMatchArmList]
@@ -3772,25 +3808,34 @@
 (define (lint-single-element-array-resource-bindings
   [bindings : AstResourceBindingList]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding name init cleanup)
-          (let
-            [after-init : LintSingleElementArrayState
-              (lint-single-element-array-expr (ast-node-get init) state)]
-            [after-cleanup : LintSingleElementArrayState
-              (lint-single-element-array-expr (ast-node-get cleanup) after-init)]
-            [after-shadow : LintSingleElementArrayState
-              (lint-single-element-array-state-with-candidates
-                after-cleanup
-                (lint-single-element-array-candidate-remove
-                  (struct-get after-cleanup candidates)
-                  (intern-str name)))]
-            (lint-single-element-array-resource-bindings
-              (box-get rest)
-              after-shadow))])]))
+  (lint-single-element-array-resource-bindings-at (& bindings) state 0))
+
+(define (lint-single-element-array-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [state : LintSingleElementArrayState]
+  [index : i64]) : LintSingleElementArrayState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init cleanup)
+        (let
+          [after-init : LintSingleElementArrayState
+            (lint-single-element-array-expr (ast-node-get init) state)]
+          [after-cleanup : LintSingleElementArrayState
+            (lint-single-element-array-expr (ast-node-get cleanup) after-init)]
+          [after-shadow : LintSingleElementArrayState
+            (lint-single-element-array-state-with-candidates
+              after-cleanup
+              (lint-single-element-array-candidate-remove
+                (struct-get after-cleanup candidates)
+                (intern-str name)))]
+          (lint-single-element-array-resource-bindings-at
+            bindings
+            after-shadow
+            (+ index 1)))])))
 
 (define (lint-single-element-array-call-ref
   [args : AstExprList]
@@ -4240,14 +4285,20 @@
 (define (lint-unused-assignment-note-reads-let-bindings
   [bindings : AstLetBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ _ init)
-          (lint-unused-assignment-note-reads-let-bindings
-            (box-get rest)
-            (lint-unused-assignment-note-reads (ast-node-get init) state))])]))
+  (lint-unused-assignment-note-reads-let-bindings-at (& bindings) state 0))
+
+(define (lint-unused-assignment-note-reads-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintUnusedAssignmentState]
+  [index : i64]) : LintUnusedAssignmentState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init)
+        (lint-unused-assignment-note-reads-let-bindings-at
+          bindings
+          (lint-unused-assignment-note-reads (ast-node-get init) state)
+          (+ index 1))])))
 
 (define (lint-unused-assignment-note-reads-match-arms
   [arms : AstMatchArmList]
@@ -4270,16 +4321,25 @@
 (define (lint-unused-assignment-note-reads-resource-bindings
   [bindings : AstResourceBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ init cleanup)
-          (lint-unused-assignment-note-reads-resource-bindings
-            (box-get rest)
-            (lint-unused-assignment-note-reads
-              (ast-node-get cleanup)
-              (lint-unused-assignment-note-reads (ast-node-get init) state)))])]))
+  (lint-unused-assignment-note-reads-resource-bindings-at (& bindings) state 0))
+
+(define (lint-unused-assignment-note-reads-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [state : LintUnusedAssignmentState]
+  [index : i64]) : LintUnusedAssignmentState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (lint-unused-assignment-note-reads-resource-bindings-at
+          bindings
+          (lint-unused-assignment-note-reads
+            (ast-node-get cleanup)
+            (lint-unused-assignment-note-reads (ast-node-get init) state))
+          (+ index 1))])))
 
 (define (lint-unused-assignment-note-reads
   [expr : AstExpr]
@@ -4552,37 +4612,43 @@
 (define (lint-unused-assignment-let-bindings
   [bindings : AstLetBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name _ init)
-          (let
-            [after-init : LintUnusedAssignmentState
-              (lint-unused-assignment-expr
-                (ast-node-get init)
-                state
-                (lint-unused-assignment-binding-span init))]
-            [text : String (intern-str name)]
-            [binding-base : LintUnusedAssignmentState
-              (if (lint-name-list-contains? (struct-get after-init locals) text)
-                (lint-unused-assignment-state-with
-                  after-init
-                  (lint-pending-assignment-remove
-                    (struct-get after-init pending)
-                    text)
-                  (struct-get after-init findings))
-                after-init)]
-            [with-local : LintUnusedAssignmentState
-              (lint-unused-assignment-with-locals
-                binding-base
-                (lint-name-list-add (struct-get binding-base locals) text))]
-            (lint-unused-assignment-let-bindings
-              (box-get rest)
-              (lint-unused-assignment-write-name
-                with-local
-                text
-                (lint-unused-assignment-binding-span init))))])]))
+  (lint-unused-assignment-let-bindings-at (& bindings) state 0))
+
+(define (lint-unused-assignment-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintUnusedAssignmentState]
+  [index : i64]) : LintUnusedAssignmentState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init)
+        (let
+          [after-init : LintUnusedAssignmentState
+            (lint-unused-assignment-expr
+              (ast-node-get init)
+              state
+              (lint-unused-assignment-binding-span init))]
+          [text : String (intern-str name)]
+          [binding-base : LintUnusedAssignmentState
+            (if (lint-name-list-contains? (struct-get after-init locals) text)
+              (lint-unused-assignment-state-with
+                after-init
+                (lint-pending-assignment-remove
+                  (struct-get after-init pending)
+                  text)
+                (struct-get after-init findings))
+              after-init)]
+          [with-local : LintUnusedAssignmentState
+            (lint-unused-assignment-with-locals
+              binding-base
+              (lint-name-list-add (struct-get binding-base locals) text))]
+          (lint-unused-assignment-let-bindings-at
+            bindings
+            (lint-unused-assignment-write-name
+              with-local
+              text
+              (lint-unused-assignment-binding-span init))
+            (+ index 1)))])))
 
 (define (lint-unused-assignment-let
   [bindings : AstLetBindingList]
@@ -5123,14 +5189,20 @@
 (define (lint-redundant-function-name-macro-let-bindings
   [bindings : AstLetBindingList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ _ init)
-          (lint-redundant-function-name-macro-let-bindings
-            (box-get rest)
-            (lint-redundant-function-name-macro-expr (ast-node-get init) state))])]))
+  (lint-redundant-function-name-macro-let-bindings-at (& bindings) state 0))
+
+(define (lint-redundant-function-name-macro-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintRedundantFunctionNameState]
+  [index : i64]) : LintRedundantFunctionNameState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init)
+        (lint-redundant-function-name-macro-let-bindings-at
+          bindings
+          (lint-redundant-function-name-macro-expr (ast-node-get init) state)
+          (+ index 1))])))
 
 (define (lint-redundant-function-name-macro-match-arms
   [arms : AstMatchArmList]
@@ -5684,14 +5756,20 @@
 (define (lint-unused-variable-quasiquote-let-bindings
   [bindings : AstLetBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ _ init)
-          (lint-unused-variable-quasiquote-let-bindings
-            (box-get rest)
-            (lint-unused-variable-quasiquote-expr (ast-node-get init) state))])]))
+  (lint-unused-variable-quasiquote-let-bindings-at (& bindings) state 0))
+
+(define (lint-unused-variable-quasiquote-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init)
+        (lint-unused-variable-quasiquote-let-bindings-at
+          bindings
+          (lint-unused-variable-quasiquote-expr (ast-node-get init) state)
+          (+ index 1))])))
 
 (define (lint-unused-variable-quasiquote-match-arms
   [arms : AstMatchArmList]
@@ -5714,16 +5792,25 @@
 (define (lint-unused-variable-quasiquote-resource-bindings
   [bindings : AstResourceBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ init cleanup)
-          (lint-unused-variable-quasiquote-resource-bindings
-            (box-get rest)
-            (lint-unused-variable-quasiquote-expr
-              (ast-node-get cleanup)
-              (lint-unused-variable-quasiquote-expr (ast-node-get init) state)))])]))
+  (lint-unused-variable-quasiquote-resource-bindings-at (& bindings) state 0))
+
+(define (lint-unused-variable-quasiquote-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (lint-unused-variable-quasiquote-resource-bindings-at
+          bindings
+          (lint-unused-variable-quasiquote-expr
+            (ast-node-get cleanup)
+            (lint-unused-variable-quasiquote-expr (ast-node-get init) state))
+          (+ index 1))])))
 
 (define (lint-unused-variable-quasiquote-expr
   [expr : AstExpr]
@@ -5958,34 +6045,41 @@
   [bindings : AstLetBindingList]
   [state : LintUnusedVariableState]
   [cursor : i64]) : LintUnusedVariableState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name maybe-ty init)
-          (let
-            [after-ty : LintUnusedVariableState
-              (lint-unused-variable-maybe-type maybe-ty state)]
-            [after-init : LintUnusedVariableState
-              (lint-unused-variable-expr
-                (ast-node-get init)
-                after-ty
-                (lint-no-effect-span (ast-node-get init)))]
-            [text : String (intern-str name)]
-            [found : LintSourceNameSpan
-              (lint-source-name-span-from
-                (struct-get state source)
-                text
-                cursor
-                (lint-no-effect-span (ast-node-get init)))]
-            [with-binding : LintUnusedVariableState
-              (lint-unused-variable-add-to-current-frame
-                after-init
-                (lint-unused-variable-binding text (struct-get found span) true))]
-            (lint-unused-variable-let-bindings
-              (box-get rest)
-              with-binding
-              (struct-get found next-index)))])]))
+  (lint-unused-variable-let-bindings-at (& bindings) state cursor 0))
+
+(define (lint-unused-variable-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [state : LintUnusedVariableState]
+  [cursor : i64]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init)
+        (let
+          [after-ty : LintUnusedVariableState
+            (lint-unused-variable-maybe-type maybe-ty state)]
+          [after-init : LintUnusedVariableState
+            (lint-unused-variable-expr
+              (ast-node-get init)
+              after-ty
+              (lint-no-effect-span (ast-node-get init)))]
+          [text : String (intern-str name)]
+          [found : LintSourceNameSpan
+            (lint-source-name-span-from
+              (struct-get state source)
+              text
+              cursor
+              (lint-no-effect-span (ast-node-get init)))]
+          [with-binding : LintUnusedVariableState
+            (lint-unused-variable-add-to-current-frame
+              after-init
+              (lint-unused-variable-binding text (struct-get found span) true))]
+          (lint-unused-variable-let-bindings-at
+            bindings
+            with-binding
+            (struct-get found next-index)
+            (+ index 1)))])))
 
 (define (lint-unused-variable-let
   [bindings : AstLetBindingList]
@@ -6011,25 +6105,34 @@
 (define (lint-unused-variable-resource-bindings
   [bindings : AstResourceBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding name init cleanup)
-          (lint-unused-variable-resource-bindings
-            (box-get rest)
-            (lint-unused-variable-add-to-current-frame
+  (lint-unused-variable-resource-bindings-at (& bindings) state 0))
+
+(define (lint-unused-variable-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init cleanup)
+        (lint-unused-variable-resource-bindings-at
+          bindings
+          (lint-unused-variable-add-to-current-frame
+            (lint-unused-variable-expr
+              (ast-node-get cleanup)
               (lint-unused-variable-expr
-                (ast-node-get cleanup)
-                (lint-unused-variable-expr
-                  (ast-node-get init)
-                  state
-                  (lint-no-effect-span (ast-node-get init)))
-                (lint-no-effect-span (ast-node-get cleanup)))
-              (lint-unused-variable-binding
-                (intern-str name)
-                (lint-no-span)
-                false)))])]))
+                (ast-node-get init)
+                state
+                (lint-no-effect-span (ast-node-get init)))
+              (lint-no-effect-span (ast-node-get cleanup)))
+            (lint-unused-variable-binding
+              (intern-str name)
+              (lint-no-span)
+              false))
+          (+ index 1))])))
 
 (define (lint-unused-variable-match-arms
   [arms : AstMatchArmList]
@@ -6793,47 +6896,58 @@
   [bindings : AstLetBindingList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match bindings
-    [(AstLetBindingList.Nil) acc]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (lint-walk-let-bindings
-                rest
-                threshold
-                (lint-walk-expr init threshold acc)))]))]))
+  (lint-walk-let-bindings-at (& bindings) threshold acc 0))
+
+(define (lint-walk-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [threshold : i64]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-let-binding-list-len bindings))
+    acc
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (lint-walk-let-bindings-at
+            bindings
+            threshold
+            (lint-walk-expr init threshold acc)
+            (+ index 1)))])))
 
 (define (lint-let-bindings-contain-name?
   [bindings : AstLetBindingList]
   [name : i64]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding binding-name _ _)
-            (if (= binding-name name)
-              true
-              (lint-let-bindings-contain-name? rest name))]))]))
+  (lint-let-bindings-contain-name-at? (& bindings) name 0))
+
+(define (lint-let-bindings-contain-name-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [name : i64]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding binding-name _ _)
+        (if (= binding-name name)
+          true
+          (lint-let-bindings-contain-name-at? bindings name (+ index 1)))])))
 
 (define (lint-let-bindings-shadow-outer?
   [outer : AstLetBindingList]
   [inner : AstLetBindingList]) : bool
-  (match inner
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (if (lint-let-bindings-contain-name? outer name)
-              true
-              (lint-let-bindings-shadow-outer? outer rest))]))]))
+  (lint-let-bindings-shadow-outer-at? (& outer) (& inner) 0))
+
+(define (lint-let-bindings-shadow-outer-at?
+  [outer : (& outer AstLetBindingList)]
+  [inner : (& inner AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len inner))
+    false
+    (match (ast-let-binding-list-get inner index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (if (lint-let-bindings-contain-name-at? outer name 0)
+          true
+          (lint-let-bindings-shadow-outer-at? outer inner (+ index 1)))])))
 
 (define (lint-nested-let-body? [body : AstExpr]) : bool
   (match body
@@ -6897,23 +7011,31 @@
   [bindings : AstResourceBindingList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match bindings
-    [(AstResourceBindingList.Nil) acc]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (lint-walk-resource-bindings
-                rest
-                threshold
-                (lint-walk-expr
-                  cleanup
-                  threshold
-                  (lint-walk-expr init threshold acc))))]))]))
+  (lint-walk-resource-bindings-at (& bindings) threshold acc 0))
+
+(define (lint-walk-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [threshold : i64]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-resource-binding-list-len bindings))
+    acc
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (lint-walk-resource-bindings-at
+            bindings
+            threshold
+            (lint-walk-expr
+              cleanup
+              threshold
+              (lint-walk-expr init threshold acc))
+            (+ index 1)))])))
 
 ;: Walk each match-arm body in `arms`.
 (define (lint-walk-match-arms
@@ -7942,20 +8064,20 @@
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding "y" (AstMaybeType.No) ladder3)
-          (AstLetBindingList.Nil))
+          (ast-let-binding-list-new))
         vx)]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "a" (AstMaybeType.No) one)
-        (AstLetBindingList.Nil))]
+        (ast-let-binding-list-new))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "b" (AstMaybeType.No) vx)
-        (AstLetBindingList.Nil))]
+        (ast-let-binding-list-new))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "a" (AstMaybeType.No) one)
-        (AstLetBindingList.Nil))]
+        (ast-let-binding-list-new))]
     [nested-let : i64
       (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]
     [shadowing-nested-let : i64

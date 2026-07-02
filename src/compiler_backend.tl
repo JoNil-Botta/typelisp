@@ -1482,9 +1482,9 @@
         [_ ""])]))
 
 (define (compiler-backend-simd-offset-address [base-reg : String] [disp : i64]) : String
-  (if (= disp 0)
-    (str-cat "(" base-reg ")")
-    (str-cat (int->string disp) "(" base-reg ")")))
+  ;; GAP7: route through the SIB-aware base formatter (inert unless a %rbp pool
+  ;; value ever reaches here as a vector base).
+  (compiler-backend-mem-base-address disp base-reg))
 
 (define (compiler-backend-simd-index-register-address
   [base-reg : String]
@@ -5801,23 +5801,24 @@
 
 (define (compiler-backend-address-base-register-ok?
   [home : String]
-  [avoid : String]) : bool
+  [avoid : String]
+  [allow-rbp : bool]) : bool
   ;; %rax was excluded here as a pre-pooling artifact (when %rax was the hardcoded
   ;; scratch/result reg). Now %rax is in the allocator pool, so a var homed in %rax
   ;; is a valid address base -- using it directly elides the `movq %rax,<scav>` reload
   ;; (the value-home conflict is still handled by `avoid`).
   ;;
-  ;; M-G3 stage 2 (#rbp-base): a %rbp home must NEVER appear as a memory-operand
-  ;; BASE. In FPO functions %rbp is a pool value register, but the rsp-rebase
-  ;; pass (and the peephole slot recognizers) identify frame references
-  ;; textually by "(%rbp" -- a pool deref `off(%rbp)` would be rewritten as a
-  ;; frame slot (miscompile). Excluding %rbp here routes such bases through the
-  ;; staged scratch-copy path (`movq %rbp, %rSCAV`), preserving the invariant
-  ;; that every "(%rbp" in emitted text is a frame reference. SIB INDEX position
-  ;; (",%rbp,") is fine -- the recognizers only match the base spelling.
+  ;; M-G3 stage 2 (#rbp-base): a %rbp home spelled as a plain `off(%rbp)` base
+  ;; would be rewritten as a frame slot by the FPO rsp-rebase pass (and mis-slot
+  ;; by the peephole). GAP7: when `allow-rbp` is set, the CONST-offset caller
+  ;; spells the %rbp base as the SIB scale-1 form `off(,%rbp,1)` (textually
+  ;; distinct from a frame ref), so %rbp is admitted here. When it is not set
+  ;; (the variable-index store caller, where the base occupies the SIB base slot
+  ;; alongside the gep index), %rbp stays excluded -> staged. SIB INDEX position
+  ;; (",%rbp,") is always fine -- the recognizers only match the base spelling.
   (and
     (not (string.string-eq home ""))
-    (not (string.string-eq home "%rbp"))
+    (or allow-rbp (not (string.string-eq home "%rbp")))
     (if (string.string-eq avoid "")
       true
       (not (string.string-eq home avoid)))))
@@ -5830,10 +5831,20 @@
     ""
     home))
 
+;; GAP7: like address-base-filter but ADMITS a %rbp home as a direct base. Used
+;; at the CONST-offset fused gep sites where the base occupies the memory
+;; operand's BASE slot ALONE (no separate SIB index) -- there the %rbp base is
+;; spelled `disp(,%rbp,1)` (compiler-backend-mem-base-address). The
+;; DYNAMIC-index sites keep address-base-filter: a %rbp base there would need
+;; the SIB index slot (already taken by the gep index), so it stays staged.
+(define (compiler-backend-address-base-filter-direct [home : String]) : String
+  home)
+
 (define (compiler-backend-address-base-home
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
-  [avoid : String]) : String
+  [avoid : String]
+  [allow-rbp : bool]) : String
   (match value
     [(IrValueVar id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
@@ -5842,7 +5853,7 @@
           [(CompilerRegSomeLocation location)
             (match location
               [(CompilerRegRegister home)
-                (if (compiler-backend-address-base-register-ok? home avoid)
+                (if (compiler-backend-address-base-register-ok? home avoid allow-rbp)
                   home
                   "")]
               [_ ""])]
@@ -5853,9 +5864,11 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [fallback-reg : String]
-  [avoid : String]) : ResultCompilerBackendAddressBase
+  [avoid : String]
+  [allow-rbp : bool]) : ResultCompilerBackendAddressBase
   (let
-    [home : String (compiler-backend-address-base-home assignments value avoid)]
+    [home : String
+      (compiler-backend-address-base-home assignments value avoid allow-rbp)]
     (if (string.string-eq home "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -5867,6 +5880,11 @@
         [(ErrCompilerBackend message) (ErrCompilerBackendAddressBase message)])
       (OkCompilerBackendAddressBase (CompilerBackendAddressBase "" home)))))
 
+;; The plain (avoid-free) address base is only ever consumed by CONST-offset
+;; callers (store-ptr, store-to-gep const, store-ptr-pair, load-deref -- each
+;; formats the returned base with copy-address / base-deref), so GAP7 admits a
+;; %rbp base here (allow-rbp = true; spelled `off(,%rbp,1)`). The variable-index
+;; store caller uses emit-address-base-with-avoid with allow-rbp = false.
 (define (compiler-backend-emit-address-base
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -5875,7 +5893,8 @@
     assignments
     value
     fallback-reg
-    ""))
+    ""
+    true))
 
 (define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
   (let
@@ -12754,7 +12773,7 @@
             ;; staging copy -- the compare only READS the addressing base, so the
             ;; home register is used directly (the load below self-elides).
             [base-home : String
-              (compiler-backend-address-base-filter
+              (compiler-backend-address-base-filter-direct
                 (compiler-backend-value-scalar-register assignments base))]
             [scav-base : String
               (if (string-eq base-home "")
@@ -13287,9 +13306,11 @@
   ;; through to the staged/scavenged path.
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
-    ;; #rbp-base: never leaq off a %rbp base (frame-spelling collision).
+    ;; GAP7: a %rbp base is admitted for the CONST-offset leaq (spelled as the
+    ;; SIB scale-1 form via compiler-backend-copy-address); the variable-index
+    ;; branch below re-excludes it (the SIB index slot is taken by the gep index).
     [base-reg : String
-      (compiler-backend-address-base-filter
+      (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register assignments base))]
     (if (if (string.string-eq dst-home "")
       false
@@ -13322,7 +13343,12 @@
             [scale : i64 (compiler-backend-type-size elem-ty)]
             (if (and
               (not (string.string-eq offset-home ""))
-              (compiler-backend-gep-sib-scale? scale))
+              (and
+                (compiler-backend-gep-sib-scale? scale)
+                ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
+                ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
+                ;; ref); route it to the staged path instead.
+                (not (string.string-eq base-reg "%rbp"))))
               (OkCompilerBackend
                 (str_cat.str-cat
                   "    leaq "
@@ -13585,14 +13611,33 @@
 
 ;; Base-register-parameterized address: scavenged-register-aware address
 ;; formatting so addressing-base scratch is not fixed to one register.
+;; GAP7: spell a %rbp memory-operand BASE as the SIB scale-1 index form
+;; `disp(,%rbp,1)` -- base absent, %rbp as a scale-1 index, semantically
+;; identical to `disp(%rbp)` but textually DISTINCT from a frame reference. The
+;; FPO rsp-rebase pass and the peephole slot recognizers key frame slots on the
+;; `(%rbp)` / `(%rsp)` base spelling; `(,%rbp,1)` matches NEITHER, so a pool
+;; value homed in %rbp can serve as a memory base directly (no staged
+;; `movq %rbp,%rSCRATCH` copy) while the rebase pass still rewrites every real
+;; frame slot and never rewrites the pool base -- STRUCTURAL disambiguation by
+;; addressing MODE. Every OTHER base (a scavenged scratch or a non-%rbp register
+;; home) spells normally; base-address / copy-address / base-deref never format
+;; a frame slot (those go through compiler-backend-slot / the slot machinery),
+;; so a %rbp base reaching these formatters is ALWAYS a pool value. On Win64
+;; and any keep-rbp function %rbp is not a pool register, so it never arrives
+;; here as a base (unconditionally sound across targets).
+(define (compiler-backend-mem-base-address [disp : i64] [base : String]) : String
+  (if (string.string-eq base "%rbp")
+    (str_cat.str-cat (string.int->string disp) "(,%rbp,1)")
+    (if (= disp 0)
+      (str_cat.str-cat "(" base ")")
+      (str_cat.str-cat (string.int->string disp) "(" base ")"))))
+
 (define (compiler-backend-base-address [disp : i64] [base : String]) : String
-  (if (= disp 0)
-    (str-cat "(" base ")")
-    (str-cat (int->string disp) "(" base ")" "")))
+  (compiler-backend-mem-base-address disp base))
 
 ;; "(base)" memory operand for a scavenged base register.
 (define (compiler-backend-base-deref [base : String]) : String
-  (str-cat "(" base ")"))
+  (compiler-backend-mem-base-address 0 base))
 
 ;; Minimal exclude for an addressing-base scavenge: the base register only holds
 ;; a pointer that is immediately dereferenced and dead after, so nothing extra
@@ -13756,9 +13801,7 @@
       a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
-  (if (= disp 0)
-    (str_cat.str-cat "(" reg ")" "")
-    (str_cat.str-cat (string.int->string disp) "(" reg ")")))
+  (compiler-backend-mem-base-address disp reg))
 
 (define (compiler-backend-copy-chunk-size [remaining : i64]) : i64
   (cond [(>= remaining 8) 8] [(>= remaining 4) 4] [(>= remaining 2) 2] [else 1]))
@@ -13938,9 +13981,10 @@
   (if (<= size 0)
     (OkCompilerBackend "")
     (let
-      ;; #rbp-base: both homes serve as memory-operand bases in the chunk copies.
+      ;; GAP7: both homes serve as CONST-offset memory-operand bases in the chunk
+      ;; copies -- a %rbp home is spelled via the SIB scale-1 form.
       [dst-home : String
-        (compiler-backend-address-base-filter
+        (compiler-backend-address-base-filter-direct
           (compiler-backend-value-register-home assignments dst))]
       [dst-reg : String
         (if (string-eq dst-home "")
@@ -13952,7 +13996,7 @@
         [(OkCompilerBackend dst-asm)
           (let
             [src-home : String
-              (compiler-backend-address-base-filter
+              (compiler-backend-address-base-filter-direct
                 (compiler-backend-value-register-home assignments src))]
             [src-exclude-base : (Array String)
               (compiler-backend-one-exclude dst-reg)]
@@ -14200,11 +14244,11 @@
         (compiler-backend-imm32? (+ disp size)))]
     [base-home : String
       (if near?
-        (compiler-backend-address-base-filter
+        (compiler-backend-address-base-filter-direct
           (compiler-backend-value-scalar-register assignments base))
         "")]
     [src-home : String
-      (compiler-backend-address-base-filter
+      (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register assignments src))]
     [dst-reg : String
       (if (string-eq base-home "")
@@ -14523,7 +14567,7 @@
         ;; address before writing, and home equality means the allocator proved
         ;; the base value dead after this load.
         [base-home : String
-          (compiler-backend-address-base-filter
+          (compiler-backend-address-base-filter-direct
             (compiler-backend-value-scalar-register assignments base))]
         [base-reg : String
           (if (string-eq base-reg-in "")
@@ -14726,7 +14770,7 @@
     ;; (the 2nd load reads its address operand before writing, and afterwards
     ;; the base register is no longer needed).
     [base-home : String
-      (compiler-backend-address-base-filter
+      (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register assignments base))]
     [dst0-home : String
       (compiler-backend-var-register-home assignments load-dst0)]
@@ -15027,7 +15071,11 @@
           assignments
           base
           scav-fold
-          scav-idx)
+          scav-idx
+          ;; GAP7: variable-index store -- the base reg feeds gep-index-address
+          ;; (SIB base slot alongside the index), so a %rbp base must NOT be
+          ;; admitted here (it would spell `(%rbp,idx,s)` = a frame-ref collision).
+          false)
           [(OkCompilerBackendAddressBase base-plan)
             (match (compiler-backend-emit-load-value-with-plan
               assignments

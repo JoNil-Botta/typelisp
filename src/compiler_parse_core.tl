@@ -108,7 +108,7 @@
   (Err String))
 
 (defenum ResultAstExternParts
-  (Ok AstExternMetadata AstType)
+  (Ok AstExternAbi String bool AstType)
   (Err String))
 
 (defenum AstExternHeadItem
@@ -6056,7 +6056,7 @@
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
   (match items
@@ -6071,13 +6071,7 @@
                   pools
                   (spanned-sexpr-form (sp-node-get ty)))
                   [(ResultAstType.Ok parsed-ty)
-                    (ResultAstExternParts.Ok
-                      (AstExternMetadata.Metadata
-                        abi
-                        symbol
-                        link-inputs
-                        seen-abi)
-                      parsed-ty)]
+                    (ResultAstExternParts.Ok abi symbol seen-abi parsed-ty)]
                   [(ResultAstType.Err message)
                     (ResultAstExternParts.Err message)])]
               [_ (ResultAstExternParts.Err "parse: malformed extern")])]
@@ -6126,17 +6120,19 @@
                       ":link-lib"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Lib value))
-                          seen-abi
-                          seen-symbol)]
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(string.eq key ":link-search")
@@ -6144,17 +6140,19 @@
                       ":link-search"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Search value))
-                          seen-abi
-                          seen-symbol)]
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(string.eq key ":link-arg")
@@ -6162,17 +6160,19 @@
                       ":link-arg"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Arg value))
-                          seen-abi
-                          seen-symbol)]
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
@@ -6188,12 +6188,13 @@
   [pools : AstNodePoolContext]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
   [seen-abi : bool]
   [param-types : AstTypeList]
   [ret : AstType]) : ResultAstExternParts
   (ResultAstExternParts.Ok
-    (AstExternMetadata.Metadata abi symbol link-inputs seen-abi)
+    abi
+    symbol
+    seen-abi
     (ast-ty-func-with-pools pools param-types ret)))
 
 (define (parse-ast-extern-head-post-ret
@@ -6202,21 +6203,14 @@
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
   [param-types : AstTypeList]
   [ret : AstType]) : ResultAstExternParts
   (match items
     [(SpannedSexpr.Nil _)
-      (parse-ast-extern-head-finish
-        pools
-        abi
-        symbol
-        link-inputs
-        seen-abi
-        param-types
-        ret)]
+      (parse-ast-extern-head-finish pools abi symbol seen-abi param-types ret)]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
@@ -6270,19 +6264,21 @@
                     ":link-lib"
                     (box-get after-key))
                     [(ResultAstExternSymbol.Ok value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
                           (AstExternLinkInput.Lib value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
                 [(string.eq key ":link-search")
@@ -6290,19 +6286,21 @@
                     ":link-search"
                     (box-get after-key))
                     [(ResultAstExternSymbol.Ok value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
                           (AstExternLinkInput.Search value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
                 [(string.eq key ":link-arg")
@@ -6310,19 +6308,21 @@
                     ":link-arg"
                     (box-get after-key))
                     [(ResultAstExternSymbol.Ok value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
                           (AstExternLinkInput.Arg value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
                 [(compiler-parse-metadata-key? key)
@@ -6339,7 +6339,7 @@
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
   [param-types : AstTypeList]) : ResultAstExternParts
@@ -6359,7 +6359,6 @@
                       pools
                       abi
                       symbol
-                      link-inputs
                       seen-abi
                       param-types
                       parsed-ret)]
@@ -6435,18 +6434,20 @@
                       ":link-lib"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Lib value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(string.eq key ":link-search")
@@ -6454,18 +6455,20 @@
                       ":link-search"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Search value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(string.eq key ":link-arg")
@@ -6473,18 +6476,20 @@
                       ":link-arg"
                       (box-get after-key))
                       [(ResultAstExternSymbol.Ok value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
                             (AstExternLinkInput.Arg value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
@@ -6503,20 +6508,30 @@
   [rest : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-extern-header dispatch pools head)
     [(ResultAstExternHeader.Ok name param-types abi)
-      (match (parse-ast-extern-head-rest
-        dispatch
-        pools
-        rest
-        abi
-        name
-        AstExternLinkInputList.Nil
-        false
-        false
-        param-types)
-        [(ResultAstExternParts.Ok metadata ty)
-          (ResultAstDecl.Ok
-            (ast-decl-extern name (AstExternKind.Function) metadata ty))]
-        [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)])]
+      (let
+        [link-inputs : AstExternLinkInputList (ast-extern-link-input-list-new)]
+        (match (parse-ast-extern-head-rest
+          dispatch
+          pools
+          rest
+          abi
+          name
+          (&mut link-inputs)
+          false
+          false
+          param-types)
+          [(ResultAstExternParts.Ok parsed-abi parsed-symbol explicit-abi ty)
+            (ResultAstDecl.Ok
+              (ast-decl-extern
+                name
+                (AstExternKind.Function)
+                (AstExternMetadata.Metadata
+                  parsed-abi
+                  parsed-symbol
+                  link-inputs
+                  explicit-abi)
+                ty))]
+          [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
     [(ResultAstExternHeader.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-extern
@@ -6527,19 +6542,34 @@
     [(SpannedSexpr.Cons name-node after-name _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
-          (match (parse-ast-extern-items
-            dispatch
-            pools
-            (sp-node-get after-name)
-            (AstExternAbi.C)
-            name
-            AstExternLinkInputList.Nil
-            false
-            false)
-            [(ResultAstExternParts.Ok metadata parsed-ty)
-              (ResultAstDecl.Ok
-                (ast-decl-extern name (AstExternKind.Value) metadata parsed-ty))]
-            [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)])]
+          (let
+            [link-inputs : AstExternLinkInputList
+              (ast-extern-link-input-list-new)]
+            (match (parse-ast-extern-items
+              dispatch
+              pools
+              (sp-node-get after-name)
+              (AstExternAbi.C)
+              name
+              (&mut link-inputs)
+              false
+              false)
+              [(ResultAstExternParts.Ok
+                  parsed-abi
+                  parsed-symbol
+                  explicit-abi
+                  parsed-ty)
+                (ResultAstDecl.Ok
+                  (ast-decl-extern
+                    name
+                    (AstExternKind.Value)
+                    (AstExternMetadata.Metadata
+                      parsed-abi
+                      parsed-symbol
+                      link-inputs
+                      explicit-abi)
+                    parsed-ty))]
+              [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
         [_
           (parse-ast-extern-function-head
             dispatch
@@ -8571,30 +8601,27 @@
 
 (define (compiler-parse-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
-  (match inputs
-    [(AstExternLinkInputList.Cons (AstExternLinkInput.Lib lib) rest0)
-      (let
-        [rest0 : AstExternLinkInputList (box-get rest0)]
-        (match rest0
-          [(AstExternLinkInputList.Cons (AstExternLinkInput.Search dir) rest1)
-            (let
-              [rest1 : AstExternLinkInputList (box-get rest1)]
-              (match rest1
-                [(AstExternLinkInputList.Cons
-                    (AstExternLinkInput.Arg arg-value)
-                    rest2)
-                  (let
-                    [rest2 : AstExternLinkInputList (box-get rest2)]
-                    (match rest2
-                      [(AstExternLinkInputList.Nil)
-                        (and
-                          (string.eq lib "m")
-                          (string.eq dir "native/lib")
-                          (string.eq arg-value "-Wl,--as-needed"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (and
+    (= (ast-extern-link-input-list-len (& inputs)) 3)
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      0
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Lib lib) (string.eq lib "m")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      1
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Search dir) (string.eq dir "native/lib")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      2
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Arg arg-value)
+        (string.eq arg-value "-Wl,--as-needed")]
+      [_ false])))
 
 (define (compiler-parse-extern-metadata-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-metadata-source))

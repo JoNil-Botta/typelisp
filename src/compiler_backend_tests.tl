@@ -12181,7 +12181,7 @@
     (ast-ty-func params ret)
     abi
     symbol
-    AstExternLinkInputList.Nil
+    (ast-extern-link-input-list-new)
     false))
 
 (define (compiler-backend-non-direct-tail-call-emit
@@ -12982,7 +12982,7 @@
       (ast-ty-func AstTypeList.Nil (AstType.I64))
       (AstExternAbi.C)
       "provided_link"
-      AstExternLinkInputList.Nil
+      (ast-extern-link-input-list-new)
       true)
     (compiler-ir-extern-cons
       (CompilerIrExtern.Extern
@@ -12992,7 +12992,7 @@
           (AstType.I64))
         (AstExternAbi.C)
         "referenced_link"
-        AstExternLinkInputList.Nil
+        (ast-extern-link-input-list-new)
         false)
       CompilerIrExternList.Nil)))
 
@@ -13120,7 +13120,7 @@
               (ast-ty-func AstTypeList.Nil (AstType.I64))
               (AstExternAbi.C)
               extern-link
-              AstExternLinkInputList.Nil
+              (ast-extern-link-input-list-new)
               false)
             CompilerIrExternList.Nil))]
       [fn-id : i64 (ci.intern fn-name)]

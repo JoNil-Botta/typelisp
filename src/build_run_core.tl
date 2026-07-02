@@ -381,15 +381,19 @@
 
 (define (source-tool-link-inputs-add-ast-list
   [inputs : SourceToolLinkInputs]
-  [items : AstExternLinkInputList]) : SourceToolLinkInputs
-  (match items
-    [(AstExternLinkInputList.Nil) inputs]
-    [(AstExternLinkInputList.Cons head rest)
-      (let
-        [rest : AstExternLinkInputList (box-get rest)]
-        (source-tool-link-inputs-add-ast-list
-          (source-tool-link-inputs-add-ast inputs head)
-          rest))]))
+  [items : (& items AstExternLinkInputList)]
+  [index : i64]) : SourceToolLinkInputs
+  (if (>= index (ast-extern-link-input-list-len items))
+    inputs
+    (source-tool-link-inputs-add-ast-list
+      (source-tool-link-inputs-add-ast
+        inputs
+        (ast-extern-link-input-list-get
+          items
+          index
+          (ast-extern-link-input-fallback)))
+      items
+      (+ index 1))))
 
 (define (source-tool-link-inputs-eq?
   [left : SourceToolLinkInputs]
@@ -407,20 +411,25 @@
 
 (define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
   (let
-    [metadata-items : AstExternLinkInputList
-      (ast-extern-link-input-cons
-        (AstExternLinkInput.Lib "m")
-        (ast-extern-link-input-cons
-          (AstExternLinkInput.Lib "m")
-          (ast-extern-link-input-cons
-            (AstExternLinkInput.Search "native")
-            (ast-extern-link-input-cons
-              (AstExternLinkInput.Arg "-Wl,a")
-              AstExternLinkInputList.Nil))))]
+    [metadata-items : AstExternLinkInputList (ast-extern-link-input-list-new)]
     [metadata-inputs : SourceToolLinkInputs
-      (source-tool-link-inputs-add-ast-list
-        (source-tool-link-inputs-empty)
-        metadata-items)]
+      (begin
+        (ast-extern-link-input-list-push
+          (&mut metadata-items)
+          (AstExternLinkInput.Lib "m"))
+        (ast-extern-link-input-list-push
+          (&mut metadata-items)
+          (AstExternLinkInput.Lib "m"))
+        (ast-extern-link-input-list-push
+          (&mut metadata-items)
+          (AstExternLinkInput.Search "native"))
+        (ast-extern-link-input-list-push
+          (&mut metadata-items)
+          (AstExternLinkInput.Arg "-Wl,a"))
+        (source-tool-link-inputs-add-ast-list
+          (source-tool-link-inputs-empty)
+          (& metadata-items)
+          0))]
     [explicit-inputs : SourceToolLinkInputs
       (source-tool-link-inputs-add-raw-arg
         (source-tool-link-inputs-add-raw-arg
@@ -458,11 +467,15 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDecl.Extern _ _ metadata _)
-            (source-tool-link-inputs-from-decls
-              rest
-              (source-tool-link-inputs-add-ast-list
-                inputs
-                (ast-extern-metadata-link-inputs metadata)))]
+            (let
+              [metadata-items : AstExternLinkInputList
+                (ast-extern-metadata-link-inputs metadata)]
+              (source-tool-link-inputs-from-decls
+                rest
+                (source-tool-link-inputs-add-ast-list
+                  inputs
+                  (& metadata-items)
+                  0)))]
           [(AstDecl.Unsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]

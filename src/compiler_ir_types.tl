@@ -728,7 +728,7 @@
     ty
     (AstExternAbi.C)
     name
-    AstExternLinkInputList.Nil
+    (ast-extern-link-input-list-new)
     false))
 
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue

@@ -12995,6 +12995,110 @@
         hoisted
         (compiler-ir-block-seq-to-list seq))]))
 
+;; M-G (B1): duplicate-hoist dedup. The filter hoists EVERY invariant load/gep
+;; individually, so a loop whose body loads the same descriptor slot at N sites
+;; (one gep+load pair per inlined bounds check, kept distinct in-body because
+;; element stores conservatively clear the block-local load-CSE table) lands N
+;; IDENTICAL gep+load pairs in the preheader -- N live registers carrying one
+;; value through the loop (measured: qs_partition hoists the data-slot load 5x
+;; and the len-slot load 3x -> 3 spilled vars + per-iteration spill/scavenge
+;; traffic in a zero-call loop). Build a substitution env mapping every
+;; duplicate's dst to the FIRST hoisted def of the same (operand-substituted)
+;; shape, then rewrite all uses in the preheader instructions and the loop
+;; body. The duplicate defs are KEPT (their dsts become dead-or-preheader-local,
+;; zero loop-carried pressure), so any use the substituter conservatively skips
+;; (phi inputs, AddrOf raw vars) still reads a defined var -- partial
+;; substitution is always sound. Dsts are single-def (opt-gvn-stable-var? gates
+;; candidacy), so a body use can only see the preheader def.
+(defenum OptLicmDup
+  (OptLicmDupNone)
+  (OptLicmDupVar i64))
+
+;; First selected instruction computing the same value as `instr` (whose
+;; operands are already substituted through the env-so-far): loads must match
+;; on source value + type, geps on base + offset + element type.
+(define (opt-licm-dup-of
+  [selected : CompilerIrInstrList]
+  [instr : CompilerIrInstr]) : OptLicmDup
+  (match selected
+    [(IrInstrNil) (OptLicmDupNone)]
+    [(IrInstrCons prev rest)
+      (match prev
+        [(IrInstrLoad pdst psrc pty)
+          (match instr
+            [(IrInstrLoad _ src ty)
+              (if (and (opt-value-eq psrc src) (opt-type-eq pty ty))
+                (OptLicmDupVar pdst)
+                (opt-licm-dup-of (box-get rest) instr))]
+            [_ (opt-licm-dup-of (box-get rest) instr)])]
+        [(IrInstrGep pdst pbase poffset pty)
+          (match instr
+            [(IrInstrGep _ base offset ty)
+              (if (and
+                (opt-value-eq pbase base)
+                (opt-value-eq poffset offset)
+                (opt-type-eq pty ty))
+                (OptLicmDupVar pdst)
+                (opt-licm-dup-of (box-get rest) instr))]
+            [_ (opt-licm-dup-of (box-get rest) instr)])]
+        [_ (opt-licm-dup-of (box-get rest) instr)])]))
+
+;; Walk the hoisted list in program order, accumulating dup-dst -> canonical
+;; var bindings. Each instruction is operand-substituted through the env built
+;; so far BEFORE comparison, so a load through a duplicate gep matches the
+;; canonical load (its source resolves to the canonical gep dst).
+(define (opt-licm-dedup-env
+  [moved : CompilerIrInstrList]
+  [selected : CompilerIrInstrList]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (match moved
+    [(IrInstrNil) env]
+    [(IrInstrCons instr rest)
+      (let
+        [subst : CompilerIrInstr (opt-copy-subst-instr env instr)]
+        (match (opt-licm-dup-of selected subst)
+          [(OptLicmDupVar canon)
+            (match (opt-instr-def-var instr)
+              [(OptSomeI64 dst)
+                (opt-licm-dedup-env
+                  (box-get rest)
+                  selected
+                  (OptCopyCons dst (IrValueVar canon) (box env)))]
+              [(OptNoI64) (opt-licm-dedup-env (box-get rest) selected env)])]
+          [(OptLicmDupNone)
+            (opt-licm-dedup-env
+              (box-get rest)
+              (compiler-ir-instr-cons subst selected)
+              env)]))]))
+
+(define (opt-licm-subst-instr-list
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons
+        (opt-copy-subst-instr env instr)
+        (opt-licm-subst-instr-list env (box-get rest)))]))
+
+(define (opt-licm-subst-body-blocks
+  [env : OptCopyEnv]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              label
+              (opt-licm-subst-instr-list
+                env
+                (compiler-ir-instr-seq-to-list instrs)))
+            (opt-licm-subst-body-blocks env (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-licm-subst-body-blocks env (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
   [sources : hashmap.I64I64Map]
@@ -13028,10 +13132,25 @@
           (hashmap.i64-i64-map-with-capacity map-capacity))
           [(OptLicmBlocksResult filtered-body hoisted _ changed)
             (if changed
-              (opt-licm-insert-preheader-blocks
-                preheader
-                hoisted
-                (opt-licm-replace-body-blocks blocks filtered-body))
+              ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
+              ;; occurrence (see opt-licm-dedup-env). An empty env means no
+              ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
+              (let
+                [dedup-env : OptCopyEnv
+                  (opt-licm-dedup-env hoisted (IrInstrNil) (OptCopyNil))]
+                (match dedup-env
+                  [(OptCopyNil)
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      hoisted
+                      (opt-licm-replace-body-blocks blocks filtered-body))]
+                  [_
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      (opt-licm-subst-instr-list dedup-env hoisted)
+                      (opt-licm-replace-body-blocks
+                        blocks
+                        (opt-licm-subst-body-blocks dedup-env filtered-body)))]))
               blocks)]))]
     [(OptNoLoopPreheader) blocks]))
 

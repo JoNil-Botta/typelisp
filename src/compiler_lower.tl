@@ -2360,7 +2360,7 @@
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [_paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
   [module : String]
@@ -2424,7 +2424,7 @@
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [_paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
   [target-current-module : String]
@@ -6410,8 +6410,8 @@
 
 (define (lower-dispatch-variant-set-from-decls-in-module
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
+  [_paths : AstDeclPathList]
+  [_entry-path : String]
   [module : String]
   [names : LowerNameCache]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map

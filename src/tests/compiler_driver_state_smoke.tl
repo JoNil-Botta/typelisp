@@ -992,6 +992,88 @@
               [(ResultCompilerSymbols.Err _) false])]
           [_ false])))))
 
+(define (compiler-driver-state-smoke-lower-expr-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [then-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 11)))]
+        [cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [then-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 700)))]
+        [else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 1100)))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "main"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Scalar)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [lowered : ResultLowerExpr
+                    (lower-expr
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (AstExpr.If cond-a then-a else-a))]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= cond-a cond-b)
+                    (= then-a then-b)
+                    (= else-a else-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (match lowered
+                      [(ResultLowerExpr.Ok _) true]
+                      [(ResultLowerExpr.Err _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1412,6 +1494,9 @@
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)
       (return 18))
+    (unless
+      (compiler-driver-state-smoke-lower-expr-reads-use-context?)
+      (return 22))
     (unless
       (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
       (return 19))

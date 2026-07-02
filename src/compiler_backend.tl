@@ -13231,7 +13231,27 @@
                   dst-home
                   "\n"))))]
         [(CompilerBackendNoI64)
-          (compiler-backend-emit-gep-staged assignments dst base offset elem-ty)])
+          ;; GAP6b: variable index, both base and index register-homed with a
+          ;; valid SIB scale -> compute the address in ONE leaq off the homes,
+          ;; no `movq base,%r; movq idx,%r2; leaq (%r,%r2,s)` staging copies.
+          ;; leaq only READS its operands, so dst-home may alias base-reg or the
+          ;; index. #rbp-base: base-reg is already filtered (never %rbp); a
+          ;; %rbp-homed INDEX in the SIB index slot is legal.
+          (let
+            [offset-home : String
+              (compiler-backend-value-scalar-register assignments offset)]
+            [scale : i64 (compiler-backend-type-size elem-ty)]
+            (if (and
+              (not (string.string-eq offset-home ""))
+              (compiler-backend-gep-sib-scale? scale))
+              (OkCompilerBackend
+                (str_cat.str-cat
+                  "    leaq "
+                  (compiler-backend-gep-index-address base-reg scale offset-home)
+                  ", "
+                  dst-home
+                  "\n"))
+              (compiler-backend-emit-gep-staged assignments dst base offset elem-ty)))])
       (compiler-backend-emit-gep-staged assignments dst base offset elem-ty))))
 
 (define (compiler-backend-emit-gep-staged-avoid

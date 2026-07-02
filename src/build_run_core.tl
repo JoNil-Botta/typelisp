@@ -467,11 +467,15 @@
         [rest : AstDeclList rest]
         (match (ast-decl-unwrapped decl)
           [(AstDecl.Extern _ _ metadata _)
-            (source-tool-link-inputs-from-decls
-              rest
-              (source-tool-link-inputs-add-ast-list
-                inputs
-                (ast-extern-metadata-link-inputs metadata)))]
+            (let
+              [metadata-items : AstExternLinkInputList
+                (ast-extern-metadata-link-inputs metadata)]
+              (source-tool-link-inputs-from-decls
+                rest
+                (source-tool-link-inputs-add-ast-list
+                  inputs
+                  (& metadata-items)
+                  0)))]
           [_ (source-tool-link-inputs-from-decls rest inputs)]))]))
 
 (define (source-tool-link-inputs-for-source

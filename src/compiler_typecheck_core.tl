@@ -53,6 +53,26 @@
     (Box TcTypeEnv)
     (Box TcTypeEnv)))
 
+(defenum TcTypeEnvSpineStep
+  (Done)
+  (Cache TcTypeEnv)
+  (Bind i64 AstType TcTypeEnv))
+
+(defenum TcTypeEnvMarkerStep
+  (Done)
+  (Cache TcTypeEnv)
+  (Bind i64 AstType TcTypeEnv))
+
+(defenum TcTypeEnvLookupStep
+  (Missing)
+  (Miss TcTypeEnv)
+  (Found AstType))
+
+(defenum TcTypeEnvUnsafeLookupStep
+  (Missing)
+  (Miss TcTypeEnv)
+  (Found AstType bool))
+
 (defenum TcContext
   (TcContext
     AstProgram
@@ -2637,6 +2657,75 @@
 (define (tc-empty-env) : TcTypeEnv
   TcTypeEnv.Nil)
 
+(define (tc-type-env-spine-step [env : TcTypeEnv]) : TcTypeEnvSpineStep
+  (match env
+    [(TcTypeEnv.Nil) (TcTypeEnvSpineStep.Done)]
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (TcTypeEnvSpineStep.Cache (box-get rest))]
+    [(TcTypeEnv.Bind key ty rest)
+      (TcTypeEnvSpineStep.Bind key ty (box-get rest))]))
+
+(define (tc-type-env-marker-start [env : TcTypeEnv]) : TcTypeEnv
+  (match env
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (box-get rest)]
+    [_ env]))
+
+(define (tc-type-env-marker-step [env : TcTypeEnv]) : TcTypeEnvMarkerStep
+  (match env
+    [(TcTypeEnv.Nil) (TcTypeEnvMarkerStep.Done)]
+    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (TcTypeEnvMarkerStep.Cache (box-get rest))
+        (TcTypeEnvMarkerStep.Done))]
+    [(TcTypeEnv.Bind key ty rest)
+      (TcTypeEnvMarkerStep.Bind key ty (box-get rest))]))
+
+(define (tc-type-env-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
+  (match env
+    [(TcTypeEnv.Nil) (TcTypeEnvLookupStep.Missing)]
+    [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound index)
+          ;; #2357: AstType reads must stay `array-ref` because inline-by-value
+          ;; AstType values are multi-word.
+          (TcTypeEnvLookupStep.Found (array-ref values index))]
+        [(hashmap.I64I64MapMissing)
+          (if partial
+            (TcTypeEnvLookupStep.Miss (box-get below))
+            (TcTypeEnvLookupStep.Missing))])]
+    [(TcTypeEnv.Bind key ty rest)
+      (if (= key name-id)
+        (TcTypeEnvLookupStep.Found ty)
+        (TcTypeEnvLookupStep.Miss (box-get rest)))]))
+
+(define (tc-type-env-unsafe-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvUnsafeLookupStep
+  (match env
+    [(TcTypeEnv.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
+    [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound index)
+          ;; #2357: AstType read must stay `array-ref`; the unsafe flag is a
+          ;; scalar i64 and keeps the previous raw read path.
+          (TcTypeEnvUnsafeLookupStep.Found
+            (array-ref values index)
+            (=
+              (unsafe
+                (ptr-read
+                  (ptr-offset
+                    (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                    index)))
+              1))]
+        [(hashmap.I64I64MapMissing)
+          (if partial
+            (TcTypeEnvUnsafeLookupStep.Miss (box-get below))
+            (TcTypeEnvUnsafeLookupStep.Missing))])]
+    [(TcTypeEnv.Bind key ty rest)
+      (if (= key name-id)
+        (TcTypeEnvUnsafeLookupStep.Found
+          ty
+          (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
+        (TcTypeEnvUnsafeLookupStep.Miss (box-get rest)))]))
+
 (define (tc-local-cache-threshold) : i64
   32)
 
@@ -2737,14 +2826,13 @@
     true))
 
 (define (tc-topenv-membership-seed! [env : TcTypeEnv]) : unit
-  (match env
-    [(TcTypeEnv.Nil) unit]
-    [(TcTypeEnv.Bind key _ rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) unit]
+    [(TcTypeEnvSpineStep.Cache rest-env) (tc-topenv-membership-seed! rest-env)]
+    [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (begin
         (tc-topenv-membership-mark! key)
-        (tc-topenv-membership-seed! (box-get rest)))]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-topenv-membership-seed! (box-get rest))]))
+        (tc-topenv-membership-seed! rest-env))]))
 
 (define (tc-topenv-membership-begin! [env : TcTypeEnv]) : unit
   (begin
@@ -6333,14 +6421,14 @@
   [root : TcTypeEnv]
   [env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (match env
-    [(TcTypeEnv.Nil) (tc-lookup-id root name-id)]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-lookup-hygiene-global-scan root (box-get rest) name-id)]
-    [(TcTypeEnv.Bind key _ rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) (tc-lookup-id root name-id)]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (tc-lookup-hygiene-global-scan root rest-env name-id)]
+    [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
-        (tc-lookup-id (box-get rest) name-id)
-        (tc-lookup-hygiene-global-scan root (box-get rest) name-id))]))
+        (tc-lookup-id rest-env name-id)
+        (tc-lookup-hygiene-global-scan root rest-env name-id))]))
 
 (define (tc-lookup-hygiene-global-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (tc-lookup-hygiene-global-scan env env name-id))
@@ -6449,14 +6537,14 @@
   [root : TcTypeEnv]
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) (tc-binding-unsafe-id? root name-id)]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id)]
-    [(TcTypeEnv.Bind key _ rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) (tc-binding-unsafe-id? root name-id)]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (tc-hygiene-global-binding-unsafe-scan root rest-env name-id)]
+    [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
-        (tc-binding-unsafe-id? (box-get rest) name-id)
-        (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id))]))
+        (tc-binding-unsafe-id? rest-env name-id)
+        (tc-hygiene-global-binding-unsafe-scan root rest-env name-id))]))
 
 (define (tc-hygiene-global-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (tc-hygiene-global-binding-unsafe-scan env env name-id))
@@ -13057,6 +13145,70 @@
         [(ResultTcUnit.Ok) true]
         [_ false]))))
 
+(define (tc-type-env-walker-api-smoke?) : bool
+  (let
+    [lookup-base : TcTypeEnv
+      (tc-env-with-cache (tc-bind (tc-empty-env) "global" (AstType.String)))]
+    [lookup-local : TcTypeEnv (tc-bind lookup-base "local" (AstType.I64))]
+    [lookup-deep : TcTypeEnv
+      (tc-type-env-bind-many lookup-local (+ (tc-local-cache-threshold) 4))]
+    [marker-base : TcTypeEnv
+      (tc-env-with-cache (tc-push-region (tc-empty-env) "outer"))]
+    [marker-local : TcTypeEnv (tc-push-region marker-base "inner")]
+    [marker-deep : TcTypeEnv
+      (tc-type-env-bind-many
+        marker-local
+        (+ (* (tc-local-cache-threshold) 2) 8))]
+    [unsafe-env : TcTypeEnv
+      (tc-bind-unsafe (tc-empty-env) "unsafe-value" (AstType.I64))]
+    [hygiene-top : TcTypeEnv (tc-bind (tc-empty-env) "visible" (AstType.I64))]
+    [hygiene-env : TcTypeEnv
+      (tc-bind (tc-hygiene-global-env hygiene-top) "visible" (AstType.Bool))]
+    (and
+      (match (tc-type-env-lookup-step lookup-local (tc-name-id "local"))
+        [(TcTypeEnvLookupStep.Found (AstType.I64)) true]
+        [_ false])
+      (match (tc-type-env-lookup-step lookup-local (tc-name-id "global"))
+        [(TcTypeEnvLookupStep.Miss rest-env)
+          (match (tc-type-env-lookup-step rest-env (tc-name-id "global"))
+            [(TcTypeEnvLookupStep.Found (AstType.String)) true]
+            [_ false])]
+        [_ false])
+      (match (tc-type-env-marker-step (tc-type-env-marker-start marker-local))
+        [(TcTypeEnvMarkerStep.Bind key (AstType.Var region) _)
+          (and
+            (= key (tc-region-marker-id))
+            (string.eq (intern-str region) "inner"))]
+        [_ false])
+      (match (tc-type-env-unsafe-lookup-step
+        unsafe-env
+        (tc-name-id "unsafe-value"))
+        [(TcTypeEnvUnsafeLookupStep.Found (AstType.I64) unsafe) unsafe]
+        [_ false])
+      (match (tc-lookup lookup-deep "global")
+        [(ResultTcType.Ok (AstType.String)) true]
+        [_ false])
+      (match (tc-lookup lookup-deep "local")
+        [(ResultTcType.Ok (AstType.I64)) true]
+        [_ false])
+      (match (tc-active-region marker-deep)
+        [(TcMaybeString.Some region) (string.eq region "inner")]
+        [_ false])
+      (tc-lifetime-visible? marker-deep "inner")
+      (not (tc-lifetime-visible? marker-deep "outer"))
+      (match (tc-lookup hygiene-env "visible")
+        [(ResultTcType.Ok (AstType.Bool)) true]
+        [_ false])
+      (match (tc-lookup-hygiene-global hygiene-env "visible")
+        [(ResultTcType.Ok (AstType.I64)) true]
+        [_ false]))))
+
+(test
+  tc-type-env-walker-api
+  (if (tc-type-env-walker-api-smoke?)
+    unit
+    (io.panic "typecheck: env walker api smoke failed")))
+
 (define (tc-type-env-local-cache-smoke?) : bool
   (and
     (tc-type-env-local-cache-behavior-smoke?)
@@ -13066,7 +13218,8 @@
     (tc-type-env-local-cache-depth-cap-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)
     (tc-type-env-local-cache-c-abi-fnptr-smoke?)
-    (tc-type-env-local-cache-lambda-capture-smoke?)))
+    (tc-type-env-local-cache-lambda-capture-smoke?)
+    (tc-type-env-walker-api-smoke?)))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let

@@ -48769,7 +48769,8 @@
                 [(TcMaybeString.Some base)
                   (ResultMacroParsedDecls.Ok
                     (macro-vf-decls elem-ty vec-name base))]
-                [(TcMaybeString.No) (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
+                [(TcMaybeString.No)
+                  (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
             [(TcMaybeString.No) (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-vector-family-fast-arity-error call-expr)))

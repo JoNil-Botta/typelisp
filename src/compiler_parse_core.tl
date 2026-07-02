@@ -31,8 +31,16 @@
   (Ok AstTypeList)
   (Err String))
 
+(defenum ResultAstTypeListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstLifetimeList
   (Ok AstLifetimeList)
+  (Err String))
+
+(defenum ResultAstLifetimeListBuild
+  (Ok)
   (Err String))
 
 (defenum ResultAstParam
@@ -1454,19 +1462,30 @@
 (define (parse-ast-type-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : Sexpr]) : ResultAstTypeList
+  [s : Sexpr]
+  [out : (&mut out AstTypeList)]) : ResultAstTypeListBuild
   (match s
-    [(Sexpr.Nil) (ResultAstTypeList.Ok AstTypeList.Nil)]
+    [(Sexpr.Nil) (ResultAstTypeListBuild.Ok)]
     [(Sexpr.Cons head tail)
       (match (parse-ast-type dispatch pools (box-get head))
         [(ResultAstType.Ok parsed-head)
-          (match (parse-ast-type-list dispatch pools (box-get tail))
-            [(ResultAstTypeList.Ok parsed-tail)
-              (ResultAstTypeList.Ok
-                (ast-type-cons-with-pools pools parsed-head parsed-tail))]
-            [(ResultAstTypeList.Err message) (ResultAstTypeList.Err message)])]
-        [(ResultAstType.Err message) (ResultAstTypeList.Err message)])]
-    [_ (ResultAstTypeList.Err "parse: malformed type list")]))
+          (begin
+            (ast-type-list-push
+              out
+              (ast-node-pool-context-type-push pools parsed-head))
+            (parse-ast-type-list dispatch pools (box-get tail) out))]
+        [(ResultAstType.Err message) (ResultAstTypeListBuild.Err message)])]
+    [_ (ResultAstTypeListBuild.Err "parse: malformed type list")]))
+
+(define (parse-ast-type-list-result
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]) : ResultAstTypeList
+  (let
+    [out : AstTypeList (ast-type-list-new)]
+    (match (parse-ast-type-list dispatch pools s (&mut out))
+      [(ResultAstTypeListBuild.Ok) (ResultAstTypeList.Ok out)]
+      [(ResultAstTypeListBuild.Err message) (ResultAstTypeList.Err message)])))
 
 (define (parse-ast-lifetime-name?
   [dispatch : sym_i64_env.SymI64Env]
@@ -1486,26 +1505,38 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
-  [message : String]) : ResultAstLifetimeList
+  [message : String]
+  [out : (&mut out AstLifetimeList)]) : ResultAstLifetimeListBuild
   (match s
-    [(Sexpr.Nil) (ResultAstLifetimeList.Ok AstLifetimeList.Nil)]
+    [(Sexpr.Nil) (ResultAstLifetimeListBuild.Ok)]
     [(Sexpr.Cons head tail)
       (match (box-get head)
         [(Sexpr.Sym name)
           (if (parse-ast-lifetime-name? dispatch name)
-            (match (parse-ast-lifetime-list
-              dispatch
-              pools
-              (box-get tail)
-              message)
-              [(ResultAstLifetimeList.Ok parsed-tail)
-                (ResultAstLifetimeList.Ok (ast-lifetime-cons name parsed-tail))]
-              [(ResultAstLifetimeList.Err parse-message)
-                (ResultAstLifetimeList.Err parse-message)])
-            (ResultAstLifetimeList.Err message))]
-        [_ (ResultAstLifetimeList.Err message)])]
-    [(Sexpr.Cons _ _) (ResultAstLifetimeList.Err message)]
-    [_ (ResultAstLifetimeList.Err message)]))
+            (begin
+              (ast-lifetime-list-push out name)
+              (parse-ast-lifetime-list
+                dispatch
+                pools
+                (box-get tail)
+                message
+                out))
+            (ResultAstLifetimeListBuild.Err message))]
+        [_ (ResultAstLifetimeListBuild.Err message)])]
+    [(Sexpr.Cons _ _) (ResultAstLifetimeListBuild.Err message)]
+    [_ (ResultAstLifetimeListBuild.Err message)]))
+
+(define (parse-ast-lifetime-list-result
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [message : String]) : ResultAstLifetimeList
+  (let
+    [out : AstLifetimeList (ast-lifetime-list-new)]
+    (match (parse-ast-lifetime-list dispatch pools s message (&mut out))
+      [(ResultAstLifetimeListBuild.Ok) (ResultAstLifetimeList.Ok out)]
+      [(ResultAstLifetimeListBuild.Err parse-message)
+        (ResultAstLifetimeList.Err parse-message)])))
 
 (define (parse-ast-lifetime-list-nonempty
   [dispatch : sym_i64_env.SymI64Env]
@@ -1514,7 +1545,7 @@
   [message : String]) : ResultAstLifetimeList
   (match s
     [(Sexpr.Nil) (ResultAstLifetimeList.Err message)]
-    [_ (parse-ast-lifetime-list dispatch pools s message)]))
+    [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
 
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
@@ -1526,7 +1557,7 @@
         [(Sexpr.Nil)
           (match (parse-ast-type dispatch pools (box-get arg))
             [(ResultAstType.Ok parsed-ret)
-              (ResultAstFuncTypeParts.Ok AstTypeList.Nil parsed-ret)]
+              (ResultAstFuncTypeParts.Ok (ast-type-list-new) parsed-ret)]
             [(ResultAstType.Err message) (ResultAstFuncTypeParts.Err message)])]
         [_
           (match (parse-ast-type dispatch pools (box-get arg))
@@ -1560,7 +1591,7 @@
     [(Sexpr.Cons name-node lifetimes-box)
       (match (box-get name-node)
         [(Sexpr.Str name)
-          (match (parse-ast-lifetime-list
+          (match (parse-ast-lifetime-list-result
             dispatch
             pools
             (box-get lifetimes-box)
@@ -1568,12 +1599,12 @@
             [(ResultAstLifetimeList.Ok lifetimes)
               (ResultAstType.Ok
                 (if is-struct
-                  (match lifetimes
-                    [(AstLifetimeList.Nil) (AstType.Struct (intern name))]
-                    [_ (ast-ty-struct-args (intern name) lifetimes)])
-                  (match lifetimes
-                    [(AstLifetimeList.Nil) (AstType.Enum (intern name))]
-                    [_ (ast-ty-enum-args (intern name) lifetimes)])))]
+                  (if (ast-lifetime-list-empty? (& lifetimes))
+                    (AstType.Struct (intern name))
+                    (ast-ty-struct-args (intern name) lifetimes))
+                  (if (ast-lifetime-list-empty? (& lifetimes))
+                    (AstType.Enum (intern name))
+                    (ast-ty-enum-args (intern name) lifetimes))))]
             [(ResultAstLifetimeList.Err message) (ResultAstType.Err message)])]
         [_ (ResultAstType.Err "parse: malformed internal resolved type")])]
     [_ (ResultAstType.Err "parse: malformed internal resolved type")]))
@@ -1670,7 +1701,7 @@
                   [(ResultAstFuncTypeParts.Err message)
                     (ResultAstType.Err message)])]
               [(= tag (compiler-parse-tag-ty-tuple))
-                (match (parse-ast-type-list dispatch pools rest)
+                (match (parse-ast-type-list-result dispatch pools rest)
                   [(ResultAstTypeList.Ok elems)
                     (ResultAstType.Ok (ast-ty-tuple elems))]
                   [(ResultAstTypeList.Err message) (ResultAstType.Err message)])]
@@ -2447,7 +2478,7 @@
   (match s
     [(Sexpr.Nil)
       (ResultAstVariantPayloadParts.Ok
-        AstTypeList.Nil
+        (ast-type-list-new)
         (ast-variant-payload-cleanup-list-new))]
     [(Sexpr.Cons ty-node rest)
       (let
@@ -2461,7 +2492,10 @@
               (match rest-form
                 [(Sexpr.Nil)
                   (ResultAstVariantPayloadParts.Ok
-                    (ast-type-cons-with-pools pools parsed-ty AstTypeList.Nil)
+                    (ast-type-cons-with-pools
+                      pools
+                      parsed-ty
+                      (ast-type-list-new))
                     (ast-variant-payload-cleanup-cons
                       (AstVariantPayloadCleanup.No)
                       (ast-variant-payload-cleanup-list-new)))]
@@ -5910,7 +5944,7 @@
   [items : SpannedSexpr]) : ResultAstExternHeader
   (match items
     [(SpannedSexpr.Nil _)
-      (ResultAstExternHeader.Ok "" AstTypeList.Nil (AstExternAbi.C))]
+      (ResultAstExternHeader.Ok "" (ast-type-list-new) (AstExternAbi.C))]
     [(SpannedSexpr.Cons item tail _)
       (let
         [item : SpannedSexpr (sp-node-get item)]
@@ -5932,7 +5966,7 @@
                   [(SpannedSexpr.Nil _)
                     (ResultAstExternHeader.Ok
                       ""
-                      AstTypeList.Nil
+                      (ast-type-list-new)
                       (AstExternAbi.CVarargsOpen))]
                   [_
                     (ResultAstExternHeader.Err
@@ -5942,7 +5976,7 @@
                   [(SpannedSexpr.Nil _)
                     (ResultAstExternHeader.Ok
                       ""
-                      AstTypeList.Nil
+                      (ast-type-list-new)
                       (AstExternAbi.CVarargsTyped tail-ty))]
                   [_
                     (ResultAstExternHeader.Err
@@ -6560,7 +6594,7 @@
             dispatch
             pools
             (sp-node-get variants)
-            AstLifetimeList.Nil
+            (ast-lifetime-list-new)
             (AstEnumCleanup.No)
             false
             false
@@ -6568,17 +6602,15 @@
             [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
               (if (ast-variant-def-list-empty? (& parsed-variants))
                 (ResultAstDecl.Err "parse: defenum needs at least one variant")
-                (match lifetimes
-                  [(AstLifetimeList.Nil)
-                    (ResultAstDecl.Ok
-                      (ast-decl-def-enum name cleanup parsed-variants))]
-                  [_
-                    (ResultAstDecl.Ok
-                      (ast-decl-def-enum-lifetimes
-                        name
-                        lifetimes
-                        cleanup
-                        parsed-variants))]))]
+                (if (ast-lifetime-list-empty? (& lifetimes))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-enum name cleanup parsed-variants))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-enum-lifetimes
+                      name
+                      lifetimes
+                      cleanup
+                      parsed-variants))))]
             [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defenum")])]
     [_ (ResultAstDecl.Err "parse: malformed defenum")]))
@@ -6595,7 +6627,7 @@
             dispatch
             pools
             (sp-node-get fields)
-            AstLifetimeList.Nil
+            (ast-lifetime-list-new)
             (AstStructRepr.Default)
             (AstStructCleanup.No)
             (ast-field-def-list-new)
@@ -6606,18 +6638,16 @@
             [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
               (if (ast-field-def-list-empty? (& parsed-fields))
                 (ResultAstDecl.Err "parse: defstruct needs at least one field")
-                (match lifetimes
-                  [(AstLifetimeList.Nil)
-                    (ResultAstDecl.Ok
-                      (ast-decl-def-struct name repr cleanup parsed-fields))]
-                  [_
-                    (ResultAstDecl.Ok
-                      (ast-decl-def-struct-lifetimes
-                        name
-                        lifetimes
-                        repr
-                        cleanup
-                        parsed-fields))]))]
+                (if (ast-lifetime-list-empty? (& lifetimes))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-struct name repr cleanup parsed-fields))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-struct-lifetimes
+                      name
+                      lifetimes
+                      repr
+                      cleanup
+                      parsed-fields))))]
             [(ResultAstStructDefParts.Err message) (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
     [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
@@ -8525,10 +8555,7 @@
       (+ 1 (compiler-parse-param-list-count (box-get rest)))]))
 
 (define (compiler-parse-type-list-count [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) 0]
-    [(AstTypeList.Cons _ rest)
-      (+ 1 (compiler-parse-type-list-count (box-get rest)))]))
+  (ast-type-list-len (& types)))
 
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
@@ -8551,19 +8578,18 @@
                     (= name (intern "raw-map"))
                     (match ty
                       [(AstType.Func args ret)
-                        (match (box-get args)
-                          [(AstTypeList.Cons first tail)
-                            (let
-                              [first : AstType (ty-node-get first)]
-                              [tail : AstTypeList (box-get tail)]
-                              (and
-                                (compiler-parse-type-ptr-i64? first)
-                                (match tail
-                                  [(AstTypeList.Nil)
-                                    (compiler-parse-type-mut-ptr-ptr-u8?
-                                      (ty-node-get ret))]
-                                  [_ false])))]
-                          [_ false])]
+                        (let
+                          [args-list : AstTypeList (box-get args)]
+                          (and
+                            (= (ast-type-list-len (& args-list)) 1)
+                            (compiler-parse-type-ptr-i64?
+                              (ty-node-get
+                                (ast-type-list-get
+                                  (& args-list)
+                                  0
+                                  (ast-type-id-fallback))))
+                            (compiler-parse-type-mut-ptr-ptr-u8?
+                              (ty-node-get ret))))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -8617,22 +8643,20 @@
                       (ast-extern-metadata-link-inputs metadata))
                     (match ty
                       [(AstType.Func args ret)
-                        (match (box-get args)
-                          [(AstTypeList.Cons first tail)
-                            (let
-                              [first : AstType (ty-node-get first)]
-                              [tail : AstTypeList (box-get tail)]
-                              (and
-                                (match first
-                                  [(AstType.I64) true]
-                                  [_ false])
-                                (match tail
-                                  [(AstTypeList.Nil)
-                                    (match (ty-node-get ret)
-                                      [(AstType.I64) true]
-                                      [_ false])]
-                                  [_ false])))]
-                          [_ false])]
+                        (let
+                          [args-list : AstTypeList (box-get args)]
+                          (and
+                            (= (ast-type-list-len (& args-list)) 1)
+                            (match (ty-node-get
+                              (ast-type-list-get
+                                (& args-list)
+                                0
+                                (ast-type-id-fallback)))
+                              [(AstType.I64) true]
+                              [_ false])
+                            (match (ty-node-get ret)
+                              [(AstType.I64) true]
+                              [_ false])))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -8656,40 +8680,23 @@
           [_ false])
         (match ty
           [(AstType.Func args ret)
-            (and
-              (= (compiler-parse-type-list-count (box-get args)) 3)
-              (match (ty-node-get ret)
-                [(AstType.I32) true]
-                [_ false])
-              (match (box-get args)
-                [(AstTypeList.Cons first rest0)
-                  (let
-                    [first : AstType (ty-node-get first)]
-                    [rest0 : AstTypeList (box-get rest0)]
-                    (and
-                      (compiler-parse-type-mut-ptr-u8? first)
-                      (match rest0
-                        [(AstTypeList.Cons second rest1)
-                          (let
-                            [second : AstType (ty-node-get second)]
-                            [rest1 : AstTypeList (box-get rest1)]
-                            (and
-                              (match second
-                                [(AstType.I64) true]
-                                [_ false])
-                              (match rest1
-                                [(AstTypeList.Cons third rest2)
-                                  (let
-                                    [third : AstType (ty-node-get third)]
-                                    [rest2 : AstTypeList (box-get rest2)]
-                                    (and
-                                      (compiler-parse-type-ptr-u8? third)
-                                      (match rest2
-                                        [(AstTypeList.Nil) true]
-                                        [_ false])))]
-                                [_ false])))]
-                        [_ false])))]
-                [_ false]))]
+            (let
+              [args-list : AstTypeList (box-get args)]
+              (and
+                (= (compiler-parse-type-list-count args-list) 3)
+                (match (ty-node-get ret)
+                  [(AstType.I32) true]
+                  [_ false])
+                (compiler-parse-type-mut-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 0 (ast-type-id-fallback))))
+                (match (ty-node-get
+                  (ast-type-list-get (& args-list) 1 (ast-type-id-fallback)))
+                  [(AstType.I64) true]
+                  [_ false])
+                (compiler-parse-type-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 2 (ast-type-id-fallback))))))]
           [_ false]))]
     [_ false]))
 
@@ -8703,22 +8710,16 @@
           [_ false])
         (match ty
           [(AstType.Func args ret)
-            (and
-              (= (compiler-parse-type-list-count (box-get args)) 1)
-              (match (ty-node-get ret)
-                [(AstType.I32) true]
-                [_ false])
-              (match (box-get args)
-                [(AstTypeList.Cons first rest)
-                  (let
-                    [first : AstType (ty-node-get first)]
-                    [rest : AstTypeList (box-get rest)]
-                    (and
-                      (compiler-parse-type-ptr-u8? first)
-                      (match rest
-                        [(AstTypeList.Nil) true]
-                        [_ false])))]
-                [_ false]))]
+            (let
+              [args-list : AstTypeList (box-get args)]
+              (and
+                (= (compiler-parse-type-list-count args-list) 1)
+                (match (ty-node-get ret)
+                  [(AstType.I32) true]
+                  [_ false])
+                (compiler-parse-type-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 0 (ast-type-id-fallback))))))]
           [_ false]))]
     [_ false]))
 
@@ -8728,25 +8729,12 @@
     [_ false]))
 
 (define (compiler-parse-two-i64-types? [args : AstTypeList]) : bool
-  (match args
-    [(AstTypeList.Cons first rest0)
-      (let
-        [first : AstType (ty-node-get first)]
-        [rest0 : AstTypeList (box-get rest0)]
-        (and
-          (compiler-parse-i64-type? first)
-          (match rest0
-            [(AstTypeList.Cons second rest1)
-              (let
-                [second : AstType (ty-node-get second)]
-                [rest1 : AstTypeList (box-get rest1)]
-                (and
-                  (compiler-parse-i64-type? second)
-                  (match rest1
-                    [(AstTypeList.Nil) true]
-                    [_ false])))]
-            [_ false])))]
-    [_ false]))
+  (and
+    (= (ast-type-list-len (& args)) 2)
+    (compiler-parse-i64-type?
+      (ty-node-get (ast-type-list-get (& args) 0 (ast-type-id-fallback))))
+    (compiler-parse-i64-type?
+      (ty-node-get (ast-type-list-get (& args) 1 (ast-type-id-fallback))))))
 
 (define (compiler-parse-extern-head-fixed-decl-ok? [decl : AstDecl]) : bool
   (match decl

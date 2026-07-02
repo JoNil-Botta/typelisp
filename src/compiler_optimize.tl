@@ -3835,41 +3835,41 @@
         [(CompilerIrValue.Unit) true]
         [_ false])]))
 
+(define (opt-type-list-eq-at
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len a))
+    true
+    (and
+      (opt-type-eq
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get a index (ast-type-id-fallback)))
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get b index (ast-type-id-fallback))))
+      (opt-type-list-eq-at a b (+ index 1)))))
+
 (define (opt-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
-  (match a
-    [(AstTypeList.Nil)
-      (match b
-        [(AstTypeList.Nil) true]
-        [_ false])]
-    [(AstTypeList.Cons ah at)
-      (let
-        [ah : AstType (ast-node-pool-reader-type-get ah)]
-        [at : AstTypeList (box-get at)]
-        (match b
-          [(AstTypeList.Cons bh bt)
-            (let
-              [bh : AstType (ast-node-pool-reader-type-get bh)]
-              [bt : AstTypeList (box-get bt)]
-              (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
-          [_ false]))]))
+  (and
+    (= (ast-type-list-len (& a)) (ast-type-list-len (& b)))
+    (opt-type-list-eq-at (& a) (& b) 0)))
+
+(define (opt-lifetime-list-eq-at
+  [a : (& a AstLifetimeList)]
+  [b : (& b AstLifetimeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-lifetime-list-len a))
+    true
+    (and
+      (string.eq
+        (ast-lifetime-list-get a index (ast-lifetime-fallback))
+        (ast-lifetime-list-get b index (ast-lifetime-fallback)))
+      (opt-lifetime-list-eq-at a b (+ index 1)))))
 
 (define (opt-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
-  (match a
-    [(AstLifetimeList.Nil)
-      (match b
-        [(AstLifetimeList.Nil) true]
-        [_ false])]
-    [(AstLifetimeList.Cons a-head a-rest)
-      (let
-        [a-rest : AstLifetimeList (box-get a-rest)]
-        (match b
-          [(AstLifetimeList.Cons b-head b-rest)
-            (let
-              [b-rest : AstLifetimeList (box-get b-rest)]
-              (and
-                (string.eq a-head b-head)
-                (opt-lifetime-list-eq a-rest b-rest)))]
-          [_ false]))]))
+  (and
+    (= (ast-lifetime-list-len (& a)) (ast-lifetime-list-len (& b)))
+    (opt-lifetime-list-eq-at (& a) (& b) 0)))
 
 (define (opt-type-eq [a : AstType] [b : AstType]) : bool
   (match a
@@ -4103,25 +4103,36 @@
           (hash.combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
     [(OptExprKey.XgetbvKey index) (hash.combine 4 (opt-value-hash index))]))
 
-(define (opt-type-list-hash [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) (hash.i64 0)]
-    [(AstTypeList.Cons head rest)
+(define (opt-type-list-hash-at [types : (& types AstTypeList)] [index : i64]) : i64
+  (if (>= index (ast-type-list-len types))
+    (hash.i64 0)
+    (hash.combine
+      1
       (hash.combine
-        1
-        (hash.combine
-          (opt-type-hash (ast-node-pool-reader-type-get head))
-          (opt-type-list-hash (box-get rest))))]))
+        (opt-type-hash
+          (ast-node-pool-reader-type-get
+            (ast-type-list-get types index (ast-type-id-fallback))))
+        (opt-type-list-hash-at types (+ index 1))))))
 
-(define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
-  (match lifetimes
-    [(AstLifetimeList.Nil) (hash.i64 0)]
-    [(AstLifetimeList.Cons head rest)
+(define (opt-type-list-hash [types : AstTypeList]) : i64
+  (opt-type-list-hash-at (& types) 0))
+
+(define (opt-lifetime-list-hash-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [index : i64]) : i64
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    (hash.i64 0)
+    (let
+      [head : String
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))]
       (hash.combine
         1
         (hash.combine
           (hash.string-key (& head))
-          (opt-lifetime-list-hash (box-get rest))))]))
+          (opt-lifetime-list-hash-at lifetimes (+ index 1)))))))
+
+(define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
+  (opt-lifetime-list-hash-at (& lifetimes) 0))
 
 (define (opt-type-hash [ty : AstType]) : i64
   (match ty

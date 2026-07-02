@@ -9241,7 +9241,7 @@
       (compiler-backend-call-arg-space
         target
         (CompilerIrCallArgs.Nil)
-        AstTypeList.Nil
+        (ast-type-list-new)
         false
         program-index)]
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
@@ -10981,35 +10981,59 @@
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
   (match params
-    [(CompilerIrParamList.Nil) AstTypeList.Nil]
+    [(CompilerIrParamList.Nil) (ast-type-list-new)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
           (ast-type-cons ty (compiler-backend-param-type-list (box-get rest)))])]))
 
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) 0]
-    [(AstTypeList.Cons _ rest)
-      (let
-        [rest : AstTypeList (box-get rest)]
-        (+ 1 (compiler-backend-type-list-count rest)))]))
+  (ast-type-list-len (& types)))
+
+(define (compiler-backend-type-list-slice-into
+  [types : (& types AstTypeList)]
+  [start : i64]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len types))
+    unit
+    (begin
+      (if (>= index start)
+        (ast-type-list-push
+          out
+          (ast-type-list-get types index (ast-type-id-fallback)))
+        unit)
+      (compiler-backend-type-list-slice-into types start out (+ index 1)))))
+
+(define (compiler-backend-type-list-slice [types : AstTypeList] [start : i64]) : AstTypeList
+  (let
+    [len : i64 (ast-type-list-len (& types))]
+    [out : AstTypeList
+      (ast-type-list-with-capacity
+        (if (< start len)
+          (- len start)
+          0))]
+    (begin
+      (compiler-backend-type-list-slice-into (& types) start (&mut out) 0)
+      out)))
 
 (define (compiler-backend-param-list-from-types
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
-  (match types
-    [(AstTypeList.Nil) CompilerIrParamList.Nil]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (ast-node-pool-reader-type-get ty)]
-        [rest : AstTypeList (box-get rest)]
-        (compiler-ir-param-cons
-          (CompilerIrParam.Param
-            (string.append "arg" (string.int->string idx))
-            ty
-            idx)
-          (compiler-backend-param-list-from-types rest (+ idx 1))))]))
+  (compiler-backend-param-list-from-types-at (& types) idx))
+
+(define (compiler-backend-param-list-from-types-at
+  [types : (& types AstTypeList)]
+  [idx : i64]) : CompilerIrParamList
+  (if (>= idx (ast-type-list-len types))
+    CompilerIrParamList.Nil
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param
+        (string.append "arg" (string.int->string idx))
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types idx (ast-type-id-fallback)))
+        idx)
+      (compiler-backend-param-list-from-types-at types (+ idx 1)))))
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
@@ -11022,7 +11046,7 @@
   [functions : CompilerIrFunctionList]
   [name : String]) : AstTypeList
   (match functions
-    [(CompilerIrFunctionList.Nil) AstTypeList.Nil]
+    [(CompilerIrFunctionList.Nil) (ast-type-list-new)]
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname params _ _ _)
@@ -11038,14 +11062,14 @@
   [externs : CompilerIrExternList]
   [name : String]) : AstTypeList
   (match externs
-    [(CompilerIrExternList.Nil) AstTypeList.Nil]
+    [(CompilerIrExternList.Nil) (ast-type-list-new)]
     [(CompilerIrExternList.Cons item rest)
       (match item
         [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (if (string.eq extern-name name)
             (match ty
               [(AstType.Func args _) (box-get args)]
-              [_ AstTypeList.Nil])
+              [_ (ast-type-list-new)])
             (compiler-backend-extern-param-types (box-get rest) name))])]))
 
 (define (compiler-backend-function-signature
@@ -11897,20 +11921,20 @@
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
       [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-        (ast-type-cons (AstType.Char) AstTypeList.Nil)]
+        (ast-type-cons (AstType.Char) (ast-type-list-new))]
       [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-        (ast-type-cons (AstType.F64) AstTypeList.Nil)]
+        (ast-type-cons (AstType.F64) (ast-type-list-new))]
       [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
         (ast-type-cons
           (ast-ty-mut-ptr (AstType.U8))
           (ast-type-cons
             (AstType.I64)
-            (ast-type-cons (AstType.U64) AstTypeList.Nil)))]
+            (ast-type-cons (AstType.U64) (ast-type-list-new))))]
       [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
         (ast-type-cons
           (ast-ty-mut-ptr (AstType.U8))
-          (ast-type-cons (AstType.I64) AstTypeList.Nil))]
-      [else AstTypeList.Nil])))
+          (ast-type-cons (AstType.I64) (ast-type-list-new)))]
+      [else (ast-type-list-new)])))
 
 (define (compiler-backend-call-param-types
   [name : String]
@@ -11946,22 +11970,33 @@
   [types : AstTypeList]
   [float-idx : i64]
   [count : i64]) : i64
-  (match types
-    [(AstTypeList.Nil) count]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (ast-node-pool-reader-type-get ty)]
-        [rest : AstTypeList (box-get rest)]
-        [is-float : bool (compiler-backend-float-type? ty)]
-        [next-float : i64
-          (if is-float
-            (+ float-idx 1)
-            float-idx)]
-        [next-count : i64
-          (if (and is-float (< float-idx 8))
-            (+ count 1)
-            count)]
-        (compiler-backend-varargs-linux-vector-count rest next-float next-count))]))
+  (compiler-backend-varargs-linux-vector-count-at (& types) 0 float-idx count))
+
+(define (compiler-backend-varargs-linux-vector-count-at
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [float-idx : i64]
+  [count : i64]) : i64
+  (if (>= index (ast-type-list-len types))
+    count
+    (let
+      [ty : AstType
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      [is-float : bool (compiler-backend-float-type? ty)]
+      [next-float : i64
+        (if is-float
+          (+ float-idx 1)
+          float-idx)]
+      [next-count : i64
+        (if (and is-float (< float-idx 8))
+          (+ count 1)
+          count)]
+      (compiler-backend-varargs-linux-vector-count-at
+        types
+        (+ index 1)
+        next-float
+        next-count))))
 
 (define (compiler-backend-windows-vararg-int-reg [position : i64]) : String
   (cond
@@ -11975,29 +12010,35 @@
   [types : AstTypeList]
   [fixed-count : i64]
   [position : i64]) : String
-  (match types
-    [(AstTypeList.Nil) ""]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (ast-node-pool-reader-type-get ty)]
-        [rest : AstTypeList (box-get rest)]
-        [tail : String
-          (compiler-backend-windows-vararg-dup-asm
-            rest
-            fixed-count
-            (+ position 1))]
-        [reg : String (compiler-backend-windows-vararg-int-reg position)]
-        (if (and
-          (>= position fixed-count)
-          (< position 4)
-          (compiler-backend-float-type? ty))
-          (str_cat.str-cat
-            "    movq %xmm"
-            (string.int->string position)
-            ", "
-            reg
-            (string.append "\n" tail))
-          tail))]))
+  (compiler-backend-windows-vararg-dup-asm-at (& types) fixed-count position))
+
+(define (compiler-backend-windows-vararg-dup-asm-at
+  [types : (& types AstTypeList)]
+  [fixed-count : i64]
+  [position : i64]) : String
+  (if (>= position (ast-type-list-len types))
+    ""
+    (let
+      [ty : AstType
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types position (ast-type-id-fallback)))]
+      [tail : String
+        (compiler-backend-windows-vararg-dup-asm-at
+          types
+          fixed-count
+          (+ position 1))]
+      [reg : String (compiler-backend-windows-vararg-int-reg position)]
+      (if (and
+        (>= position fixed-count)
+        (< position 4)
+        (compiler-backend-float-type? ty))
+        (str_cat.str-cat
+          "    movq %xmm"
+          (string.int->string position)
+          ", "
+          reg
+          (string.append "\n" tail))
+        tail))))
 
 (define (compiler-backend-varargs-pre-call
   [target : CompilerBackendTarget]
@@ -12037,6 +12078,56 @@
     [(CompilerRegMaybeType.Some ty) ty]
     [(CompilerRegMaybeType.No) (AstType.I64)]))
 
+(define (compiler-backend-call-actual-param-type-for-index
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [fixed-types : AstTypeList]
+  [fixed-count : i64]
+  [index : i64]) : AstType
+  (if (< index fixed-count)
+    (if (< index (ast-type-list-len (& fixed-types)))
+      (ast-node-pool-reader-type-get
+        (ast-type-list-get (& fixed-types) index (ast-type-id-fallback)))
+      (compiler-backend-call-actual-type
+        types
+        global-types
+        (compiler-backend-call-arg-at args index)))
+    (compiler-backend-call-actual-type
+      types
+      global-types
+      (compiler-backend-call-arg-at args index))))
+
+(define (compiler-backend-call-actual-param-types-fill
+  [out : (&mut out AstTypeList)]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [fixed-types : AstTypeList]
+  [fixed-count : i64]
+  [index : i64]) : unit
+  (if (>= index (compiler-backend-call-args-count args))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-node-pool-reader-type-push
+          (compiler-backend-call-actual-param-type-for-index
+            types
+            global-types
+            args
+            fixed-types
+            fixed-count
+            index)))
+      (compiler-backend-call-actual-param-types-fill
+        out
+        types
+        global-types
+        args
+        fixed-types
+        fixed-count
+        (+ index 1)))))
+
 (define (compiler-backend-call-actual-param-types-from
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -12044,57 +12135,142 @@
   [fixed-types : AstTypeList]
   [fixed-count : i64]
   [index : i64]) : AstTypeList
-  (if (>= index (compiler-backend-call-args-count args))
-    AstTypeList.Nil
-    (if (< index fixed-count)
-      (match fixed-types
-        [(AstTypeList.Cons ty rest)
-          (ast-type-cons
-            (ast-node-pool-reader-type-get ty)
-            (compiler-backend-call-actual-param-types-from
-              types
-              global-types
-              args
-              (box-get rest)
-              fixed-count
-              (+ index 1)))]
-        [(AstTypeList.Nil)
-          (ast-type-cons
-            (compiler-backend-call-actual-type
-              types
-              global-types
-              (compiler-backend-call-arg-at args index))
-            (compiler-backend-call-actual-param-types-from
-              types
-              global-types
-              args
-              AstTypeList.Nil
-              fixed-count
-              (+ index 1)))])
-      (ast-type-cons
-        (compiler-backend-call-actual-type
-          types
-          global-types
-          (compiler-backend-call-arg-at args index))
-        (compiler-backend-call-actual-param-types-from
-          types
-          global-types
-          args
-          fixed-types
-          fixed-count
-          (+ index 1))))))
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (compiler-backend-call-args-count args))]
+    (begin
+      (compiler-backend-call-actual-param-types-fill
+        (&mut out)
+        types
+        global-types
+        args
+        fixed-types
+        fixed-count
+        index)
+      out)))
 
-(define (compiler-backend-call-actual-param-types
+(define (compiler-backend-call-c-abi-param-types-fill
+  [out : (&mut out AstTypeList)]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
-  [args : CompilerIrCallArgs]) : AstTypeList
-  (compiler-backend-call-actual-param-types-from
-    types
-    global-types
-    args
-    AstTypeList.Nil
-    0
-    0))
+  [args : CompilerIrCallArgs]
+  [declared-types : AstTypeList]
+  [decl-index : i64]
+  [arg-index : i64]
+  [program-index : CompilerBackendProgramIndex]) : unit
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    unit
+    (if (>= decl-index (ast-type-list-len (& declared-types)))
+      (compiler-backend-call-actual-param-types-fill
+        out
+        types
+        global-types
+        args
+        (ast-type-list-new)
+        0
+        arg-index)
+      (let
+        [declared : i64
+          (ast-type-list-get
+            (& declared-types)
+            decl-index
+            (ast-type-id-fallback))]
+        [declared-ty : AstType (ast-node-pool-reader-type-get declared)]
+        [memory-size : i64
+          (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
+        [aggregate? : bool
+          (not
+            (string.eq (compiler-backend-aggregate-type-name declared-ty) ""))]
+        (if (and (> memory-size 0) aggregate?)
+          (begin
+            (ast-type-list-push
+              out
+              (ast-node-pool-reader-type-push declared-ty))
+            (ast-type-list-push
+              out
+              (ast-node-pool-reader-type-push (AstType.I64)))
+            (ast-type-list-push
+              out
+              (ast-node-pool-reader-type-push (AstType.Unit)))
+            (compiler-backend-call-c-abi-param-types-fill
+              out
+              types
+              global-types
+              args
+              declared-types
+              (+ decl-index 1)
+              (+ arg-index 3)
+              program-index))
+          (if (and
+            aggregate?
+            (compiler-backend-group-type? program-index declared-ty)
+            (< (+ arg-index 1) (compiler-backend-call-args-count args)))
+            (begin
+              (ast-type-list-push
+                out
+                (ast-node-pool-reader-type-push
+                  (compiler-backend-call-actual-param-type-at
+                    types
+                    global-types
+                    args
+                    arg-index)))
+              (ast-type-list-push
+                out
+                (ast-node-pool-reader-type-push
+                  (compiler-backend-call-actual-param-type-at
+                    types
+                    global-types
+                    args
+                    (+ arg-index 1))))
+              (compiler-backend-call-c-abi-param-types-fill
+                out
+                types
+                global-types
+                args
+                declared-types
+                (+ decl-index 1)
+                (+ arg-index 2)
+                program-index))
+            (begin
+              (ast-type-list-push
+                out
+                (ast-node-pool-reader-type-push
+                  (compiler-backend-call-actual-param-type-at
+                    types
+                    global-types
+                    args
+                    arg-index)))
+              (compiler-backend-call-c-abi-param-types-fill
+                out
+                types
+                global-types
+                args
+                declared-types
+                (+ decl-index 1)
+                (+ arg-index 1)
+                program-index))))))))
+
+(define (compiler-backend-call-c-abi-param-types-from
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [declared-types : AstTypeList]
+  [arg-index : i64]
+  [program-index : CompilerBackendProgramIndex]) : AstTypeList
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (compiler-backend-call-args-count args))]
+    (begin
+      (compiler-backend-call-c-abi-param-types-fill
+        (&mut out)
+        types
+        global-types
+        args
+        declared-types
+        0
+        arg-index
+        program-index)
+      out)))
 
 (define (compiler-backend-call-actual-param-type-at
   [types : CompilerRegVarTypeList]
@@ -12108,85 +12284,17 @@
       (compiler-backend-call-arg-at args index))
     (AstType.I64)))
 
-(define (compiler-backend-call-c-abi-param-types-from
+(define (compiler-backend-call-actual-param-types
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
-  [args : CompilerIrCallArgs]
-  [declared-types : AstTypeList]
-  [arg-index : i64]
-  [program-index : CompilerBackendProgramIndex]) : AstTypeList
-  (if (>= arg-index (compiler-backend-call-args-count args))
-    AstTypeList.Nil
-    (match declared-types
-      [(AstTypeList.Cons declared rest)
-        (let
-          [declared-ty : AstType (ast-node-pool-reader-type-get declared)]
-          [rest-declared : AstTypeList (box-get rest)]
-          [memory-size : i64
-            (compiler-backend-c-memory-aggregate-marker-size
-              args
-              (+ arg-index 1))]
-          [aggregate? : bool
-            (not
-              (string.eq (compiler-backend-aggregate-type-name declared-ty) ""))]
-          (if (and (> memory-size 0) aggregate?)
-            (ast-type-cons
-              declared-ty
-              (ast-type-cons
-                (AstType.I64)
-                (ast-type-cons
-                  (AstType.Unit)
-                  (compiler-backend-call-c-abi-param-types-from
-                    types
-                    global-types
-                    args
-                    rest-declared
-                    (+ arg-index 3)
-                    program-index))))
-            (if (and
-              aggregate?
-              (compiler-backend-group-type? program-index declared-ty)
-              (< (+ arg-index 1) (compiler-backend-call-args-count args)))
-              (ast-type-cons
-                (compiler-backend-call-actual-param-type-at
-                  types
-                  global-types
-                  args
-                  arg-index)
-                (ast-type-cons
-                  (compiler-backend-call-actual-param-type-at
-                    types
-                    global-types
-                    args
-                    (+ arg-index 1))
-                  (compiler-backend-call-c-abi-param-types-from
-                    types
-                    global-types
-                    args
-                    rest-declared
-                    (+ arg-index 2)
-                    program-index)))
-              (ast-type-cons
-                (compiler-backend-call-actual-param-type-at
-                  types
-                  global-types
-                  args
-                  arg-index)
-                (compiler-backend-call-c-abi-param-types-from
-                  types
-                  global-types
-                  args
-                  rest-declared
-                  (+ arg-index 1)
-                  program-index)))))]
-      [(AstTypeList.Nil)
-        (compiler-backend-call-actual-param-types-from
-          types
-          global-types
-          args
-          AstTypeList.Nil
-          0
-          arg-index)])))
+  [args : CompilerIrCallArgs]) : AstTypeList
+  (compiler-backend-call-actual-param-types-from
+    types
+    global-types
+    args
+    (ast-type-list-new)
+    0
+    0))
 
 (define (compiler-backend-call-c-abi-param-types
   [types : CompilerRegVarTypeList]
@@ -12203,16 +12311,21 @@
     program-index))
 
 (define (compiler-backend-type-list-has-aggregate? [types : AstTypeList]) : bool
-  (match types
-    [(AstTypeList.Nil) false]
-    [(AstTypeList.Cons ty rest)
-      (or
-        (not
-          (string.eq
-            (compiler-backend-aggregate-type-name
-              (ast-node-pool-reader-type-get ty))
-            ""))
-        (compiler-backend-type-list-has-aggregate? (box-get rest)))]))
+  (compiler-backend-type-list-has-aggregate-at? (& types) 0))
+
+(define (compiler-backend-type-list-has-aggregate-at?
+  [types : (& types AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (or
+      (not
+        (string.eq
+          (compiler-backend-aggregate-type-name
+            (ast-node-pool-reader-type-get
+              (ast-type-list-get types index (ast-type-id-fallback))))
+          ""))
+      (compiler-backend-type-list-has-aggregate-at? types (+ index 1)))))
 
 (define (compiler-backend-c-aggregate-extern-call?
   [externs : CompilerIrExternList]
@@ -12308,12 +12421,7 @@
     0))
 
 (define (compiler-backend-skip-c-memory-marker-types [types : AstTypeList]) : AstTypeList
-  (match types
-    [(AstTypeList.Cons _ rest-size)
-      (match (box-get rest-size)
-        [(AstTypeList.Cons _ rest-sentinel) (box-get rest-sentinel)]
-        [(AstTypeList.Nil) AstTypeList.Nil])]
-    [(AstTypeList.Nil) AstTypeList.Nil]))
+  (compiler-backend-type-list-slice types 2))
 
 ;; Count the OUTGOING arguments that must be passed on the stack (#750). Walks
 ;; the args in order, tracking the integer/float/position banks exactly as
@@ -12334,16 +12442,10 @@
     stack-count
     (let
       [arg-ty : AstType
-        (match types
-          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeList.Nil) (AstType.I64)])]
-      [rest-types : AstTypeList
-        (match types
-          [(AstTypeList.Cons _ tail)
-            (let
-              [tail : AstTypeList (box-get tail)]
-              tail)]
-          [(AstTypeList.Nil) AstTypeList.Nil])]
+        (if (< arg-index (ast-type-list-len (& types)))
+          (ast-node-pool-reader-type-get
+            (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
+          (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [memory-aggregate? : bool
         (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
@@ -12361,7 +12463,7 @@
         (compiler-backend-call-stack-arg-count
           target
           args
-          (compiler-backend-skip-c-memory-marker-types rest-types)
+          types
           c-abi?
           (+ arg-index 3)
           int-idx
@@ -12401,7 +12503,7 @@
             (compiler-backend-call-stack-arg-count
               target
               args
-              rest-types
+              types
               c-abi?
               (+ arg-index 1)
               (if w1-sse
@@ -12424,7 +12526,7 @@
           (compiler-backend-call-stack-arg-count
             target
             args
-            rest-types
+            types
             c-abi?
             (+ arg-index 1)
             (if is-float
@@ -12452,84 +12554,105 @@
   [position : i64]
   [stack-count : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (match types
-    [(AstTypeList.Nil) stack-count]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [arg-ty : AstType (ast-node-pool-reader-type-get ty)]
-        [rest-types : AstTypeList (box-get rest)]
-        [is-float : bool (compiler-backend-float-type? arg-ty)]
-        [next-int : i64
-          (if is-float
-            int-idx
-            (+ int-idx 1))]
-        [next-float : i64
-          (if is-float
-            (+ float-idx 1)
-            float-idx)]
-        (if (compiler-backend-group-type? program-index arg-ty)
-          (let
-            [w0-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 0)]
-            [w0-stack : bool
-              (compiler-backend-stack-call-arg-for-banks?
-                target
-                w0-sse
-                int-idx
-                float-idx
-                position)]
-            [int1 : i64
-              (if w0-sse
-                int-idx
-                (+ int-idx 1))]
-            [float1 : i64
-              (if w0-sse
-                (+ float-idx 1)
-                float-idx)]
-            [w1-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 1)]
-            [w1-stack : bool
-              (compiler-backend-stack-call-arg-for-banks?
-                target
-                w1-sse
-                int1
-                float1
-                (+ position 1))]
-            (compiler-backend-type-list-stack-arg-count
+  (compiler-backend-type-list-stack-arg-count-at
+    target
+    (& types)
+    0
+    int-idx
+    float-idx
+    position
+    stack-count
+    program-index))
+
+(define (compiler-backend-type-list-stack-arg-count-at
+  [target : CompilerBackendTarget]
+  [types : (& types AstTypeList)]
+  [type-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-count : i64]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (if (>= type-index (ast-type-list-len types))
+    stack-count
+    (let
+      [arg-ty : AstType
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types type-index (ast-type-id-fallback)))]
+      [is-float : bool (compiler-backend-float-type? arg-ty)]
+      [next-int : i64
+        (if is-float
+          int-idx
+          (+ int-idx 1))]
+      [next-float : i64
+        (if is-float
+          (+ float-idx 1)
+          float-idx)]
+      (if (compiler-backend-group-type? program-index arg-ty)
+        (let
+          [w0-sse : bool
+            (compiler-backend-group-word-sse? program-index arg-ty 0)]
+          [w0-stack : bool
+            (compiler-backend-stack-call-arg-for-banks?
               target
-              rest-types
-              (if w1-sse
-                int1
-                (+ int1 1))
-              (if w1-sse
-                (+ float1 1)
-                float1)
-              (+ position 2)
-              (+
-                stack-count
-                (+
-                  (if w0-stack
-                    1
-                    0)
-                  (if w1-stack
-                    1
-                    0)))
-              program-index))
-          (compiler-backend-type-list-stack-arg-count
-            target
-            rest-types
-            next-int
-            next-float
-            (+ position 1)
-            (if (compiler-backend-stack-call-arg-for-banks?
-              target
-              is-float
+              w0-sse
               int-idx
               float-idx
-              position)
-              (+ stack-count 1)
-              stack-count)
-            program-index)))]))
+              position)]
+          [int1 : i64
+            (if w0-sse
+              int-idx
+              (+ int-idx 1))]
+          [float1 : i64
+            (if w0-sse
+              (+ float-idx 1)
+              float-idx)]
+          [w1-sse : bool
+            (compiler-backend-group-word-sse? program-index arg-ty 1)]
+          [w1-stack : bool
+            (compiler-backend-stack-call-arg-for-banks?
+              target
+              w1-sse
+              int1
+              float1
+              (+ position 1))]
+          (compiler-backend-type-list-stack-arg-count-at
+            target
+            types
+            (+ type-index 1)
+            (if w1-sse
+              int1
+              (+ int1 1))
+            (if w1-sse
+              (+ float1 1)
+              float1)
+            (+ position 2)
+            (+
+              stack-count
+              (+
+                (if w0-stack
+                  1
+                  0)
+                (if w1-stack
+                  1
+                  0)))
+            program-index))
+        (compiler-backend-type-list-stack-arg-count-at
+          target
+          types
+          (+ type-index 1)
+          next-int
+          next-float
+          (+ position 1)
+          (if (compiler-backend-stack-call-arg-for-banks?
+            target
+            is-float
+            int-idx
+            float-idx
+            position)
+            (+ stack-count 1)
+            stack-count)
+          program-index)))))
 
 (define (compiler-backend-incoming-stack-arg-count
   [target : CompilerBackendTarget]
@@ -12548,14 +12671,20 @@
 (define (compiler-backend-type-list-has-group?
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (match types
-    [(AstTypeList.Nil) false]
-    [(AstTypeList.Cons ty rest)
-      (if (compiler-backend-group-type?
-        program-index
-        (ast-node-pool-reader-type-get ty))
-        true
-        (compiler-backend-type-list-has-group? (box-get rest) program-index))]))
+  (compiler-backend-type-list-has-group-at? (& types) program-index 0))
+
+(define (compiler-backend-type-list-has-group-at?
+  [types : (& types AstTypeList)]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (if (compiler-backend-group-type?
+      program-index
+      (ast-node-pool-reader-type-get
+        (ast-type-list-get types index (ast-type-id-fallback))))
+      true
+      (compiler-backend-type-list-has-group-at? types program-index (+ index 1)))))
 
 (define (compiler-backend-direct-tail-call?
   [target : CompilerBackendTarget]
@@ -12614,49 +12743,50 @@
   (if (>= arg-index (compiler-backend-call-args-count args))
     (match params
       [(CompilerIrParamList.Nil)
-        (match target-types
-          [(AstTypeList.Nil) true]
-          [_ false])]
+        (>= arg-index (ast-type-list-len (& target-types)))]
       [_ false])
     (match params
       [(CompilerIrParamList.Nil) false]
       [(CompilerIrParamList.Cons param rest)
-        (match target-types
-          [(AstTypeList.Nil) false]
-          [(AstTypeList.Cons target-ty target-rest)
-            (match param
-              [(CompilerIrParam.Param _ source-ty var-id)
-                (let
-                  [callee-ty : AstType
-                    (ast-node-pool-reader-type-get target-ty)]
-                  (match (compiler-backend-call-arg-at args arg-index)
-                    [(CompilerIrValue.Var arg-var)
-                      (and
-                        (= arg-var var-id)
-                        (compiler-backend-identity-tail-forwarder-type-ok?
-                          program-index
-                          source-ty)
-                        (compiler-backend-identity-tail-forwarder-type-ok?
-                          program-index
-                          callee-ty)
-                        (not
-                          (compiler-backend-stack-call-arg-for-banks?
-                            target
-                            false
-                            int-idx
-                            float-idx
-                            position))
-                        (compiler-backend-identity-tail-forwarder-args?
+        (if (>= arg-index (ast-type-list-len (& target-types)))
+          false
+          (match param
+            [(CompilerIrParam.Param _ source-ty var-id)
+              (let
+                [callee-ty : AstType
+                  (ast-node-pool-reader-type-get
+                    (ast-type-list-get
+                      (& target-types)
+                      arg-index
+                      (ast-type-id-fallback)))]
+                (match (compiler-backend-call-arg-at args arg-index)
+                  [(CompilerIrValue.Var arg-var)
+                    (and
+                      (= arg-var var-id)
+                      (compiler-backend-identity-tail-forwarder-type-ok?
+                        program-index
+                        source-ty)
+                      (compiler-backend-identity-tail-forwarder-type-ok?
+                        program-index
+                        callee-ty)
+                      (not
+                        (compiler-backend-stack-call-arg-for-banks?
                           target
-                          (box-get rest)
-                          args
-                          (box-get target-rest)
-                          (+ arg-index 1)
-                          (+ int-idx 1)
+                          false
+                          int-idx
                           float-idx
-                          (+ position 1)
-                          program-index))]
-                    [_ false]))])])])))
+                          position))
+                      (compiler-backend-identity-tail-forwarder-args?
+                        target
+                        (box-get rest)
+                        args
+                        target-types
+                        (+ arg-index 1)
+                        (+ int-idx 1)
+                        float-idx
+                        (+ position 1)
+                        program-index))]
+                  [_ false]))]))])))
 
 (define (compiler-backend-identity-tail-forwarder-call?
   [target : CompilerBackendTarget]
@@ -12815,17 +12945,14 @@
     stack-words
     (let
       [arg-ty : AstType
-        (match types
-          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeList.Nil) (AstType.I64)])]
-      [rest-types : AstTypeList
-        (match types
-          [(AstTypeList.Cons _ tail) (box-get tail)]
-          [(AstTypeList.Nil) AstTypeList.Nil])]
+        (if (< arg-index (ast-type-list-len (& types)))
+          (ast-node-pool-reader-type-get
+            (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
+          (AstType.I64))]
       (if (compiler-backend-group-type? program-index arg-ty)
         (compiler-backend-windows-stack-word-count
           args
-          rest-types
+          types
           (+ arg-index 1)
           (+ position 2)
           ;; both halves fit in the 4 Windows int arg registers (rcx,rdx,r8,r9)?
@@ -12835,7 +12962,7 @@
           program-index)
         (compiler-backend-windows-stack-word-count
           args
-          rest-types
+          types
           (+ arg-index 1)
           (+ position 1)
           (if (< position 4)
@@ -13074,16 +13201,10 @@
     (let
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
-        (match types
-          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeList.Nil) (AstType.I64)])]
-      [rest-types : AstTypeList
-        (match types
-          [(AstTypeList.Cons _ tail)
-            (let
-              [tail : AstTypeList (box-get tail)]
-              tail)]
-          [(AstTypeList.Nil) AstTypeList.Nil])]
+        (if (< arg-index (ast-type-list-len (& types)))
+          (ast-node-pool-reader-type-get
+            (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
+          (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
         (if is-float
@@ -13117,7 +13238,7 @@
                 target
                 arg-assignments
                 args
-                (compiler-backend-skip-c-memory-marker-types rest-types)
+                types
                 c-abi?
                 (+ arg-index 3)
                 int-idx
@@ -13199,7 +13320,7 @@
                       target
                       arg-assignments
                       args
-                      rest-types
+                      types
                       c-abi?
                       (+ arg-index 1)
                       (if w1-sse
@@ -13242,7 +13363,7 @@
                 target
                 arg-assignments
                 args
-                rest-types
+                types
                 c-abi?
                 (+ arg-index 1)
                 next-int
@@ -13286,7 +13407,7 @@
                     target
                     arg-assignments
                     args
-                    rest-types
+                    types
                     c-abi?
                     (+ arg-index 1)
                     next-int
@@ -13432,16 +13553,10 @@
     (let
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
-        (match types
-          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeList.Nil) (AstType.I64)])]
-      [rest-types : AstTypeList
-        (match types
-          [(AstTypeList.Cons _ tail)
-            (let
-              [tail : AstTypeList (box-get tail)]
-              tail)]
-          [(AstTypeList.Nil) AstTypeList.Nil])]
+        (if (< arg-index (ast-type-list-len (& types)))
+          (ast-node-pool-reader-type-get
+            (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
+          (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
         (if is-float
@@ -13469,7 +13584,7 @@
               target
               assignments
               args
-              rest-types
+              types
               (+ arg-index 1)
               next-int
               next-float
@@ -13506,7 +13621,7 @@
                   target
                   assignments
                   args
-                  rest-types
+                  types
                   (+ arg-index 1)
                   next-int
                   next-float
@@ -19496,7 +19611,7 @@
     [(CompilerIrValue.Function name)
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types _) param-types]
-        [(CompilerBackendMaybeSignature.No) AstTypeList.Nil])]
+        [(CompilerBackendMaybeSignature.No) (ast-type-list-new)])]
     [_
       (match (compiler-backend-value-type
         types
@@ -19505,8 +19620,8 @@
         [(CompilerRegMaybeType.Some ty)
           (match ty
             [(AstType.Func param-types _) (box-get param-types)]
-            [_ AstTypeList.Nil])]
-        [(CompilerRegMaybeType.No) AstTypeList.Nil])]))
+            [_ (ast-type-list-new)])]
+        [(CompilerRegMaybeType.No) (ast-type-list-new)])]))
 
 (define (compiler-backend-indirect-tail-call-register-only?
   [target : CompilerBackendTarget]

@@ -3893,24 +3893,33 @@
   [roots : CloneNameList]
   [types : AstTypeList]
   [module : String]) : CloneNameList
-  (match types
-    [(AstTypeList.Nil) roots]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (lower-clone-root-add-type-list
+  (lower-clone-root-add-type-list-at ctx decls able roots (& types) module 0))
+
+(define (lower-clone-root-add-type-list-at
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [types : (& types AstTypeList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-type-list-len types))
+    roots
+    (lower-clone-root-add-type-list-at
+      ctx
+      decls
+      able
+      (lower-clone-root-add-type
+        (tc-context-with-module ctx module)
+        decls
+        able
+        roots
+        (tc-context-type-get
           ctx
-          decls
-          able
-          (lower-clone-root-add-type
-            (tc-context-with-module ctx module)
-            decls
-            able
-            roots
-            head)
-          rest
-          module))]))
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      types
+      module
+      (+ index 1))))
 
 (define (lower-clone-root-add-field-list
   [ctx : TcContext]
@@ -6746,14 +6755,26 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [types : AstTypeList]) : hashmap.I64I64Map
-  (match types
-    [(AstTypeList.Nil) used]
-    [(AstTypeList.Cons head rest)
-      (lower-used-types-add-type-list
+  (lower-used-types-add-type-list-at pools used module (& types) 0))
+
+(define (lower-used-types-add-type-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [types : (& types AstTypeList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-type-list-len types))
+    used
+    (lower-used-types-add-type-list-at
+      pools
+      (lower-used-types-add-type-id
         pools
-        (lower-used-types-add-type-id pools used module head)
+        used
         module
-        (box-get rest))]))
+        (ast-type-list-get types index (ast-type-id-fallback)))
+      module
+      types
+      (+ index 1))))
 
 (define (lower-used-types-add-type
   [pools : AstNodePoolContext]
@@ -8852,18 +8873,27 @@
   [ctx : TcContext]
   [types : AstTypeList]
   [cursor : i64]) : i64
-  (match types
-    [(AstTypeList.Nil) cursor]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        [resolved : AstType (tc-resolve-type ctx ty)]
-        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-        (lower-type-list-extent
+  (lower-type-list-extent-at ctx (& types) cursor 0))
+
+(define (lower-type-list-extent-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [cursor : i64]
+  [index : i64]) : i64
+  (if (>= index (ast-type-list-len types))
+    cursor
+    (let
+      [ty : AstType
+        (tc-context-type-get
           ctx
-          rest
-          (+ offset (lower-type-size ctx resolved))))]))
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      [resolved : AstType (tc-resolve-type ctx ty)]
+      [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+      (lower-type-list-extent-at
+        ctx
+        types
+        (+ offset (lower-type-size ctx resolved))
+        (+ index 1)))))
 
 (define (lower-type-list-storage-size [ctx : TcContext] [types : AstTypeList]) : i64
   (let
@@ -8905,20 +8935,19 @@
       [(AstVariantDef.Def variant-name fields _)
         (let
           [next : CompilerIrGlobalList
-            (match fields
-              [(AstTypeList.Nil)
-                (let
-                  [object-name : String
-                    (lower-nullary-variant-object-name
-                      enum-name
-                      (intern-str variant-name))]
-                  (compiler-ir-global-cons
-                    (CompilerIrGlobal.Global
-                      object-name
-                      (AstType.I64)
-                      (CompilerIrValue.I64 tag))
-                    globals))]
-              [_ globals])]
+            (if (ast-type-list-empty? (& fields))
+              (let
+                [object-name : String
+                  (lower-nullary-variant-object-name
+                    enum-name
+                    (intern-str variant-name))]
+                (compiler-ir-global-cons
+                  (CompilerIrGlobal.Global
+                    object-name
+                    (AstType.I64)
+                    (CompilerIrValue.I64 tag))
+                  globals))
+              globals)]
           (lower-nullary-variant-globals enum-name variants (+ tag 1) next))])))
 
 (define (lower-enum-variants-storage-size
@@ -10006,26 +10035,25 @@
     [(CompilerIrValueList.Nil)
       (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(AstTypeList.Cons ty rest-fields)
-          (let
-            [resolved : AstType
-              (tc-resolve-type ctx (tc-context-type-get ctx ty))]
-            [offset : i64
-              (lower-align-up cursor (lower-type-align ctx resolved))]
-            (match (lower-pack-word-field ctx state acc value offset resolved)
-              [(LowerExpr.Expr packed-state packed-acc packed-ty)
-                (lower-pack-enum-payload-word
-                  ctx
-                  packed-state
-                  packed-acc
-                  packed-ty
-                  (+ offset (lower-type-size ctx resolved))
-                  (box-get rest-values)
-                  (box-get rest-fields))]))]
-        [(AstTypeList.Nil)
-          (ResultLowerExpr.Err
-            (box (lower-diagnostic "lower: enum payload arity mismatch")))])]))
+      (if (ast-type-list-empty? (& fields))
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic "lower: enum payload arity mismatch")))
+        (let
+          [ty-id : i64 (ast-type-list-get (& fields) 0 (ast-type-id-fallback))]
+          [rest-fields : AstTypeList (ast-type-list-slice fields 1)]
+          [resolved : AstType
+            (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          (match (lower-pack-word-field ctx state acc value offset resolved)
+            [(LowerExpr.Expr packed-state packed-acc packed-ty)
+              (lower-pack-enum-payload-word
+                ctx
+                packed-state
+                packed-acc
+                packed-ty
+                (+ offset (lower-type-size ctx resolved))
+                (box-get rest-values)
+                rest-fields)])))]))
 
 ;; #2386: construct a register-group enum value: word0 = discriminant tag, word1 =
 ;; the variant's packed (word-class) payload (0 for a nullary variant).
@@ -10538,7 +10566,7 @@
       (lower-supported-reference-struct-args-with-stack?
         ctx
         (intern-str name)
-        AstLifetimeList.Nil
+        (ast-lifetime-list-new)
         LowerStringSet.Nil)]
     [(AstType.StructArgs name lifetimes)
       (lower-supported-reference-struct-args-with-stack?
@@ -10550,7 +10578,7 @@
       (lower-supported-reference-enum-args-with-stack?
         ctx
         (intern-str name)
-        AstLifetimeList.Nil
+        (ast-lifetime-list-new)
         LowerStringSet.Nil)]
     [(AstType.EnumArgs name lifetimes)
       (lower-supported-reference-enum-args-with-stack?
@@ -10579,37 +10607,63 @@
   [ctx : TcContext]
   [types : AstTypeList]
   [stack : LowerStringSet]) : bool
-  (match types
-    [(AstTypeList.Nil) true]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (and
-          (lower-supported-reference-type-with-stack? ctx head stack)
-          (lower-supported-reference-type-list-with-stack? ctx rest stack)))]))
+  (lower-supported-reference-type-list-with-stack-at? ctx (& types) stack 0))
+
+(define (lower-supported-reference-type-list-with-stack-at?
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [stack : LowerStringSet]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    true
+    (and
+      (lower-supported-reference-type-with-stack?
+        ctx
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))
+        stack)
+      (lower-supported-reference-type-list-with-stack-at?
+        ctx
+        types
+        stack
+        (+ index 1)))))
 
 (define (lower-supported-reference-type-list-subst-with-stack?
   [ctx : TcContext]
   [subst : TcLifetimeSubst]
   [types : AstTypeList]
   [stack : LowerStringSet]) : bool
-  (match types
-    [(AstTypeList.Nil) true]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (and
-          (lower-supported-reference-type-with-stack?
+  (lower-supported-reference-type-list-subst-with-stack-at?
+    ctx
+    subst
+    (& types)
+    stack
+    0))
+
+(define (lower-supported-reference-type-list-subst-with-stack-at?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [types : (& types AstTypeList)]
+  [stack : LowerStringSet]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    true
+    (and
+      (lower-supported-reference-type-with-stack?
+        ctx
+        (tc-lifetime-subst-type
+          subst
+          (tc-context-type-get
             ctx
-            (tc-lifetime-subst-type subst head)
-            stack)
-          (lower-supported-reference-type-list-subst-with-stack?
-            ctx
-            subst
-            rest
-            stack)))]))
+            (ast-type-list-get types index (ast-type-id-fallback))))
+        stack)
+      (lower-supported-reference-type-list-subst-with-stack-at?
+        ctx
+        subst
+        types
+        stack
+        (+ index 1)))))
 
 (define (lower-supported-reference-field-list-with-stack?
   [ctx : TcContext]
@@ -11484,32 +11538,41 @@
   [values : CompilerIrValueList]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
+  (lower-store-values-at ctx state base values (& types) 0 cursor))
+
+(define (lower-store-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [types : (& types AstTypeList)]
+  [type-index : i64]
+  [cursor : i64]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerState.Ok state)]
-        [_
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerState.Ok state)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match types
-        [(AstTypeList.Cons ty rest-types)
-          (let
-            [ty : AstType (tc-context-type-get ctx ty)]
-            [rest-types : AstTypeList (box-get rest-types)]
-            [resolved : AstType (tc-resolve-type ctx ty)]
-            [offset : i64
-              (lower-align-up cursor (lower-type-align ctx resolved))]
-            (lower-store-values
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (let
+          [ty : AstType
+            (tc-context-type-get
               ctx
-              (lower-store-at-offset state base offset value resolved)
-              base
-              (box-get rest-values)
-              rest-types
-              (+ offset (lower-type-size ctx resolved))))]
-        [(AstTypeList.Nil)
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+              (ast-type-list-get types type-index (ast-type-id-fallback)))]
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          (lower-store-values-at
+            ctx
+            (lower-store-at-offset state base offset value resolved)
+            base
+            (box-get rest-values)
+            types
+            (+ type-index 1)
+            (+ offset (lower-type-size ctx resolved)))))]))
 
 (define (lower-store-repr-c-values
   [ctx : TcContext]
@@ -11635,57 +11698,75 @@
   [layout : TcInlineAggregateLayout]
   [variant-name : String]
   [index : i64]) : ResultLowerState
+  (lower-store-inline-payload-values-at
+    ctx
+    state
+    base
+    values
+    (& types)
+    layout
+    variant-name
+    index))
+
+(define (lower-store-inline-payload-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [types : (& types AstTypeList)]
+  [layout : TcInlineAggregateLayout]
+  [variant-name : String]
+  [index : i64]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerState.Ok state)]
-        [_
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= index (ast-type-list-len types))
+        (ResultLowerState.Ok state)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (match types
-        [(AstTypeList.Cons ty rest-types)
-          (let
-            [ty : AstType (tc-context-type-get ctx ty)]
-            [rest-types : AstTypeList (box-get rest-types)]
-            [resolved : AstType (tc-resolve-type ctx ty)]
-            [offset : i64
-              (tc-inline-aggregate-layout-variant-payload-offset
-                layout
-                variant-name
-                index)]
-            (if (< offset 0)
-              (ResultLowerState.Err
-                (box
-                  (lower-diagnostic
-                    (string.append
-                      "lower: inline enum layout missing payload for "
-                      variant-name))))
-              (match (tc-inline-aggregate-type-layout ctx resolved)
-                [(ResultTcLayoutInfo.Ok info)
-                  (lower-store-inline-payload-values
-                    ctx
-                    (if (<= (tc-layout-info-size info) 0)
+      (if (>= index (ast-type-list-len types))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (let
+          [ty : AstType
+            (tc-context-type-get
+              ctx
+              (ast-type-list-get types index (ast-type-id-fallback)))]
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [offset : i64
+            (tc-inline-aggregate-layout-variant-payload-offset
+              layout
+              variant-name
+              index)]
+          (if (< offset 0)
+            (ResultLowerState.Err
+              (box
+                (lower-diagnostic
+                  (string.append
+                    "lower: inline enum layout missing payload for "
+                    variant-name))))
+            (match (tc-inline-aggregate-type-layout ctx resolved)
+              [(ResultTcLayoutInfo.Ok info)
+                (lower-store-inline-payload-values-at
+                  ctx
+                  (if (<= (tc-layout-info-size info) 0)
+                    state
+                    (lower-store-inline-value-at-offset
+                      ctx
                       state
-                      (lower-store-inline-value-at-offset
-                        ctx
-                        state
-                        base
-                        offset
-                        value
-                        resolved
-                        (tc-layout-info-size info)))
-                    base
-                    (box-get rest-values)
-                    rest-types
-                    layout
-                    variant-name
-                    (+ index 1))]
-                [(ResultTcLayoutInfo.Err message)
-                  (ResultLowerState.Err (box (lower-diagnostic message)))])))]
-        [(AstTypeList.Nil)
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+                      base
+                      offset
+                      value
+                      resolved
+                      (tc-layout-info-size info)))
+                  base
+                  (box-get rest-values)
+                  types
+                  layout
+                  variant-name
+                  (+ index 1))]
+              [(ResultTcLayoutInfo.Err message)
+                (ResultLowerState.Err (box (lower-diagnostic message)))]))))]))
 
 (define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
   (match lit
@@ -12065,20 +12146,22 @@
   ;; and trip its rewind, corrupting later lowering.
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (if (ast-pattern-list-empty? (& patterns))
-    (match types
-      [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
-      [_
-        (ResultLowerEnv.Err
-          (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))])
+    (if (ast-type-list-empty? (& types))
+      (ResultLowerEnv.Ok state env type-env)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: enum payload pattern arity mismatch"))))
     (let
       [pattern : AstPattern
         (ast-pattern-list-get (& patterns) 0 (ast-pattern-fallback))]
       [rest-patterns : AstPatternList (ast-pattern-list-tail patterns)]
-      (match types
-        [(AstTypeList.Cons ty rest-types)
+      (if (ast-type-list-empty? (& types))
+        (ResultLowerEnv.Err
+          (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))
+        (let
+          [ty : i64 (ast-type-list-get (& types) 0 (ast-type-id-fallback))]
+          [rest-types : AstTypeList (ast-type-list-slice types 1)]
           (let
             [ty : AstType (tc-context-type-get ctx ty)]
-            [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [default-offset : i64
               (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -12391,11 +12474,7 @@
                   (ResultLowerEnv.Err
                     (box
                       (lower-diagnostic
-                        "lower: unsupported enum payload pattern")))])))]
-        [(AstTypeList.Nil)
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic "lower: enum payload pattern arity mismatch")))]))))
+                        "lower: unsupported enum payload pattern")))]))))))))
 
 (define (lower-borrowed-payload-ref-expr
   [ctx : TcContext]
@@ -12433,249 +12512,244 @@
   [cursor : i64]
   [fail-label : String]) : ResultLowerEnv
   (if (ast-pattern-list-empty? (& patterns))
-    (match types
-      [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
-      [_
-        (ResultLowerEnv.Err
-          (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))])
+    (if (ast-type-list-empty? (& types))
+      (ResultLowerEnv.Ok state env type-env)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: enum payload pattern arity mismatch"))))
     (let
       [pattern : AstPattern
         (ast-pattern-list-get (& patterns) 0 (ast-pattern-fallback))]
       [rest-patterns : AstPatternList (ast-pattern-list-tail patterns)]
-      (match types
-        [(AstTypeList.Cons ty rest-types)
-          (let
-            [ty : AstType (tc-context-type-get ctx ty)]
-            [rest-types : AstTypeList (box-get rest-types)]
-            [resolved : AstType (tc-resolve-type ctx ty)]
-            [default-offset : i64
-              (lower-align-up cursor (lower-type-align ctx resolved))]
-            [offset : i64
-              (lower-variant-payload-offset
-                ctx
-                mode
-                enum-name
-                variant-name
-                index
-                cursor
-                resolved)]
-            [next-cursor : i64
-              (+ default-offset (lower-type-size ctx resolved))]
-            [next-index : i64 (+ index 1)]
-            (if (< offset 0)
-              (ResultLowerEnv.Err
-                (box
-                  (lower-diagnostic
-                    (string.append
-                      "lower: inline enum layout missing payload for "
-                      variant-name))))
-              (match pattern
-                [(AstPattern.Wildcard)
-                  (lower-bind-borrowed-variant-payloads
-                    ctx
-                    state
-                    env
-                    type-env
-                    borrow-lifetime
-                    base
-                    rest-patterns
-                    rest-types
-                    mode
-                    enum-name
-                    variant-name
-                    next-index
-                    next-cursor
-                    fail-label)]
-                [(AstPattern.Binding name)
-                  (let
-                    [ref-ty : AstType
-                      (tc-borrowed-field-ref-type borrow-lifetime resolved)]
-                    [ref-expr : LowerExpr
-                      (lower-borrowed-payload-ref-expr
+      (if (ast-type-list-empty? (& types))
+        (ResultLowerEnv.Err
+          (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))
+        (let
+          [ty-id : i64 (ast-type-list-get (& types) 0 (ast-type-id-fallback))]
+          [rest-types : AstTypeList (ast-type-list-slice types 1)]
+          [ty : AstType (tc-context-type-get ctx ty-id)]
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [default-offset : i64
+            (lower-align-up cursor (lower-type-align ctx resolved))]
+          [offset : i64
+            (lower-variant-payload-offset
+              ctx
+              mode
+              enum-name
+              variant-name
+              index
+              cursor
+              resolved)]
+          [next-cursor : i64 (+ default-offset (lower-type-size ctx resolved))]
+          [next-index : i64 (+ index 1)]
+          (if (< offset 0)
+            (ResultLowerEnv.Err
+              (box
+                (lower-diagnostic
+                  (string.append
+                    "lower: inline enum layout missing payload for "
+                    variant-name))))
+            (match pattern
+              [(AstPattern.Wildcard)
+                (lower-bind-borrowed-variant-payloads
+                  ctx
+                  state
+                  env
+                  type-env
+                  borrow-lifetime
+                  base
+                  rest-patterns
+                  rest-types
+                  mode
+                  enum-name
+                  variant-name
+                  next-index
+                  next-cursor
+                  fail-label)]
+              [(AstPattern.Binding name)
+                (let
+                  [ref-ty : AstType
+                    (tc-borrowed-field-ref-type borrow-lifetime resolved)]
+                  [ref-expr : LowerExpr
+                    (lower-borrowed-payload-ref-expr
+                      ctx
+                      state
+                      base
+                      offset
+                      resolved
+                      ref-ty)]
+                  (match ref-expr
+                    [(LowerExpr.Expr ref-state ref-value _)
+                      (match ref-value
+                        [(CompilerIrValue.Var field-var)
+                          (lower-bind-borrowed-variant-payloads
+                            ctx
+                            ref-state
+                            (sym_i64_env.sym-i64-bind-id env name field-var)
+                            (tc-bind-id type-env name ref-ty)
+                            borrow-lifetime
+                            base
+                            rest-patterns
+                            rest-types
+                            mode
+                            enum-name
+                            variant-name
+                            next-index
+                            next-cursor
+                            fail-label)]
+                        [_
+                          (ResultLowerEnv.Err
+                            (box
+                              (lower-diagnostic
+                                "lower: internal borrowed enum payload reference failed")))])]))]
+              [(AstPattern.Literal lit)
+                (if (lower-literal-payload-supported? lit)
+                  (match (lower-load-at-offset state base offset resolved)
+                    [(LowerExpr.Expr load-state field-value _)
+                      (match (lower-literal-payload-eq
                         ctx
-                        state
-                        base
-                        offset
-                        resolved
-                        ref-ty)]
-                    (match ref-expr
-                      [(LowerExpr.Expr ref-state ref-value _)
-                        (match ref-value
-                          [(CompilerIrValue.Var field-var)
-                            (lower-bind-borrowed-variant-payloads
-                              ctx
-                              ref-state
-                              (sym_i64_env.sym-i64-bind-id env name field-var)
-                              (tc-bind-id type-env name ref-ty)
-                              borrow-lifetime
-                              base
-                              rest-patterns
-                              rest-types
-                              mode
-                              enum-name
-                              variant-name
-                              next-index
-                              next-cursor
-                              fail-label)]
-                          [_
-                            (ResultLowerEnv.Err
-                              (box
-                                (lower-diagnostic
-                                  "lower: internal borrowed enum payload reference failed")))])]))]
-                [(AstPattern.Literal lit)
-                  (if (lower-literal-payload-supported? lit)
-                    (match (lower-load-at-offset state base offset resolved)
-                      [(LowerExpr.Expr load-state field-value _)
-                        (match (lower-literal-payload-eq
-                          ctx
-                          load-state
-                          field-value
-                          lit
-                          resolved)
-                          [(ResultLowerExpr.Ok lowered-eq)
-                            (match lowered-eq
-                              [(LowerExpr.Expr eq-state eq-value _)
-                                (match (lower-state-fresh-label
-                                  eq-state
-                                  "payload_ok")
-                                  [(LowerLabel.Label ok-state ok-label)
-                                    (lower-bind-borrowed-variant-payloads
-                                      ctx
-                                      (lower-state-finish-block
-                                        (lower-state-emit
-                                          ok-state
-                                          (CompilerIrInstr.Branch
-                                            eq-value
-                                            ok-label
-                                            fail-label))
-                                        ok-label)
-                                      env
-                                      type-env
-                                      borrow-lifetime
-                                      base
-                                      rest-patterns
-                                      rest-types
-                                      mode
-                                      enum-name
-                                      variant-name
-                                      next-index
-                                      next-cursor
-                                      fail-label)])])]
-                          [(ResultLowerExpr.Err message)
-                            (ResultLowerEnv.Err message)])])
-                    (ResultLowerEnv.Err
-                      (box
-                        (lower-diagnostic
-                          "lower: unsupported enum payload literal pattern type"))))]
-                [(AstPattern.Variant nested-name nested-args-box)
-                  (let
-                    [nested-args : AstPatternList (box-get nested-args-box)]
-                    [nested-name-str : String (intern-str nested-name)]
-                    (match ctx
-                      [(TcContext _ symbols registries _ _)
-                        (let
-                          [handle : i64
-                            (compiler-registries-lookup-variant-id-or
-                              registries
-                              nested-name
-                              (compiler-symbols-missing-handle))]
-                          (if (not (compiler-symbols-handle-found? handle))
-                            (ResultLowerEnv.Err
-                              (box
-                                (lower-diagnostic
-                                  (string.append
-                                    "lower: unknown nested variant "
-                                    nested-name-str))))
-                            (match (compiler-registries-variant-fields-indexed
-                              symbols
-                              handle)
-                              [(ResultAstTypeList.Err message)
-                                (ResultLowerEnv.Err
-                                  (box (lower-diagnostic message)))]
-                              [(ResultAstTypeList.Ok nested-fields)
-                                (match (lower-load-at-offset
-                                  state
-                                  base
-                                  offset
-                                  resolved)
-                                  [(LowerExpr.Expr field-state field-value _)
-                                    (match (lower-load-at-offset
-                                      field-state
-                                      field-value
-                                      0
-                                      (AstType.I64))
-                                      [(LowerExpr.Expr tag-state tag-value _)
-                                        (match (lower-state-alloc-var tag-state)
-                                          [(LowerAlloc.Alloc eq-alloc eq-var)
-                                            (match (lower-state-fresh-label
-                                              (lower-state-emit
-                                                eq-alloc
-                                                (CompilerIrInstr.BinOp
-                                                  eq-var
-                                                  CompilerIrBinOp.Eq
-                                                  tag-value
-                                                  (CompilerIrValue.I64
-                                                    (compiler-registry-handle-child-index
-                                                      handle))
-                                                  (AstType.I64)))
-                                              "payload_ok")
-                                              [(LowerLabel.Label
-                                                  ok-state
-                                                  ok-label)
-                                                (match (lower-bind-borrowed-variant-payloads
-                                                  ctx
-                                                  (lower-state-finish-block
-                                                    (lower-state-emit
-                                                      ok-state
-                                                      (CompilerIrInstr.Branch
-                                                        (CompilerIrValue.Var
-                                                          eq-var)
-                                                        ok-label
-                                                        fail-label))
-                                                    ok-label)
-                                                  env
-                                                  type-env
-                                                  borrow-lifetime
-                                                  field-value
-                                                  nested-args
-                                                  nested-fields
-                                                  mode
-                                                  (lower-enum-type-name-or-empty
-                                                    resolved)
-                                                  nested-name-str
-                                                  0
-                                                  8
-                                                  fail-label)
-                                                  [(ResultLowerEnv.Ok
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env)
-                                                    (lower-bind-borrowed-variant-payloads
-                                                      ctx
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env
-                                                      borrow-lifetime
-                                                      base
-                                                      rest-patterns
-                                                      rest-types
-                                                      mode
-                                                      enum-name
-                                                      variant-name
-                                                      next-index
-                                                      next-cursor
-                                                      fail-label)]
-                                                  [(ResultLowerEnv.Err message)
-                                                    (ResultLowerEnv.Err message)])])])])])])))]))]
-                [_
+                        load-state
+                        field-value
+                        lit
+                        resolved)
+                        [(ResultLowerExpr.Ok lowered-eq)
+                          (match lowered-eq
+                            [(LowerExpr.Expr eq-state eq-value _)
+                              (match (lower-state-fresh-label
+                                eq-state
+                                "payload_ok")
+                                [(LowerLabel.Label ok-state ok-label)
+                                  (lower-bind-borrowed-variant-payloads
+                                    ctx
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        ok-state
+                                        (CompilerIrInstr.Branch
+                                          eq-value
+                                          ok-label
+                                          fail-label))
+                                      ok-label)
+                                    env
+                                    type-env
+                                    borrow-lifetime
+                                    base
+                                    rest-patterns
+                                    rest-types
+                                    mode
+                                    enum-name
+                                    variant-name
+                                    next-index
+                                    next-cursor
+                                    fail-label)])])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerEnv.Err message)])])
                   (ResultLowerEnv.Err
                     (box
                       (lower-diagnostic
-                        "lower: unsupported enum payload pattern")))])))]
-        [(AstTypeList.Nil)
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic "lower: enum payload pattern arity mismatch")))]))))
+                        "lower: unsupported enum payload literal pattern type"))))]
+              [(AstPattern.Variant nested-name nested-args-box)
+                (let
+                  [nested-args : AstPatternList (box-get nested-args-box)]
+                  [nested-name-str : String (intern-str nested-name)]
+                  (match ctx
+                    [(TcContext _ symbols registries _ _)
+                      (let
+                        [handle : i64
+                          (compiler-registries-lookup-variant-id-or
+                            registries
+                            nested-name
+                            (compiler-symbols-missing-handle))]
+                        (if (not (compiler-symbols-handle-found? handle))
+                          (ResultLowerEnv.Err
+                            (box
+                              (lower-diagnostic
+                                (string.append
+                                  "lower: unknown nested variant "
+                                  nested-name-str))))
+                          (match (compiler-registries-variant-fields-indexed
+                            symbols
+                            handle)
+                            [(ResultAstTypeList.Err message)
+                              (ResultLowerEnv.Err
+                                (box (lower-diagnostic message)))]
+                            [(ResultAstTypeList.Ok nested-fields)
+                              (match (lower-load-at-offset
+                                state
+                                base
+                                offset
+                                resolved)
+                                [(LowerExpr.Expr field-state field-value _)
+                                  (match (lower-load-at-offset
+                                    field-state
+                                    field-value
+                                    0
+                                    (AstType.I64))
+                                    [(LowerExpr.Expr tag-state tag-value _)
+                                      (match (lower-state-alloc-var tag-state)
+                                        [(LowerAlloc.Alloc eq-alloc eq-var)
+                                          (match (lower-state-fresh-label
+                                            (lower-state-emit
+                                              eq-alloc
+                                              (CompilerIrInstr.BinOp
+                                                eq-var
+                                                CompilerIrBinOp.Eq
+                                                tag-value
+                                                (CompilerIrValue.I64
+                                                  (compiler-registry-handle-child-index
+                                                    handle))
+                                                (AstType.I64)))
+                                            "payload_ok")
+                                            [(LowerLabel.Label
+                                                ok-state
+                                                ok-label)
+                                              (match (lower-bind-borrowed-variant-payloads
+                                                ctx
+                                                (lower-state-finish-block
+                                                  (lower-state-emit
+                                                    ok-state
+                                                    (CompilerIrInstr.Branch
+                                                      (CompilerIrValue.Var
+                                                        eq-var)
+                                                      ok-label
+                                                      fail-label))
+                                                  ok-label)
+                                                env
+                                                type-env
+                                                borrow-lifetime
+                                                field-value
+                                                nested-args
+                                                nested-fields
+                                                mode
+                                                (lower-enum-type-name-or-empty
+                                                  resolved)
+                                                nested-name-str
+                                                0
+                                                8
+                                                fail-label)
+                                                [(ResultLowerEnv.Ok
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env)
+                                                  (lower-bind-borrowed-variant-payloads
+                                                    ctx
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env
+                                                    borrow-lifetime
+                                                    base
+                                                    rest-patterns
+                                                    rest-types
+                                                    mode
+                                                    enum-name
+                                                    variant-name
+                                                    next-index
+                                                    next-cursor
+                                                    fail-label)]
+                                                [(ResultLowerEnv.Err message)
+                                                  (ResultLowerEnv.Err message)])])])])])])))]))]
+              [_
+                (ResultLowerEnv.Err
+                  (box
+                    (lower-diagnostic "lower: unsupported enum payload pattern")))])))))))
 
 (define (lower-bind-match-variant-payloads
   [ctx : TcContext]
@@ -12801,25 +12875,23 @@
   [index : i64]
   [types : AstTypeList]) : bool
   (if (>= index (ast-pattern-list-len patterns))
-    (match types
-      [(AstTypeList.Nil) false]
-      [_ true])
-    (match types
-      [(AstTypeList.Cons ty rest-types)
-        (let
-          [ty : AstType (tc-context-type-get ctx ty)]
-          [rest-types : AstTypeList (box-get rest-types)]
-          (if (lower-pattern-refutable-for-type?
+    (not (ast-type-list-empty? (& types)))
+    (if (ast-type-list-empty? (& types))
+      true
+      (let
+        [ty-id : i64 (ast-type-list-get (& types) 0 (ast-type-id-fallback))]
+        [rest-types : AstTypeList (ast-type-list-slice types 1)]
+        [ty : AstType (tc-context-type-get ctx ty-id)]
+        (if (lower-pattern-refutable-for-type?
+          ctx
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))
+          ty)
+          true
+          (lower-pattern-list-refutable-for-types-at?
             ctx
-            (ast-pattern-list-get patterns index (ast-pattern-fallback))
-            ty)
-            true
-            (lower-pattern-list-refutable-for-types-at?
-              ctx
-              patterns
-              (+ index 1)
-              rest-types)))]
-      [(AstTypeList.Nil) true])))
+            patterns
+            (+ index 1)
+            rest-types))))))
 
 (define (lower-field-info-from-list
   [ctx : TcContext]
@@ -13541,60 +13613,84 @@
   [dst : CompilerIrValue]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (match types
-    [(AstTypeList.Nil) (ResultLowerState.Ok state)]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-        [size : i64 (lower-type-size ctx resolved)]
-        (if (> size 0)
-          (match (lower-load-inline-value-at-offset
-            ctx
-            state
-            src
-            offset
-            resolved
-            (lower-state-mode state))
-            [(LowerExpr.Expr load-state field-value _)
-              (match (lower-capture-snapshot-value
-                ctx
-                load-state
-                env
-                type-env
-                field-value
-                resolved)
-                [(ResultLowerExpr.Ok snap)
-                  (match snap
-                    [(LowerExpr.Expr snap-state snap-value _)
-                      (lower-capture-snapshot-type-list
+  (lower-capture-snapshot-type-list-at
+    ctx
+    state
+    env
+    type-env
+    src
+    dst
+    (& types)
+    cursor
+    0))
+
+(define (lower-capture-snapshot-type-list-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : (& types AstTypeList)]
+  [cursor : i64]
+  [index : i64]) : ResultLowerState
+  (if (>= index (ast-type-list-len types))
+    (ResultLowerState.Ok state)
+    (let
+      [ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+      [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+      [size : i64 (lower-type-size ctx resolved)]
+      (if (> size 0)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          resolved
+          (lower-state-mode state))
+          [(LowerExpr.Expr load-state field-value _)
+            (match (lower-capture-snapshot-value
+              ctx
+              load-state
+              env
+              type-env
+              field-value
+              resolved)
+              [(ResultLowerExpr.Ok snap)
+                (match snap
+                  [(LowerExpr.Expr snap-state snap-value _)
+                    (lower-capture-snapshot-type-list-at
+                      ctx
+                      (lower-store-inline-value-at-offset
                         ctx
-                        (lower-store-inline-value-at-offset
-                          ctx
-                          snap-state
-                          dst
-                          offset
-                          snap-value
-                          resolved
-                          size)
-                        env
-                        type-env
-                        src
+                        snap-state
                         dst
-                        rest
-                        (+ offset size))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-          (lower-capture-snapshot-type-list
-            ctx
-            state
-            env
-            type-env
-            src
-            dst
-            rest
-            (+ offset size))))]))
+                        offset
+                        snap-value
+                        resolved
+                        size)
+                      env
+                      type-env
+                      src
+                      dst
+                      types
+                      (+ offset size)
+                      (+ index 1))])]
+              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
+        (lower-capture-snapshot-type-list-at
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          types
+          (+ offset size)
+          (+ index 1))))))
 
 (define (lower-capture-snapshot-tuple-value
   [ctx : TcContext]
@@ -14469,14 +14565,14 @@
   (ast-ty-tuple
     (ast-type-cons
       (AstType.Var (intern hidden-name))
-      (ast-type-cons (AstType.Var (intern cleanup-name)) AstTypeList.Nil))))
+      (ast-type-cons (AstType.Var (intern cleanup-name)) (ast-type-list-new)))))
 
 (define (lower-region-reset-metadata-type [hidden-name : String]) : AstType
   (AstType.Var (intern hidden-name)))
 
 (define (lower-arena-restore-metadata-type [hidden-name : String]) : AstType
   (ast-ty-tuple
-    (ast-type-cons (AstType.Var (intern hidden-name)) AstTypeList.Nil)))
+    (ast-type-cons (AstType.Var (intern hidden-name)) (ast-type-list-new))))
 
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
@@ -14650,6 +14746,51 @@
     (struct-get cleanups cleanup-names)
     (- (struct-get cleanups count) 1)))
 
+(define (lower-emit-cleanup-marker-tuple
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [types : AstTypeList]) : ResultLowerState
+  (if (= (ast-type-list-len (& types)) 2)
+    (let
+      [hidden-ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get (& types) 0 (ast-type-id-fallback)))]
+      [cleanup-ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get (& types) 1 (ast-type-id-fallback)))]
+      (match hidden-ty
+        [(AstType.Var hidden-name)
+          (match cleanup-ty
+            [(AstType.Var cleanup-name)
+              (lower-emit-cleanup-call
+                state
+                env
+                (intern-str hidden-name)
+                (intern-str cleanup-name))]
+            [_ (ResultLowerState.Ok state)])]
+        [_ (ResultLowerState.Ok state)]))
+    (ResultLowerState.Ok state)))
+
+(define (lower-emit-arena-restore-marker-tuple
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [types : AstTypeList]) : ResultLowerState
+  (if (= (ast-type-list-len (& types)) 1)
+    (let
+      [hidden-ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get (& types) 0 (ast-type-id-fallback)))]
+      (match hidden-ty
+        [(AstType.Var hidden-name)
+          (lower-emit-arena-restore state env (intern-str hidden-name))]
+        [_ (ResultLowerState.Ok state)]))
+    (ResultLowerState.Ok state)))
+
 ;; #2598: emit the cleanup/region-reset calls a binding env keeps active. This
 ;; walks the whole TcTypeEnv chain once per scope exit; it used to be a
 ;; tail-recursive walk, but the inline-aggregate TCO guard (#2597) declines
@@ -14682,43 +14823,17 @@
               (if (= key cleanup-marker-id)
                 (match ty
                   [(AstType.Tuple types)
-                    (match (box-get types)
-                      [(AstTypeList.Cons hidden-ty type-rest)
-                        (let
-                          [hidden-ty : AstType
-                            (tc-context-type-get ctx hidden-ty)]
-                          [type-rest : AstTypeList (box-get type-rest)]
-                          (match hidden-ty
-                            [(AstType.Var hidden-name)
-                              (match type-rest
-                                [(AstTypeList.Cons cleanup-ty end)
-                                  (let
-                                    [cleanup-ty : AstType
-                                      (tc-context-type-get ctx cleanup-ty)]
-                                    [end : AstTypeList (box-get end)]
-                                    (match cleanup-ty
-                                      [(AstType.Var cleanup-name)
-                                        (match end
-                                          [(AstTypeList.Nil)
-                                            (match (lower-emit-cleanup-call
-                                              cur-state
-                                              env
-                                              (intern-str hidden-name)
-                                              (intern-str cleanup-name))
-                                              [(ResultLowerState.Ok next-state)
-                                                (set! cur-state next-state)]
-                                              [(ResultLowerState.Err message)
-                                                (begin
-                                                  (set!
-                                                    result
-                                                    (ResultLowerState.Err
-                                                      message))
-                                                  (set! done true))])]
-                                          [_ unit])]
-                                      [_ unit]))]
-                                [_ unit])]
-                            [_ unit]))]
-                      [_ unit])]
+                    (match (lower-emit-cleanup-marker-tuple
+                      ctx
+                      cur-state
+                      env
+                      (box-get types))
+                      [(ResultLowerState.Ok next-state)
+                        (set! cur-state next-state)]
+                      [(ResultLowerState.Err message)
+                        (begin
+                          (set! result (ResultLowerState.Err message))
+                          (set! done true))])]
                   [_ unit])
                 (if (= key region-reset-marker-id)
                   (match ty
@@ -14734,31 +14849,17 @@
                             (set! result (ResultLowerState.Err message))
                             (set! done true))])]
                     [(AstType.Tuple types)
-                      (match (box-get types)
-                        [(AstTypeList.Cons hidden-ty end)
-                          (let
-                            [hidden-ty : AstType
-                              (tc-context-type-get ctx hidden-ty)]
-                            [end : AstTypeList (box-get end)]
-                            (match hidden-ty
-                              [(AstType.Var hidden-name)
-                                (match end
-                                  [(AstTypeList.Nil)
-                                    (match (lower-emit-arena-restore
-                                      cur-state
-                                      env
-                                      (intern-str hidden-name))
-                                      [(ResultLowerState.Ok next-state)
-                                        (set! cur-state next-state)]
-                                      [(ResultLowerState.Err message)
-                                        (begin
-                                          (set!
-                                            result
-                                            (ResultLowerState.Err message))
-                                          (set! done true))])]
-                                  [_ unit])]
-                              [_ unit]))]
-                        [_ unit])]
+                      (match (lower-emit-arena-restore-marker-tuple
+                        ctx
+                        cur-state
+                        env
+                        (box-get types))
+                        [(ResultLowerState.Ok next-state)
+                          (set! cur-state next-state)]
+                        [(ResultLowerState.Err message)
+                          (begin
+                            (set! result (ResultLowerState.Err message))
+                            (set! done true))])]
                     [_ unit])
                   unit))
               (if done
@@ -14786,7 +14887,9 @@
     (box
       (ast-type-cons
         (AstType.Var (intern break-label))
-        (ast-type-cons (AstType.Var (intern continue-label)) AstTypeList.Nil)))))
+        (ast-type-cons
+          (AstType.Var (intern continue-label))
+          (ast-type-list-new))))))
 
 (define (lower-enter-loop-target
   [type-env : TcTypeEnv]
@@ -14834,26 +14937,23 @@
     [(AstMaybeType.Some ty)
       (match ty
         [(AstType.Tuple types-box)
-          (match (box-get types-box)
-            [(AstTypeList.Cons break-ty rest-box)
+          (let
+            [types : AstTypeList (box-get types-box)]
+            (if (= (ast-type-list-len (& types)) 2)
               (let
-                [break-ty : AstType (tc-context-type-get ctx break-ty)]
-                [rest : AstTypeList (box-get rest-box)]
-                (match rest
-                  [(AstTypeList.Cons continue-ty end-box)
-                    (let
-                      [continue-ty : AstType
-                        (tc-context-type-get ctx continue-ty)]
-                      [end : AstTypeList (box-get end-box)]
-                      (match end
-                        [(AstTypeList.Nil)
-                          (lower-current-loop-target-from-types
-                            origin
-                            break-ty
-                            continue-ty)]
-                        [_ (lower-loop-target-malformed origin)]))]
-                  [_ (lower-loop-target-malformed origin)]))]
-            [_ (lower-loop-target-malformed origin)])]
+                [break-ty : AstType
+                  (tc-context-type-get
+                    ctx
+                    (ast-type-list-get (& types) 0 (ast-type-id-fallback)))]
+                [continue-ty : AstType
+                  (tc-context-type-get
+                    ctx
+                    (ast-type-list-get (& types) 1 (ast-type-id-fallback)))]
+                (lower-current-loop-target-from-types
+                  origin
+                  break-ty
+                  continue-ty))
+              (lower-loop-target-malformed origin)))]
         [_ (lower-loop-target-missing origin form)])]
     [(AstMaybeType.No) (lower-loop-target-missing origin form)]))
 
@@ -14890,44 +14990,17 @@
                 (if (= key cleanup-marker-id)
                   (match ty
                     [(AstType.Tuple types)
-                      (match (box-get types)
-                        [(AstTypeList.Cons hidden-ty type-rest)
-                          (let
-                            [hidden-ty : AstType
-                              (tc-context-type-get ctx hidden-ty)]
-                            [type-rest : AstTypeList (box-get type-rest)]
-                            (match hidden-ty
-                              [(AstType.Var hidden-name)
-                                (match type-rest
-                                  [(AstTypeList.Cons cleanup-ty end)
-                                    (let
-                                      [cleanup-ty : AstType
-                                        (tc-context-type-get ctx cleanup-ty)]
-                                      [end : AstTypeList (box-get end)]
-                                      (match cleanup-ty
-                                        [(AstType.Var cleanup-name)
-                                          (match end
-                                            [(AstTypeList.Nil)
-                                              (match (lower-emit-cleanup-call
-                                                cur-state
-                                                env
-                                                (intern-str hidden-name)
-                                                (intern-str cleanup-name))
-                                                [(ResultLowerState.Ok
-                                                    next-state)
-                                                  (set! cur-state next-state)]
-                                                [(ResultLowerState.Err message)
-                                                  (begin
-                                                    (set!
-                                                      result
-                                                      (ResultLowerState.Err
-                                                        message))
-                                                    (set! done true))])]
-                                            [_ unit])]
-                                        [_ unit]))]
-                                  [_ unit])]
-                              [_ unit]))]
-                        [_ unit])]
+                      (match (lower-emit-cleanup-marker-tuple
+                        ctx
+                        cur-state
+                        env
+                        (box-get types))
+                        [(ResultLowerState.Ok next-state)
+                          (set! cur-state next-state)]
+                        [(ResultLowerState.Err message)
+                          (begin
+                            (set! result (ResultLowerState.Err message))
+                            (set! done true))])]
                     [_ unit])
                   (if (= key region-reset-marker-id)
                     (match ty
@@ -14943,31 +15016,17 @@
                               (set! result (ResultLowerState.Err message))
                               (set! done true))])]
                       [(AstType.Tuple types)
-                        (match (box-get types)
-                          [(AstTypeList.Cons hidden-ty end)
-                            (let
-                              [hidden-ty : AstType
-                                (tc-context-type-get ctx hidden-ty)]
-                              [end : AstTypeList (box-get end)]
-                              (match hidden-ty
-                                [(AstType.Var hidden-name)
-                                  (match end
-                                    [(AstTypeList.Nil)
-                                      (match (lower-emit-arena-restore
-                                        cur-state
-                                        env
-                                        (intern-str hidden-name))
-                                        [(ResultLowerState.Ok next-state)
-                                          (set! cur-state next-state)]
-                                        [(ResultLowerState.Err message)
-                                          (begin
-                                            (set!
-                                              result
-                                              (ResultLowerState.Err message))
-                                            (set! done true))])]
-                                    [_ unit])]
-                                [_ unit]))]
-                          [_ unit])]
+                        (match (lower-emit-arena-restore-marker-tuple
+                          ctx
+                          cur-state
+                          env
+                          (box-get types))
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
                       [_ unit])
                     unit)))
               (if done
@@ -15035,72 +15094,19 @@
       (if (= key cleanup-marker-id)
         (match ty
           [(AstType.Tuple types)
-            (match (box-get types)
-              [(AstTypeList.Cons hidden-ty type-rest)
-                (let
-                  [hidden-ty : AstType (tc-context-type-get ctx hidden-ty)]
-                  [type-rest : AstTypeList (box-get type-rest)]
-                  (match hidden-ty
-                    [(AstType.Var hidden-name)
-                      (match type-rest
-                        [(AstTypeList.Cons cleanup-ty end)
-                          (let
-                            [cleanup-ty : AstType
-                              (tc-context-type-get ctx cleanup-ty)]
-                            [end : AstTypeList (box-get end)]
-                            (match cleanup-ty
-                              [(AstType.Var cleanup-name)
-                                (match end
-                                  [(AstTypeList.Nil)
-                                    (match (lower-emit-cleanup-call
-                                      state
-                                      env
-                                      (intern-str hidden-name)
-                                      (intern-str cleanup-name))
-                                      [(ResultLowerState.Ok next-state)
-                                        (lower-emit-active-cleanups-with
-                                          ctx
-                                          cleanup-marker-id
-                                          next-state
-                                          env
-                                          (box-get rest))]
-                                      [(ResultLowerState.Err message)
-                                        (ResultLowerState.Err message)])]
-                                  [_
-                                    (lower-emit-active-cleanups-with
-                                      ctx
-                                      cleanup-marker-id
-                                      state
-                                      env
-                                      (box-get rest))])]
-                              [_
-                                (lower-emit-active-cleanups-with
-                                  ctx
-                                  cleanup-marker-id
-                                  state
-                                  env
-                                  (box-get rest))]))]
-                        [_
-                          (lower-emit-active-cleanups-with
-                            ctx
-                            cleanup-marker-id
-                            state
-                            env
-                            (box-get rest))])]
-                    [_
-                      (lower-emit-active-cleanups-with
-                        ctx
-                        cleanup-marker-id
-                        state
-                        env
-                        (box-get rest))]))]
-              [_
+            (match (lower-emit-cleanup-marker-tuple
+              ctx
+              state
+              env
+              (box-get types))
+              [(ResultLowerState.Ok next-state)
                 (lower-emit-active-cleanups-with
                   ctx
                   cleanup-marker-id
-                  state
+                  next-state
                   env
-                  (box-get rest))])]
+                  (box-get rest))]
+              [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
           [_
             (lower-emit-active-cleanups-with
               ctx
@@ -15696,60 +15702,75 @@
   [dst : CompilerIrValue]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (match types
-    [(AstTypeList.Nil) (ResultLowerState.Ok state)]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-        [size : i64 (lower-type-size ctx resolved)]
-        (if (> size 0)
-          (match (lower-load-inline-value-at-offset
-            ctx
-            state
-            src
-            offset
-            resolved
-            (lower-state-mode state))
-            [(LowerExpr.Expr load-state field-value _)
-              (match (lower-clone-dispatch
-                ctx
-                load-state
-                env
-                type-env
-                field-value
-                resolved)
-                [(ResultLowerExpr.Ok cloned)
-                  (match cloned
-                    [(LowerExpr.Expr clone-state clone-value _)
-                      (lower-clone-type-list
+  (lower-clone-type-list-at ctx state env type-env src dst (& types) cursor 0))
+
+(define (lower-clone-type-list-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : (& types AstTypeList)]
+  [cursor : i64]
+  [index : i64]) : ResultLowerState
+  (if (>= index (ast-type-list-len types))
+    (ResultLowerState.Ok state)
+    (let
+      [ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+      [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+      [size : i64 (lower-type-size ctx resolved)]
+      (if (> size 0)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          resolved
+          (lower-state-mode state))
+          [(LowerExpr.Expr load-state field-value _)
+            (match (lower-clone-dispatch
+              ctx
+              load-state
+              env
+              type-env
+              field-value
+              resolved)
+              [(ResultLowerExpr.Ok cloned)
+                (match cloned
+                  [(LowerExpr.Expr clone-state clone-value _)
+                    (lower-clone-type-list-at
+                      ctx
+                      (lower-store-inline-value-at-offset
                         ctx
-                        (lower-store-inline-value-at-offset
-                          ctx
-                          clone-state
-                          dst
-                          offset
-                          clone-value
-                          resolved
-                          size)
-                        env
-                        type-env
-                        src
+                        clone-state
                         dst
-                        rest
-                        (+ offset size))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-          (lower-clone-type-list
-            ctx
-            state
-            env
-            type-env
-            src
-            dst
-            rest
-            (+ offset size))))]))
+                        offset
+                        clone-value
+                        resolved
+                        size)
+                      env
+                      type-env
+                      src
+                      dst
+                      types
+                      (+ offset size)
+                      (+ index 1))])]
+              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
+        (lower-clone-type-list-at
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          types
+          (+ offset size)
+          (+ index 1))))))
 
 (define (lower-clone-tuple-value
   [ctx : TcContext]
@@ -16467,63 +16488,62 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerCallArgs
+  (lower-call-args-as-at ctx state env type-env args (& types) 0))
+
+(define (lower-call-args-as-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : (& types AstTypeList)]
+  [type-index : i64]) : ResultLowerCallArgs
   (match args
     [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil)
-          (ResultLowerCallArgs.Ok
-            state
-            CompilerIrValueList.Nil
-            (lower-arg-writeback-list-empty))]
-        [_
-          (ResultLowerCallArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerCallArgs.Ok
+          state
+          CompilerIrValueList.Nil
+          (lower-arg-writeback-list-empty))
+        (ResultLowerCallArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstExprList.Cons arg rest-args)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (lower-call-arg-as
-                ctx
-                state
-                env
-                type-env
-                arg
-                expected
-                arg-ty)
-                [(ResultLowerCallArg.Ok lowered-arg)
-                  (match lowered-arg
-                    [(LowerCallArg.Arg arg-state value maybe-writeback)
-                      (match (lower-call-args-as
-                        ctx
-                        arg-state
-                        env
-                        type-env
-                        rest-args
-                        rest-types)
-                        [(ResultLowerCallArgs.Ok
-                            rest-state
-                            rest-values
-                            rest-writebacks)
-                          (ResultLowerCallArgs.Ok
-                            rest-state
-                            (compiler-ir-value-cons value rest-values)
-                            (lower-call-arg-writebacks-add-maybe
-                              rest-writebacks
-                              maybe-writeback))]
-                        [(ResultLowerCallArgs.Err message)
-                          (ResultLowerCallArgs.Err message)])])]
-                [(ResultLowerCallArg.Err message)
-                  (ResultLowerCallArgs.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultLowerCallArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerCallArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (let
+          [arg : AstExpr (ast-node-get arg)]
+          [rest-args : AstExprList (box-get rest-args)]
+          [expected-id : i64
+            (ast-type-list-get types type-index (ast-type-id-fallback))]
+          [expected : AstType (tc-context-type-get ctx expected-id)]
+          [arg-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx expected))]
+          (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
+            [(ResultLowerCallArg.Ok lowered-arg)
+              (match lowered-arg
+                [(LowerCallArg.Arg arg-state value maybe-writeback)
+                  (match (lower-call-args-as-at
+                    ctx
+                    arg-state
+                    env
+                    type-env
+                    rest-args
+                    types
+                    (+ type-index 1))
+                    [(ResultLowerCallArgs.Ok
+                        rest-state
+                        rest-values
+                        rest-writebacks)
+                      (ResultLowerCallArgs.Ok
+                        rest-state
+                        (compiler-ir-value-cons value rest-values)
+                        (lower-call-arg-writebacks-add-maybe
+                          rest-writebacks
+                          maybe-writeback))]
+                    [(ResultLowerCallArgs.Err message)
+                      (ResultLowerCallArgs.Err message)])])]
+            [(ResultLowerCallArg.Err message) (ResultLowerCallArgs.Err message)])))]))
 
 (define (lower-apply-arg-writeback
   [ctx : TcContext]
@@ -16575,71 +16595,86 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerArgs
+  (lower-args-as-at ctx state env type-env args (& types) 0))
+
+(define (lower-args-as-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : (& types AstTypeList)]
+  [type-index : i64]) : ResultLowerArgs
   (match args
     [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstExprList.Cons arg rest-args)
       (let
         [arg : AstExpr (ast-node-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (tc-call-effective-arg-expr ctx type-env arg expected)
-                [(ResultTcExpr.Ok effective-arg)
-                  (match (lower-expr-expected
-                    ctx
-                    state
-                    env
-                    type-env
-                    effective-arg
-                    arg-ty
-                    arg)
-                    [(ResultLowerExpr.Ok lowered)
-                      (match lowered
-                        [(LowerExpr.Expr arg-state value _)
-                          (match (lower-args-as
-                            ctx
-                            arg-state
-                            env
-                            type-env
-                            rest-args
-                            rest-types)
-                            [(ResultLowerArgs.Ok rest-state rest-values)
-                              (ResultLowerArgs.Ok
-                                rest-state
-                                (compiler-ir-value-cons value rest-values))]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerArgs.Err message)])]
-                [(ResultTcExpr.Err message)
-                  (ResultLowerArgs.Err
-                    (box (lower-diagnostic-at-expr arg message)))]))]
-          [(AstTypeList.Nil)
-            (ResultLowerArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+        (if (>= type-index (ast-type-list-len types))
+          (ResultLowerArgs.Err
+            (box (lower-diagnostic "lower: constructor arity mismatch")))
+          (let
+            [expected-id : i64
+              (ast-type-list-get types type-index (ast-type-id-fallback))]
+            [expected : AstType (tc-context-type-get ctx expected-id)]
+            [arg-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx expected))]
+            (match (tc-call-effective-arg-expr ctx type-env arg expected)
+              [(ResultTcExpr.Ok effective-arg)
+                (match (lower-expr-expected
+                  ctx
+                  state
+                  env
+                  type-env
+                  effective-arg
+                  arg-ty
+                  arg)
+                  [(ResultLowerExpr.Ok lowered)
+                    (match lowered
+                      [(LowerExpr.Expr arg-state value _)
+                        (match (lower-args-as-at
+                          ctx
+                          arg-state
+                          env
+                          type-env
+                          rest-args
+                          types
+                          (+ type-index 1))
+                          [(ResultLowerArgs.Ok rest-state rest-values)
+                            (ResultLowerArgs.Ok
+                              rest-state
+                              (compiler-ir-value-cons value rest-values))]
+                          [(ResultLowerArgs.Err message)
+                            (ResultLowerArgs.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)])]
+              [(ResultTcExpr.Err message)
+                (ResultLowerArgs.Err
+                  (box (lower-diagnostic-at-expr arg message)))]))))]))
 
 (define (lower-call-type-list-has-mut-ref-formal?
   [ctx : TcContext]
   [types : AstTypeList]) : bool
-  (match types
-    [(AstTypeList.Nil) false]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (match (tc-type-strip-region head)
-          [(AstType.MutRef _ _) true]
-          [_ (lower-call-type-list-has-mut-ref-formal? ctx rest)]))]))
+  (lower-call-type-list-has-mut-ref-formal-at? ctx (& types) 0))
+
+(define (lower-call-type-list-has-mut-ref-formal-at?
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (let
+      [head : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      (match (tc-type-strip-region head)
+        [(AstType.MutRef _ _) true]
+        [_ (lower-call-type-list-has-mut-ref-formal-at? ctx types (+ index 1))]))))
 
 (define (lower-call-args-as-needed
   [ctx : TcContext]
@@ -16955,49 +16990,44 @@
                     resolved-fields
                     enum-name
                     enum-ty)
-                  (match resolved-fields
-                    [(AstTypeList.Nil)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          args-state
-                          (CompilerIrValue.GlobalAddr
-                            (lower-nullary-variant-object-name
-                              enum-name
-                              variant-name))
-                          enum-ty))]
-                    [_
-                      (let
-                        [size : i64
-                          (lower-variant-fields-storage-size
-                            ctx
-                            resolved-fields)]
-                        (match (lower-reserve-heap-storage
-                          args-state
-                          size
-                          enum-ty)
-                          [(LowerExpr.Expr base-state base _)
-                            (let
-                              [tag-state : LowerState
-                                (lower-store-at-offset
-                                  base-state
-                                  base
-                                  0
-                                  (CompilerIrValue.I64
-                                    (compiler-registry-handle-child-index
-                                      handle))
-                                  (AstType.I64))]
-                              (match (lower-store-values
-                                ctx
-                                tag-state
+                  (if (ast-type-list-empty? (& resolved-fields))
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        args-state
+                        (CompilerIrValue.GlobalAddr
+                          (lower-nullary-variant-object-name
+                            enum-name
+                            variant-name))
+                        enum-ty))
+                    (let
+                      [size : i64
+                        (lower-variant-fields-storage-size ctx resolved-fields)]
+                      (match (lower-reserve-heap-storage
+                        args-state
+                        size
+                        enum-ty)
+                        [(LowerExpr.Expr base-state base _)
+                          (let
+                            [tag-state : LowerState
+                              (lower-store-at-offset
+                                base-state
                                 base
-                                values
-                                resolved-fields
-                                8)
-                                [(ResultLowerState.Ok done-state)
-                                  (ResultLowerExpr.Ok
-                                    (LowerExpr.Expr done-state base enum-ty))]
-                                [(ResultLowerState.Err message)
-                                  (ResultLowerExpr.Err message)]))]))]))]
+                                0
+                                (CompilerIrValue.I64
+                                  (compiler-registry-handle-child-index handle))
+                                (AstType.I64))]
+                            (match (lower-store-values
+                              ctx
+                              tag-state
+                              base
+                              values
+                              resolved-fields
+                              8)
+                              [(ResultLowerState.Ok done-state)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr done-state base enum-ty))]
+                              [(ResultLowerState.Err message)
+                                (ResultLowerExpr.Err message)]))]))))]
               [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))]
         [(ResultAstTypeList.Err message)
           (ResultLowerExpr.Err (box (lower-diagnostic message)))])]))
@@ -17297,15 +17327,22 @@
 (define (lower-init-expr-list-from-types
   [ctx : TcContext]
   [types : AstTypeList]) : AstExprList
-  (match types
-    [(AstTypeList.Nil) AstExprList.Nil]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (ast-expr-cons
-          (ast-expr-init head)
-          (lower-init-expr-list-from-types ctx rest)))]))
+  (lower-init-expr-list-from-types-at ctx (& types) 0))
+
+(define (lower-init-expr-list-from-types-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : AstExprList
+  (if (>= index (ast-type-list-len types))
+    AstExprList.Nil
+    (let
+      [head : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      (ast-expr-cons
+        (ast-expr-init head)
+        (lower-init-expr-list-from-types-at ctx types (+ index 1))))))
 
 (define (lower-init-expr-list-repeat [ty : AstType] [count : i64]) : AstExprList
   (if (<= count 0)
@@ -17719,18 +17756,17 @@
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
           [(ResultAstTypeList.Ok fields)
-            (match fields
-              [(AstTypeList.Nil)
-                (lower-construct-enum-with-handle
-                  ctx
-                  state
-                  env
-                  type-env
-                  lookup-name
-                  handle
-                  AstExprList.Nil
-                  expr-ty)]
-              [_ (lower-function-value-or-var ctx state env name expr-ty)])]
+            (if (ast-type-list-empty? (& fields))
+              (lower-construct-enum-with-handle
+                ctx
+                state
+                env
+                type-env
+                lookup-name
+                handle
+                AstExprList.Nil
+                expr-ty)
+              (lower-function-value-or-var ctx state env name expr-ty))]
           [(ResultAstTypeList.Err _)
             (lower-function-value-or-var ctx state env name expr-ty)])
         (lower-function-value-or-var ctx state env name expr-ty)))
@@ -20459,24 +20495,24 @@
   [target : i64]
   [index : i64]
   [cursor : i64]) : ResultLowerFieldInfo
-  (match types
-    [(AstTypeList.Nil)
-      (ResultLowerFieldInfo.Err
-        (box (lower-diagnostic "lower: tuple-ref index out of range")))]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        [resolved : AstType (tc-resolve-type ctx ty)]
-        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-        (if (= index target)
-          (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
-          (lower-tuple-elem-info
-            ctx
-            rest
-            target
-            (+ index 1)
-            (+ offset (lower-type-size ctx resolved)))))]))
+  (if (>= index (ast-type-list-len (& types)))
+    (ResultLowerFieldInfo.Err
+      (box (lower-diagnostic "lower: tuple-ref index out of range")))
+    (let
+      [ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get (& types) index (ast-type-id-fallback)))]
+      [resolved : AstType (tc-resolve-type ctx ty)]
+      [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+      (if (= index target)
+        (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
+        (lower-tuple-elem-info
+          ctx
+          types
+          target
+          (+ index 1)
+          (+ offset (lower-type-size ctx resolved)))))))
 
 ;; Evaluate each tuple element (preserving side effects even for zero-sized
 ;; elements) and store the sized ones into the aggregate at their field offset,
@@ -20491,54 +20527,74 @@
   [values : AstExprList]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
+  (lower-tuple-store-elems-at
+    ctx
+    state
+    env
+    type-env
+    base
+    values
+    (& types)
+    0
+    cursor))
+
+(define (lower-tuple-store-elems-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : AstExprList]
+  [types : (& types AstTypeList)]
+  [type-index : i64]
+  [cursor : i64]) : ResultLowerState
   (match values
     [(AstExprList.Nil) (ResultLowerState.Ok state)]
     [(AstExprList.Cons value rest-values)
-      (let
-        [value : AstExpr (ast-node-get value)]
-        [rest-values : AstExprList (box-get rest-values)]
-        (match types
-          [(AstTypeList.Nil)
-            (ResultLowerState.Err
-              (box (lower-diagnostic "lower: tuple arity mismatch")))]
-          [(AstTypeList.Cons ty rest-types)
-            (let
-              [ty : AstType (tc-context-type-get ctx ty)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              [offset : i64
-                (lower-align-up cursor (lower-type-align ctx resolved))]
-              [size : i64 (lower-type-size ctx resolved)]
-              (match (lower-expr-expected
-                ctx
-                state
-                env
-                type-env
-                value
-                resolved
-                value)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr elem-state elem-value _)
-                      (lower-tuple-store-elems
+      (if (>= type-index (ast-type-list-len types))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: tuple arity mismatch")))
+        (let
+          [value : AstExpr (ast-node-get value)]
+          [rest-values : AstExprList (box-get rest-values)]
+          [ty : AstType
+            (tc-context-type-get
+              ctx
+              (ast-type-list-get types type-index (ast-type-id-fallback)))]
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (match (lower-expr-expected
+            ctx
+            state
+            env
+            type-env
+            value
+            resolved
+            value)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr elem-state elem-value _)
+                  (lower-tuple-store-elems-at
+                    ctx
+                    (if (> size 0)
+                      (lower-store-inline-value-at-offset
                         ctx
-                        (if (> size 0)
-                          (lower-store-inline-value-at-offset
-                            ctx
-                            elem-state
-                            base
-                            offset
-                            elem-value
-                            resolved
-                            size)
-                          elem-state)
-                        env
-                        type-env
+                        elem-state
                         base
-                        rest-values
-                        rest-types
-                        (+ offset size))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))]))]))
+                        offset
+                        elem-value
+                        resolved
+                        size)
+                      elem-state)
+                    env
+                    type-env
+                    base
+                    rest-values
+                    types
+                    (+ type-index 1)
+                    (+ offset size))])]
+            [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))]))
 
 ;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
 ;; element types, store each element at its field offset, and return the storage
@@ -21777,170 +21833,169 @@
   [types : AstTypeList]) : ResultLowerArgs
   (match args
     [(AstExprList.Nil)
-      (match types
-        [(AstTypeList.Nil) (ResultLowerArgs.Ok state CompilerIrValueList.Nil)]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (ast-type-list-empty? (& types))
+        (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstExprList.Cons arg rest-args)
       (let
         [arg : AstExpr (ast-node-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
-        (match types
-          [(AstTypeList.Cons expected rest-types)
-            (let
-              [expected : AstType (tc-context-type-get ctx expected)]
-              [rest-types : AstTypeList (box-get rest-types)]
-              [arg-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr arg-state value _)
-                      (match (lower-c-abi-aggregate-class
-                        ctx
-                        (lower-state-mode arg-state)
-                        arg-ty)
-                        [(LowerCAbiAggregate.No)
-                          (match (lower-c-abi-args-as
+        (if (ast-type-list-empty? (& types))
+          (ResultLowerArgs.Err
+            (box (lower-diagnostic "lower: constructor arity mismatch")))
+          (let
+            [expected-id : i64
+              (ast-type-list-get (& types) 0 (ast-type-id-fallback))]
+            [expected : AstType (tc-context-type-get ctx expected-id)]
+            [rest-types : AstTypeList (ast-type-list-slice types 1)]
+            [arg-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx expected))]
+            (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr arg-state value _)
+                    (match (lower-c-abi-aggregate-class
+                      ctx
+                      (lower-state-mode arg-state)
+                      arg-ty)
+                      [(LowerCAbiAggregate.No)
+                        (match (lower-c-abi-args-as
+                          ctx
+                          arg-state
+                          env
+                          type-env
+                          rest-args
+                          rest-types)
+                          [(ResultLowerArgs.Ok rest-state rest-values)
+                            (ResultLowerArgs.Ok
+                              rest-state
+                              (compiler-ir-value-cons value rest-values))]
+                          [(ResultLowerArgs.Err message)
+                            (ResultLowerArgs.Err message)])]
+                      [(LowerCAbiAggregate.Integer scalar-ty size)
+                        ;; #2386: a register-resident aggregate is carried as a
+                        ;; single-word scalar -- `value` is already the word the C
+                        ;; ABI wants in a register, so pass it directly. Any other
+                        ;; aggregate (a memory-backed value, e.g. a mixed
+                        ;; int/float sub-word struct) is a
+                        ;; pointer, so load the scalar out of it. Gate on the same
+                        ;; residency predicate that chose the value representation
+                        ;; -- not on `size`, since mixed sub-word float
+                        ;; structs can still be memory-backed at 8 bytes.
+                        (match (if (lower-type-register-resident? ctx arg-ty)
+                          (lower-c-abi-register-resident-to-scalar
                             ctx
                             arg-state
-                            env
-                            type-env
-                            rest-args
-                            rest-types)
-                            [(ResultLowerArgs.Ok rest-state rest-values)
-                              (ResultLowerArgs.Ok
-                                rest-state
-                                (compiler-ir-value-cons value rest-values))]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Integer scalar-ty size)
-                          ;; #2386: a register-resident aggregate is carried as a
-                          ;; single-word scalar -- `value` is already the word the C
-                          ;; ABI wants in a register, so pass it directly. Any other
-                          ;; aggregate (a memory-backed value, e.g. a mixed
-                          ;; int/float sub-word struct) is a
-                          ;; pointer, so load the scalar out of it. Gate on the same
-                          ;; residency predicate that chose the value representation
-                          ;; -- not on `size`, since mixed sub-word float
-                          ;; structs can still be memory-backed at 8 bytes.
-                          (match (if (lower-type-register-resident? ctx arg-ty)
-                            (lower-c-abi-register-resident-to-scalar
+                            value
+                            arg-ty
+                            scalar-ty)
+                          (lower-load-at-offset arg-state value 0 scalar-ty))
+                          [(LowerExpr.Expr scalar-state scalar-value _)
+                            (match (lower-c-abi-args-as
                               ctx
-                              arg-state
-                              value
-                              arg-ty
-                              scalar-ty)
-                            (lower-load-at-offset arg-state value 0 scalar-ty))
-                            [(LowerExpr.Expr scalar-state scalar-value _)
-                              (match (lower-c-abi-args-as
-                                ctx
-                                scalar-state
-                                env
-                                type-env
-                                rest-args
-                                rest-types)
-                                [(ResultLowerArgs.Ok rest-state rest-values)
-                                  (ResultLowerArgs.Ok
-                                    rest-state
-                                    (compiler-ir-value-cons
-                                      scalar-value
-                                      rest-values))]
-                                [(ResultLowerArgs.Err message)
-                                  (ResultLowerArgs.Err message)])])]
-                        [(LowerCAbiAggregate.Register slots _)
-                          (match (lower-c-abi-register-arg-slot-values
-                            ctx
-                            arg-state
-                            value
-                            arg-ty
-                            slots)
-                            [(ResultLowerArgs.Ok slot-state slot-values)
-                              (match (lower-c-abi-args-as
-                                ctx
-                                slot-state
-                                env
-                                type-env
-                                rest-args
-                                rest-types)
-                                [(ResultLowerArgs.Ok rest-state rest-values)
-                                  (ResultLowerArgs.Ok
-                                    rest-state
-                                    (lower-value-list-append
-                                      slot-values
-                                      rest-values))]
-                                [(ResultLowerArgs.Err message)
-                                  (ResultLowerArgs.Err message)])]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Memory size)
-                          ;; The backend consumes size/unit markers and copies the aggregate to %rsp.
-                          (match (lower-c-abi-args-as
-                            ctx
-                            arg-state
-                            env
-                            type-env
-                            rest-args
-                            rest-types)
-                            [(ResultLowerArgs.Ok rest-state rest-values)
-                              (ResultLowerArgs.Ok
-                                rest-state
-                                (compiler-ir-value-cons
-                                  value
+                              scalar-state
+                              env
+                              type-env
+                              rest-args
+                              rest-types)
+                              [(ResultLowerArgs.Ok rest-state rest-values)
+                                (ResultLowerArgs.Ok
+                                  rest-state
                                   (compiler-ir-value-cons
-                                    (CompilerIrValue.I64 size)
-                                    (compiler-ir-value-cons
-                                      (CompilerIrValue.Unit)
-                                      rest-values))))]
-                            [(ResultLowerArgs.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.ByRef _)
-                          ;; The ABI argument is the address of the copied
-                          ;; object, not the aggregate itself. Type the value as
-                          ;; u64 so direct extern-call register assignment does
-                          ;; not reclassify this pointer as a multi-word group.
-                          (match (lower-copy-inline-aggregate-to-heap-as
-                            ctx
-                            arg-state
-                            value
-                            arg-ty
-                            (AstType.U64))
-                            [(ResultLowerExpr.Ok copied)
-                              (match copied
-                                [(LowerExpr.Expr copy-state copy-value _)
-                                  (match (lower-c-abi-args-as
-                                    ctx
-                                    copy-state
-                                    env
-                                    type-env
-                                    rest-args
-                                    rest-types)
-                                    [(ResultLowerArgs.Ok rest-state rest-values)
-                                      (ResultLowerArgs.Ok
-                                        rest-state
-                                        (compiler-ir-value-cons
-                                          copy-value
-                                          rest-values))]
-                                    [(ResultLowerArgs.Err message)
-                                      (ResultLowerArgs.Err message)])])]
-                            [(ResultLowerExpr.Err message)
-                              (ResultLowerArgs.Err message)])]
-                        [(LowerCAbiAggregate.Unsupported message)
-                          (ResultLowerArgs.Err
-                            (box (lower-diagnostic-at-expr arg message)))]
-                        [(LowerCAbiAggregate.Sret _)
-                          (ResultLowerArgs.Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                arg
-                                (lower-c-abi-unsupported-message
-                                  (lower-state-mode arg-state)
-                                  arg-ty))))])])]
-                [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))]
-          [(AstTypeList.Nil)
-            (ResultLowerArgs.Err
-              (box (lower-diagnostic "lower: constructor arity mismatch")))]))]))
+                                    scalar-value
+                                    rest-values))]
+                              [(ResultLowerArgs.Err message)
+                                (ResultLowerArgs.Err message)])])]
+                      [(LowerCAbiAggregate.Register slots _)
+                        (match (lower-c-abi-register-arg-slot-values
+                          ctx
+                          arg-state
+                          value
+                          arg-ty
+                          slots)
+                          [(ResultLowerArgs.Ok slot-state slot-values)
+                            (match (lower-c-abi-args-as
+                              ctx
+                              slot-state
+                              env
+                              type-env
+                              rest-args
+                              rest-types)
+                              [(ResultLowerArgs.Ok rest-state rest-values)
+                                (ResultLowerArgs.Ok
+                                  rest-state
+                                  (lower-value-list-append
+                                    slot-values
+                                    rest-values))]
+                              [(ResultLowerArgs.Err message)
+                                (ResultLowerArgs.Err message)])]
+                          [(ResultLowerArgs.Err message)
+                            (ResultLowerArgs.Err message)])]
+                      [(LowerCAbiAggregate.Memory size)
+                        ;; The backend consumes size/unit markers and copies the aggregate to %rsp.
+                        (match (lower-c-abi-args-as
+                          ctx
+                          arg-state
+                          env
+                          type-env
+                          rest-args
+                          rest-types)
+                          [(ResultLowerArgs.Ok rest-state rest-values)
+                            (ResultLowerArgs.Ok
+                              rest-state
+                              (compiler-ir-value-cons
+                                value
+                                (compiler-ir-value-cons
+                                  (CompilerIrValue.I64 size)
+                                  (compiler-ir-value-cons
+                                    (CompilerIrValue.Unit)
+                                    rest-values))))]
+                          [(ResultLowerArgs.Err message)
+                            (ResultLowerArgs.Err message)])]
+                      [(LowerCAbiAggregate.ByRef _)
+                        ;; The ABI argument is the address of the copied
+                        ;; object, not the aggregate itself. Type the value as
+                        ;; u64 so direct extern-call register assignment does
+                        ;; not reclassify this pointer as a multi-word group.
+                        (match (lower-copy-inline-aggregate-to-heap-as
+                          ctx
+                          arg-state
+                          value
+                          arg-ty
+                          (AstType.U64))
+                          [(ResultLowerExpr.Ok copied)
+                            (match copied
+                              [(LowerExpr.Expr copy-state copy-value _)
+                                (match (lower-c-abi-args-as
+                                  ctx
+                                  copy-state
+                                  env
+                                  type-env
+                                  rest-args
+                                  rest-types)
+                                  [(ResultLowerArgs.Ok rest-state rest-values)
+                                    (ResultLowerArgs.Ok
+                                      rest-state
+                                      (compiler-ir-value-cons
+                                        copy-value
+                                        rest-values))]
+                                  [(ResultLowerArgs.Err message)
+                                    (ResultLowerArgs.Err message)])])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerArgs.Err message)])]
+                      [(LowerCAbiAggregate.Unsupported message)
+                        (ResultLowerArgs.Err
+                          (box (lower-diagnostic-at-expr arg message)))]
+                      [(LowerCAbiAggregate.Sret _)
+                        (ResultLowerArgs.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              arg
+                              (lower-c-abi-unsupported-message
+                                (lower-state-mode arg-state)
+                                arg-ty))))])])]
+              [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))]))
 
 (define (lower-c-abi-register-arg-slot-values-from
   [ctx : TcContext]
@@ -24062,20 +24117,19 @@
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
           [(ResultAstTypeList.Ok fields)
-            (match fields
-              [(AstTypeList.Nil)
-                (lower-direct-store-result
-                  (lower-construct-enum-with-handle-into
-                    ctx
-                    state
-                    env
-                    type-env
-                    dst
-                    variant-name
-                    handle
-                    AstExprList.Nil
-                    result-ty))]
-              [_ (LowerMaybeDirectStore.No)])]
+            (if (ast-type-list-empty? (& fields))
+              (lower-direct-store-result
+                (lower-construct-enum-with-handle-into
+                  ctx
+                  state
+                  env
+                  type-env
+                  dst
+                  variant-name
+                  handle
+                  AstExprList.Nil
+                  result-ty))
+              (LowerMaybeDirectStore.No))]
           [(ResultAstTypeList.Err message)
             (LowerMaybeDirectStore.Err (box (lower-diagnostic message)))])
         (LowerMaybeDirectStore.No)))))
@@ -25916,15 +25970,22 @@
 (define (lower-init-default-share-safe-type-list?
   [ctx : TcContext]
   [types : AstTypeList]) : bool
-  (match types
-    [(AstTypeList.Nil) true]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (tc-context-type-get ctx head)]
-        [rest : AstTypeList (box-get rest)]
-        (if (lower-init-default-share-safe? ctx head)
-          (lower-init-default-share-safe-type-list? ctx rest)
-          false))]))
+  (lower-init-default-share-safe-type-list-at? ctx (& types) 0))
+
+(define (lower-init-default-share-safe-type-list-at?
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    true
+    (let
+      [head : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      (if (lower-init-default-share-safe? ctx head)
+        (lower-init-default-share-safe-type-list-at? ctx types (+ index 1))
+        false))))
 
 (define (lower-init-default-share-safe-struct?
   [ctx : TcContext]
@@ -38293,16 +38354,17 @@
   [field-index : i64]
   [types : AstTypeList]) : ResultLowerEnv
   (if (ast-pattern-list-empty? (& patterns))
-    (match types
-      [(AstTypeList.Nil) (ResultLowerEnv.Ok state env type-env)]
-      [_
-        (ResultLowerEnv.Err
-          (box (lower-diagnostic "lower: struct pattern arity mismatch")))])
+    (if (>= field-index (ast-type-list-len (& types)))
+      (ResultLowerEnv.Ok state env type-env)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: struct pattern arity mismatch"))))
     (let
       [pattern : AstPattern
         (ast-pattern-list-get (& patterns) 0 (ast-pattern-fallback))]
       [rest-patterns : AstPatternList (ast-pattern-list-tail patterns)]
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (or
+        (>= field-index (ast-field-def-list-len fields))
+        (>= field-index (ast-type-list-len (& types))))
         (ResultLowerEnv.Err
           (box (lower-diagnostic "lower: struct pattern arity mismatch")))
         (match (ast-field-def-list-get
@@ -38310,38 +38372,37 @@
           field-index
           (ast-field-def-fallback))
           [(AstFieldDef.Def field-name _ _)
-            (match types
-              [(AstTypeList.Cons ty rest-types)
-                (let
-                  [ty : AstType (tc-context-type-get ctx ty)]
-                  [rest-types : AstTypeList (box-get rest-types)]
-                  (match (lower-bind-struct-field-pattern
+            (let
+              [ty : AstType
+                (tc-context-type-get
+                  ctx
+                  (ast-type-list-get
+                    (& types)
+                    field-index
+                    (ast-type-id-fallback)))]
+              (match (lower-bind-struct-field-pattern
+                ctx
+                state
+                env
+                type-env
+                base
+                struct-name
+                (intern-str field-name)
+                pattern
+                ty)
+                [(ResultLowerEnv.Ok next-state next-env next-type-env)
+                  (lower-bind-struct-pattern-fields-at
                     ctx
-                    state
-                    env
-                    type-env
+                    next-state
+                    next-env
+                    next-type-env
                     base
                     struct-name
-                    (intern-str field-name)
-                    pattern
-                    ty)
-                    [(ResultLowerEnv.Ok next-state next-env next-type-env)
-                      (lower-bind-struct-pattern-fields-at
-                        ctx
-                        next-state
-                        next-env
-                        next-type-env
-                        base
-                        struct-name
-                        rest-patterns
-                        fields
-                        (+ field-index 1)
-                        rest-types)]
-                    [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)]))]
-              [(AstTypeList.Nil)
-                (ResultLowerEnv.Err
-                  (box
-                    (lower-diagnostic "lower: struct pattern arity mismatch")))])])))))
+                    rest-patterns
+                    fields
+                    (+ field-index 1)
+                    types)]
+                [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)]))])))))
 
 (define (lower-bind-struct-pattern
   [ctx : TcContext]
@@ -41428,15 +41489,22 @@
 (define (lower-type-list-contains-inline-aggregate?
   [ctx : TcContext]
   [types : AstTypeList]) : bool
-  (match types
-    [(AstTypeList.Nil) false]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        (or
-          (lower-type-contains-inline-aggregate? ctx ty)
-          (lower-type-list-contains-inline-aggregate? ctx rest)))]))
+  (lower-type-list-contains-inline-aggregate-at? ctx (& types) 0))
+
+(define (lower-type-list-contains-inline-aggregate-at?
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (let
+      [ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      (or
+        (lower-type-contains-inline-aggregate? ctx ty)
+        (lower-type-list-contains-inline-aggregate-at? ctx types (+ index 1))))))
 
 (define (lower-param-list-contains-inline-aggregate?
   [ctx : TcContext]
@@ -42081,50 +42149,52 @@
 (define (lower-dispatch-type-list-without-regions
   [ctx : TcContext]
   [types : AstTypeList]) : AstTypeList
-  (match types
-    [(AstTypeList.Nil) AstTypeList.Nil]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        (ast-type-cons
-          (tc-type-without-regions ty)
-          (lower-dispatch-type-list-without-regions ctx rest)))]))
+  (lower-dispatch-type-list-without-regions-at ctx (& types) 0))
+
+(define (lower-dispatch-type-list-without-regions-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : AstTypeList
+  (if (>= index (ast-type-list-len types))
+    (ast-type-list-new)
+    (ast-type-cons
+      (tc-type-without-regions
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (lower-dispatch-type-list-without-regions-at ctx types (+ index 1)))))
 
 (define (lower-dispatch-param-type-count [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) 0]
-    [(AstTypeList.Cons _ rest)
-      (let
-        [rest : AstTypeList (box-get rest)]
-        (+ 1 (lower-dispatch-param-type-count rest)))]))
+  (ast-type-list-len (& types)))
 
 (define (lower-dispatch-param-list-from-types
   [ctx : TcContext]
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
-  (match types
-    [(AstTypeList.Nil) CompilerIrParamList.Nil]
-    [(AstTypeList.Cons ty rest)
-      (let
-        [ty : AstType (tc-context-type-get ctx ty)]
-        [rest : AstTypeList (box-get rest)]
-        (compiler-ir-param-cons
-          (CompilerIrParam.Param
-            (string.append "arg" (string.int->string idx))
-            (tc-type-without-regions ty)
-            idx)
-          (lower-dispatch-param-list-from-types ctx rest (+ idx 1))))]))
+  (lower-dispatch-param-list-from-types-at ctx (& types) idx))
+
+(define (lower-dispatch-param-list-from-types-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [idx : i64]) : CompilerIrParamList
+  (if (>= idx (ast-type-list-len types))
+    CompilerIrParamList.Nil
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param
+        (string.append "arg" (string.int->string idx))
+        (tc-type-without-regions
+          (tc-context-type-get
+            ctx
+            (ast-type-list-get types idx (ast-type-id-fallback))))
+        idx)
+      (lower-dispatch-param-list-from-types-at ctx types (+ idx 1)))))
 
 (define (lower-dispatch-param-values [types : AstTypeList] [idx : i64]) : CompilerIrValueList
-  (match types
-    [(AstTypeList.Nil) CompilerIrValueList.Nil]
-    [(AstTypeList.Cons _ rest)
-      (let
-        [rest : AstTypeList (box-get rest)]
-        (compiler-ir-value-cons
-          (CompilerIrValue.Var idx)
-          (lower-dispatch-param-values rest (+ idx 1))))]))
+  (if (>= idx (ast-type-list-len (& types)))
+    CompilerIrValueList.Nil
+    (compiler-ir-value-cons
+      (CompilerIrValue.Var idx)
+      (lower-dispatch-param-values types (+ idx 1)))))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants AstDispatchVariantList)]
@@ -54436,7 +54506,7 @@
         (ast-variant-def-cons
           (ast-variant-def
             "UsedA"
-            AstTypeList.Nil
+            (ast-type-list-new)
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new)))
       (ast-decl-cons
@@ -54446,7 +54516,7 @@
           (ast-variant-def-cons
             (ast-variant-def
               "DeadA"
-              AstTypeList.Nil
+              (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons
@@ -54496,7 +54566,7 @@
         (ast-variant-def-cons
           (ast-variant-def
             "OkIoString"
-            AstTypeList.Nil
+            (ast-type-list-new)
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new)))
       (ast-decl-cons
@@ -54506,7 +54576,7 @@
           (ast-variant-def-cons
             (ast-variant-def
               "DeadResultA"
-              AstTypeList.Nil
+              (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons

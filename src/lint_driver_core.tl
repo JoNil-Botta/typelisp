@@ -812,12 +812,20 @@
 (define (selfhost-lint-dead-type-list-refs
   [types : AstTypeList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match types
-    [(AstTypeList.Nil) refs]
-    [(AstTypeList.Cons head rest)
-      (selfhost-lint-dead-type-list-refs
-        (box-get rest)
-        (selfhost-lint-dead-type-refs (ty-node-get head) refs))]))
+  (selfhost-lint-dead-type-list-refs-at (& types) refs 0))
+
+(define (selfhost-lint-dead-type-list-refs-at
+  [types : (& types AstTypeList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-type-list-len types))
+    refs
+    (selfhost-lint-dead-type-list-refs-at
+      types
+      (selfhost-lint-dead-type-refs
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+        refs)
+      (+ index 1))))
 
 (define (selfhost-lint-dead-type-id-refs [ty : i64] [refs : vector.StringVec]) : vector.StringVec
   (selfhost-lint-dead-type-refs (ty-node-get ty) refs))

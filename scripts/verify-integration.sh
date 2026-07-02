@@ -14,6 +14,38 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 
+usage() {
+    cat >&2 <<'EOF'
+usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic]
+
+Runs manifest-driven native integration tests.
+--self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
+helper without invoking a compiler or native toolchain.
+EOF
+}
+
+SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
+case "${1:-}" in
+    "")
+        ;;
+    --self-test-empty-compile-diagnostic)
+        SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=1
+        shift
+        ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+if [ "$#" -ne 0 ]; then
+    usage
+    exit 2
+fi
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -24,18 +56,22 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
+    if [ -n "${TYPELISP_BIN:-}" ]; then
+        COMPILER=$TYPELISP_BIN
+    else
+        # Local-development fallback: fetch the published
+        # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+        . "$ROOT/scripts/lib-stage0.sh"
+        COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+    fi
 
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
+    if [ ! -x "$COMPILER" ]; then
+        echo "typelisp compiler is not executable: $COMPILER" >&2
+        exit 1
+    fi
+else
+    COMPILER=${TYPELISP_BIN:-typelisp}
 fi
 
 # A signal-shaped crash from a manifest binary is a real compiler/runtime bug,
@@ -61,32 +97,34 @@ run_fixture() {
     fi
 }
 
-if [ "$HOST_OS" = linux ]; then
-    command -v as >/dev/null 2>&1 || {
-        echo "missing assembler: as" >&2
-        exit 1
-    }
-    command -v ld >/dev/null 2>&1 || {
-        echo "missing linker: ld" >&2
-        exit 1
-    }
-else
-    command -v powershell.exe >/dev/null 2>&1 || {
-        echo "missing powershell.exe for Windows exit-code capture" >&2
-        exit 1
-    }
-    command -v cygpath >/dev/null 2>&1 || {
-        echo "missing cygpath for Windows path conversion" >&2
-        exit 1
-    }
-    command -v clang >/dev/null 2>&1 || {
-        echo "missing assembler: clang" >&2
-        exit 1
-    }
-    command -v lld-link >/dev/null 2>&1 || {
-        echo "missing linker: lld-link" >&2
-        exit 1
-    }
+if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
+    if [ "$HOST_OS" = linux ]; then
+        command -v as >/dev/null 2>&1 || {
+            echo "missing assembler: as" >&2
+            exit 1
+        }
+        command -v ld >/dev/null 2>&1 || {
+            echo "missing linker: ld" >&2
+            exit 1
+        }
+    else
+        command -v powershell.exe >/dev/null 2>&1 || {
+            echo "missing powershell.exe for Windows exit-code capture" >&2
+            exit 1
+        }
+        command -v cygpath >/dev/null 2>&1 || {
+            echo "missing cygpath for Windows path conversion" >&2
+            exit 1
+        }
+        command -v clang >/dev/null 2>&1 || {
+            echo "missing assembler: clang" >&2
+            exit 1
+        }
+        command -v lld-link >/dev/null 2>&1 || {
+            echo "missing linker: lld-link" >&2
+            exit 1
+        }
+    fi
 fi
 
 MANIFEST="$ROOT/tests/integration/native-$HOST_OS.manifest"
@@ -97,7 +135,7 @@ NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
 PS_RUNNER_WIN=
-if [ "$HOST_OS" = windows ]; then
+if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
     PS_RUNNER="$WORKDIR/run-windows-program.ps1"
     cat > "$PS_RUNNER" <<'EOF'
 $ErrorActionPreference = "Stop"
@@ -642,6 +680,15 @@ assert_file_text() {
     fi
 }
 
+file_size_bytes() {
+    _file=$1
+    if [ -e "$_file" ]; then
+        wc -c < "$_file" | tr -d '[:space:]'
+    else
+        printf '%s\n' missing
+    fi
+}
+
 show_stream_if_nonempty() {
     _label=$1
     _file=$2
@@ -657,6 +704,104 @@ show_build_streams() {
     show_stream_if_nonempty stdout "$_stdout"
     show_stream_if_nonempty stderr "$_stderr"
 }
+
+show_compile_stream_diagnostic() {
+    _label=$1
+    _file=$2
+    if [ ! -e "$_file" ]; then
+        echo "$_label: $_file (missing)" >&2
+        return
+    fi
+    _size=$(file_size_bytes "$_file")
+    if [ "$_size" -eq 0 ]; then
+        echo "$_label: $_file (empty, 0 bytes)" >&2
+    else
+        echo "$_label: $_file ($_size bytes):" >&2
+        sed 's/^/  /' "$_file" >&2 || true
+    fi
+}
+
+show_compile_artifact_diagnostic() {
+    _label=$1
+    _file=$2
+    if [ -e "$_file" ]; then
+        _size=$(file_size_bytes "$_file")
+        echo "$_label: $_file (exists, $_size bytes)" >&2
+    else
+        echo "$_label: $_file (missing)" >&2
+    fi
+}
+
+show_compile_failure_diagnostics() {
+    _case=$1
+    _rc=$2
+    _compiler=$3
+    _source=$4
+    _target=$5
+    _stdout=$6
+    _stderr=$7
+    _asm=$8
+    _argv=$9
+
+    echo "compile failure diagnostics:" >&2
+    echo "  case: $_case" >&2
+    echo "  exit code: $_rc" >&2
+    echo "  host: $HOST_OS" >&2
+    echo "  target: $_target" >&2
+    echo "  compiler: $_compiler" >&2
+    echo "  source: $_source" >&2
+    echo "  argv: $_compiler $_argv" >&2
+    show_compile_stream_diagnostic stdout "$_stdout"
+    show_compile_stream_diagnostic stderr "$_stderr"
+    show_compile_artifact_diagnostic assembly "$_asm"
+}
+
+run_empty_compile_diagnostic_self_test() {
+    _dir="$WORKDIR/empty-compile-diagnostic-self-test"
+    rm -rf "$_dir"
+    mkdir -p "$_dir"
+    _stdout="$_dir/case.build.stdout"
+    _stderr="$_dir/case.build.stderr"
+    _asm="$_dir/case.s"
+    _source="$_dir/case.tl"
+    _diagnostic="$_dir/diagnostic.txt"
+
+    : > "$_stdout"
+    : > "$_stderr"
+    : > "$_source"
+    rm -f "$_asm"
+
+    show_compile_failure_diagnostics \
+        empty_stream_case \
+        37 \
+        /tmp/fake-typelisp \
+        "$_source" \
+        linux-x86_64 \
+        "$_stdout" \
+        "$_stderr" \
+        "$_asm" \
+        "compile $_source --target linux-x86_64 --stdlib-root $ROOT/stdlib --stdlib-root $ROOT/src -o $_asm" \
+        > "$_diagnostic" 2>&1
+
+    assert_contains "$_diagnostic" "compile failure diagnostics:" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "case: empty_stream_case" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "exit code: 37" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "host: $HOST_OS" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "target: linux-x86_64" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "compiler: /tmp/fake-typelisp" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "source: $_source" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "argv: /tmp/fake-typelisp compile $_source" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "stdout: $_stdout (empty, 0 bytes)" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "stderr: $_stderr (empty, 0 bytes)" empty-compile-diagnostic
+    assert_contains "$_diagnostic" "assembly: $_asm (missing)" empty-compile-diagnostic
+
+    printf '%s\n' "verify-integration empty compile diagnostic self-test passed"
+}
+
+if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 1 ]; then
+    run_empty_compile_diagnostic_self_test
+    exit 0
+fi
 
 build_linux_fixture_driver() {
     _label=$1
@@ -1279,7 +1424,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
                 continue
             fi
             echo "FAIL: $name compile failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
+            show_compile_failure_diagnostics \
+                "$name" \
+                "$build_rc" \
+                "$COMPILER" \
+                "$work_src" \
+                windows-x86_64 \
+                "$build_stdout" \
+                "$build_stderr" \
+                "$asm" \
+                "compile $work_src --target windows-x86_64 --cfg windows --stdlib-root $ROOT/stdlib --stdlib-root $ROOT/src -o $asm"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -1344,7 +1498,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
                 continue
             fi
             echo "FAIL: $name compile failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
+            show_compile_failure_diagnostics \
+                "$name" \
+                "$build_rc" \
+                "$COMPILER" \
+                "$work_src" \
+                linux-x86_64 \
+                "$build_stdout" \
+                "$build_stderr" \
+                "$asm" \
+                "compile $work_src --stdlib-root $ROOT/stdlib --stdlib-root $ROOT/src -o $asm"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue

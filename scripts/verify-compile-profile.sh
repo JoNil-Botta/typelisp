@@ -42,6 +42,8 @@ VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
 VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
+RESULT_IMPORT_STDOUT="$WORKDIR/profile-result-import.stdout"
+RESULT_IMPORT_STDERR="$WORKDIR/profile-result-import.stderr"
 GEN_IMPORT_INERT_STDOUT="$WORKDIR/profile-generated-import-inert.stdout"
 GEN_IMPORT_INERT_STDERR="$WORKDIR/profile-generated-import-inert.stderr"
 REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
@@ -295,6 +297,45 @@ assert_profile_counter_eq_in \
     0 \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
+
+echo "[compile-profile] check generated result import fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_result_import.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$RESULT_IMPORT_STDOUT" 2> "$RESULT_IMPORT_STDERR"; then
+    show_failure_logs "$RESULT_IMPORT_STDOUT" "$RESULT_IMPORT_STDERR"
+    fail "profiled generated result import fixture check failed"
+fi
+
+assert_contains_in \
+    "$RESULT_IMPORT_STDERR" \
+    "stdlib.result/result arity=2 calls=1" \
+    "$RESULT_IMPORT_STDOUT" \
+    "$RESULT_IMPORT_STDERR"
+assert_profile_counter_eq_in \
+    "$RESULT_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_passes" \
+    2 \
+    "$RESULT_IMPORT_STDOUT" \
+    "$RESULT_IMPORT_STDERR"
+assert_profile_counter_eq_in \
+    "$RESULT_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_needs_followup" \
+    1 \
+    "$RESULT_IMPORT_STDOUT" \
+    "$RESULT_IMPORT_STDERR"
+assert_profile_counter_eq_in \
+    "$RESULT_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_generated_imports" \
+    0 \
+    "$RESULT_IMPORT_STDOUT" \
+    "$RESULT_IMPORT_STDERR"
+assert_profile_counter_eq_in \
+    "$RESULT_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_module_placeholders" \
+    0 \
+    "$RESULT_IMPORT_STDOUT" \
+    "$RESULT_IMPORT_STDERR"
 
 echo "[compile-profile] check inert generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_inert.tl \

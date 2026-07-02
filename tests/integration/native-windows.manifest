@@ -32,6 +32,7 @@ arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
 arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl
 arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
+save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl

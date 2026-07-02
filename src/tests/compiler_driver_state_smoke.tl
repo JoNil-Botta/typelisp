@@ -1,6 +1,6 @@
 (import stdlib.string)
 (import stdlib.io)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_driver_core.tl")
 (import "../compiler_lower.tl")
 (import "../compiler_clone.tl")
@@ -716,7 +716,7 @@
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
             (ast-decl-path-list-new)
-            (vector.string-vec-new)
+            (svec.new)
             (tc-prefix-default-cache-scope)
             pools)
             [(ResultCompilerTypecheck.Ok _)
@@ -1229,8 +1229,12 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
       (compiler-driver-state-reset-file-state! state-a)
@@ -1282,7 +1286,7 @@
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
   [input-path : String]
-  [stdlib-roots : vector.StringVec]) : bool
+  [stdlib-roots : svec.StringVector]) : bool
   (let
     [decoy-state : CompilerDriverState (compiler-driver-state-new)]
     (begin
@@ -1311,8 +1315,12 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -1352,8 +1360,12 @@
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
     [needle : String "score"]

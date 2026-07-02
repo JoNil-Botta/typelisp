@@ -9,7 +9,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import stdlib.io)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "doc_render.tl")
 (import "doc_html.tl")
 (import "doc_test.tl")
@@ -23,11 +23,11 @@
   (Some String))
 
 (defenum DocTestCliConfig
-  (File vector.StringVec vector.StringVec)
-  (Package String bool vector.StringVec))
+  (File svec.StringVector svec.StringVector)
+  (Package String bool svec.StringVector))
 
 (defenum ResultDocTestBatchPaths
-  (Ok vector.StringVec)
+  (Ok svec.StringVector)
   (Err String))
 
 (defenum ResultDocTestCliConfig
@@ -38,7 +38,7 @@
   false)
 
 (defenum DocDefaultCliConfig
-  (Explicit vector.StringVec DocMaybeString vector.StringVec)
+  (Explicit svec.StringVector DocMaybeString svec.StringVector)
   (Package String bool String))
 
 (defenum ResultDocDefaultCliConfig
@@ -115,7 +115,7 @@
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym_i64_env.sym-i64-empty)
@@ -167,7 +167,7 @@
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-test-file [input-path : String] [stdlib-roots : vector.StringVec]) : i64
+(define (doc-test-file [input-path : String] [stdlib-roots : svec.StringVector]) : i64
   (let
     [report : DocTestRunReport
       (doc-test-run-file-with-roots input-path stdlib-roots)]
@@ -181,42 +181,42 @@
 (define (doc-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
-(define (doc-stdlib-roots [idx : i64]) : vector.StringVec
+(define (doc-stdlib-roots [idx : i64]) : svec.StringVector
   (let
     [i : i64 idx]
     [n : i64 (arg-count)]
-    [roots : vector.StringVec (vector.string-vec-new)]
+    [roots : svec.StringVector (svec.new)]
     (begin
       (while (< i n)
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) n)
             (begin
-              (set! roots (vector.string-vec-push roots (io.arg (+ i 1))))
+              (svec.push (&mut roots) (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i n))
           (set! i (+ i 1))))
       roots)))
 
 (define (doc-modules-from-input-paths-before-last
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [index : i64]
   [last-index : i64]) : DocModuleList
   (if (>= index last-index)
     DocModuleList.Nil
     (let
-      [path : String (vector.string-vec-get paths index "")]
+      [path : String (svec.get (& paths) index "")]
       (doc-cli-module-cons
         (DocModule.Module path (doc-extract-file path))
         (doc-modules-from-input-paths-before-last paths (+ index 1) last-index)))))
 
-(define (doc-generate-module-graph-from-input-paths [paths : vector.StringVec]) : i64
+(define (doc-generate-module-graph-from-input-paths [paths : svec.StringVector]) : i64
   (let
-    [output-path : String (vector.string-vec-last paths "")]
+    [output-path : String (svec.last (& paths) "")]
     [modules : DocModuleList
       (doc-modules-from-input-paths-before-last
         paths
         0
-        (- (vector.string-vec-len paths) 1))]
+        (- (svec.len (& paths)) 1))]
     (begin
       (io.write-file output-path (doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
@@ -252,11 +252,11 @@
           (+ line-end 2)
           (+ line-end 1))))))
 
-(define (doc-test-batch-paths-from-text [text : String]) : vector.StringVec
+(define (doc-test-batch-paths-from-text [text : String]) : svec.StringVector
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [paths : vector.StringVec (vector.string-vec-new)]
+    [paths : svec.StringVector (svec.new)]
     (begin
       (while (< i n)
         (let
@@ -264,7 +264,7 @@
           [line : String (string.substring text i (- line-end i))]
           (begin
             (if (> (string.string-length line) 0)
-              (set! paths (vector.string-vec-push paths line))
+              (svec.push (&mut paths) line)
               unit)
             (set! i (doc-test-batch-next-line-start text line-end n)))))
       paths)))
@@ -280,22 +280,22 @@
           (io.error-message error)))]))
 
 (define (doc-test-config-finish
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (match batch-list
     [(DocMaybeString.Some list-path)
       (if has-manifest
         (ResultDocTestCliConfig.Err
           "doc: cannot combine --batch with --manifest-path")
-        (if (not (vector.string-vec-is-empty? input-paths))
+        (if (not (svec.is-empty? (& input-paths)))
           (ResultDocTestCliConfig.Err
             "doc: cannot combine input paths with --batch")
           (match (doc-test-batch-paths list-path)
             [(ResultDocTestBatchPaths.Ok paths)
-              (if (vector.string-vec-is-empty? paths)
+              (if (svec.is-empty? (& paths))
                 (ResultDocTestCliConfig.Err "doc: --batch list is empty")
                 (ResultDocTestCliConfig.Ok
                   (DocTestCliConfig.File paths stdlib-roots)))]
@@ -306,7 +306,7 @@
         [doc-test-prefix-cache-stats
           (ResultDocTestCliConfig.Err
             "doc: --prefix-cache-stats requires --batch")]
-        [(vector.string-vec-is-empty? input-paths)
+        [(svec.is-empty? (& input-paths))
           (ResultDocTestCliConfig.Ok
             (DocTestCliConfig.Package manifest-path has-manifest stdlib-roots))]
         [has-manifest
@@ -319,10 +319,10 @@
 (define (doc-test-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (if (>= idx count)
     (doc-test-config-finish
@@ -343,7 +343,11 @@
               input-paths
               manifest-path
               has-manifest
-              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
+              (let
+                [next-roots : svec.StringVector stdlib-roots]
+                (begin
+                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  next-roots))
               batch-list))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
@@ -391,7 +395,11 @@
           (doc-test-parse-options
             (+ idx 1)
             count
-            (vector.string-vec-push input-paths current)
+            (let
+              [next-paths : svec.StringVector input-paths]
+              (begin
+                (svec.push (&mut next-paths) current)
+                next-paths))
             manifest-path
             has-manifest
             stdlib-roots
@@ -403,22 +411,22 @@
     (doc-test-parse-options
       (+ base 1)
       count
-      (vector.string-vec-new)
+      (svec.new)
       ""
       false
-      (vector.string-vec-new)
+      (svec.new)
       (DocMaybeString.No))))
 
 (define (doc-test-files-from
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [index : i64]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len input-paths))
+  (if (>= index (svec.len (& input-paths)))
     status
     (let
-      [input-path : String (vector.string-vec-get input-paths index "")]
+      [input-path : String (svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
           (if print-headers
@@ -436,8 +444,8 @@
           status)))))
 
 (define (doc-test-files
-  [input-paths : vector.StringVec]
-  [stdlib-roots : vector.StringVec]
+  [input-paths : svec.StringVector]
+  [stdlib-roots : svec.StringVector]
   [print-headers : bool]
   [status : i64]) : i64
   (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
@@ -445,7 +453,7 @@
 (define (doc-test-package-files-from
   [input-paths : PackageSourceList]
   [index : i64]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [status : i64]) : i64
   (if (>= index (package-source-list-len input-paths))
     status
@@ -466,14 +474,14 @@
 
 (define (doc-test-package-files
   [input-paths : PackageSourceList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [status : i64]) : i64
   (doc-test-package-files-from input-paths 0 stdlib-roots status))
 
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
@@ -483,12 +491,12 @@
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
 
 (define (doc-default-config-finish
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [output-path : DocMaybeString]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]) : ResultDocDefaultCliConfig
-  (if (vector.string-vec-is-empty? input-paths)
+  [stdlib-roots : svec.StringVector]) : ResultDocDefaultCliConfig
+  (if (svec.is-empty? (& input-paths))
     (match output-path
       [(DocMaybeString.Some out)
         (ResultDocDefaultCliConfig.Ok
@@ -507,10 +515,10 @@
 (define (doc-default-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [output-path : DocMaybeString]
   [manifest-path : String]
-  [stdlib-roots : vector.StringVec]) : ResultDocDefaultCliConfig
+  [stdlib-roots : svec.StringVector]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
       input-paths
@@ -545,7 +553,11 @@
               input-paths
               output-path
               manifest-path
-              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
+              (let
+                [next-roots : svec.StringVector stdlib-roots]
+                (begin
+                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  next-roots))))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultDocDefaultCliConfig.Err
@@ -566,7 +578,11 @@
           (doc-default-parse-options
             (+ idx 1)
             count
-            (vector.string-vec-push input-paths current)
+            (let
+              [next-paths : svec.StringVector input-paths]
+              (begin
+                (svec.push (&mut next-paths) current)
+                next-paths))
             output-path
             manifest-path
             stdlib-roots)]))))
@@ -575,10 +591,10 @@
   (doc-default-parse-options
     base
     count
-    (vector.string-vec-new)
+    (svec.new)
     (DocMaybeString.No)
     ""
-    (vector.string-vec-new)))
+    (svec.new)))
 
 (define (doc-invalid-args) : i64
   (begin
@@ -596,24 +612,24 @@
     1))
 
 (define (doc-run-explicit-default
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [output-path : DocMaybeString]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (match output-path
     [(DocMaybeString.Some out)
-      (if (vector.string-vec-is-empty? input-paths)
+      (if (svec.is-empty? (& input-paths))
         (doc-invalid-args)
         (doc-generate-loaded-file
-          (vector.string-vec-get input-paths 0 "")
+          (svec.get (& input-paths) 0 "")
           out
           stdlib-roots))]
     [(DocMaybeString.No)
       (let
-        [path-count : i64 (vector.string-vec-len input-paths)]
+        [path-count : i64 (svec.len (& input-paths))]
         (if (= path-count 2)
           (doc-generate-file
-            (vector.string-vec-get input-paths 0 "")
-            (vector.string-vec-get input-paths 1 ""))
+            (svec.get (& input-paths) 0 "")
+            (svec.get (& input-paths) 1 ""))
           (if (> path-count 2)
             (doc-generate-module-graph-from-input-paths input-paths)
             (doc-invalid-args))))]))
@@ -654,7 +670,7 @@
                   (doc-test-files
                     input-paths
                     stdlib-roots
-                    (> (vector.string-vec-len input-paths) 1)
+                    (> (svec.len (& input-paths)) 1)
                     0))]
               (begin
                 (if doc-test-prefix-cache-stats

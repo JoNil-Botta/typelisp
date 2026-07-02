@@ -2,29 +2,17 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
-(defstruct StringVec (len i64) (first String))
-(define (string-vec-new) : StringVec
-  (StringVec 0 \"\"))
-(define (string-vec-push [v : StringVec] [value : String]) : StringVec
-  (StringVec (+ (struct-get v len) 1) value))
-(define (string-vec-get [v : StringVec] [index : i64] [fallback : String]) : String
-  (if (< index (struct-get v len))
-    (struct-get v first)
-    fallback))
+(define (local-vector-string) : String \"a\")
 (module main)
 (import stdlib.vector)
 (define (main) : i64
-  (__tl_string_length
-    (vector.string-vec-get
-      (vector.string-vec-push (vector.string-vec-new) \"a\")
-      0
-      \"\")))")
+  (__tl_string_length (vector.local-vector-string)))")
 
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower-compiler-source
@@ -37,8 +25,12 @@
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root)]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) root)
+          items))]
     (begin
       (compiler-load-test-mkdir root)
       (io.write-file
@@ -72,8 +64,12 @@
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
       (CompilerBackendTarget.Linux)
@@ -90,6 +86,7 @@
   `(begin
     (module generated.lower_vector_user_no_main)
     (import stdlib.vector)
+(import (vector.vector String) as svec)
     (defstruct T
       (value i64))
     (import (vector T) as vec)
@@ -116,8 +113,12 @@
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
     [path : String "target/lower_module_macro_vector_no_main.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (io.write-file
         path
@@ -136,8 +137,12 @@
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
     [path : String "target/lower_direct_no_main_symbols.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (io.write-file path "(define (no-main-direct-helper) : i64 7)")
       (lower-no-main-entry-prune-set! true)

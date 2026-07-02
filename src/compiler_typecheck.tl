@@ -1,6 +1,6 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
 (import stdlib.io)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
@@ -9,7 +9,7 @@
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
@@ -22,7 +22,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (typecheck-compiler-specialized-program-with-paths-cache-with-pools
@@ -35,7 +35,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
@@ -48,7 +48,7 @@
 (define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
@@ -138,7 +138,7 @@
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-pools
     program
@@ -153,13 +153,13 @@
   (typecheck-compiler-program-with-paths-cache
     program
     paths
-    (vector.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
@@ -244,7 +244,7 @@
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-pools
     program
@@ -259,7 +259,7 @@
   (typecheck-compiler-program-with-paths-checked-cache
     program
     paths
-    (vector.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
@@ -284,7 +284,7 @@
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let
-    [stdlib-roots : vector.StringVec (vector.string-vec-new)]
+    [stdlib-roots : svec.StringVector (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)

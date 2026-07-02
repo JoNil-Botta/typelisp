@@ -22276,6 +22276,93 @@
         program-index
         buf)]))
 
+;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
+;; saturated at a switch dispatch, one or both of the index / jump-table-base
+;; scratches is EMERGENCY-borrowed from a live occupant. The enclosing
+;; emergency-wrap saves that occupant BEFORE this head and would normally
+;; restore it AFTER -- but the borrowed register is consumed by the indirect
+;; `jmp *`, a control transfer, so a trailing restore lands on UNREACHABLE code
+;; (dead on every taken arm AND on the `ja default` edge). The occupant would
+;; then arrive in the successor blocks holding the jump-table / arm address (the
+;; GAP2b vm_run miscompile: an arm's bounds check compared against a code
+;; pointer).
+;; Fix: compute the FINAL target block address (an arm's, or the default block's
+;; when out of range) into table-reg, STASH it into a dedicated frame slot,
+;; restore every borrowed occupant INLINE (emergency-restore-before-jumps, which
+;; sets restore-suppressed so the wrap omits its now-redundant trailing
+;; restore), then jump SLOT-INDIRECT through the stash. Both borrowed registers
+;; are dead by the stash, so every occupant is restored on the single path that
+;; reaches the transfer; the provisional `leaq default` folds the out-of-range
+;; edge into the same restore+jump so the default path is covered too. The
+;; target slot sits one past the borrowed emergency slots (at index
+;; emergency-pending-count); used-count is bumped so the frame reserves it.
+;; The rsp-rebase (FPO) pass rewrites the `-K(%rbp)` stash-store and
+;; `jmp *-K(%rbp)` like any other frame reference (delta 0, no rsp motion).
+(define (compiler-backend-emit-switch-dispatch-emergency
+  [function : String]
+  [current-label : String]
+  [default-label : String]
+  [case-count : i64]
+  [base : i64]
+  [index-reg : String]
+  [table-reg : String]
+  [load-index : String]) : String
+  (let
+    [target-idx : i64 compiler-backend-emergency-pending-count]
+    [target-slot : String
+      (str-cat
+        (int->string (compiler-backend-emergency-reg-offset target-idx))
+        "(%rbp)"
+        "")]
+    [_reserve-target-slot : unit
+      (if (< compiler-backend-emergency-used-count (+ target-idx 1))
+        (set! compiler-backend-emergency-used-count (+ target-idx 1))
+        unit)]
+    [done-label : String
+      (compiler-backend-asm-label
+        function
+        (str_cat.str-cat current-label "_disp_j" ""))]
+    ;; Emits the borrowed-occupant restores here (before the transfer) and
+    ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
+    ;; stash and BEFORE the indirect jump.
+    [restore : String (compiler-backend-emergency-restore-before-jumps)]
+    (str-cat
+      load-index
+      (if (= base 0)
+        ""
+        (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
+      "    leaq "
+      (compiler-backend-asm-label function default-label)
+      "(%rip), "
+      table-reg
+      "\n    cmpq $"
+      (int->string (- case-count 1))
+      ", "
+      index-reg
+      "\n    ja "
+      done-label
+      "\n    leaq "
+      (compiler-backend-switch-table-label function current-label)
+      "(%rip), "
+      table-reg
+      "\n    movq ("
+      table-reg
+      ","
+      index-reg
+      ",8), "
+      table-reg
+      "\n"
+      done-label
+      ":\n    movq "
+      table-reg
+      ", "
+      target-slot
+      "\n"
+      restore
+      "    jmp *"
+      target-slot
+      "\n")))
+
 (define (compiler-backend-emit-switch-dispatch
   [function : String]
   [current-label : String]
@@ -22310,26 +22397,39 @@
     (match index-load
       [(OkCompilerBackend load-index)
         (OkCompilerBackend
-          (str-cat
-            load-index
-            (if (= base 0)
-              ""
-              (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
-            "    cmpq $"
-            (int->string (- case-count 1))
-            ", "
-            index-reg
-            "\n    ja "
-            (compiler-backend-asm-label function default-label)
-            "\n    leaq "
-            (compiler-backend-switch-table-label function current-label)
-            "(%rip), "
-            table-reg
-            "\n    jmp *("
-            table-reg
-            ","
-            index-reg
-            ",8)\n"))]
+          (if compiler-backend-emergency-pending
+            ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
+            ;; a trailing restore after the indirect jmp is unreachable. Emit the
+            ;; slot-indirect form with the restore BEFORE the transfer.
+            (compiler-backend-emit-switch-dispatch-emergency
+              function
+              current-label
+              default-label
+              case-count
+              base
+              index-reg
+              table-reg
+              load-index)
+            (str-cat
+              load-index
+              (if (= base 0)
+                ""
+                (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
+              "    cmpq $"
+              (int->string (- case-count 1))
+              ", "
+              index-reg
+              "\n    ja "
+              (compiler-backend-asm-label function default-label)
+              "\n    leaq "
+              (compiler-backend-switch-table-label function current-label)
+              "(%rip), "
+              table-reg
+              "\n    jmp *("
+              table-reg
+              ","
+              index-reg
+              ",8)\n")))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-switch

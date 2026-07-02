@@ -3156,11 +3156,17 @@
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
-  [switch-points : CompilerLiveI64Set]
+  [_switch-points : CompilerLiveI64Set]
   [var : i64]
   [reg : String]) : bool
+  ;; GAP2b-v2: the kind-3 (any-switch-refuses-all-pins) clause is REMOVED. The
+  ;; dispatch emitter's emergency scavenge is now sound (it restores every
+  ;; borrowed occupant BEFORE the indirect jmp via a slot-indirect transfer --
+  ;; compiler-backend-emit-switch-dispatch-emergency), so an ABI pin that
+  ;; perturbs occupancy at a dispatch no longer risks the restore-after-jmp
+  ;; miscompile. switch-points stays plumbed (harmless) for a possible future
+  ;; per-interval switch model; the pin gate ignores it.
   (and
-    (= (compiler-live-set-count switch-points) 0)
     (not (compiler-reg-param-pin-spans-clobber? interval-index call-points var))
     (not (compiler-reg-param-pin-spans-clobber? interval-index div-points var))
     (or
@@ -15952,7 +15958,7 @@
   [excluded : CompilerLiveI64Set]
   [starts : (Array i64)]
   [ends : (Array i64)]
-  [switch-points : (Array i64)]
+  [_switch-points : (Array i64)]
   [poisoned : (Array bool)]
   [parents : (Array i64)]
   [members : (Array i64)]
@@ -16006,18 +16012,16 @@
                   count
                   vars
                   (+ i0 1))]
-              (if (and
-                (>= i1 0)
-                (compiler-reg-group-pair-switch-headroom-ok?
-                  assignments
-                  starts
-                  ends
-                  vars
-                  switch-points
-                  members
-                  count
-                  (compiler-reg-group-pair-csr i0)
-                  (compiler-reg-group-pair-csr i1)))
+              ;; GAP2b-v2: the #switch-headroom guard is REMOVED. It refused a
+              ;; dispatch-covering component unless every switch point kept >= 2
+              ;; free scavenger candidates, preserving the "never emergency at a
+              ;; dispatch" invariant only because the dispatch emitter's
+              ;; emergency restore was unsound (restore-after-jmp). The emitter
+              ;; now restores every borrowed occupant BEFORE the indirect jmp
+              ;; (compiler-backend-emit-switch-dispatch-emergency), so a
+              ;; dispatch scrutinee pair that drives the scavenge to emergency is
+              ;; codegen-correct; the pair may claim its two CSRs unconditionally.
+              (if (>= i1 0)
                 (let
                   [pair : CompilerRegLocation
                     (CompilerRegRegisterPair

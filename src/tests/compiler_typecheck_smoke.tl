@@ -2619,6 +2619,32 @@
 (define (main) : String
   (str_cat.str-cat \"a\" \"b\" \"c\" \"d\" \"e\"))")
 
+(define (compiler-typecheck-smoke-runtime-str-cat-two-nested-source) : String
+  "(module main)
+(import stdlib.str_cat_runtime as str_cat)
+(import stdlib.string)
+
+(defstruct Span
+  (line i64)
+  (col i64))
+
+(define (span-line [span : (& span Span)]) : i64
+  (struct-get span line))
+
+(define (span-col [span : (& span Span)]) : i64
+  (struct-get span col))
+
+(define (render [span : Span]) : String
+  (str_cat.str-cat
+    \"a\"
+    \"b\"
+    (string.int->string (span-line span))
+    \"d\"
+    (string.int->string (span-col span))
+    \"f\"))
+
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?) : bool
   (let
     [ok : bool
@@ -2795,6 +2821,23 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-runtime-str-cat-two-nested-ok?) : bool
+  (let
+    [ok : bool
+      (match (typecheck-compiler-source-load
+        (compiler-typecheck-smoke-runtime-str-cat-two-nested-source))
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (match (typecheck-compiler-program-with-paths-checked
+            (ast-program decls)
+            paths)
+            [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+            [(ResultCompilerTypecheckChecked.Err _) false])]
+        [(ResultCompilerLoadWithPaths.Err _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -2858,6 +2901,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-str-cat-macro-ok?)
       (io.panic "typecheck: lazy import str-cat macro smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-runtime-str-cat-two-nested-ok?)
+      (io.panic "typecheck: runtime str-cat two nested smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?)
       (io.panic "typecheck: lazy summary macro unused smoke failed"))

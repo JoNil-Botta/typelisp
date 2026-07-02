@@ -1009,10 +1009,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-arg-count [args : AstExprList]) : i64
-    (match args
-      [(AstExprList.Nil) 0]
-      [(AstExprList.Cons _ rest)
-        (+ 1 (compiler-tc-macro-profile-arg-count (box-get rest)))])))
+    (struct-get (& args) len)))
 
 (cfg
   compile-profile
@@ -2405,15 +2402,11 @@
     [_ (TcMaybeAstSourceSpan.No)]))
 
 (define (tc-expr-list-last-maybe-span [exprs : AstExprList]) : TcMaybeAstSourceSpan
-  (match exprs
-    [(AstExprList.Nil) (TcMaybeAstSourceSpan.No)]
-    [(AstExprList.Cons head rest-box)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Nil) (tc-expr-maybe-span head-expr)]
-          [_ (tc-expr-list-last-maybe-span rest)]))]))
+  (if (ast-expr-list-empty? (& exprs))
+    (TcMaybeAstSourceSpan.No)
+    (tc-expr-maybe-span
+      (ast-node-get
+        (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
 
 (define (tc-reference-escape-help) : String
   "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
@@ -4987,13 +4980,13 @@
   [index : i64]) : ResultTcUnit
   (match specs
     [(TcStdlibFieldSpecList.Nil)
-      (if (>= index (ast-field-def-list-len (& fields)))
+      (if (>= index (struct-get (& fields) len))
         ResultTcUnit.Ok
         (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))]
     [(TcStdlibFieldSpecList.Cons expected-name expected-ty rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 9))
-        (if (>= index (ast-field-def-list-len (& fields)))
+        (if (>= index (struct-get (& fields) len))
           (tc-stdlib-well-known-mismatch
             type-name
             (str_cat.str-cat "missing field " expected-name))
@@ -5077,13 +5070,13 @@
   [index : i64]) : ResultTcUnit
   (match specs
     [(TcStdlibVariantSpecList.Nil)
-      (if (>= index (ast-variant-def-list-len (& variants)))
+      (if (>= index (struct-get (& variants) len))
         ResultTcUnit.Ok
         (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))]
     [(TcStdlibVariantSpecList.Cons expected-name expected-payloads rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 11))
-        (if (>= index (ast-variant-def-list-len (& variants)))
+        (if (>= index (struct-get (& variants) len))
           (tc-stdlib-well-known-mismatch
             type-name
             (str_cat.str-cat "missing variant " expected-name))
@@ -10266,7 +10259,7 @@
   [ctx : TcContext]
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     ResultTcUnit.Ok
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -10290,7 +10283,7 @@
   [ctx : TcContext]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     ResultTcUnit.Ok
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -10336,7 +10329,7 @@
   [params : AstLifetimeList]
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     ResultTcUnit.Ok
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -10391,7 +10384,7 @@
   [params : AstLifetimeList]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     ResultTcUnit.Ok
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -10428,7 +10421,7 @@
   [ctx : TcContext]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     ResultTcUnit.Ok
     (match (tc-source-pattern-policy-ok
       ctx
@@ -10459,7 +10452,7 @@
   [ctx : TcContext]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -10515,15 +10508,20 @@
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
 
 (define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-source-expr-policy-ok ctx expr)
-          [(ResultTcUnit.Ok) (tc-source-expr-list-policy-ok ctx rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-source-expr-list-policy-ok-at ctx (& exprs) 0))
+
+(define (tc-source-expr-list-policy-ok-at
+  [ctx : TcContext]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-source-expr-policy-ok ctx expr)
+        [(ResultTcUnit.Ok)
+          (tc-source-expr-list-policy-ok-at ctx exprs (+ index 1))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-source-expr-pair-policy-ok
   [ctx : TcContext]
@@ -10556,16 +10554,23 @@
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
   [exprs : AstExprList]
   [allow : bool]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-source-expr-spmd-broadcast-scope-ok expr allow)
-          [(ResultTcUnit.Ok)
-            (tc-source-expr-list-spmd-broadcast-scope-ok rest allow)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-source-expr-list-spmd-broadcast-scope-ok-at (& exprs) 0 allow))
+
+(define (tc-source-expr-list-spmd-broadcast-scope-ok-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [allow : bool]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-source-expr-spmd-broadcast-scope-ok expr allow)
+        [(ResultTcUnit.Ok)
+          (tc-source-expr-list-spmd-broadcast-scope-ok-at
+            exprs
+            (+ index 1)
+            allow)]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-source-expr-pair-spmd-broadcast-scope-ok
   [left : AstExpr]
@@ -10635,7 +10640,7 @@
   [arms : (& arms AstMatchArmList)]
   [allow : bool]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -12084,15 +12089,14 @@
   [name : String]
   [ptr : AstExpr]
   [rest : AstExprList]) : ResultTcType
-  (match rest
-    [(AstExprList.Nil)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-atomic-pointer-elem ctx name ptr-ty)
-            [(ResultTcType.Ok elem) (ResultTcType.Ok elem)]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [_ (ResultTcType.Err "typecheck: atomic-load expects exactly one argument")]))
+  (if (ast-expr-list-empty? (& rest))
+    (match (tc-expr ctx env ptr)
+      [(ResultTcType.Ok ptr-ty)
+        (match (tc-atomic-pointer-elem ctx name ptr-ty)
+          [(ResultTcType.Ok elem) (ResultTcType.Ok elem)]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (ResultTcType.Err "typecheck: atomic-load expects exactly one argument")))
 
 (define (tc-atomic-two-arg-call
   [ctx : TcContext]
@@ -12101,30 +12105,27 @@
   [ptr : AstExpr]
   [value : AstExpr]
   [rest : AstExprList]) : ResultTcType
-  (match rest
-    [(AstExprList.Nil)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-atomic-pointer-elem ctx name ptr-ty)
-            [(ResultTcType.Ok elem)
-              (match (tc-atomic-check-value
-                ctx
-                env
-                value
-                elem
-                "typecheck: atomic value type mismatch")
-                [(ResultTcUnit.Ok)
-                  (if (tc-atomic-store-name? name)
+  (if (ast-expr-list-empty? (& rest))
+    (match (tc-expr ctx env ptr)
+      [(ResultTcType.Ok ptr-ty)
+        (match (tc-atomic-pointer-elem ctx name ptr-ty)
+          [(ResultTcType.Ok elem)
+            (match (tc-atomic-check-value
+              ctx
+              env
+              value
+              elem
+              "typecheck: atomic value type mismatch")
+              [(ResultTcUnit.Ok)
+                (if (tc-atomic-store-name? name)
+                  (ResultTcType.Ok (AstType.Unit))
+                  (if (string.eq name "atomic-add!")
                     (ResultTcType.Ok (AstType.Unit))
-                    (if (string.eq name "atomic-add!")
-                      (ResultTcType.Ok (AstType.Unit))
-                      (ResultTcType.Ok elem)))]
-                [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [_
-      (ResultTcType.Err
-        "typecheck: atomic update expects exactly two arguments")]))
+                    (ResultTcType.Ok elem)))]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (ResultTcType.Err "typecheck: atomic update expects exactly two arguments")))
 
 (define (tc-atomic-cas-call
   [ctx : TcContext]
@@ -12133,33 +12134,30 @@
   [expected : AstExpr]
   [new-value : AstExpr]
   [rest : AstExprList]) : ResultTcType
-  (match rest
-    [(AstExprList.Nil)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-atomic-pointer-elem ctx "atomic-cas!" ptr-ty)
-            [(ResultTcType.Ok elem)
-              (match (tc-atomic-check-value
-                ctx
-                env
-                expected
-                elem
-                "typecheck: atomic expected value type mismatch")
-                [(ResultTcUnit.Ok)
-                  (match (tc-atomic-check-value
-                    ctx
-                    env
-                    new-value
-                    elem
-                    "typecheck: atomic new value type mismatch")
-                    [(ResultTcUnit.Ok) (ResultTcType.Ok elem)]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [_
-      (ResultTcType.Err
-        "typecheck: atomic-cas! expects exactly three arguments")]))
+  (if (ast-expr-list-empty? (& rest))
+    (match (tc-expr ctx env ptr)
+      [(ResultTcType.Ok ptr-ty)
+        (match (tc-atomic-pointer-elem ctx "atomic-cas!" ptr-ty)
+          [(ResultTcType.Ok elem)
+            (match (tc-atomic-check-value
+              ctx
+              env
+              expected
+              elem
+              "typecheck: atomic expected value type mismatch")
+              [(ResultTcUnit.Ok)
+                (match (tc-atomic-check-value
+                  ctx
+                  env
+                  new-value
+                  elem
+                  "typecheck: atomic new value type mismatch")
+                  [(ResultTcUnit.Ok) (ResultTcType.Ok elem)]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (ResultTcType.Err "typecheck: atomic-cas! expects exactly three arguments")))
 
 (define (tc-atomic-nonload-call
   [ctx : TcContext]
@@ -12167,30 +12165,26 @@
   [name : String]
   [ptr : AstExpr]
   [tail0 : AstExprList]) : ResultTcType
-  (match tail0
-    [(AstExprList.Cons value-node tail1)
-      (let
-        [value : AstExpr (ast-node-get value-node)]
-        [tail1 : AstExprList (box-get tail1)]
-        (if (tc-atomic-cas-name? name)
-          (match tail1
-            [(AstExprList.Cons new-node tail2)
-              (tc-atomic-cas-call
-                ctx
-                env
-                ptr
-                value
-                (ast-node-get new-node)
-                (box-get tail2))]
-            [_
-              (ResultTcType.Err
-                "typecheck: atomic-cas! expects exactly three arguments")])
-          (tc-atomic-two-arg-call ctx env name ptr value tail1)))]
-    [_
-      (ResultTcType.Err
-        (if (tc-atomic-cas-name? name)
-          "typecheck: atomic-cas! expects exactly three arguments"
-          "typecheck: atomic update expects exactly two arguments"))]))
+  (if (> (struct-get (& tail0) len) 0)
+    (let
+      [value : AstExpr (ast-node-get (ast-expr-list-get (& tail0) 0 0))]
+      [tail1 : AstExprList (ast-expr-list-tail-from-ref (& tail0) 1)]
+      (if (tc-atomic-cas-name? name)
+        (if (> (struct-get (& tail1) len) 0)
+          (tc-atomic-cas-call
+            ctx
+            env
+            ptr
+            value
+            (ast-node-get (ast-expr-list-get (& tail1) 0 0))
+            (ast-expr-list-tail-from-ref (& tail1) 1))
+          (ResultTcType.Err
+            "typecheck: atomic-cas! expects exactly three arguments"))
+        (tc-atomic-two-arg-call ctx env name ptr value tail1)))
+    (ResultTcType.Err
+      (if (tc-atomic-cas-name? name)
+        "typecheck: atomic-cas! expects exactly three arguments"
+        "typecheck: atomic update expects exactly two arguments"))))
 
 (define (tc-atomic-pointer-call
   [ctx : TcContext]
@@ -12199,21 +12193,19 @@
   [args : AstExprList]) : ResultTcType
   (match (tc-require-unsafe env name)
     [(ResultTcUnit.Ok)
-      (match args
-        [(AstExprList.Cons ptr-node tail0)
-          (let
-            [ptr : AstExpr (ast-node-get ptr-node)]
-            [tail0 : AstExprList (box-get tail0)]
-            (if (tc-atomic-load-name? name)
-              (tc-atomic-one-arg-call ctx env name ptr tail0)
-              (tc-atomic-nonload-call ctx env name ptr tail0)))]
-        [(AstExprList.Nil)
-          (ResultTcType.Err
-            (if (tc-atomic-load-name? name)
-              "typecheck: atomic-load expects exactly one argument"
-              (if (tc-atomic-cas-name? name)
-                "typecheck: atomic-cas! expects exactly three arguments"
-                "typecheck: atomic update expects exactly two arguments")))])]
+      (if (> (struct-get (& args) len) 0)
+        (let
+          [ptr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          [tail0 : AstExprList (ast-expr-list-tail-from-ref (& args) 1)]
+          (if (tc-atomic-load-name? name)
+            (tc-atomic-one-arg-call ctx env name ptr tail0)
+            (tc-atomic-nonload-call ctx env name ptr tail0)))
+        (ResultTcType.Err
+          (if (tc-atomic-load-name? name)
+            "typecheck: atomic-load expects exactly one argument"
+            (if (tc-atomic-cas-name? name)
+              "typecheck: atomic-cas! expects exactly three arguments"
+              "typecheck: atomic update expects exactly two arguments"))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-addr-of-cell-type-ok? [ty : AstType]) : bool
@@ -13194,12 +13186,7 @@
       (ty-node-get (ast-type-list-get (& types) index (ast-type-id-fallback))))))
 
 (define (tc-expr-list-len [exprs : AstExprList]) : i64
-  (match exprs
-    [(AstExprList.Nil) 0]
-    [(AstExprList.Cons _ rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (+ 1 (tc-expr-list-len rest)))]))
+  (struct-get (& exprs) len))
 
 (define (tc-expr-list-types
   [ctx : TcContext]
@@ -13207,46 +13194,54 @@
   [exprs : AstExprList]) : ResultTcTypeList
   (let
     [out : AstTypeList (ast-type-list-new)]
-    (match (tc-expr-list-types-into ctx env exprs (&mut out))
+    (match (tc-expr-list-types-into-at ctx env (& exprs) 0 (&mut out))
       [(ResultTcUnit.Ok) (ResultTcTypeList.Ok out)]
       [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)])))
 
-(define (tc-expr-list-types-into
+(define (tc-expr-list-types-into-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
   [out : (&mut out AstTypeList)]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match (tc-expr-id ctx env expr)
-          [(ResultTcType.Ok ty)
-            (begin
-              (ast-type-list-push out (ast-node-pool-reader-type-push ty))
-              (tc-expr-list-types-into ctx env rest out))]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]))
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-expr-id ctx env (ast-expr-list-get exprs index 0))
+      [(ResultTcType.Ok ty)
+        (begin
+          (ast-type-list-push out (ast-node-pool-reader-type-push ty))
+          (tc-expr-list-types-into-at ctx env exprs (+ index 1) out))]
+      [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-array-rest
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [elem-ty : AstType]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match (tc-expr-with-expected-or-actual-id ctx env expr elem-ty)
-          [(ResultTcType.Ok ty)
-            (match (tc-expect
-              ty
-              elem-ty
-              "typecheck: array elements must have same type")
-              [(ResultTcUnit.Ok) (tc-check-array-rest ctx env rest elem-ty)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-check-array-rest-at ctx env (& exprs) 0 elem-ty))
+
+(define (tc-check-array-rest-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [elem-ty : AstType]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-expr-with-expected-or-actual-id
+      ctx
+      env
+      (ast-expr-list-get exprs index 0)
+      elem-ty)
+      [(ResultTcType.Ok ty)
+        (match (tc-expect
+          ty
+          elem-ty
+          "typecheck: array elements must have same type")
+          [(ResultTcUnit.Ok)
+            (tc-check-array-rest-at ctx env exprs (+ index 1) elem-ty)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+      [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-bind-params
   [ctx : TcContext]
@@ -13341,14 +13336,14 @@
                   variadic
                   (tc-macro-expr-clause-type?
                     (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                (CompilerCtfeValue.ExprClauseList AstExprClauseList.Nil)]
+                (CompilerCtfeValue.ExprClauseList (ast-expr-clause-list-new))]
               [(and
                   variadic
                   (tc-macro-expr-binding-clause-type?
                     (tc-resolve-type ctx (tc-macro-signature-type ty))))
                 (CompilerCtfeValue.ExprBindingClauseList
-                  AstExprBindingClauseList.Nil)]
-              [variadic (CompilerCtfeValue.ExprList AstExprList.Nil)]
+                  (ast-expr-binding-clause-list-new))]
+              [variadic (CompilerCtfeValue.ExprList (ast-expr-list-new))]
               [(tc-macro-expr-clause-type?
                   (tc-resolve-type ctx (tc-macro-signature-type ty)))
                 (CompilerCtfeValue.ExprClause
@@ -13406,7 +13401,7 @@
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
   [isa : AstDispatchIsa]) : bool
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     false
     (match (ast-dispatch-variant-list-get
       variants
@@ -13425,7 +13420,7 @@
 (define (tc-dispatch-variant-list-duplicate-isa-from?
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]) : bool
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     false
     (match (ast-dispatch-variant-list-get
       variants
@@ -13444,7 +13439,7 @@
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     count
     (match (ast-dispatch-variant-list-get
       variants
@@ -13524,7 +13519,7 @@
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
   [expected : AstMaybeType]) : ResultTcType
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     (match expected
       [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
       [(AstMaybeType.No)
@@ -13754,7 +13749,7 @@
   [lifetimes : AstLifetimeList]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultTcEnv
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     (ResultTcEnv.Ok env)
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name fields _)
@@ -14001,7 +13996,7 @@
   [lifetimes : AstLifetimeList]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : TcTypeEnv
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     env
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name fields _)
@@ -14672,7 +14667,7 @@
   [lifetimes : AstLifetimeList]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : TcTypeEnv
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     env
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name fields _)
@@ -15211,21 +15206,35 @@
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [elem-ty : AstType]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match (tc-expr-with-expected-or-actual-id ctx env expr elem-ty)
-          [(ResultTcType.Ok got)
-            (match (tc-expect
-              got
-              elem-ty
-              "typecheck: array elements must have same type")
-              [(ResultTcUnit.Ok)
-                (tc-expr-list-with-expected-elements ctx env rest elem-ty)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-expr-list-with-expected-elements-at ctx env (& exprs) 0 elem-ty))
+
+(define (tc-expr-list-with-expected-elements-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [elem-ty : AstType]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-expr-with-expected-or-actual-id
+      ctx
+      env
+      (ast-expr-list-get exprs index 0)
+      elem-ty)
+      [(ResultTcType.Ok got)
+        (match (tc-expect
+          got
+          elem-ty
+          "typecheck: array elements must have same type")
+          [(ResultTcUnit.Ok)
+            (tc-expr-list-with-expected-elements-at
+              ctx
+              env
+              exprs
+              (+ index 1)
+              elem-ty)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+      [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-expr-array-with-expected-or-actual
   [ctx : TcContext]
@@ -15286,49 +15295,53 @@
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [types : AstTypeList]) : ResultTcTypeList
-  (tc-check-tuple-elements-with-expected-at ctx env exprs (& types) 0))
+  (let
+    [out : AstTypeList (ast-type-list-new)]
+    (match (tc-check-tuple-elements-with-expected-into-at
+      ctx
+      env
+      (& exprs)
+      (& types)
+      0
+      (&mut out))
+      [(ResultTcUnit.Ok) (ResultTcTypeList.Ok out)]
+      [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)])))
 
-(define (tc-check-tuple-elements-with-expected-at
+(define (tc-check-tuple-elements-with-expected-into-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : ResultTcTypeList
-  (match exprs
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (ResultTcTypeList.Ok (ast-type-list-new))
-        (ResultTcTypeList.Err "typecheck: tuple element type mismatch"))]
-    [(AstExprList.Cons expr rest-exprs)
-      (if (>= type-index (ast-type-list-len types))
-        (ResultTcTypeList.Err "typecheck: tuple element type mismatch")
-        (let
-          [rest-exprs : AstExprList (box-get rest-exprs)]
-          [want : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (tc-expr-with-expected-or-actual-id ctx env expr want)
-            [(ResultTcType.Ok got)
-              (match (tc-expect
-                got
-                want
-                "typecheck: tuple element type mismatch")
-                [(ResultTcUnit.Ok)
-                  (match (tc-check-tuple-elements-with-expected-at
+  [index : i64]
+  [out : (&mut out AstTypeList)]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    (if (>= index (ast-type-list-len types))
+      ResultTcUnit.Ok
+      (ResultTcUnit.Err "typecheck: tuple element type mismatch"))
+    (if (>= index (ast-type-list-len types))
+      (ResultTcUnit.Err "typecheck: tuple element type mismatch")
+      (let
+        [expr-id : i64 (ast-expr-list-get exprs index 0)]
+        [want : AstType
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (match (tc-expr-with-expected-or-actual-id ctx env expr-id want)
+          [(ResultTcType.Ok got)
+            (match (tc-expect got want "typecheck: tuple element type mismatch")
+              [(ResultTcUnit.Ok)
+                (begin
+                  (ast-type-list-push
+                    out
+                    (ast-node-pool-reader-type-push
+                      (tc-contextual-result-type want got)))
+                  (tc-check-tuple-elements-with-expected-into-at
                     ctx
                     env
-                    rest-exprs
+                    exprs
                     types
-                    (+ type-index 1))
-                    [(ResultTcTypeList.Ok rest-result)
-                      (ResultTcTypeList.Ok
-                        (ast-type-cons
-                          (tc-contextual-result-type want got)
-                          rest-result))]
-                    [(ResultTcTypeList.Err message)
-                      (ResultTcTypeList.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)])]
-            [(ResultTcType.Err message) (ResultTcTypeList.Err message)])))]))
+                    (+ index 1)
+                    out))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcType.Err message) (ResultTcUnit.Err message)])))))
 
 (define (tc-expr-tuple-with-expected-or-actual
   [ctx : TcContext]
@@ -15357,19 +15370,26 @@
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [expected : AstType]) : ResultTcType
-  (match exprs
-    [(AstExprList.Nil) (ResultTcType.Ok (AstType.Unit))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (tc-expr-with-expected-or-actual-id ctx env expr expected)]
-          [_
-            (match (tc-expr-id ctx env expr)
-              [(ResultTcType.Ok _)
-                (tc-begin-list-with-expected ctx env rest expected)]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]))]))
+  (tc-begin-list-with-expected-at ctx env (& exprs) 0 expected))
+
+(define (tc-begin-list-with-expected-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [expected : AstType]) : ResultTcType
+  (if (>= index (struct-get exprs len))
+    (ResultTcType.Ok (AstType.Unit))
+    (if (= (+ index 1) (struct-get exprs len))
+      (tc-expr-with-expected-or-actual-id
+        ctx
+        env
+        (ast-expr-list-get exprs index 0)
+        expected)
+      (match (tc-expr-id ctx env (ast-expr-list-get exprs index 0))
+        [(ResultTcType.Ok _)
+          (tc-begin-list-with-expected-at ctx env exprs (+ index 1) expected)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-ctfe-value-type [ctx : TcContext] [value : CompilerCtfeValue]) : ResultTcType
   (match value
@@ -15699,24 +15719,24 @@
         (compiler-tc-reinfer-profile-expr-id site ctx env expr-id)
         (tc-expr-id ctx env expr-id))]))
 
-(define (tc-body-type-fact-list-types-into
-  [exprs : AstExprList]
+(define (tc-body-type-fact-list-types-into-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
   [out : (&mut out AstTypeList)]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (match (tc-body-type-fact-lookup expr)
-        [(TcBodyTypeFact.Hit ty)
-          (begin
-            (ast-type-list-push out (ast-node-pool-reader-type-push ty))
-            (tc-body-type-fact-list-types-into (box-get rest) out))]
-        [(TcBodyTypeFact.Miss) (ResultTcUnit.Err "")])]))
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-body-type-fact-lookup (ast-expr-list-get exprs index 0))
+      [(TcBodyTypeFact.Hit ty)
+        (begin
+          (ast-type-list-push out (ast-node-pool-reader-type-push ty))
+          (tc-body-type-fact-list-types-into-at exprs (+ index 1) out))]
+      [(TcBodyTypeFact.Miss) (ResultTcUnit.Err "")])))
 
 (define (tc-body-type-fact-list-types [exprs : AstExprList]) : ResultTcTypeList
   (if tc-body-type-facts-consuming
     (let
       [out : AstTypeList (ast-type-list-new)]
-      (match (tc-body-type-fact-list-types-into exprs (&mut out))
+      (match (tc-body-type-fact-list-types-into-at (& exprs) 0 (&mut out))
         [(ResultTcUnit.Ok) (ResultTcTypeList.Ok out)]
         [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)]))
     (ResultTcTypeList.Err "")))
@@ -16566,52 +16586,55 @@
   [params : AstTypeList]
   [lifetimes : AstLifetimeList]
   [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
-  (tc-infer-call-lifetime-subst-at ctx env args (& params) 0 lifetimes subst))
+  (tc-infer-call-lifetime-subst-at
+    ctx
+    env
+    (& args)
+    (& params)
+    0
+    lifetimes
+    subst))
 
 (define (tc-infer-call-lifetime-subst-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
-  [param-index : i64]
+  [index : i64]
   [lifetimes : AstLifetimeList]
   [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
-  (match args
-    [(AstExprList.Nil)
-      (if (>= param-index (ast-type-list-len params))
-        (ResultTcLifetimeSubst.Ok subst)
-        (ResultTcLifetimeSubst.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons arg rest-args)
-      (if (>= param-index (ast-type-list-len params))
-        (ResultTcLifetimeSubst.Err "typecheck: arity mismatch")
-        (let
-          [arg : AstExpr (ast-node-get arg)]
-          [rest-args : AstExprList (box-get rest-args)]
-          [want : AstType
-            (ty-node-get
-              (ast-type-list-get params param-index (ast-type-id-fallback)))]
-          (match (tc-call-effective-arg-type ctx env arg want)
-            [(ResultTcType.Ok got)
-              (match (tc-infer-lifetime-subst-from-type
-                ctx
-                lifetimes
-                subst
-                want
-                got)
-                [(ResultTcLifetimeSubst.Ok next-subst)
-                  (tc-infer-call-lifetime-subst-at
-                    ctx
-                    env
-                    rest-args
-                    params
-                    (+ param-index 1)
-                    lifetimes
-                    next-subst)]
-                [(ResultTcLifetimeSubst.Err message)
-                  (ResultTcLifetimeSubst.Err
-                    (tc-locate-error-at-expr arg message))])]
-            [(ResultTcType.Err message)
-              (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))])))]))
+  (if (>= index (struct-get args len))
+    (if (>= index (ast-type-list-len params))
+      (ResultTcLifetimeSubst.Ok subst)
+      (ResultTcLifetimeSubst.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len params))
+      (ResultTcLifetimeSubst.Err "typecheck: arity mismatch")
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [want : AstType
+          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+        (match (tc-call-effective-arg-type ctx env arg want)
+          [(ResultTcType.Ok got)
+            (match (tc-infer-lifetime-subst-from-type
+              ctx
+              lifetimes
+              subst
+              want
+              got)
+              [(ResultTcLifetimeSubst.Ok next-subst)
+                (tc-infer-call-lifetime-subst-at
+                  ctx
+                  env
+                  args
+                  params
+                  (+ index 1)
+                  lifetimes
+                  next-subst)]
+              [(ResultTcLifetimeSubst.Err message)
+                (ResultTcLifetimeSubst.Err
+                  (tc-locate-error-at-expr arg message))])]
+          [(ResultTcType.Err message)
+            (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))])))))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
@@ -16751,15 +16774,13 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil) (tc-expr-c-abi-fnptr? ctx env expr)]
-          [_ (tc-expr-list-last-c-abi-fnptr? ctx env rest)]))]))
+  (if (ast-expr-list-empty? (& exprs))
+    false
+    (tc-expr-c-abi-fnptr?
+      ctx
+      env
+      (ast-node-get
+        (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
 
 (define (tc-hygiene-c-abi-fnptr-binding?
   [ctx : TcContext]
@@ -16897,22 +16918,21 @@
   [expr : AstExpr]) : i64
   (match (ast-expr-unspan expr)
     [(AstExpr.Call func-box args)
-      (match args
-        [(AstExprList.Nil)
-          (match (tc-expr-var-name (ast-node-get func-box))
-            [(TcMaybeString.Some name)
-              (cond
-                [(or
-                    (tc-arena-owner-call-name? ctx env name "arena-make-atomic")
-                    (tc-arena-canonical-call-name? ctx env name "make-atomic"))
-                  (tc-arena-owner-kind-atomic)]
-                [(or
-                    (tc-arena-owner-call-name? ctx env name "arena-make")
-                    (tc-arena-canonical-call-name? ctx env name "make"))
-                  (tc-arena-owner-kind-ordinary)]
-                [else (tc-arena-owner-kind-none)])]
-            [(TcMaybeString.No) (tc-arena-owner-kind-none)])]
-        [_ (tc-arena-owner-kind-none)])]
+      (if (ast-expr-list-empty? (& args))
+        (match (tc-expr-var-name (ast-node-get func-box))
+          [(TcMaybeString.Some name)
+            (cond
+              [(or
+                  (tc-arena-owner-call-name? ctx env name "arena-make-atomic")
+                  (tc-arena-canonical-call-name? ctx env name "make-atomic"))
+                (tc-arena-owner-kind-atomic)]
+              [(or
+                  (tc-arena-owner-call-name? ctx env name "arena-make")
+                  (tc-arena-canonical-call-name? ctx env name "make"))
+                (tc-arena-owner-kind-ordinary)]
+              [else (tc-arena-owner-kind-none)])]
+          [(TcMaybeString.No) (tc-arena-owner-kind-none)])
+        (tc-arena-owner-kind-none))]
     [_ (tc-arena-owner-kind-none)]))
 
 (define (tc-phase-call-owner
@@ -16921,28 +16941,23 @@
   [expr : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan expr)
     [(AstExpr.Call func-box args)
-      (match args
-        [(AstExprList.Cons owner-box rest-box)
-          (let
-            [owner-expr : AstExpr (ast-node-get owner-box)]
-            [rest : AstExprList (box-get rest-box)]
-            (match rest
-              [(AstExprList.Nil)
-                (match (tc-expr-var-name (ast-node-get func-box))
-                  [(TcMaybeString.Some name)
-                    (if (tc-arena-safe-call-name? ctx env name "phase")
-                      (match (tc-expr-var-name owner-expr)
-                        [(TcMaybeString.Some owner)
-                          (if (or
-                            (tc-ordinary-arena-owner-active? env owner)
-                            (tc-atomic-arena-owner-active? env owner))
-                            (TcMaybeString.Some owner)
-                            (TcMaybeString.No))]
-                        [(TcMaybeString.No) (TcMaybeString.No)])
+      (if (= (struct-get (& args) len) 1)
+        (let
+          [owner-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          (match (tc-expr-var-name (ast-node-get func-box))
+            [(TcMaybeString.Some name)
+              (if (tc-arena-safe-call-name? ctx env name "phase")
+                (match (tc-expr-var-name owner-expr)
+                  [(TcMaybeString.Some owner)
+                    (if (or
+                      (tc-ordinary-arena-owner-active? env owner)
+                      (tc-atomic-arena-owner-active? env owner))
+                      (TcMaybeString.Some owner)
                       (TcMaybeString.No))]
-                  [(TcMaybeString.No) (TcMaybeString.No)])]
-              [(AstExprList.Cons _ _) (TcMaybeString.No)]))]
-        [(AstExprList.Nil) (TcMaybeString.No)])]
+                  [(TcMaybeString.No) (TcMaybeString.No)])
+                (TcMaybeString.No))]
+            [(TcMaybeString.No) (TcMaybeString.No)]))
+        (TcMaybeString.No))]
     [_ (TcMaybeString.No)]))
 
 (define (tc-bind-arena-owner-if-needed-id
@@ -17005,18 +17020,17 @@
     ResultTcUnit.Ok))
 
 (define (tc-call-varargs-tail-args [args : AstExprList] [params : AstTypeList]) : ResultTcExprList
-  (tc-call-varargs-tail-args-at args (& params) 0))
+  (tc-call-varargs-tail-args-at (& args) (& params) 0))
 
 (define (tc-call-varargs-tail-args-at
-  [args : AstExprList]
+  [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
   [index : i64]) : ResultTcExprList
   (if (>= index (ast-type-list-len params))
-    (ResultTcExprList.Ok args)
-    (match args
-      [(AstExprList.Cons _ rest-args)
-        (tc-call-varargs-tail-args-at (box-get rest-args) params (+ index 1))]
-      [(AstExprList.Nil) (ResultTcExprList.Err "typecheck: arity mismatch")])))
+    (ResultTcExprList.Ok (ast-expr-list-tail-from-ref args index))
+    (if (< index (struct-get args len))
+      (tc-call-varargs-tail-args-at args params (+ index 1))
+      (ResultTcExprList.Err "typecheck: arity mismatch"))))
 
 (define (tc-type-list-append [a : AstTypeList] [b : AstTypeList]) : AstTypeList
   (let
@@ -17052,34 +17066,41 @@
   [args : AstExprList]) : ResultTcTypeList
   (let
     [out : AstTypeList (ast-type-list-new)]
-    (match (tc-call-open-varargs-tail-types-into ctx env args (&mut out))
+    (match (tc-call-open-varargs-tail-types-into-at
+      ctx
+      env
+      (& args)
+      0
+      (&mut out))
       [(ResultTcUnit.Ok) (ResultTcTypeList.Ok out)]
       [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)])))
 
-(define (tc-call-open-varargs-tail-types-into
+(define (tc-call-open-varargs-tail-types-into-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
+  [index : i64]
   [out : (&mut out AstTypeList)]) : ResultTcUnit
-  (match args
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-expr ctx env arg)
-          [(ResultTcType.Ok ty)
-            (let
-              [resolved : AstType (tc-resolve-type ctx ty)]
-              (if (tc-extern-abi-value-type-ok? ctx resolved)
-                (begin
-                  (ast-type-list-push out (ast-node-pool-reader-type-push ty))
-                  (tc-call-open-varargs-tail-types-into ctx env rest out))
-                (ResultTcUnit.Err
-                  (tc-extern-abi-unsupported-message
-                    "variadic argument"
-                    resolved))))]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]))
+  (if (>= index (struct-get args len))
+    ResultTcUnit.Ok
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (tc-expr ctx env arg)
+        [(ResultTcType.Ok ty)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (if (tc-extern-abi-value-type-ok? ctx resolved)
+              (begin
+                (ast-type-list-push out (ast-node-pool-reader-type-push ty))
+                (tc-call-open-varargs-tail-types-into-at
+                  ctx
+                  env
+                  args
+                  (+ index 1)
+                  out))
+              (ResultTcUnit.Err
+                (tc-extern-abi-unsupported-message "variadic argument" resolved))))]
+        [(ResultTcType.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-call-extern-varargs-params
   [ctx : TcContext]
@@ -17320,23 +17341,10 @@
       "typecheck: channel send expects channel and message parameters")))
 
 (define (tc-thread-channel-send-message-arg [args : AstExprList]) : ResultTcExpr
-  (match args
-    [(AstExprList.Cons _ rest-box)
-      (let
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Cons message-box tail-box)
-            (match (box-get tail-box)
-              [(AstExprList.Nil) (ResultTcExpr.Ok (ast-node-get message-box))]
-              [_
-                (ResultTcExpr.Err
-                  "typecheck: channel send expects channel and message arguments")])]
-          [(AstExprList.Nil)
-            (ResultTcExpr.Err
-              "typecheck: channel send expects channel and message arguments")]))]
-    [(AstExprList.Nil)
-      (ResultTcExpr.Err
-        "typecheck: channel send expects channel and message arguments")]))
+  (if (= (struct-get (& args) len) 2)
+    (ResultTcExpr.Ok (ast-node-get (ast-expr-list-get (& args) 1 0)))
+    (ResultTcExpr.Err
+      "typecheck: channel send expects channel and message arguments")))
 
 (define (tc-thread-generated-spawn-result-module
   [ctx : TcContext]
@@ -17659,7 +17667,7 @@
   [stack : TcStringList]
   [owner-proof : bool]
   [index : i64]) : TcThreadTransferClass
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     (TcThreadTransferClass.Shareable)
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -17694,7 +17702,7 @@
   [stack : TcStringList]
   [owner-proof : bool]
   [index : i64]) : TcThreadTransferClass
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     (TcThreadTransferClass.Shareable)
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ payloads _)
@@ -18193,34 +18201,23 @@
           lookup-name
           params
           ret)
-          (match args
-            [(AstExprList.Cons arg rest)
-              (match (box-get rest)
-                [(AstExprList.Nil)
-                  (match (tc-check-thread-safe-spawn-direct-lambda
-                    source-name
-                    ctx
-                    env
-                    (ast-node-get arg))
-                    [(ResultTcUnit.Ok)
-                      (ResultTcStringList.Ok
-                        (tc-thread-safe-spawn-direct-lambda-owner-regions
-                          env
-                          (ast-node-get arg)))]
-                    [(ResultTcUnit.Err message)
-                      (ResultTcStringList.Err message)])]
-                [_
-                  (ResultTcStringList.Err
-                    (str_cat.str-cat
-                      "typecheck: "
-                      source-name
-                      " expects one argument"))])]
-            [(AstExprList.Nil)
-              (ResultTcStringList.Err
-                (str_cat.str-cat
-                  "typecheck: "
-                  source-name
-                  " expects one argument"))])
+          (if (= (struct-get (& args) len) 1)
+            (let
+              [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+              (match (tc-check-thread-safe-spawn-direct-lambda
+                source-name
+                ctx
+                env
+                arg)
+                [(ResultTcUnit.Ok)
+                  (ResultTcStringList.Ok
+                    (tc-thread-safe-spawn-direct-lambda-owner-regions env arg))]
+                [(ResultTcUnit.Err message) (ResultTcStringList.Err message)]))
+            (ResultTcStringList.Err
+              (str_cat.str-cat
+                "typecheck: "
+                source-name
+                " expects one argument")))
           (ResultTcStringList.Ok TcStringList.Nil)))]
     [(TcMaybeString.No) (ResultTcStringList.Ok TcStringList.Nil)]))
 
@@ -18391,7 +18388,7 @@
   (tc-check-call-args-with-message-at
     ctx
     env
-    args
+    (& args)
     (& params)
     0
     allow-region-args
@@ -18402,112 +18399,101 @@
 (define (tc-check-call-args-with-message-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
-  [param-index : i64]
+  [index : i64]
   [allow-region-args : bool]
   [constructor-target : AstMaybeType]
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
-  (match args
-    [(AstExprList.Nil)
-      (if (>= param-index (ast-type-list-len params))
-        ResultTcUnit.Ok
-        (ResultTcUnit.Err (tc-arity-message-text arity-msg)))]
-    [(AstExprList.Cons arg rest-args)
-      (if (>= param-index (ast-type-list-len params))
-        (ResultTcUnit.Err (tc-arity-message-text arity-msg))
-        (let
-          [arg : AstExpr (ast-node-get arg)]
-          [rest-args : AstExprList (box-get rest-args)]
-          [want : AstType
-            (ty-node-get
-              (ast-type-list-get params param-index (ast-type-id-fallback)))]
-          (match (tc-call-effective-arg-expr ctx env arg want)
-            [(ResultTcExpr.Ok effective-arg)
-              (let
-                [typed-arg : ResultTcType
-                  (match constructor-target
-                    [(AstMaybeType.No)
-                      (tc-expr-with-expected-or-actual-call-arg
+  (if (>= index (struct-get args len))
+    (if (>= index (ast-type-list-len params))
+      ResultTcUnit.Ok
+      (ResultTcUnit.Err (tc-arity-message-text arity-msg)))
+    (if (>= index (ast-type-list-len params))
+      (ResultTcUnit.Err (tc-arity-message-text arity-msg))
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [want : AstType
+          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+        (match (tc-call-effective-arg-expr ctx env arg want)
+          [(ResultTcExpr.Ok effective-arg)
+            (let
+              [typed-arg : ResultTcType
+                (match constructor-target
+                  [(AstMaybeType.No)
+                    (tc-expr-with-expected-or-actual-call-arg
+                      ctx
+                      env
+                      effective-arg
+                      want)]
+                  [(AstMaybeType.Some _)
+                    (tc-expr-with-expected-or-actual ctx env effective-arg want)])]
+              (match typed-arg
+                [(ResultTcType.Ok got)
+                  (match (tc-expect-at-expr
+                    arg
+                    got
+                    want
+                    "typecheck: argument type mismatch")
+                    [(ResultTcUnit.Ok)
+                      (match (tc-raw-c-fnptr-flow-ok
                         ctx
                         env
                         effective-arg
-                        want)]
-                    [(AstMaybeType.Some _)
-                      (tc-expr-with-expected-or-actual
-                        ctx
-                        env
-                        effective-arg
-                        want)])]
-                (match typed-arg
-                  [(ResultTcType.Ok got)
-                    (match (tc-expect-at-expr
-                      arg
-                      got
-                      want
-                      "typecheck: argument type mismatch")
-                      [(ResultTcUnit.Ok)
-                        (match (tc-raw-c-fnptr-flow-ok
-                          ctx
-                          env
-                          effective-arg
-                          want
-                          c-abi-args)
-                          [(ResultTcUnit.Ok)
-                            (if (and
-                              (tc-type-contains-any-region got)
-                              (not allow-region-args)
-                              (not
-                                (tc-type-regions-all-atomic-arena-owners?
+                        want
+                        c-abi-args)
+                        [(ResultTcUnit.Ok)
+                          (if (and
+                            (tc-type-contains-any-region got)
+                            (not allow-region-args)
+                            (not
+                              (tc-type-regions-all-atomic-arena-owners? env got))
+                            (not (tc-type-contains-reference? got)))
+                            (ResultTcUnit.Err
+                              "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+                            (match constructor-target
+                              [(AstMaybeType.Some target)
+                                (match (tc-ensure-cleanup-resource-not-stored-expr
                                   env
-                                  got))
-                              (not (tc-type-contains-reference? got)))
-                              (ResultTcUnit.Err
-                                "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
-                              (match constructor-target
-                                [(AstMaybeType.Some target)
-                                  (match (tc-ensure-cleanup-resource-not-stored-expr
-                                    env
-                                    effective-arg)
-                                    [(ResultTcUnit.Ok)
-                                      (match (tc-ensure-region-value-can-flow-into
-                                        env
-                                        target
-                                        got
-                                        "constructor result")
-                                        [(ResultTcUnit.Ok)
-                                          (tc-check-call-args-with-message-at
-                                            ctx
-                                            env
-                                            rest-args
-                                            params
-                                            (+ param-index 1)
-                                            allow-region-args
-                                            constructor-target
-                                            arity-msg
-                                            c-abi-args)]
-                                        [(ResultTcUnit.Err message)
-                                          (ResultTcUnit.Err message)])]
-                                    [(ResultTcUnit.Err message)
-                                      (ResultTcUnit.Err message)])]
-                                [(AstMaybeType.No)
-                                  (tc-check-call-args-with-message-at
-                                    ctx
-                                    env
-                                    rest-args
-                                    params
-                                    (+ param-index 1)
-                                    allow-region-args
-                                    constructor-target
-                                    arity-msg
-                                    c-abi-args)]))]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcUnit.Err message)])]
-                      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-                  [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
-            [(ResultTcExpr.Err message)
-              (ResultTcUnit.Err (tc-locate-error-at-expr arg message))])))]))
+                                  effective-arg)
+                                  [(ResultTcUnit.Ok)
+                                    (match (tc-ensure-region-value-can-flow-into
+                                      env
+                                      target
+                                      got
+                                      "constructor result")
+                                      [(ResultTcUnit.Ok)
+                                        (tc-check-call-args-with-message-at
+                                          ctx
+                                          env
+                                          args
+                                          params
+                                          (+ index 1)
+                                          allow-region-args
+                                          constructor-target
+                                          arity-msg
+                                          c-abi-args)]
+                                      [(ResultTcUnit.Err message)
+                                        (ResultTcUnit.Err message)])]
+                                  [(ResultTcUnit.Err message)
+                                    (ResultTcUnit.Err message)])]
+                              [(AstMaybeType.No)
+                                (tc-check-call-args-with-message-at
+                                  ctx
+                                  env
+                                  args
+                                  params
+                                  (+ index 1)
+                                  allow-region-args
+                                  constructor-target
+                                  arity-msg
+                                  c-abi-args)]))]
+                        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
+          [(ResultTcExpr.Err message)
+            (ResultTcUnit.Err (tc-locate-error-at-expr arg message))])))))
 
 (define (tc-check-call-args
   [ctx : TcContext]
@@ -18532,39 +18518,35 @@
   [env : TcTypeEnv]
   [args : AstExprList]
   [params : AstTypeList]) : ResultTcUnit
-  (tc-check-args-at ctx env args (& params) 0))
+  (tc-check-args-at ctx env (& args) (& params) 0))
 
 (define (tc-check-args-at
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
-  [param-index : i64]) : ResultTcUnit
-  (match args
-    [(AstExprList.Nil)
-      (if (>= param-index (ast-type-list-len params))
-        ResultTcUnit.Ok
-        (ResultTcUnit.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons arg rest-args)
-      (if (>= param-index (ast-type-list-len params))
-        (ResultTcUnit.Err "typecheck: arity mismatch")
-        (let
-          [arg : AstExpr (ast-node-get arg)]
-          [rest-args : AstExprList (box-get rest-args)]
-          [want : AstType
-            (ty-node-get
-              (ast-type-list-get params param-index (ast-type-id-fallback)))]
-          (match (tc-expr-with-expected-or-actual ctx env arg want)
-            [(ResultTcType.Ok got)
-              (match (tc-expect-at-expr
-                arg
-                got
-                want
-                "typecheck: argument type mismatch")
-                [(ResultTcUnit.Ok)
-                  (tc-check-args-at ctx env rest-args params (+ param-index 1))]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-            [(ResultTcType.Err message) (ResultTcUnit.Err message)])))]))
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get args len))
+    (if (>= index (ast-type-list-len params))
+      ResultTcUnit.Ok
+      (ResultTcUnit.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len params))
+      (ResultTcUnit.Err "typecheck: arity mismatch")
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [want : AstType
+          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+        (match (tc-expr-with-expected-or-actual ctx env arg want)
+          [(ResultTcType.Ok got)
+            (match (tc-expect-at-expr
+              arg
+              got
+              want
+              "typecheck: argument type mismatch")
+              [(ResultTcUnit.Ok)
+                (tc-check-args-at ctx env args params (+ index 1))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcType.Err message) (ResultTcUnit.Err message)])))))
 
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
@@ -18626,183 +18608,154 @@
                         (tc-tag-active-region env (ty-node-get ret)))]
                     [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                 [(AstType.Enum enum-name)
-                  (match args
-                    [(AstExprList.Nil)
-                      (tc-nullary-variant-call-expr
-                        ctx
-                        env
-                        func
-                        (intern-str enum-name)
-                        (ty-node-get inner))]
-                    [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                  (if (ast-expr-list-empty? (& args))
+                    (tc-nullary-variant-call-expr
+                      ctx
+                      env
+                      func
+                      (intern-str enum-name)
+                      (ty-node-get inner))
+                    (ResultTcType.Err "typecheck: arity mismatch"))]
                 [(AstType.EnumArgs enum-name _)
-                  (match args
-                    [(AstExprList.Nil)
-                      (tc-nullary-variant-call-expr
-                        ctx
-                        env
-                        func
-                        (intern-str enum-name)
-                        (ty-node-get inner))]
-                    [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                  (if (ast-expr-list-empty? (& args))
+                    (tc-nullary-variant-call-expr
+                      ctx
+                      env
+                      func
+                      (intern-str enum-name)
+                      (ty-node-get inner))
+                    (ResultTcType.Err "typecheck: arity mismatch"))]
                 [_
                   (ResultTcType.Err "typecheck: call target is not a function")])]
             [(AstType.Enum enum-name)
-              (match args
-                [(AstExprList.Nil)
-                  (tc-nullary-variant-call-expr
-                    ctx
-                    env
-                    func
-                    (intern-str enum-name)
-                    fn-ty)]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+              (if (ast-expr-list-empty? (& args))
+                (tc-nullary-variant-call-expr
+                  ctx
+                  env
+                  func
+                  (intern-str enum-name)
+                  fn-ty)
+                (ResultTcType.Err "typecheck: arity mismatch"))]
             [(AstType.EnumArgs enum-name _)
-              (match args
-                [(AstExprList.Nil)
-                  (tc-nullary-variant-call-expr
-                    ctx
-                    env
-                    func
-                    (intern-str enum-name)
-                    fn-ty)]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+              (if (ast-expr-list-empty? (& args))
+                (tc-nullary-variant-call-expr
+                  ctx
+                  env
+                  func
+                  (intern-str enum-name)
+                  fn-ty)
+                (ResultTcType.Err "typecheck: arity mismatch"))]
             [_ (ResultTcType.Err "typecheck: call target is not a function")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
 (define (tc-phase-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons owner-box rest-box)
-      (let
-        [owner-expr : AstExpr (ast-node-get owner-box)]
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (tc-expr ctx env owner-expr)
-              [(ResultTcType.Ok owner-ty)
-                (if (tc-arena-type? ctx owner-ty)
-                  (match (tc-expr-var-name owner-expr)
-                    [(TcMaybeString.Some owner)
-                      (if (or
-                        (tc-ordinary-arena-owner-active? env owner)
-                        (tc-atomic-arena-owner-active? env owner))
-                        (ResultTcType.Ok
-                          (AstType.Struct (intern (tc-arena-phase-type-name))))
-                        (ResultTcType.Err
-                          (tc-locate-error-at-expr
-                            owner-expr
-                            "typecheck: arena.phase requires a direct arena owner")))]
-                    [(TcMaybeString.No)
-                      (ResultTcType.Err
-                        (tc-locate-error-at-expr
-                          owner-expr
-                          "typecheck: arena.phase requires a direct arena owner"))])
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [owner-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env owner-expr)
+        [(ResultTcType.Ok owner-ty)
+          (if (tc-arena-type? ctx owner-ty)
+            (match (tc-expr-var-name owner-expr)
+              [(TcMaybeString.Some owner)
+                (if (or
+                  (tc-ordinary-arena-owner-active? env owner)
+                  (tc-atomic-arena-owner-active? env owner))
+                  (ResultTcType.Ok
+                    (AstType.Struct (intern (tc-arena-phase-type-name))))
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
                       owner-expr
-                      "typecheck: arena.phase arena must be Arena")))]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
-          [(AstExprList.Cons _ _)
+                      "typecheck: arena.phase requires a direct arena owner")))]
+              [(TcMaybeString.No)
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    owner-expr
+                    "typecheck: arena.phase requires a direct arena owner"))])
             (ResultTcType.Err
-              "typecheck: arena.phase expects exactly one argument")]))]
-    [(AstExprList.Nil)
-      (ResultTcType.Err "typecheck: arena.phase expects exactly one argument")]))
+              (tc-locate-error-at-expr
+                owner-expr
+                "typecheck: arena.phase arena must be Arena")))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arena.phase expects exactly one argument")))
 
 (define (tc-rewind-safe-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons phase-box rest-box)
-      (let
-        [phase-expr : AstExpr (ast-node-get phase-box)]
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (tc-expr ctx env phase-expr)
-              [(ResultTcType.Ok phase-ty)
-                (if (tc-arena-phase-type? ctx phase-ty)
-                  (match (tc-expr-var-name phase-expr)
-                    [(TcMaybeString.Some phase)
-                      (match (tc-arena-phase-token-region-active env phase)
-                        [(TcMaybeString.Some _)
-                          (match (tc-arena-phase-token-owner-active env phase)
-                            [(TcMaybeString.Some owner)
-                              (if (tc-active-region-owned-by-arena? env owner)
-                                (ResultTcType.Err
-                                  (tc-locate-error-at-expr
-                                    phase-expr
-                                    "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds"))
-                                (ResultTcType.Ok (AstType.Unit)))]
-                            [(TcMaybeString.No)
-                              (ResultTcType.Ok (AstType.Unit))])]
-                        [(TcMaybeString.No)
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [phase-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env phase-expr)
+        [(ResultTcType.Ok phase-ty)
+          (if (tc-arena-phase-type? ctx phase-ty)
+            (match (tc-expr-var-name phase-expr)
+              [(TcMaybeString.Some phase)
+                (match (tc-arena-phase-token-region-active env phase)
+                  [(TcMaybeString.Some _)
+                    (match (tc-arena-phase-token-owner-active env phase)
+                      [(TcMaybeString.Some owner)
+                        (if (tc-active-region-owned-by-arena? env owner)
                           (ResultTcType.Err
                             (tc-locate-error-at-expr
                               phase-expr
-                              "typecheck: arena.rewind-safe! requires a direct arena phase token"))])]
-                    [(TcMaybeString.No)
-                      (ResultTcType.Err
-                        (tc-locate-error-at-expr
-                          phase-expr
-                          "typecheck: arena.rewind-safe! requires a direct arena phase token"))])
-                  (ResultTcType.Err
-                    (tc-locate-error-at-expr
-                      phase-expr
-                      "typecheck: arena.rewind-safe! phase must be ArenaPhase")))]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
-          [(AstExprList.Cons _ _)
+                              "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds"))
+                          (ResultTcType.Ok (AstType.Unit)))]
+                      [(TcMaybeString.No) (ResultTcType.Ok (AstType.Unit))])]
+                  [(TcMaybeString.No)
+                    (ResultTcType.Err
+                      (tc-locate-error-at-expr
+                        phase-expr
+                        "typecheck: arena.rewind-safe! requires a direct arena phase token"))])]
+              [(TcMaybeString.No)
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    phase-expr
+                    "typecheck: arena.rewind-safe! requires a direct arena phase token"))])
             (ResultTcType.Err
-              "typecheck: arena.rewind-safe! expects exactly one argument")]))]
-    [(AstExprList.Nil)
-      (ResultTcType.Err
-        "typecheck: arena.rewind-safe! expects exactly one argument")]))
+              (tc-locate-error-at-expr
+                phase-expr
+                "typecheck: arena.rewind-safe! phase must be ArenaPhase")))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err
+      "typecheck: arena.rewind-safe! expects exactly one argument")))
 
 (define (tc-destroy-safe-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons owner-box rest-box)
-      (let
-        [owner-expr : AstExpr (ast-node-get owner-box)]
-        [rest : AstExprList (box-get rest-box)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (tc-expr ctx env owner-expr)
-              [(ResultTcType.Ok owner-ty)
-                (if (tc-arena-type? ctx owner-ty)
-                  (match (tc-expr-var-name owner-expr)
-                    [(TcMaybeString.Some owner)
-                      (if (or
-                        (tc-ordinary-arena-owner-active? env owner)
-                        (tc-atomic-arena-owner-active? env owner))
-                        (if (tc-active-region-owned-by-arena? env owner)
-                          (ResultTcType.Err
-                            (tc-locate-error-at-expr
-                              owner-expr
-                              "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
-                          (ResultTcType.Ok (AstType.Unit)))
-                        (ResultTcType.Err
-                          (tc-locate-error-at-expr
-                            owner-expr
-                            "typecheck: arena.destroy-safe! requires a direct arena owner")))]
-                    [(TcMaybeString.No)
-                      (ResultTcType.Err
-                        (tc-locate-error-at-expr
-                          owner-expr
-                          "typecheck: arena.destroy-safe! requires a direct arena owner"))])
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [owner-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env owner-expr)
+        [(ResultTcType.Ok owner-ty)
+          (if (tc-arena-type? ctx owner-ty)
+            (match (tc-expr-var-name owner-expr)
+              [(TcMaybeString.Some owner)
+                (if (or
+                  (tc-ordinary-arena-owner-active? env owner)
+                  (tc-atomic-arena-owner-active? env owner))
+                  (if (tc-active-region-owned-by-arena? env owner)
+                    (ResultTcType.Err
+                      (tc-locate-error-at-expr
+                        owner-expr
+                        "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
+                    (ResultTcType.Ok (AstType.Unit)))
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
                       owner-expr
-                      "typecheck: arena.destroy-safe! arena must be Arena")))]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
-          [(AstExprList.Cons _ _)
+                      "typecheck: arena.destroy-safe! requires a direct arena owner")))]
+              [(TcMaybeString.No)
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    owner-expr
+                    "typecheck: arena.destroy-safe! requires a direct arena owner"))])
             (ResultTcType.Err
-              "typecheck: arena.destroy-safe! expects exactly one argument")]))]
-    [(AstExprList.Nil)
-      (ResultTcType.Err
-        "typecheck: arena.destroy-safe! expects exactly one argument")]))
+              (tc-locate-error-at-expr
+                owner-expr
+                "typecheck: arena.destroy-safe! arena must be Arena")))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err
+      "typecheck: arena.destroy-safe! expects exactly one argument")))
 
 (define (tc-call-expr-ordinary-id
   [ctx : TcContext]
@@ -18868,48 +18821,44 @@
                           (tc-tag-active-region env (ty-node-get ret)))]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                   [(AstType.Enum enum-name)
-                    (match args
-                      [(AstExprList.Nil)
-                        (tc-nullary-variant-call-expr
-                          ctx
-                          env
-                          func
-                          (intern-str enum-name)
-                          (ty-node-get inner))]
-                      [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                    (if (ast-expr-list-empty? (& args))
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        (intern-str enum-name)
+                        (ty-node-get inner))
+                      (ResultTcType.Err "typecheck: arity mismatch"))]
                   [(AstType.EnumArgs enum-name _)
-                    (match args
-                      [(AstExprList.Nil)
-                        (tc-nullary-variant-call-expr
-                          ctx
-                          env
-                          func
-                          (intern-str enum-name)
-                          (ty-node-get inner))]
-                      [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                    (if (ast-expr-list-empty? (& args))
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        (intern-str enum-name)
+                        (ty-node-get inner))
+                      (ResultTcType.Err "typecheck: arity mismatch"))]
                   [_
                     (ResultTcType.Err
                       "typecheck: call target is not a function")])]
               [(AstType.Enum enum-name)
-                (match args
-                  [(AstExprList.Nil)
-                    (tc-nullary-variant-call-expr
-                      ctx
-                      env
-                      func
-                      (intern-str enum-name)
-                      fn-ty)]
-                  [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                (if (ast-expr-list-empty? (& args))
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    (intern-str enum-name)
+                    fn-ty)
+                  (ResultTcType.Err "typecheck: arity mismatch"))]
               [(AstType.EnumArgs enum-name _)
-                (match args
-                  [(AstExprList.Nil)
-                    (tc-nullary-variant-call-expr
-                      ctx
-                      env
-                      func
-                      (intern-str enum-name)
-                      fn-ty)]
-                  [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                (if (ast-expr-list-empty? (& args))
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    (intern-str enum-name)
+                    fn-ty)
+                  (ResultTcType.Err "typecheck: arity mismatch"))]
               [_ (ResultTcType.Err "typecheck: call target is not a function")])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
@@ -19042,211 +18991,147 @@
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (tc-check-string-handle-arg
-              ctx
-              env
-              arg
-              "typecheck: argument type mismatch")
-              [(ResultTcUnit.Ok)
-                (ResultTcType.Ok (tc-tag-active-region env ret))]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        arg
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-one-length-handle-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (tc-check-length-handle-arg
-              ctx
-              env
-              arg
-              "typecheck: argument type mismatch")
-              [(ResultTcUnit.Ok)
-                (ResultTcType.Ok (tc-tag-active-region env ret))]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-check-length-handle-arg
+        ctx
+        env
+        arg
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-two-string-handle-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons left tail)
-      (let
-        [left : AstExpr (ast-node-get left)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons right rest)
-            (let
-              [right : AstExpr (ast-node-get right)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (match (tc-check-string-handle-arg
-                    ctx
-                    env
-                    left
-                    "typecheck: argument type mismatch")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-check-string-handle-arg
-                        ctx
-                        env
-                        right
-                        "typecheck: argument type mismatch")
-                        [(ResultTcUnit.Ok)
-                          (ResultTcType.Ok (tc-tag-active-region env ret))]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        left
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok)
+          (match (tc-check-string-handle-arg
+            ctx
+            env
+            right
+            "typecheck: argument type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-string-i64-i64-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons text tail)
-      (let
-        [text : AstExpr (ast-node-get text)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons start rest1)
-            (let
-              [start : AstExpr (ast-node-get start)]
-              [rest1 : AstExprList (box-get rest1)]
-              (match rest1
-                [(AstExprList.Cons len rest2)
-                  (let
-                    [len : AstExpr (ast-node-get len)]
-                    [rest2 : AstExprList (box-get rest2)]
-                    (match rest2
-                      [(AstExprList.Nil)
-                        (match (tc-check-string-handle-arg
-                          ctx
-                          env
-                          text
-                          "typecheck: argument type mismatch")
-                          [(ResultTcUnit.Ok)
-                            (match (tc-check-exact-arg
-                              ctx
-                              env
-                              start
-                              (AstType.I64)
-                              "typecheck: argument type mismatch")
-                              [(ResultTcUnit.Ok)
-                                (match (tc-check-exact-arg
-                                  ctx
-                                  env
-                                  len
-                                  (AstType.I64)
-                                  "typecheck: argument type mismatch")
-                                  [(ResultTcUnit.Ok)
-                                    (ResultTcType.Ok
-                                      (tc-tag-active-region env ret))]
-                                  [(ResultTcUnit.Err message)
-                                    (ResultTcType.Err message)])]
-                              [(ResultTcUnit.Err message)
-                                (ResultTcType.Err message)])]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcType.Err message)])]
-                      [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [text : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [start : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [len : AstExpr (ast-node-get (ast-expr-list-get (& args) 2 0))]
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        text
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok)
+          (match (tc-check-exact-arg
+            ctx
+            env
+            start
+            (AstType.I64)
+            "typecheck: argument type mismatch")
+            [(ResultTcUnit.Ok)
+              (match (tc-check-exact-arg
+                ctx
+                env
+                len
+                (AstType.I64)
+                "typecheck: argument type mismatch")
+                [(ResultTcUnit.Ok)
+                  (ResultTcType.Ok (tc-tag-active-region env ret))]
+                [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-string-i64-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons text tail)
-      (let
-        [text : AstExpr (ast-node-get text)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons value rest)
-            (let
-              [value : AstExpr (ast-node-get value)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (match (tc-check-string-handle-arg
-                    ctx
-                    env
-                    text
-                    "typecheck: argument type mismatch")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-check-exact-arg
-                        ctx
-                        env
-                        value
-                        (AstType.I64)
-                        "typecheck: argument type mismatch")
-                        [(ResultTcUnit.Ok)
-                          (ResultTcType.Ok (tc-tag-active-region env ret))]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [text : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [value : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        text
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok)
+          (match (tc-check-exact-arg
+            ctx
+            env
+            value
+            (AstType.I64)
+            "typecheck: argument type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-i64-string-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
-  (match args
-    [(AstExprList.Cons value tail)
-      (let
-        [value : AstExpr (ast-node-get value)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons text rest)
-            (let
-              [text : AstExpr (ast-node-get text)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (match (tc-check-exact-arg
-                    ctx
-                    env
-                    value
-                    (AstType.I64)
-                    "typecheck: argument type mismatch")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-check-string-handle-arg
-                        ctx
-                        env
-                        text
-                        "typecheck: argument type mismatch")
-                        [(ResultTcUnit.Ok)
-                          (ResultTcType.Ok (tc-tag-active-region env ret))]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [value : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [text : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (tc-check-exact-arg
+        ctx
+        env
+        value
+        (AstType.I64)
+        "typecheck: argument type mismatch")
+        [(ResultTcUnit.Ok)
+          (match (tc-check-string-handle-arg
+            ctx
+            env
+            text
+            "typecheck: argument type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-string-length-helper-call-name?
   [ctx : TcContext]
@@ -19403,35 +19288,22 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons str tail)
-      (let
-        [str : AstExpr (ast-node-get str)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons index rest)
-            (let
-              [index : AstExpr (ast-node-get index)]
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (match (tc-expr ctx env str)
-                    [(ResultTcType.Ok str-ty)
-                      (if (tc-string-handle-type? str-ty)
-                        (match (tc-expr ctx env index)
-                          [(ResultTcType.Ok index-ty)
-                            (if (tc-integer-type? index-ty)
-                              (ResultTcType.Ok (AstType.Char))
-                              (ResultTcType.Err
-                                "typecheck: string index must be integer"))]
-                          [(ResultTcType.Err message)
-                            (ResultTcType.Err message)])
-                        (ResultTcType.Err
-                          "typecheck: string-ref requires String"))]
-                    [(ResultTcType.Err message) (ResultTcType.Err message)])]
-                [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-          [_ (ResultTcType.Err "typecheck: arity mismatch")]))]
-    [_ (ResultTcType.Err "typecheck: arity mismatch")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (match (tc-expr ctx env str)
+        [(ResultTcType.Ok str-ty)
+          (if (tc-string-handle-type? str-ty)
+            (match (tc-expr ctx env index)
+              [(ResultTcType.Ok index-ty)
+                (if (tc-integer-type? index-ty)
+                  (ResultTcType.Ok (AstType.Char))
+                  (ResultTcType.Err "typecheck: string index must be integer"))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])
+            (ResultTcType.Err "typecheck: string-ref requires String"))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: arity mismatch")))
 
 (define (tc-length-string-call
   [ctx : TcContext]
@@ -19513,37 +19385,21 @@
   [name : String]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (tc-expr ctx env arg)
-              [(ResultTcType.Ok arg-ty)
-                (match (tc-array-length-receiver ctx arg-ty)
-                  [(ResultTcArrayReceiver.Ok _)
-                    (tc-array-length-array-call ctx env name func args)]
-                  [(ResultTcArrayReceiver.Err _)
-                    (tc-array-length-non-array-call
-                      ctx
-                      env
-                      name
-                      func
-                      args
-                      arg-ty)])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
-          [_
-            (if (cbi.compiler-builtin-typecheck-array-length-id?
-              (tc-builtin-name-id name))
-              (ResultTcType.Err "typecheck: arity mismatch")
-              (tc-call-expr-ordinary ctx env func args))]))]
-    [_
-      (if (cbi.compiler-builtin-typecheck-array-length-id?
-        (tc-builtin-name-id name))
-        (ResultTcType.Err "typecheck: arity mismatch")
-        (tc-call-expr-ordinary ctx env func args))]))
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env arg)
+        [(ResultTcType.Ok arg-ty)
+          (match (tc-array-length-receiver ctx arg-ty)
+            [(ResultTcArrayReceiver.Ok _)
+              (tc-array-length-array-call ctx env name func args)]
+            [(ResultTcArrayReceiver.Err _)
+              (tc-array-length-non-array-call ctx env name func args arg-ty)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (if (cbi.compiler-builtin-typecheck-array-length-id?
+      (tc-builtin-name-id name))
+      (ResultTcType.Err "typecheck: arity mismatch")
+      (tc-call-expr-ordinary ctx env func args))))
 
 (define (tc-layout-query-name? [name : String]) : bool
   (if (string.eq name "size-of")
@@ -19558,51 +19414,22 @@
 (define (tc-one-arg-layout-query-runtime-call
   [name : String]
   [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons _ rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (ResultTcType.Err
-              (string.append
-                "typecheck: "
-                (string.append
-                  name
-                  " is compile-time only; wrap it in (comptime ...)")))]
-          [_
-            (ResultTcType.Err
-              (string.append
-                "typecheck: "
-                (string.append name " expects exactly one type argument")))]))]
-    [_
-      (ResultTcType.Err
-        (string.append
-          "typecheck: "
-          (string.append name " expects exactly one type argument")))]))
+  (if (= (struct-get (& args) len) 1)
+    (ResultTcType.Err
+      (string.append
+        "typecheck: "
+        (string.append name " is compile-time only; wrap it in (comptime ...)")))
+    (ResultTcType.Err
+      (string.append
+        "typecheck: "
+        (string.append name " expects exactly one type argument")))))
 
 (define (tc-offset-layout-query-runtime-call [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons _ tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Cons _ rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprList.Nil)
-                  (ResultTcType.Err
-                    "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")]
-                [_
-                  (ResultTcType.Err
-                    "typecheck: offset-of expects exactly one type argument and one field name")]))]
-          [_
-            (ResultTcType.Err
-              "typecheck: offset-of expects exactly one type argument and one field name")]))]
-    [_
-      (ResultTcType.Err
-        "typecheck: offset-of expects exactly one type argument and one field name")]))
+  (if (= (struct-get (& args) len) 2)
+    (ResultTcType.Err
+      "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")
+    (ResultTcType.Err
+      "typecheck: offset-of expects exactly one type argument and one field name")))
 
 (define (tc-layout-query-runtime-call [name : String] [args : AstExprList]) : ResultTcType
   (if (string.eq name "offset-of")
@@ -19666,32 +19493,27 @@
 ;; lands in the enclosing arena, not the source's region). Unsupported types are
 ;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
 (define (tc-clone-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Cons arg tail)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprList.Nil)
-            (match (tc-expr ctx env arg)
-              [(ResultTcType.Ok arg-ty)
-                (let
-                  [clone-ty : AstType (tc-type-without-regions arg-ty)]
-                  (if (tc-clone-able-type? ctx clone-ty)
-                    (ResultTcType.Ok clone-ty)
-                    (ResultTcType.Err
-                      (string.append
-                        "typecheck: clone unsupported type "
-                        (tc-type-render
-                          (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
-          [_ (ResultTcType.Err "typecheck: clone expects exactly one argument")]))]
-    [_ (ResultTcType.Err "typecheck: clone expects exactly one argument")]))
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env arg)
+        [(ResultTcType.Ok arg-ty)
+          (let
+            [clone-ty : AstType (tc-type-without-regions arg-ty)]
+            (if (tc-clone-able-type? ctx clone-ty)
+              (ResultTcType.Ok clone-ty)
+              (ResultTcType.Err
+                (string.append
+                  "typecheck: clone unsupported type "
+                  (tc-type-render
+                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: clone expects exactly one argument")))
 
 (define (tc-tls-current-arena-read-call [args : AstExprList]) : ResultTcType
-  (match args
-    [(AstExprList.Nil) (ResultTcType.Ok (AstType.I64))]
-    [_ (ResultTcType.Err "typecheck: tls-current-arena expects no arguments")]))
+  (if (ast-expr-list-empty? (& args))
+    (ResultTcType.Ok (AstType.I64))
+    (ResultTcType.Err "typecheck: tls-current-arena expects no arguments")))
 
 (define (tc-tls-current-arena-set-call
   [ctx : TcContext]
@@ -19699,27 +19521,19 @@
   [args : AstExprList]) : ResultTcType
   (match (tc-require-unsafe env "tls-current-arena-set!")
     [(ResultTcUnit.Ok)
-      (match args
-        [(AstExprList.Cons value-node rest-box)
-          (let
-            [value : AstExpr (ast-node-get value-node)]
-            [rest : AstExprList (box-get rest-box)]
-            (match rest
-              [(AstExprList.Nil)
-                (match (tc-check-exact-arg
-                  ctx
-                  env
-                  value
-                  (AstType.I64)
-                  "typecheck: tls-current-arena-set! value type mismatch")
-                  [(ResultTcUnit.Ok) (ResultTcType.Ok (AstType.Unit))]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-              [_
-                (ResultTcType.Err
-                  "typecheck: tls-current-arena-set! expects exactly one argument")]))]
-        [_
-          (ResultTcType.Err
-            "typecheck: tls-current-arena-set! expects exactly one argument")])]
+      (if (= (struct-get (& args) len) 1)
+        (let
+          [value : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          (match (tc-check-exact-arg
+            ctx
+            env
+            value
+            (AstType.I64)
+            "typecheck: tls-current-arena-set! value type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok (AstType.Unit))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+        (ResultTcType.Err
+          "typecheck: tls-current-arena-set! expects exactly one argument"))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-tls-current-arena-call
@@ -20001,15 +19815,21 @@
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match exprs
-    [(AstExprList.Nil) true]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (and
-          (tc-ref-closure-local-uses-ok? expr name bound)
-          (tc-ref-closure-expr-list-local-uses-ok? rest name bound)))]))
+  (tc-ref-closure-expr-list-local-uses-ok-at? (& exprs) 0 name bound))
+
+(define (tc-ref-closure-expr-list-local-uses-ok-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (if (>= index (struct-get exprs len))
+    true
+    (and
+      (tc-ref-closure-local-uses-ok?
+        (ast-node-get (ast-expr-list-get exprs index 0))
+        name
+        bound)
+      (tc-ref-closure-expr-list-local-uses-ok-at? exprs (+ index 1) name bound))))
 
 (define (tc-ref-closure-let-binding-list-local-uses-ok?
   [bindings : AstLetBindingList]
@@ -20086,7 +19906,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     true
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -20851,17 +20671,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]) : ResultTcType
-  (match exprs
-    [(AstExprList.Nil) (ResultTcType.Ok (AstType.Unit))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil) (tc-expr-id ctx env expr)]
-          [_
-            (match (tc-expr-id ctx env expr)
-              [(ResultTcType.Ok _) (tc-begin-list ctx env rest)]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]))]))
+  (tc-begin-list-at ctx env (& exprs) 0))
+
+(define (tc-begin-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcType
+  (if (>= index (struct-get exprs len))
+    (ResultTcType.Ok (AstType.Unit))
+    (if (= (+ index 1) (struct-get exprs len))
+      (tc-expr-id ctx env (ast-expr-list-get exprs index 0))
+      (match (tc-expr-id ctx env (ast-expr-list-get exprs index 0))
+        [(ResultTcType.Ok _) (tc-begin-list-at ctx env exprs (+ index 1))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-spmd-require-uniform [class : TcSpmdClass] [message : String]) : ResultTcUnit
   (if (tc-spmd-varying? class)
@@ -20981,8 +20804,8 @@
     helper-env
     helper-spmd-env
     (& params)
+    (& args)
     0
-    args
     seen-class))
 
 (define (tc-spmd-inline-helper-bind-args-at
@@ -20993,60 +20816,57 @@
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
   [params : (& params AstParamList)]
+  [args : (& args AstExprList)]
   [index : i64]
-  [args : AstExprList]
   [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
-  (if (>= index (ast-param-list-len params))
-    (match args
-      [(AstExprList.Nil)
+  (cond
+    [(>= index (ast-param-list-len params))
+      (if (>= index (struct-get args len))
         (ResultTcSpmdInlineCallState.Ok
           (TcSpmdInlineCallState
             caller-spmd-env
             helper-env
             helper-spmd-env
-            seen-class))]
-      [_ (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")])
-    (match args
-      [(AstExprList.Cons arg rest-args)
-        (let
-          [arg : AstExpr (ast-node-get arg)]
-          [rest-args : AstExprList (box-get rest-args)]
-          (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
-            [(ResultTcSpmdExprInfo.Ok arg-info)
-              (match arg-info
-                [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
-                  (match (ast-param-list-get params index (ast-param-fallback))
-                    [(AstParam.Param param-name param-ty _)
-                      (let
-                        [bound-ty : AstType
-                          (tc-resolve-type helper-ctx param-ty)]
-                        (if (and
-                          (tc-spmd-varying? arg-class)
-                          (not (tc-spmd-varying-value-type-supported? bound-ty)))
-                          (ResultTcSpmdInlineCallState.Err
-                            (string.append
-                              "typecheck: SPMD inline helper varying parameter type is not supported: "
-                              (tc-type-render (tc-type-strip-region bound-ty))))
-                          (tc-spmd-inline-helper-bind-args-at
-                            ctx
-                            caller-env
-                            next-caller-spmd-env
-                            helper-ctx
-                            (tc-bind-id helper-env param-name bound-ty)
-                            (tc-spmd-env-bind
-                              helper-spmd-env
-                              (intern-str param-name)
-                              bound-ty
-                              arg-class
-                              TcSpmdScope.Local)
-                            params
-                            (+ index 1)
-                            rest-args
-                            (tc-spmd-merge-class seen-class arg-class))))])])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdInlineCallState.Err message)]))]
-      [(AstExprList.Nil)
-        (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")])))
+            seen-class))
+        (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch"))]
+    [(>= index (struct-get args len))
+      (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")]
+    [else
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
+          [(ResultTcSpmdExprInfo.Ok arg-info)
+            (match arg-info
+              [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
+                (match (ast-param-list-get params index (ast-param-fallback))
+                  [(AstParam.Param param-name param-ty _)
+                    (let
+                      [bound-ty : AstType (tc-resolve-type helper-ctx param-ty)]
+                      (if (and
+                        (tc-spmd-varying? arg-class)
+                        (not (tc-spmd-varying-value-type-supported? bound-ty)))
+                        (ResultTcSpmdInlineCallState.Err
+                          (string.append
+                            "typecheck: SPMD inline helper varying parameter type is not supported: "
+                            (tc-type-render (tc-type-strip-region bound-ty))))
+                        (tc-spmd-inline-helper-bind-args-at
+                          ctx
+                          caller-env
+                          next-caller-spmd-env
+                          helper-ctx
+                          (tc-bind-id helper-env param-name bound-ty)
+                          (tc-spmd-env-bind
+                            helper-spmd-env
+                            (intern-str param-name)
+                            bound-ty
+                            arg-class
+                            TcSpmdScope.Local)
+                          params
+                          args
+                          (+ index 1)
+                          (tc-spmd-merge-class seen-class arg-class))))])])]
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdInlineCallState.Err message)]))]))
 
 (define (tc-spmd-inline-helper-body
   [ctx : TcContext]
@@ -21631,16 +21451,24 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env expr)
-          [(ResultTcUnit.Ok)
-            (tc-spmd-masked-if-expr-list ctx env spmd-env rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-spmd-masked-if-expr-list-at ctx env spmd-env (& exprs) 0))
+
+(define (tc-spmd-masked-if-expr-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-spmd-masked-if-expr
+      ctx
+      env
+      spmd-env
+      (ast-node-get (ast-expr-list-get exprs index 0)))
+      [(ResultTcUnit.Ok)
+        (tc-spmd-masked-if-expr-list-at ctx env spmd-env exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-spmd-masked-if-let-bindings
   [ctx : TcContext]
@@ -21942,54 +21770,68 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcSpmdExprListInfo
-  (match exprs
-    [(AstExprList.Nil)
-      (ResultTcSpmdExprListInfo.Ok
-        (TcSpmdExprListInfo TcSpmdClass.Uniform spmd-env))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-spmd-expr ctx env spmd-env expr)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (match (tc-spmd-expr-list ctx env next-spmd-env rest)
-                  [(ResultTcSpmdExprListInfo.Ok rest-info)
-                    (match rest-info
-                      [(TcSpmdExprListInfo rest-class rest-env)
-                        (ResultTcSpmdExprListInfo.Ok
-                          (TcSpmdExprListInfo
-                            (tc-spmd-merge-class class rest-class)
-                            rest-env))])]
-                  [(ResultTcSpmdExprListInfo.Err message)
-                    (ResultTcSpmdExprListInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprListInfo.Err message)]))]))
+  (tc-spmd-expr-list-at ctx env spmd-env (& exprs) 0))
+
+(define (tc-spmd-expr-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcSpmdExprListInfo
+  (if (>= index (struct-get exprs len))
+    (ResultTcSpmdExprListInfo.Ok
+      (TcSpmdExprListInfo TcSpmdClass.Uniform spmd-env))
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-spmd-expr ctx env spmd-env expr)
+        [(ResultTcSpmdExprInfo.Ok info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (match (tc-spmd-expr-list-at
+                ctx
+                env
+                next-spmd-env
+                exprs
+                (+ index 1))
+                [(ResultTcSpmdExprListInfo.Ok rest-info)
+                  (match rest-info
+                    [(TcSpmdExprListInfo rest-class rest-env)
+                      (ResultTcSpmdExprListInfo.Ok
+                        (TcSpmdExprListInfo
+                          (tc-spmd-merge-class class rest-class)
+                          rest-env))])]
+                [(ResultTcSpmdExprListInfo.Err message)
+                  (ResultTcSpmdExprListInfo.Err message)])])]
+        [(ResultTcSpmdExprInfo.Err message)
+          (ResultTcSpmdExprListInfo.Err message)]))))
 
 (define (tc-spmd-begin-list
   [ctx : TcContext]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcSpmdExprInfo
-  (match exprs
-    [(AstExprList.Nil)
-      (ResultTcSpmdExprInfo.Ok
-        (TcSpmdExprInfo (AstType.Unit) TcSpmdClass.Uniform spmd-env))]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil) (tc-spmd-expr ctx env spmd-env expr)]
-          [_
-            (match (tc-spmd-expr ctx env spmd-env expr)
-              [(ResultTcSpmdExprInfo.Ok info)
-                (match info
-                  [(TcSpmdExprInfo _ _ next-spmd-env)
-                    (tc-spmd-begin-list ctx env next-spmd-env rest)])]
-              [(ResultTcSpmdExprInfo.Err message)
-                (ResultTcSpmdExprInfo.Err message)])]))]))
+  (tc-spmd-begin-list-at ctx env spmd-env (& exprs) 0))
+
+(define (tc-spmd-begin-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcSpmdExprInfo
+  (if (>= index (struct-get exprs len))
+    (ResultTcSpmdExprInfo.Ok
+      (TcSpmdExprInfo (AstType.Unit) TcSpmdClass.Uniform spmd-env))
+    (let
+      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (if (= (+ index 1) (struct-get exprs len))
+        (tc-spmd-expr ctx env spmd-env expr)
+        (match (tc-spmd-expr ctx env spmd-env expr)
+          [(ResultTcSpmdExprInfo.Ok info)
+            (match info
+              [(TcSpmdExprInfo _ _ next-spmd-env)
+                (tc-spmd-begin-list-at ctx env next-spmd-env exprs (+ index 1))])]
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdExprInfo.Err message)])))))
 
 (define (tc-spmd-match-pattern-binding-supported?
   [class : TcSpmdClass]
@@ -22063,7 +21905,7 @@
   [scrut-class : TcSpmdClass]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -22132,7 +21974,7 @@
   [arms : (& arms AstMatchArmList)]
   [class : TcSpmdClass]
   [index : i64]) : ResultTcSpmdExprListInfo
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultTcSpmdExprListInfo.Ok (TcSpmdExprListInfo class spmd-env))
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -22220,15 +22062,18 @@
     body))
 
 (define (tc-spmd-scan-body-no-nested-list [exprs : AstExprList]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons expr rest)
-      (let
-        [head : AstExpr (ast-node-get expr)]
-        [tail : AstExprList (box-get rest)]
-        (match (tc-spmd-scan-body-no-nested-spmd head)
-          [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list tail)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-spmd-scan-body-no-nested-list-at (& exprs) 0))
+
+(define (tc-spmd-scan-body-no-nested-list-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-spmd-scan-body-no-nested-spmd
+      (ast-node-get (ast-expr-list-get exprs index 0)))
+      [(ResultTcUnit.Ok)
+        (tc-spmd-scan-body-no-nested-list-at exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-spmd-scan-body-no-nested-pair [left : AstExpr] [right : AstExpr]) : ResultTcUnit
   (match (tc-spmd-scan-body-no-nested-spmd left)
@@ -22282,7 +22127,7 @@
 (define (tc-spmd-scan-body-no-nested-arms-at
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -23834,7 +23679,7 @@
   [patterns : (& patterns AstPatternList)]
   [bound : TcStringList]
   [index : i64]) : TcStringList
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     bound
     (tc-pattern-list-add-bound-names-at
       patterns
@@ -23875,15 +23720,21 @@
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or
-          (tc-expr-uses-free-name? expr name bound)
-          (tc-expr-list-uses-free-name? rest name bound)))]))
+  (tc-expr-list-uses-free-name-at? (& exprs) 0 name bound))
+
+(define (tc-expr-list-uses-free-name-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (tc-expr-uses-free-name?
+        (ast-node-get (ast-expr-list-get exprs index 0))
+        name
+        bound)
+      (tc-expr-list-uses-free-name-at? exprs (+ index 1) name bound))))
 
 (define (tc-let-binding-list-uses-free-name?
   [bindings : AstLetBindingList]
@@ -23938,7 +23789,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -24352,15 +24203,21 @@
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or
-          (tc-expr-sets-free-name? expr name bound)
-          (tc-expr-list-sets-free-name? rest name bound)))]))
+  (tc-expr-list-sets-free-name-at? (& exprs) 0 name bound))
+
+(define (tc-expr-list-sets-free-name-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (tc-expr-sets-free-name?
+        (ast-node-get (ast-expr-list-get exprs index 0))
+        name
+        bound)
+      (tc-expr-list-sets-free-name-at? exprs (+ index 1) name bound))))
 
 (define (tc-let-binding-list-sets-free-name?
   [bindings : AstLetBindingList]
@@ -24415,7 +24272,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -24825,30 +24682,37 @@
   [exprs : AstExprList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (tc-expr-result-uses-cleanup-owner? expr owners bound)]
-          [_ (tc-expr-list-result-uses-cleanup-owner? rest owners bound)]))]))
+  (if (ast-expr-list-empty? (& exprs))
+    false
+    (tc-expr-result-uses-cleanup-owner?
+      (ast-node-get
+        (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0))
+      owners
+      bound)))
 
 (define (tc-expr-list-any-result-uses-cleanup-owner?
   [exprs : AstExprList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or
-          (tc-expr-result-uses-cleanup-owner? expr owners bound)
-          (tc-expr-list-any-result-uses-cleanup-owner? rest owners bound)))]))
+  (tc-expr-list-any-result-uses-cleanup-owner-at? (& exprs) 0 owners bound))
+
+(define (tc-expr-list-any-result-uses-cleanup-owner-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [owners : TcStringList]
+  [bound : TcStringList]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (tc-expr-result-uses-cleanup-owner?
+        (ast-node-get (ast-expr-list-get exprs index 0))
+        owners
+        bound)
+      (tc-expr-list-any-result-uses-cleanup-owner-at?
+        exprs
+        (+ index 1)
+        owners
+        bound))))
 
 (define (tc-match-arms-result-use-cleanup-owner?
   [arms : AstMatchArmList]
@@ -24861,7 +24725,7 @@
   [owners : TcStringList]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -25887,7 +25751,7 @@
   [fields : (& fields AstFieldDefList)]
   [stack : TcStringList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     ResultTcUnit.Ok
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -25911,7 +25775,7 @@
   [variants : (& variants AstVariantDefList)]
   [stack : TcStringList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     ResultTcUnit.Ok
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -26079,7 +25943,7 @@
   [cursor : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlineFieldsLayout
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     (match (tc-inline-aggregate-finish-layout cursor max-align)
       [(TcLayoutInfo size align)
         (ResultTcInlineFieldsLayout.Ok
@@ -26238,7 +26102,7 @@
   [max-align : i64]
   [stack : TcStringList]
   [index : i64]) : ResultTcInlineAggregateLayout
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     (ResultTcInlineAggregateLayout.Ok
       (TcInlineAggregateLayout.Enum
         (tc-align-up max-size max-align)
@@ -26927,7 +26791,7 @@
   [cursor : i64]
   [max-align : i64]
   [seen : TcStringList]) : ResultTcReprCLayout
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     (if (= max-align 0)
       (ResultTcReprCLayout.Err
         "typecheck: repr c struct needs at least one field")
@@ -27389,7 +27253,7 @@
   [ctx : TcContext]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcResultInfo
-  (if (= (ast-variant-def-list-len (& variants)) 2)
+  (if (= (struct-get (& variants) len) 2)
     (let
       [first : AstVariantDef
         (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))]
@@ -28161,26 +28025,25 @@
   [env : TcTypeEnv]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (tc-bind-sub-pattern-list-at ctx env (& patterns) types 0))
+  (tc-bind-sub-pattern-list-at ctx env (& patterns) (& types) 0))
 
 (define (tc-bind-sub-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [patterns : (& patterns AstPatternList)]
-  [types : AstTypeList]
+  [types : (& types AstTypeList)]
   [index : i64]) : ResultTcEnv
   (if (>= index (ast-pattern-list-len patterns))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
       (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Err "typecheck: pattern arity mismatch")
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
         [ty : AstType
-          (ty-node-get
-            (ast-type-list-get (& types) index (ast-type-id-fallback)))]
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-bind-sub-pattern ctx env pattern ty)
           [(ResultTcEnv.Ok next-env)
             (tc-bind-sub-pattern-list-at
@@ -28278,7 +28141,7 @@
   [inner-ty : AstType]) : bool
   (let
     [args-ref : (& args AstPatternList) (& args)]
-    (if (= (ast-pattern-list-len args-ref) 1)
+    (if (= (struct-get args-ref len) 1)
       (tc-box-pattern-inner-supported?
         ctx
         (ast-pattern-list-get args-ref 0 (ast-pattern-fallback))
@@ -28311,7 +28174,7 @@
   [inner-ty : AstType]) : ResultTcEnv
   (let
     [args-ref : (& args AstPatternList) (& args)]
-    (if (= (ast-pattern-list-len args-ref) 1)
+    (if (= (struct-get args-ref len) 1)
       (let
         [inner : AstPattern
           (ast-pattern-list-get args-ref 0 (ast-pattern-fallback))]
@@ -28412,26 +28275,25 @@
   [env : TcTypeEnv]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (tc-bind-struct-field-pattern-list-at ctx env (& patterns) types 0))
+  (tc-bind-struct-field-pattern-list-at ctx env (& patterns) (& types) 0))
 
 (define (tc-bind-struct-field-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [patterns : (& patterns AstPatternList)]
-  [types : AstTypeList]
+  [types : (& types AstTypeList)]
   [index : i64]) : ResultTcEnv
   (if (>= index (ast-pattern-list-len patterns))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
       (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Err "typecheck: pattern arity mismatch")
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
         [ty : AstType
-          (ty-node-get
-            (ast-type-list-get (& types) index (ast-type-id-fallback)))]
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-bind-struct-field-pattern ctx env pattern ty)
           [(ResultTcEnv.Ok next-env)
             (tc-bind-struct-field-pattern-list-at
@@ -28579,27 +28441,32 @@
   [lifetime : String]
   [patterns : AstPatternList]
   [types : AstTypeList]) : ResultTcEnv
-  (tc-bind-borrowed-sub-pattern-list-at ctx env lifetime (& patterns) types 0))
+  (tc-bind-borrowed-sub-pattern-list-at
+    ctx
+    env
+    lifetime
+    (& patterns)
+    (& types)
+    0))
 
 (define (tc-bind-borrowed-sub-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [lifetime : String]
   [patterns : (& patterns AstPatternList)]
-  [types : AstTypeList]
+  [types : (& types AstTypeList)]
   [index : i64]) : ResultTcEnv
   (if (>= index (ast-pattern-list-len patterns))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
       (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
-    (if (>= index (ast-type-list-len (& types)))
+    (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Err "typecheck: pattern arity mismatch")
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
         [ty : AstType
-          (ty-node-get
-            (ast-type-list-get (& types) index (ast-type-id-fallback)))]
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)
           [(ResultTcEnv.Ok next-env)
             (tc-bind-borrowed-sub-pattern-list-at
@@ -28931,7 +28798,7 @@
   [expected : AstType]) : ResultTcType
   (let
     [arms-ref : (& arms AstMatchArmList) (& arms)]
-    (if (= (ast-match-arm-list-len arms-ref) 0)
+    (if (= (struct-get arms-ref len) 0)
       (ResultTcType.Err "typecheck: match must have at least one arm")
       (tc-check-match-arm-types-with-expected-at
         ctx
@@ -28948,7 +28815,7 @@
   [arms : (& arms AstMatchArmList)]
   [expected : AstType]
   [index : i64]) : ResultTcType
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultTcType.Ok expected)
     (match (tc-match-arm-type-with-expected
       ctx
@@ -28981,7 +28848,7 @@
   [arms : (& arms AstMatchArmList)]
   [index : i64]
   [want : AstType]) : ResultTcType
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultTcType.Ok want)
     (let
       [arm : AstMatchArm
@@ -29029,7 +28896,7 @@
   [rest : (& rest AstMatchArmList)]
   [index : i64]
   [first-ty : AstType]) : ResultTcType
-  (if (>= index (ast-match-arm-list-len rest))
+  (if (>= index (struct-get rest len))
     (ResultTcType.Ok first-ty)
     (let
       [second-arm : AstMatchArm
@@ -29088,7 +28955,7 @@
   [arms : AstMatchArmList]) : ResultTcType
   (let
     [arms-ref : (& arms AstMatchArmList) (& arms)]
-    (if (= (ast-match-arm-list-len arms-ref) 0)
+    (if (= (struct-get arms-ref len) 0)
       (ResultTcType.Err "typecheck: match must have at least one arm")
       (let
         [arm : AstMatchArm
@@ -29375,7 +29242,7 @@
   [variants : AstVariantDefList]
   [enum-name : String]
   [variant-name : String]) : bool
-  (if (= (ast-variant-def-list-len (& variants)) 1)
+  (if (= (struct-get (& variants) len) 1)
     (match (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
         (tc-variant-name-matches? ctx enum-name variant-name (intern-str name))])
@@ -29386,7 +29253,7 @@
   [variants : AstVariantDefList]
   [enum-name : String]
   [pattern-name : String]) : TcMaybeString
-  (if (= (ast-variant-def-list-len (& variants)) 1)
+  (if (= (struct-get (& variants) len) 1)
     (match (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
         (let
@@ -29515,23 +29382,22 @@
   [ctx : TcContext]
   [patterns : AstPatternList]
   [types : AstTypeList]) : bool
-  (tc-pattern-list-irrefutable-at? ctx (& patterns) types 0))
+  (tc-pattern-list-irrefutable-at? ctx (& patterns) (& types) 0))
 
 (define (tc-pattern-list-irrefutable-at?
   [ctx : TcContext]
   [patterns : (& patterns AstPatternList)]
-  [types : AstTypeList]
+  [types : (& types AstTypeList)]
   [index : i64]) : bool
   (if (>= index (ast-pattern-list-len patterns))
-    (>= index (ast-type-list-len (& types)))
-    (if (>= index (ast-type-list-len (& types)))
+    (>= index (ast-type-list-len types))
+    (if (>= index (ast-type-list-len types))
       false
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
         [ty : AstType
-          (ty-node-get
-            (ast-type-list-get (& types) index (ast-type-id-fallback)))]
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (if (tc-sub-pattern-irrefutable? ctx pattern ty)
           (tc-pattern-list-irrefutable-at? ctx patterns types (+ index 1))
           false)))))
@@ -29570,7 +29436,7 @@
   [enum-name : String]
   [variant-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern _)
@@ -29611,7 +29477,7 @@
   [enum-name : String]
   [variant-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern _)
@@ -29637,7 +29503,7 @@
   [variants : (& variants AstVariantDefList)]
   [arms : AstMatchArmList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     ResultTcUnit.Ok
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
@@ -29660,7 +29526,7 @@
 (define (tc-match-arms-have-catchall-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern _)
@@ -29680,7 +29546,7 @@
   [scrut-ty : AstType]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern _)
@@ -29699,7 +29565,7 @@
   [arms : (& arms AstMatchArmList)]
   [want : bool]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern _)
@@ -29785,7 +29651,7 @@
   [arms : (& arms AstMatchArmList)]
   [seen-catchall : bool]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (if seen-catchall
       (ResultTcUnit.Err "typecheck: unreachable match arm after wildcard `_`")
@@ -30478,15 +30344,21 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]) : ResultTcUnit
-  (match args
-    [(AstExprList.Nil) (ResultTcUnit.Ok)]
-    [(AstExprList.Cons arg rest)
-      (match (tc-expr ctx env (ast-node-get arg))
-        [(ResultTcType.Ok arg-ty)
-          (if (tc-integer-type? arg-ty)
-            (tc-syscall-args ctx env (box-get rest))
-            (ResultTcUnit.Err "typecheck: syscall operands must be integer"))]
-        [(ResultTcType.Err message) (ResultTcUnit.Err message)])]))
+  (tc-syscall-args-at ctx env (& args) 0))
+
+(define (tc-syscall-args-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get args len))
+    (ResultTcUnit.Ok)
+    (match (tc-expr ctx env (ast-node-get (ast-expr-list-get args index 0)))
+      [(ResultTcType.Ok arg-ty)
+        (if (tc-integer-type? arg-ty)
+          (tc-syscall-args-at ctx env args (+ index 1))
+          (ResultTcUnit.Err "typecheck: syscall operands must be integer"))]
+      [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-syscall-expr
   [ctx : TcContext]
@@ -30904,15 +30776,22 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-quasiquote-template-ok ctx env head)
-          [(ResultTcUnit.Ok) (tc-quasiquote-template-list-ok ctx env rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-quasiquote-template-list-ok-at ctx env (& exprs) 0))
+
+(define (tc-quasiquote-template-list-ok-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-quasiquote-template-ok
+      ctx
+      env
+      (ast-node-get (ast-expr-list-get exprs index 0)))
+      [(ResultTcUnit.Ok)
+        (tc-quasiquote-template-list-ok-at ctx env exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-quasiquote-template-ok
   [ctx : TcContext]
@@ -31605,20 +31484,19 @@
     [(AstExpr.Array exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
         [(ResultTcUnit.Ok)
-          (match exprs
-            [(AstExprList.Nil)
-              (ResultTcType.Err "typecheck: cannot infer type of empty array")]
-            [(AstExprList.Cons first rest)
-              (let
-                [rest : AstExprList (box-get rest)]
-                (match (tc-expr-id ctx env first)
-                  [(ResultTcType.Ok first-ty)
-                    (match (tc-check-array-rest ctx env rest first-ty)
-                      [(ResultTcUnit.Ok)
-                        (ResultTcType.Ok
-                          (ast-ty-array first-ty (tc-expr-list-len exprs)))]
-                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                  [(ResultTcType.Err message) (ResultTcType.Err message)]))])]
+          (if (ast-expr-list-empty? (& exprs))
+            (ResultTcType.Err "typecheck: cannot infer type of empty array")
+            (let
+              [first : i64 (ast-expr-list-get (& exprs) 0 0)]
+              [rest : AstExprList (ast-expr-list-tail-from-ref (& exprs) 1)]
+              (match (tc-expr-id ctx env first)
+                [(ResultTcType.Ok first-ty)
+                  (match (tc-check-array-rest ctx env rest first-ty)
+                    [(ResultTcUnit.Ok)
+                      (ResultTcType.Ok
+                        (ast-ty-array first-ty (tc-expr-list-len exprs)))]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.MakeArray elem-ty len-box)
       (let
@@ -32730,29 +32608,46 @@
   [seen : TcStringList]
   [template? : bool]
   [exprs : AstExprList]) : ResultTcUnit
-  (match exprs
-    [(AstExprList.Nil) ResultTcUnit.Ok]
-    [(AstExprList.Cons head rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match (tc-comptime-purity-node-mode
+  (tc-comptime-purity-expr-list-mode-at
+    ctx
+    env
+    bound
+    chain
+    seen
+    template?
+    (& exprs)
+    0))
+
+(define (tc-comptime-purity-expr-list-mode-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-comptime-purity-node-mode
+      ctx
+      env
+      bound
+      chain
+      seen
+      template?
+      (ast-expr-list-get exprs index 0))
+      [(ResultTcUnit.Ok)
+        (tc-comptime-purity-expr-list-mode-at
           ctx
           env
           bound
           chain
           seen
           template?
-          head)
-          [(ResultTcUnit.Ok)
-            (tc-comptime-purity-expr-list-mode
-              ctx
-              env
-              bound
-              chain
-              seen
-              template?
-              rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+          exprs
+          (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-comptime-purity-expr-list
   [ctx : TcContext]
@@ -32859,7 +32754,7 @@
   [template? : bool]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     ResultTcUnit.Ok
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -35344,61 +35239,60 @@
   [moved : TcMovedSet]
   [args : AstExprList]
   [origin : AstExpr]) : TcMoveResult
-  (match args
-    [(AstExprList.Cons phase-box _)
-      (let
-        [phase-expr : AstExpr (ast-node-get phase-box)]
-        (match (tc-expr-var-name phase-expr)
-          [(TcMaybeString.Some phase)
-            (match (tc-arena-phase-token-region-active env phase)
-              [(TcMaybeString.Some region)
-                (match (tc-arena-phase-token-owner-active env phase)
-                  [(TcMaybeString.Some owner)
-                    (match (if (tc-atomic-arena-owner-active? env owner)
-                      (tc-move-check-atomic-arena-users-released
-                        ctx
+  (if (ast-expr-list-empty? (& args))
+    (TcMoveResult.Ok moved)
+    (let
+      [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
+      [phase-expr : AstExpr (ast-node-get phase-box)]
+      (match (tc-expr-var-name phase-expr)
+        [(TcMaybeString.Some phase)
+          (match (tc-arena-phase-token-region-active env phase)
+            [(TcMaybeString.Some region)
+              (match (tc-arena-phase-token-owner-active env phase)
+                [(TcMaybeString.Some owner)
+                  (match (if (tc-atomic-arena-owner-active? env owner)
+                    (tc-move-check-atomic-arena-users-released
+                      ctx
+                      env
+                      locals
+                      moved
+                      owner)
+                    (TcMoveResult.Ok moved))
+                    [(TcMoveResult.Ok moved1)
+                      (match (tc-move-consume-local
+                        locals
+                        loop-carried
+                        moved1
+                        phase
+                        origin)
+                        [(TcMoveResult.Ok moved2)
+                          (tc-move-mark-region-locals
+                            env
+                            locals
+                            loop-carried
+                            moved2
+                            region
+                            origin)]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(TcMaybeString.No)
+                  (match (tc-move-consume-local
+                    locals
+                    loop-carried
+                    moved
+                    phase
+                    origin)
+                    [(TcMoveResult.Ok moved2)
+                      (tc-move-mark-region-locals
                         env
                         locals
-                        moved
-                        owner)
-                      (TcMoveResult.Ok moved))
-                      [(TcMoveResult.Ok moved1)
-                        (match (tc-move-consume-local
-                          locals
-                          loop-carried
-                          moved1
-                          phase
-                          origin)
-                          [(TcMoveResult.Ok moved2)
-                            (tc-move-mark-region-locals
-                              env
-                              locals
-                              loop-carried
-                              moved2
-                              region
-                              origin)]
-                          [(TcMoveResult.Err message)
-                            (TcMoveResult.Err message)])]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                  [(TcMaybeString.No)
-                    (match (tc-move-consume-local
-                      locals
-                      loop-carried
-                      moved
-                      phase
-                      origin)
-                      [(TcMoveResult.Ok moved2)
-                        (tc-move-mark-region-locals
-                          env
-                          locals
-                          loop-carried
-                          moved2
-                          region
-                          origin)]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
-              [(TcMaybeString.No) (TcMoveResult.Ok moved)])]
-          [(TcMaybeString.No) (TcMoveResult.Ok moved)]))]
-    [(AstExprList.Nil) (TcMoveResult.Ok moved)]))
+                        loop-carried
+                        moved2
+                        region
+                        origin)]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
+            [(TcMaybeString.No) (TcMoveResult.Ok moved)])]
+        [(TcMaybeString.No) (TcMoveResult.Ok moved)]))))
 
 (define (tc-move-safe-arena-destroy-effect
   [ctx : TcContext]
@@ -35408,43 +35302,43 @@
   [moved : TcMovedSet]
   [args : AstExprList]
   [origin : AstExpr]) : TcMoveResult
-  (match args
-    [(AstExprList.Cons owner-box _)
-      (let
-        [owner-expr : AstExpr (ast-node-get owner-box)]
-        (match (tc-expr-var-name owner-expr)
-          [(TcMaybeString.Some owner)
-            (if (or
-              (tc-ordinary-arena-owner-active? env owner)
-              (tc-atomic-arena-owner-active? env owner))
-              (match (if (tc-atomic-arena-owner-active? env owner)
-                (tc-move-check-atomic-arena-users-released
-                  ctx
-                  env
+  (if (ast-expr-list-empty? (& args))
+    (TcMoveResult.Ok moved)
+    (let
+      [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
+      [owner-expr : AstExpr (ast-node-get owner-box)]
+      (match (tc-expr-var-name owner-expr)
+        [(TcMaybeString.Some owner)
+          (if (or
+            (tc-ordinary-arena-owner-active? env owner)
+            (tc-atomic-arena-owner-active? env owner))
+            (match (if (tc-atomic-arena-owner-active? env owner)
+              (tc-move-check-atomic-arena-users-released
+                ctx
+                env
+                locals
+                moved
+                owner)
+              (TcMoveResult.Ok moved))
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-consume-local
                   locals
-                  moved
-                  owner)
-                (TcMoveResult.Ok moved))
-                [(TcMoveResult.Ok moved1)
-                  (match (tc-move-consume-local
-                    locals
-                    loop-carried
-                    moved1
-                    owner
-                    origin)
-                    [(TcMoveResult.Ok moved2)
-                      (tc-move-mark-owner-region-locals
-                        env
-                        locals
-                        loop-carried
-                        moved2
-                        owner
-                        origin)]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])
-              (TcMoveResult.Ok moved))]
-          [(TcMaybeString.No) (TcMoveResult.Ok moved)]))]
-    [(AstExprList.Nil) (TcMoveResult.Ok moved)]))
+                  loop-carried
+                  moved1
+                  owner
+                  origin)
+                  [(TcMoveResult.Ok moved2)
+                    (tc-move-mark-owner-region-locals
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      owner
+                      origin)]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])
+            (TcMoveResult.Ok moved))]
+        [(TcMaybeString.No) (TcMoveResult.Ok moved)]))))
 
 (define (tc-move-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -35649,7 +35543,7 @@
     locals
     loop-carried
     moved
-    exprs
+    (& exprs)
     (& types)
     0))
 
@@ -35659,45 +35553,42 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : TcMoveResult
-  (match exprs
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (TcMoveResult.Ok moved)
-        (TcMoveResult.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons head rest)
-      (if (>= type-index (ast-type-list-len types))
-        (TcMoveResult.Err "typecheck: arity mismatch")
-        (let
-          [head-expr : AstExpr (ast-node-get head)]
-          [rest : AstExprList (box-get rest)]
-          [ty : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
-            [(TcMoveResult.Ok moved1)
-              (match (tc-move-after-consuming-value
-                ctx
-                env
-                locals
-                loop-carried
-                moved1
-                head-expr
-                ty)
-                [(TcMoveResult.Ok moved2)
-                  (tc-move-check-exprs-with-types-no-auto-at
-                    ctx
-                    env
-                    locals
-                    loop-carried
-                    moved2
-                    rest
-                    types
-                    (+ type-index 1))]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]))
+  [index : i64]) : TcMoveResult
+  (if (>= index (struct-get exprs len))
+    (if (>= index (ast-type-list-len types))
+      (TcMoveResult.Ok moved)
+      (TcMoveResult.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len types))
+      (TcMoveResult.Err "typecheck: arity mismatch")
+      (let
+        [head : i64 (ast-expr-list-get exprs index 0)]
+        [head-expr : AstExpr (ast-node-get head)]
+        [ty : AstType
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
+          [(TcMoveResult.Ok moved1)
+            (match (tc-move-after-consuming-value
+              ctx
+              env
+              locals
+              loop-carried
+              moved1
+              head-expr
+              ty)
+              [(TcMoveResult.Ok moved2)
+                (tc-move-check-exprs-with-types-no-auto-at
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved2
+                  exprs
+                  types
+                  (+ index 1))]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)])))))
 
 (define (tc-move-check-exprs-with-types-auto
   [ctx : TcContext]
@@ -35713,7 +35604,7 @@
     locals
     loop-carried
     moved
-    exprs
+    (& exprs)
     (& types)
     0))
 
@@ -35723,62 +35614,59 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : TcMoveResult
-  (match exprs
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (TcMoveResult.Ok moved)
-        (TcMoveResult.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons head rest)
-      (if (>= type-index (ast-type-list-len types))
-        (TcMoveResult.Err "typecheck: arity mismatch")
-        (let
-          [head-expr : AstExpr (ast-node-get head)]
-          [rest : AstExprList (box-get rest)]
-          [ty : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (cfg
-            compile-profile
-            (compiler-tc-reinfer-profile-effective-arg-expr
-              "move.call_arg"
+  [index : i64]) : TcMoveResult
+  (if (>= index (struct-get exprs len))
+    (if (>= index (ast-type-list-len types))
+      (TcMoveResult.Ok moved)
+      (TcMoveResult.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len types))
+      (TcMoveResult.Err "typecheck: arity mismatch")
+      (let
+        [head : i64 (ast-expr-list-get exprs index 0)]
+        [head-expr : AstExpr (ast-node-get head)]
+        [ty : AstType
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (match (cfg
+          compile-profile
+          (compiler-tc-reinfer-profile-effective-arg-expr
+            "move.call_arg"
+            ctx
+            env
+            head-expr
+            ty)
+          (tc-call-effective-arg-expr ctx env head-expr ty))
+          [(ResultTcExpr.Ok effective-head)
+            (match (tc-move-check-expr
               ctx
               env
-              head-expr
-              ty)
-            (tc-call-effective-arg-expr ctx env head-expr ty))
-            [(ResultTcExpr.Ok effective-head)
-              (match (tc-move-check-expr
-                ctx
-                env
-                locals
-                loop-carried
-                moved
-                effective-head)
-                [(TcMoveResult.Ok moved1)
-                  (match (tc-move-after-consuming-value
-                    ctx
-                    env
-                    locals
-                    loop-carried
-                    moved1
-                    effective-head
-                    ty)
-                    [(TcMoveResult.Ok moved2)
-                      (tc-move-check-exprs-with-types-auto-at
-                        ctx
-                        env
-                        locals
-                        loop-carried
-                        moved2
-                        rest
-                        types
-                        (+ type-index 1))]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-            [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))]))
+              locals
+              loop-carried
+              moved
+              effective-head)
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-after-consuming-value
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  effective-head
+                  ty)
+                  [(TcMoveResult.Ok moved2)
+                    (tc-move-check-exprs-with-types-auto-at
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      exprs
+                      types
+                      (+ index 1))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))))
 
 (define (tc-move-check-exprs-with-types
   [ctx : TcContext]
@@ -36032,15 +35920,35 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [exprs : AstExprList]) : TcMoveResult
-  (match exprs
-    [(AstExprList.Nil) (TcMoveResult.Ok moved)]
-    [(AstExprList.Cons head rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
-          [(TcMoveResult.Ok moved1)
-            (tc-move-check-exprs ctx env locals loop-carried moved1 rest)]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]))
+  (tc-move-check-exprs-at ctx env locals loop-carried moved (& exprs) 0))
+
+(define (tc-move-check-exprs-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : TcMoveResult
+  (if (>= index (struct-get exprs len))
+    (TcMoveResult.Ok moved)
+    (match (tc-move-check-expr-id
+      ctx
+      env
+      locals
+      loop-carried
+      moved
+      (ast-expr-list-get exprs index 0))
+      [(TcMoveResult.Ok moved1)
+        (tc-move-check-exprs-at
+          ctx
+          env
+          locals
+          loop-carried
+          moved1
+          exprs
+          (+ index 1))]
+      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]
@@ -36257,7 +36165,7 @@
   [scrut-ty : AstType]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : TcMoveResult
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (TcMoveResult.Ok moved)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -37499,21 +37407,18 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [exprs : AstExprList]) : TcMovedSet
-  (match exprs
-    [(AstExprList.Nil) borrowed]
-    [_
-      (if (= (tc-moved-len borrowed) 0)
-        borrowed
-        (let
-          [map : hashmap.StringI64Map (tc-moved-map borrowed)]
-          (tc-borrow-check-prune-before-exprs-loop
-            ctx
-            env
-            exprs
-            protected
-            map
-            (hashmap.string-i64-map-next-occupied map 0)
-            borrowed)))]))
+  (if (or (ast-expr-list-empty? (& exprs)) (= (tc-moved-len borrowed) 0))
+    borrowed
+    (let
+      [map : hashmap.StringI64Map (tc-moved-map borrowed)]
+      (tc-borrow-check-prune-before-exprs-loop
+        ctx
+        env
+        exprs
+        protected
+        map
+        (hashmap.string-i64-map-next-occupied map 0)
+        borrowed))))
 
 (define (tc-borrow-check-local-place-path
   [locals : TcMovedSet]
@@ -38026,29 +37931,29 @@
   [borrowed : TcMovedSet]
   [args : AstExprList]
   [primary : AstExpr]) : TcBorrowCheckResult
-  (match args
-    [(AstExprList.Cons phase-box _)
-      (let
-        [phase-expr : AstExpr (ast-node-get phase-box)]
-        (match (tc-expr-var-name phase-expr)
-          [(TcMaybeString.Some phase)
-            (match (tc-borrow-check-assign-conflict borrowed phase primary)
-              [(ResultTcUnit.Ok)
-                (match (tc-arena-phase-token-region-active env phase)
-                  [(TcMaybeString.Some region)
-                    (tc-borrow-check-region-invalidation-scan
-                      ctx
-                      env
-                      locals
-                      borrowed
-                      region
-                      TcStringList.Nil
-                      (tc-moved-len locals)
-                      primary)]
-                  [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
-              [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
-          [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))]
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
+  (if (ast-expr-list-empty? (& args))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
+      [phase-expr : AstExpr (ast-node-get phase-box)]
+      (match (tc-expr-var-name phase-expr)
+        [(TcMaybeString.Some phase)
+          (match (tc-borrow-check-assign-conflict borrowed phase primary)
+            [(ResultTcUnit.Ok)
+              (match (tc-arena-phase-token-region-active env phase)
+                [(TcMaybeString.Some region)
+                  (tc-borrow-check-region-invalidation-scan
+                    ctx
+                    env
+                    locals
+                    borrowed
+                    region
+                    TcStringList.Nil
+                    (tc-moved-len locals)
+                    primary)]
+                [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
+            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+        [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))))
 
 (define (tc-borrow-check-safe-arena-destroy-effect
   [ctx : TcContext]
@@ -38057,30 +37962,30 @@
   [borrowed : TcMovedSet]
   [args : AstExprList]
   [primary : AstExpr]) : TcBorrowCheckResult
-  (match args
-    [(AstExprList.Cons owner-box _)
-      (let
-        [owner-expr : AstExpr (ast-node-get owner-box)]
-        (match (tc-expr-var-name owner-expr)
-          [(TcMaybeString.Some owner)
-            (if (or
-              (tc-ordinary-arena-owner-active? env owner)
-              (tc-atomic-arena-owner-active? env owner))
-              (match (tc-borrow-check-assign-conflict borrowed owner primary)
-                [(ResultTcUnit.Ok)
-                  (tc-borrow-check-owner-invalidation-scan
-                    ctx
-                    env
-                    locals
-                    borrowed
-                    owner
-                    TcStringList.Nil
-                    (tc-moved-len locals)
-                    primary)]
-                [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
-              (TcBorrowCheckResult.Ok borrowed))]
-          [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))]
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
+  (if (ast-expr-list-empty? (& args))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
+      [owner-expr : AstExpr (ast-node-get owner-box)]
+      (match (tc-expr-var-name owner-expr)
+        [(TcMaybeString.Some owner)
+          (if (or
+            (tc-ordinary-arena-owner-active? env owner)
+            (tc-atomic-arena-owner-active? env owner))
+            (match (tc-borrow-check-assign-conflict borrowed owner primary)
+              [(ResultTcUnit.Ok)
+                (tc-borrow-check-owner-invalidation-scan
+                  ctx
+                  env
+                  locals
+                  borrowed
+                  owner
+                  TcStringList.Nil
+                  (tc-moved-len locals)
+                  primary)]
+              [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+            (TcBorrowCheckResult.Ok borrowed))]
+        [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))))
 
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -38159,14 +38064,13 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [args : AstExprList]) : TcBorrowCheckResult
-  (match args
-    [(AstExprList.Cons arg _)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        (match (tc-borrow-check-root-mutation-conflict locals borrowed arg arg)
-          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
-          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))]
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
+  (if (ast-expr-list-empty? (& args))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-borrow-check-root-mutation-conflict locals borrowed arg arg)
+        [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+        [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-after-call-effects
   [ctx : TcContext]
@@ -38326,7 +38230,7 @@
     env
     locals
     borrowed
-    exprs
+    (& exprs)
     (& types)
     0))
 
@@ -38335,41 +38239,36 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : TcBorrowCheckResult
-  (match exprs
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (TcBorrowCheckResult.Ok borrowed)
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons head rest)
-      (if (>= type-index (ast-type-list-len types))
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch")
-        (let
-          [head-expr : AstExpr (ast-node-get head)]
-          [rest : AstExprList (box-get rest)]
-          [ty : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (tc-borrow-check-arg-with-type
-            ctx
-            env
-            locals
-            borrowed
-            head-expr
-            ty)
-            [(TcBorrowCheckResult.Ok borrowed1)
-              (tc-borrow-check-exprs-with-types-at
-                ctx
-                env
-                locals
-                borrowed1
-                rest
-                types
-                (+ type-index 1))]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)])))]))
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (struct-get exprs len))
+    (if (>= index (ast-type-list-len types))
+      (TcBorrowCheckResult.Ok borrowed)
+      (TcBorrowCheckResult.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len types))
+      (TcBorrowCheckResult.Err "typecheck: arity mismatch")
+      (let
+        [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        [ty : AstType
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (match (tc-borrow-check-arg-with-type
+          ctx
+          env
+          locals
+          borrowed
+          head-expr
+          ty)
+          [(TcBorrowCheckResult.Ok borrowed1)
+            (tc-borrow-check-exprs-with-types-at
+              ctx
+              env
+              locals
+              borrowed1
+              exprs
+              types
+              (+ index 1))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows-loop
   [borrowed : TcMovedSet]
@@ -38469,7 +38368,7 @@
     borrowed
     reserved
     call-expr
-    exprs
+    (& exprs)
     (& types)
     0))
 
@@ -38480,104 +38379,103 @@
   [borrowed : TcMovedSet]
   [reserved : bool]
   [call-expr : AstExpr]
-  [exprs : AstExprList]
+  [exprs : (& exprs AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : TcBorrowCheckResult
-  (match exprs
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (if reserved
-          (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
-          (TcBorrowCheckResult.Ok borrowed))
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons head rest)
-      (if (>= type-index (ast-type-list-len types))
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch")
-        (let
-          [head-expr : AstExpr (ast-node-get head)]
-          [rest : AstExprList (box-get rest)]
-          [ty : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (cfg
-            compile-profile
-            (compiler-tc-reinfer-profile-effective-arg-expr
-              "borrow.call_arg"
-              ctx
-              env
-              head-expr
-              ty)
-            (tc-call-effective-arg-expr ctx env head-expr ty))
-            [(ResultTcExpr.Ok effective-head)
-              (match (ast-expr-unspan effective-head)
-                [(AstExpr.Borrow mutable _ place-box)
-                  (if (and mutable (tc-call-mutable-ref-formal? ctx ty))
-                    (let
-                      [place : AstExpr (ast-node-get place-box)]
-                      (match (tc-borrow-check-reserve-two-phase-mut-call-arg
-                        ctx
-                        env
-                        locals
-                        borrowed
-                        effective-head
-                        place)
-                        [(TcBorrowCheckResult.Ok borrowed1)
-                          (tc-borrow-check-call-args-two-phase-with-types-at
-                            ctx
-                            env
-                            locals
-                            borrowed1
-                            true
-                            call-expr
-                            rest
-                            types
-                            (+ type-index 1))]
-                        [(TcBorrowCheckResult.Err message)
-                          (TcBorrowCheckResult.Err message)]))
-                    (match (tc-borrow-check-effective-arg-with-type
-                      ctx
-                      env
-                      locals
-                      borrowed
-                      effective-head
-                      ty)
-                      [(TcBorrowCheckResult.Ok borrowed1)
-                        (tc-borrow-check-call-args-two-phase-with-types-at
-                          ctx
-                          env
-                          locals
-                          borrowed1
-                          reserved
-                          call-expr
-                          rest
-                          types
-                          (+ type-index 1))]
-                      [(TcBorrowCheckResult.Err message)
-                        (TcBorrowCheckResult.Err message)]))]
-                [_
-                  (match (tc-borrow-check-effective-arg-with-type
+  [index : i64]) : TcBorrowCheckResult
+  (begin
+    (when
+      (>= index (struct-get exprs len))
+      (return
+        (if (>= index (ast-type-list-len types))
+          (if reserved
+            (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
+            (TcBorrowCheckResult.Ok borrowed))
+          (TcBorrowCheckResult.Err "typecheck: arity mismatch"))))
+    (when
+      (>= index (ast-type-list-len types))
+      (return (TcBorrowCheckResult.Err "typecheck: arity mismatch")))
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      [ty : AstType
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-effective-arg-expr
+          "borrow.call_arg"
+          ctx
+          env
+          head-expr
+          ty)
+        (tc-call-effective-arg-expr ctx env head-expr ty))
+        [(ResultTcExpr.Ok effective-head)
+          (match (ast-expr-unspan effective-head)
+            [(AstExpr.Borrow mutable _ place-box)
+              (if (and mutable (tc-call-mutable-ref-formal? ctx ty))
+                (let
+                  [place : AstExpr (ast-node-get place-box)]
+                  (match (tc-borrow-check-reserve-two-phase-mut-call-arg
                     ctx
                     env
                     locals
                     borrowed
                     effective-head
-                    ty)
+                    place)
                     [(TcBorrowCheckResult.Ok borrowed1)
                       (tc-borrow-check-call-args-two-phase-with-types-at
                         ctx
                         env
                         locals
                         borrowed1
-                        reserved
+                        true
                         call-expr
-                        rest
+                        exprs
                         types
-                        (+ type-index 1))]
+                        (+ index 1))]
                     [(TcBorrowCheckResult.Err message)
-                      (TcBorrowCheckResult.Err message)])])]
-            [(ResultTcExpr.Err message)
-              (TcBorrowCheckResult.Err
-                (tc-locate-error-at-expr head-expr message))])))]))
+                      (TcBorrowCheckResult.Err message)]))
+                (match (tc-borrow-check-effective-arg-with-type
+                  ctx
+                  env
+                  locals
+                  borrowed
+                  effective-head
+                  ty)
+                  [(TcBorrowCheckResult.Ok borrowed1)
+                    (tc-borrow-check-call-args-two-phase-with-types-at
+                      ctx
+                      env
+                      locals
+                      borrowed1
+                      reserved
+                      call-expr
+                      exprs
+                      types
+                      (+ index 1))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)]))]
+            [_
+              (match (tc-borrow-check-effective-arg-with-type
+                ctx
+                env
+                locals
+                borrowed
+                effective-head
+                ty)
+                [(TcBorrowCheckResult.Ok borrowed1)
+                  (tc-borrow-check-call-args-two-phase-with-types-at
+                    ctx
+                    env
+                    locals
+                    borrowed1
+                    reserved
+                    call-expr
+                    exprs
+                    types
+                    (+ index 1))]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])])]
+        [(ResultTcExpr.Err message)
+          (TcBorrowCheckResult.Err (tc-locate-error-at-expr head-expr message))]))))
 
 (define (tc-call-explicit-borrow-expr? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
@@ -38629,7 +38527,7 @@
     env
     locals
     borrowed
-    args
+    (& args)
     (& types)
     0))
 
@@ -38638,41 +38536,36 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
   [types : (& types AstTypeList)]
-  [type-index : i64]) : TcBorrowCheckResult
-  (match args
-    [(AstExprList.Nil)
-      (if (>= type-index (ast-type-list-len types))
-        (TcBorrowCheckResult.Ok borrowed)
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch"))]
-    [(AstExprList.Cons head rest)
-      (if (>= type-index (ast-type-list-len types))
-        (TcBorrowCheckResult.Err "typecheck: arity mismatch")
-        (let
-          [head-expr : AstExpr (ast-node-get head)]
-          [rest : AstExprList (box-get rest)]
-          [ty : AstType
-            (ty-node-get
-              (ast-type-list-get types type-index (ast-type-id-fallback)))]
-          (match (tc-borrow-check-add-call-arg-auto-borrow
-            ctx
-            env
-            locals
-            borrowed
-            head-expr
-            ty)
-            [(TcBorrowCheckResult.Ok borrowed1)
-              (tc-borrow-check-auto-borrowed-call-args-at
-                ctx
-                env
-                locals
-                borrowed1
-                rest
-                types
-                (+ type-index 1))]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)])))]))
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (struct-get args len))
+    (if (>= index (ast-type-list-len types))
+      (TcBorrowCheckResult.Ok borrowed)
+      (TcBorrowCheckResult.Err "typecheck: arity mismatch"))
+    (if (>= index (ast-type-list-len types))
+      (TcBorrowCheckResult.Err "typecheck: arity mismatch")
+      (let
+        [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [ty : AstType
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (match (tc-borrow-check-add-call-arg-auto-borrow
+          ctx
+          env
+          locals
+          borrowed
+          head-expr
+          ty)
+          [(TcBorrowCheckResult.Ok borrowed1)
+            (tc-borrow-check-auto-borrowed-call-args-at
+              ctx
+              env
+              locals
+              borrowed1
+              args
+              types
+              (+ index 1))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))))
 
 (define (tc-borrow-check-thread-channel-send-message
   [ctx : TcContext]
@@ -38846,32 +38739,52 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
-  (match exprs
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-borrow-check-expr-id ctx env locals borrowed head)
-          [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-exprs-with-protected
-              ctx
-              env
-              locals
-              borrowed1
-              protected
-              rest)]
-          [(TcBorrowCheckResult.Err message)
+  (tc-borrow-check-exprs-with-protected-at
+    ctx
+    env
+    locals
+    borrowed
+    protected
+    (& exprs)
+    0))
+
+(define (tc-borrow-check-exprs-with-protected-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (struct-get exprs len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [head : i64 (ast-expr-list-get exprs index 0)]
+      (match (tc-borrow-check-expr-id ctx env locals borrowed head)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (tc-borrow-check-exprs-with-protected-at
+            ctx
+            env
+            locals
+            borrowed1
+            protected
+            exprs
+            (+ index 1))]
+        [(TcBorrowCheckResult.Err message)
+          (let
+            [head-expr : AstExpr (ast-node-get head)]
+            [rest : AstExprList (ast-expr-list-tail-from-ref exprs (+ index 1))]
+            [current : AstExprList (ast-expr-list-tail-from-ref exprs index)]
             (tc-borrow-check-exprs-retry-after-prune
               ctx
               env
               locals
               borrowed
               protected
-              exprs
+              current
               head-expr
               rest
-              message)]))]))
+              message))]))))
 
 (define (tc-borrow-check-exprs
   [ctx : TcContext]
@@ -38945,20 +38858,28 @@
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [lifetime : String]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons head rest)
-      (if (tc-borrow-check-expr-stores-lifetime?
+  (tc-borrow-check-expr-list-stores-lifetime-at? ctx env (& exprs) 0 lifetime))
+
+(define (tc-borrow-check-expr-list-stores-lifetime-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [lifetime : String]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (if (tc-borrow-check-expr-stores-lifetime?
+      ctx
+      env
+      (ast-node-get (ast-expr-list-get exprs index 0))
+      lifetime)
+      true
+      (tc-borrow-check-expr-list-stores-lifetime-at?
         ctx
         env
-        (ast-node-get head)
-        lifetime)
-        true
-        (tc-borrow-check-expr-list-stores-lifetime?
-          ctx
-          env
-          (box-get rest)
-          lifetime))]))
+        exprs
+        (+ index 1)
+        lifetime))))
 
 (define (tc-borrow-check-let-bindings-store-lifetime?
   [ctx : TcContext]
@@ -38995,7 +38916,7 @@
   [arms : (& arms AstMatchArmList)]
   [lifetime : String]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -39303,43 +39224,64 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
-  (match exprs
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-borrow-check-expr-loop
-          ctx
-          env
-          loop-env
-          locals
-          borrowed
-          protected
-          head)
-          [(TcBorrowCheckResult.Ok borrowed1)
-            (let
-              [protected1 : TcMovedSet
-                (tc-borrow-check-loop-protect-stored-facts
-                  ctx
-                  env
-                  head
-                  borrowed1
-                  (tc-borrow-check-loop-protect-carried-facts
-                    ctx
-                    loop-env
-                    borrowed
-                    borrowed1
-                    protected))]
-              (tc-borrow-check-exprs-loop
+  (tc-borrow-check-exprs-loop-at
+    ctx
+    env
+    loop-env
+    locals
+    borrowed
+    protected
+    (& exprs)
+    0))
+
+(define (tc-borrow-check-exprs-loop-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (struct-get exprs len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-borrow-check-expr-loop
+        ctx
+        env
+        loop-env
+        locals
+        borrowed
+        protected
+        head)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (let
+            [protected1 : TcMovedSet
+              (tc-borrow-check-loop-protect-stored-facts
                 ctx
                 env
-                loop-env
-                locals
+                head
                 borrowed1
-                protected1
-                rest))]
-          [(TcBorrowCheckResult.Err message)
+                (tc-borrow-check-loop-protect-carried-facts
+                  ctx
+                  loop-env
+                  borrowed
+                  borrowed1
+                  protected))]
+            (tc-borrow-check-exprs-loop-at
+              ctx
+              env
+              loop-env
+              locals
+              borrowed1
+              protected1
+              exprs
+              (+ index 1)))]
+        [(TcBorrowCheckResult.Err message)
+          (let
+            [rest : AstExprList (ast-expr-list-tail-from-ref exprs (+ index 1))]
+            [current : AstExprList (ast-expr-list-tail-from-ref exprs index)]
             (tc-borrow-check-exprs-loop-retry-after-prune
               ctx
               env
@@ -39347,10 +39289,10 @@
               locals
               borrowed
               protected
-              exprs
+              current
               head
               rest
-              message)]))]))
+              message))]))))
 
 (define (tc-borrow-check-arms-loop-join
   [ctx : TcContext]
@@ -39382,7 +39324,7 @@
   [arms : (& arms AstMatchArmList)]
   [joined : TcMovedSet]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (TcBorrowCheckResult.Ok joined)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -39576,26 +39518,45 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
-  (match exprs
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-borrow-check-expr ctx env locals borrowed head)
-          [(TcBorrowCheckResult.Ok borrowed1)
-            (if (= (tc-moved-len borrowed1) 0)
-              (tc-borrow-check-read-exprs ctx env locals borrowed1 rest)
-              (match (tc-borrow-check-place-read-conflict
-                locals
-                borrowed1
-                head
-                head)
-                [(TcBorrowCheckResult.Ok borrowed2)
-                  (tc-borrow-check-read-exprs ctx env locals borrowed2 rest)]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResult.Err message)]))]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]))
+  (tc-borrow-check-read-exprs-at ctx env locals borrowed (& exprs) 0))
+
+(define (tc-borrow-check-read-exprs-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : TcBorrowCheckResult
+  (if (>= index (struct-get exprs len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (tc-borrow-check-expr ctx env locals borrowed head)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (if (= (tc-moved-len borrowed1) 0)
+            (tc-borrow-check-read-exprs-at
+              ctx
+              env
+              locals
+              borrowed1
+              exprs
+              (+ index 1))
+            (match (tc-borrow-check-place-read-conflict
+              locals
+              borrowed1
+              head
+              head)
+              [(TcBorrowCheckResult.Ok borrowed2)
+                (tc-borrow-check-read-exprs-at
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  exprs
+                  (+ index 1))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-add-returned-call-arg-borrow
   [ctx : TcContext]
@@ -39653,28 +39614,44 @@
   [borrowed : TcMovedSet]
   [args : AstExprList]
   [result-lifetimes : TcStringList]) : TcBorrowCheckResult
-  (match args
-    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ast-node-get arg)]
-        [rest : AstExprList (box-get rest)]
-        (match (tc-borrow-check-add-returned-call-arg-borrow
-          ctx
-          env
-          locals
-          borrowed
-          arg
-          result-lifetimes)
-          [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-add-returned-call-borrows
-              ctx
-              env
-              locals
-              borrowed1
-              rest
-              result-lifetimes)]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]))
+  (tc-borrow-check-add-returned-call-borrows-at
+    ctx
+    env
+    locals
+    borrowed
+    (& args)
+    0
+    result-lifetimes))
+
+(define (tc-borrow-check-add-returned-call-borrows-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : (& args AstExprList)]
+  [index : i64]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (if (>= index (struct-get args len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (tc-borrow-check-add-returned-call-arg-borrow
+        ctx
+        env
+        locals
+        borrowed
+        arg
+        result-lifetimes)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (tc-borrow-check-add-returned-call-borrows-at
+            ctx
+            env
+            locals
+            borrowed1
+            args
+            (+ index 1)
+            result-lifetimes)]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-after-returning-call-lifetimes
   [ctx : TcContext]
@@ -39858,7 +39835,7 @@
   [arms : (& arms AstMatchArmList)]
   [joined : TcMovedSet]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (TcBorrowCheckResult.Ok joined)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -41471,23 +41448,30 @@
   [exprs : AstExprList]
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
-  (match exprs
-    [(AstExprList.Nil) (ResultGenKey.Ok "" fuel)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        (match (macro-identity-key-string-expr head-expr env fuel)
-          [(ResultGenKey.Ok head-key head-fuel)
-            (match (macro-identity-key-string-exprs
-              (box-get rest)
-              env
-              head-fuel)
-              [(ResultGenKey.Ok tail tail-fuel)
-                (ResultGenKey.Ok
-                  (macro-identity-key-join head-key tail)
-                  tail-fuel)]
-              [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
-          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))
+  (macro-identity-key-string-exprs-at (& exprs) 0 env fuel))
+
+(define (macro-identity-key-string-exprs-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultGenKey
+  (if (>= index (struct-get exprs len))
+    (ResultGenKey.Ok "" fuel)
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (macro-identity-key-string-expr head-expr env fuel)
+        [(ResultGenKey.Ok head-key head-fuel)
+          (match (macro-identity-key-string-exprs-at
+            exprs
+            (+ index 1)
+            env
+            head-fuel)
+            [(ResultGenKey.Ok tail tail-fuel)
+              (ResultGenKey.Ok
+                (macro-identity-key-join head-key tail)
+                tail-fuel)]
+            [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+        [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))))
 
 (define (macro-identity-key-sexpr [sexpr : SpannedSexpr]) : String
   (match sexpr
@@ -41559,34 +41543,53 @@
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
-  (match exprs
-    [(AstExprList.Nil) (ResultGenKey.Ok "" fuel)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        (match (macro-identity-key-param-expr
-          ctx
-          fallback-module
-          ty
-          head-expr
-          env
-          fuel
-          call-expr)
-          [(ResultGenKey.Ok head-key head-fuel)
-            (match (macro-identity-key-param-exprs
-              ctx
-              fallback-module
-              ty
-              (box-get rest)
-              env
-              head-fuel
-              call-expr)
-              [(ResultGenKey.Ok tail tail-fuel)
-                (ResultGenKey.Ok
-                  (macro-identity-key-join head-key tail)
-                  tail-fuel)]
-              [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
-          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))
+  (macro-identity-key-param-exprs-at
+    ctx
+    fallback-module
+    ty
+    (& exprs)
+    0
+    env
+    fuel
+    call-expr))
+
+(define (macro-identity-key-param-exprs-at
+  [ctx : TcContext]
+  [fallback-module : String]
+  [ty : AstType]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (if (>= index (struct-get exprs len))
+    (ResultGenKey.Ok "" fuel)
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (macro-identity-key-param-expr
+        ctx
+        fallback-module
+        ty
+        head-expr
+        env
+        fuel
+        call-expr)
+        [(ResultGenKey.Ok head-key head-fuel)
+          (match (macro-identity-key-param-exprs-at
+            ctx
+            fallback-module
+            ty
+            exprs
+            (+ index 1)
+            env
+            head-fuel
+            call-expr)
+            [(ResultGenKey.Ok tail tail-fuel)
+              (ResultGenKey.Ok
+                (macro-identity-key-join head-key tail)
+                tail-fuel)]
+            [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+        [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))))
 
 (define (macro-identity-key-params
   [ctx : TcContext]
@@ -41602,8 +41605,8 @@
     decls
     fallback-module
     (& params)
+    (& args)
     0
-    args
     env
     fuel
     call-expr))
@@ -41650,57 +41653,57 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]
   [index : i64]
-  [args : AstExprList]
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
-  (if (>= index (ast-macro-param-list-len params))
-    (match args
-      [(AstExprList.Nil) (ResultGenKey.Ok "" fuel)]
-      [(AstExprList.Cons head _)
+  (cond
+    [(>= index (ast-macro-param-list-len params))
+      (if (>= index (struct-get args len))
+        (ResultGenKey.Ok "" fuel)
         (ResultGenKey.Err
           (box
             (ctfe-diagnostic-at-expr
-              (ast-node-get head)
-              "macro call has too many arguments")))])
-    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty variadic)
-        (if variadic
-          (cond
-            [(tc-macro-type-param-kind? ty)
+              (ast-node-get (ast-expr-list-get args index 0))
+              "macro call has too many arguments"))))]
+    [else
+      (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+        [(AstMacroParam.Param _ ty variadic)
+          (if variadic
+            (cond
+              [(tc-macro-type-param-kind? ty)
+                (ResultGenKey.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: type macro operand cannot be variadic")))]
+              [(tc-macro-module-param-kind? ty)
+                (ResultGenKey.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: Module macro operand cannot be variadic")))]
+              [(macro-identity-syntax-param-type? ctx fallback-module ty)
+                (macro-identity-key-param-exprs-at
+                  ctx
+                  fallback-module
+                  ty
+                  args
+                  index
+                  env
+                  fuel
+                  call-expr)]
+              [else (macro-identity-key-string-exprs-at args index env fuel)])
+            (if (>= index (struct-get args len))
               (ResultGenKey.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     call-expr
-                    "typecheck: type macro operand cannot be variadic")))]
-            [(tc-macro-module-param-kind? ty)
-              (ResultGenKey.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "typecheck: Module macro operand cannot be variadic")))]
-            [(macro-identity-syntax-param-type? ctx fallback-module ty)
-              (macro-identity-key-param-exprs
-                ctx
-                fallback-module
-                ty
-                args
-                env
-                fuel
-                call-expr)]
-            [else (macro-identity-key-string-exprs args env fuel)])
-          (match args
-            [(AstExprList.Nil)
-              (ResultGenKey.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "macro call has too few arguments")))]
-            [(AstExprList.Cons head rest-args)
+                    "macro call has too few arguments")))
               (let
-                [head-expr : AstExpr (ast-node-get head)]
-                [rest-args : AstExprList (box-get rest-args)]
+                [head-expr : AstExpr
+                  (ast-node-get (ast-expr-list-get args index 0))]
                 (match (macro-identity-key-fixed-param
                   ctx
                   decls
@@ -41716,8 +41719,8 @@
                       decls
                       fallback-module
                       params
+                      args
                       (+ index 1)
-                      rest-args
                       env
                       head-fuel
                       call-expr)
@@ -41726,7 +41729,7 @@
                           (macro-identity-key-join head-key tail)
                           tail-fuel)]
                       [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
-                  [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))])))
+                  [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))))])]))
 
 (define (macro-module-identity
   [ctx : TcContext]
@@ -41760,7 +41763,7 @@
   [generator : String]
   [item : String]
   [key : String]) : AstGeneratedDeclMeta
-  (AstGeneratedDeclMeta.Some generator item AstExprList.Nil key))
+  (AstGeneratedDeclMeta.Some generator item (ast-expr-list-new) key))
 
 (define (macro-import-placeholder-kind? [kind : AstImportKind]) : bool
   (match kind
@@ -42344,7 +42347,7 @@
 (define (macro-generated-fingerprint-field-list-at
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : String
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     "fields:nil"
     (macro-generated-fingerprint-join
       "fields:cons"
@@ -42391,7 +42394,7 @@
 (define (macro-generated-fingerprint-payload-cleanup-list-at
   [cleanups : (& cleanups AstVariantPayloadCleanupList)]
   [index : i64]) : String
-  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+  (if (>= index (struct-get cleanups len))
     "payload-cleanups:nil"
     (macro-generated-fingerprint-join
       "payload-cleanups:cons"
@@ -42418,7 +42421,7 @@
 (define (macro-generated-fingerprint-variant-list-at
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : String
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     "variants:nil"
     (macro-generated-fingerprint-join
       "variants:cons"
@@ -42473,7 +42476,8 @@
   [exprs : AstExprList]
   [fuel : i64]) : i64
   (let
-    [cur : AstExprList exprs]
+    [index : i64 0]
+    [len : i64 (struct-get (& exprs) len)]
     [remaining : i64 fuel]
     [done : bool false]
     [ok : bool true]
@@ -42481,17 +42485,18 @@
       (while (if done
         false
         ok)
-        (match cur
-          [(AstExprList.Nil) (set! done true)]
-          [(AstExprList.Cons head rest)
-            (let
-              [next-remaining : i64
-                (macro-generated-fingerprint-expr-id-budget head remaining)]
-              (if (< next-remaining 0)
-                (set! ok false)
-                (begin
-                  (set! remaining next-remaining)
-                  (set! cur (box-get rest)))))]))
+        (if (>= index len)
+          (set! done true)
+          (let
+            [next-remaining : i64
+              (macro-generated-fingerprint-expr-id-budget
+                (ast-expr-list-get (& exprs) index 0)
+                remaining)]
+            (if (< next-remaining 0)
+              (set! ok false)
+              (begin
+                (set! remaining next-remaining)
+                (set! index (+ index 1)))))))
       (if ok
         remaining
         -1))))
@@ -43589,7 +43594,7 @@
   [index : i64]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))
     (match (macro-pattern-to-spanned-sexpr
       (ast-pattern-list-get patterns index (ast-pattern-fallback))
@@ -43675,7 +43680,7 @@
   [index : i64]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))
     (match (macro-match-arm-bracket
       (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -43757,19 +43762,28 @@
   [exprs : AstExprList]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (match exprs
-    [(AstExprList.Nil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-expr-to-spanned-sexpr-with-span head-expr span origin)
-          [(ResultMacroSexpr.Ok shead)
-            (match (macro-expr-list-to-spanned-sexpr rest span origin)
-              [(ResultMacroSexpr.Ok stail)
-                (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
-              [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]))
+  (macro-expr-list-to-spanned-sexpr-at (& exprs) 0 span origin))
+
+(define (macro-expr-list-to-spanned-sexpr-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (if (>= index (struct-get exprs len))
+    (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (macro-expr-to-spanned-sexpr-with-span head-expr span origin)
+        [(ResultMacroSexpr.Ok shead)
+          (match (macro-expr-list-to-spanned-sexpr-at
+            exprs
+            (+ index 1)
+            span
+            origin)
+            [(ResultMacroSexpr.Ok stail)
+              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))))
 
 (define (macro-expr-to-spanned-sexpr-with-span
   [expr : AstExpr]
@@ -43821,7 +43835,7 @@
         "if"
         (ast-expr-cons
           cond-box
-          (ast-expr-cons then-box (ast-expr-cons else-box AstExprList.Nil)))
+          (ast-expr-cons then-box (ast-expr-cons else-box (ast-expr-list-new))))
         span
         origin)]
     [(AstExpr.Begin exprs)
@@ -43835,25 +43849,25 @@
     [(AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol
         "quote"
-        (ast-expr-cons inner-box AstExprList.Nil)
+        (ast-expr-cons inner-box (ast-expr-list-new))
         span
         origin)]
     [(AstExpr.Quasiquote inner-box)
       (macro-expr-list-with-head-symbol
         "quasiquote"
-        (ast-expr-cons inner-box AstExprList.Nil)
+        (ast-expr-cons inner-box (ast-expr-list-new))
         span
         origin)]
     [(AstExpr.Unquote inner-box)
       (macro-expr-list-with-head-symbol
         "unquote"
-        (ast-expr-cons inner-box AstExprList.Nil)
+        (ast-expr-cons inner-box (ast-expr-list-new))
         span
         origin)]
     [(AstExpr.UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol
         "unquote-splicing"
-        (ast-expr-cons inner-box AstExprList.Nil)
+        (ast-expr-cons inner-box (ast-expr-list-new))
         span
         origin)]
     [(AstExpr.Binary op left-id right-id)
@@ -44207,21 +44221,30 @@
   [dispatch : sym_i64_env.SymI64Env]
   [exprs : AstExprList]
   [origin : AstExpr]) : ResultMacroParsedDecls
-  (match exprs
-    [(AstExprList.Nil) (ResultMacroParsedDecls.Ok AstDeclList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-parse-decls-from-expr dispatch head-expr origin)
-          [(ResultMacroParsedDecls.Ok head-decls)
-            (match (macro-parse-decls-from-exprs dispatch rest origin)
-              [(ResultMacroParsedDecls.Ok rest-decls)
-                (ResultMacroParsedDecls.Ok
-                  (macro-decl-list-append head-decls rest-decls))]
-              [(ResultMacroParsedDecls.Err diag)
-                (ResultMacroParsedDecls.Err diag)])]
-          [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))]))
+  (macro-parse-decls-from-exprs-at dispatch (& exprs) 0 origin))
+
+(define (macro-parse-decls-from-exprs-at
+  [dispatch : sym_i64_env.SymI64Env]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [origin : AstExpr]) : ResultMacroParsedDecls
+  (if (>= index (struct-get exprs len))
+    (ResultMacroParsedDecls.Ok AstDeclList.Nil)
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (macro-parse-decls-from-expr dispatch head-expr origin)
+        [(ResultMacroParsedDecls.Ok head-decls)
+          (match (macro-parse-decls-from-exprs-at
+            dispatch
+            exprs
+            (+ index 1)
+            origin)
+            [(ResultMacroParsedDecls.Ok rest-decls)
+              (ResultMacroParsedDecls.Ok
+                (macro-decl-list-append head-decls rest-decls))]
+            [(ResultMacroParsedDecls.Err diag)
+              (ResultMacroParsedDecls.Err diag)])]
+        [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))))
 
 (define (macro-parse-decls-from-expr
   [dispatch : sym_i64_env.SymI64Env]
@@ -44775,15 +44798,30 @@
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : AstExprList
-  (match exprs
-    [(AstExprList.Nil) AstExprList.Nil]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (ast-expr-cons
-          (macro-hygiene-expr head env macro-name depth)
-          (macro-hygiene-expr-list rest env macro-name depth)))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (begin
+      (macro-hygiene-expr-list-into (& exprs) 0 env macro-name depth (&mut out))
+      out)))
+
+(define (macro-hygiene-expr-list-into
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [out : (&mut out AstExprList)]) : unit
+  (if (>= index (struct-get exprs len))
+    unit
+    (begin
+      (ast-expr-list-push
+        out
+        (macro-hygiene-expr
+          (ast-node-get (ast-expr-list-get exprs index 0))
+          env
+          macro-name
+          depth))
+      (macro-hygiene-expr-list-into exprs (+ index 1) env macro-name depth out))))
 
 (define (macro-hygiene-param-list
   [params : AstParamList]
@@ -44822,7 +44860,7 @@
   [depth : i64]) : MacroHygienePatternList
   (let
     [out : AstPatternList
-      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
+      (ast-pattern-list-with-capacity (struct-get (& patterns) len))]
     [final-env : MacroHygieneEnv
       (macro-hygiene-pattern-list-into
         (& patterns)
@@ -44840,7 +44878,7 @@
   [macro-name : String]
   [depth : i64]
   [out : (&mut out AstPatternList)]) : MacroHygieneEnv
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     env
     (match (macro-hygiene-pattern
       (ast-pattern-list-get patterns index (ast-pattern-fallback))
@@ -44974,7 +45012,7 @@
   [depth : i64]) : AstMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (begin
       (macro-hygiene-arm-list-into (& arms) 0 env macro-name depth (&mut out))
       out)))
@@ -44986,7 +45024,7 @@
   [macro-name : String]
   [depth : i64]
   [out : (&mut out AstMatchArmList)]) : unit
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     unit
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -46893,25 +46931,13 @@
           [(ResultMacroModuleArg.Err _) (ResultMacroModuleArg.Err primary-diag)]))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
-  (match items
-    [(AstExprList.Cons first rest1)
-      (let
-        [rest1 : AstExprList (box-get rest1)]
-        (match rest1
-          [(AstExprList.Cons second rest2)
-            (match (box-get rest2)
-              [(AstExprList.Nil)
-                (ResultMacroClause.Ok (ast-expr-clause first second))]
-              [_
-                (ResultMacroClause.Err
-                  (box
-                    (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))])]
-          [_
-            (ResultMacroClause.Err
-              (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))]
-    [_
-      (ResultMacroClause.Err
-        (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))
+  (if (= (struct-get (& items) len) 2)
+    (ResultMacroClause.Ok
+      (ast-expr-clause
+        (ast-expr-list-get (& items) 0 0)
+        (ast-expr-list-get (& items) 1 0)))
+    (ResultMacroClause.Err
+      (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))))
 
 (define (macro-expr-clause-from-arg [arg : AstExpr]) : ResultMacroClause
   (match (ast-expr-unspan arg)
@@ -46924,20 +46950,27 @@
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-clause-list-from-args [args : AstExprList]) : ResultMacroClauseList
-  (match args
-    [(AstExprList.Nil) (ResultMacroClauseList.Ok AstExprClauseList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-expr-clause-from-arg head-expr)
-          [(ResultMacroClause.Ok clause)
-            (match (macro-expr-clause-list-from-args rest)
-              [(ResultMacroClauseList.Ok clauses)
-                (ResultMacroClauseList.Ok (ast-expr-clause-cons clause clauses))]
-              [(ResultMacroClauseList.Err diag)
-                (ResultMacroClauseList.Err diag)])]
-          [(ResultMacroClause.Err diag) (ResultMacroClauseList.Err diag)]))]))
+  (let
+    [out : AstExprClauseList
+      (ast-expr-clause-list-with-capacity (struct-get (& args) len))]
+    (match (macro-expr-clause-list-from-args-into (& args) 0 (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroClauseList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroClauseList.Err diag)])))
+
+(define (macro-expr-clause-list-from-args-into
+  [args : (& args AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprClauseList)]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (macro-expr-clause-from-arg head-expr)
+        [(ResultMacroClause.Ok clause)
+          (begin
+            (ast-expr-clause-list-push out clause)
+            (macro-expr-clause-list-from-args-into args (+ index 1) out))]
+        [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-expr-span-or-zero [arg : AstExpr]) : AstSourceSpan
   (match arg
@@ -46957,51 +46990,46 @@
   [arg : AstExpr]
   [name : i64]
   [rest : AstExprList]) : ResultMacroBindingClause
-  (match rest
-    [(AstExprList.Cons first rest1)
+  (let
+    [len : i64 (struct-get (& rest) len)]
+    (if (<= len 0)
+      (macro-expr-binding-clause-shape-error arg)
       (let
-        [rest1 : AstExprList (box-get rest1)]
+        [first : i64 (ast-expr-list-get (& rest) 0 0)]
         (if (macro-expr-colon? first)
-          (match rest1
-            [(AstExprList.Cons ty rest2)
-              (let
-                [rest2 : AstExprList (box-get rest2)]
-                (match rest2
-                  [(AstExprList.Cons init rest3)
-                    (match (box-get rest3)
-                      [(AstExprList.Nil)
-                        (ResultMacroBindingClause.Ok
-                          (ast-expr-binding-clause-id
-                            name
-                            true
-                            ty
-                            init
-                            (macro-expr-span-or-zero arg)))]
-                      [_ (macro-expr-binding-clause-shape-error arg)])]
-                  [_ (macro-expr-binding-clause-shape-error arg)]))]
-            [_ (macro-expr-binding-clause-shape-error arg)])
-          (match rest1
-            [(AstExprList.Nil)
-              (ResultMacroBindingClause.Ok
-                (ast-expr-binding-clause-id
-                  name
-                  false
-                  (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
-                  first
-                  (macro-expr-span-or-zero arg)))]
-            [_ (macro-expr-binding-clause-shape-error arg)])))]
-    [_ (macro-expr-binding-clause-shape-error arg)]))
+          (if (= len 3)
+            (ResultMacroBindingClause.Ok
+              (ast-expr-binding-clause-id
+                name
+                true
+                (ast-expr-list-get (& rest) 1 0)
+                (ast-expr-list-get (& rest) 2 0)
+                (macro-expr-span-or-zero arg)))
+            (macro-expr-binding-clause-shape-error arg))
+          (if (= len 1)
+            (ResultMacroBindingClause.Ok
+              (ast-expr-binding-clause-id
+                name
+                false
+                (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+                first
+                (macro-expr-span-or-zero arg)))
+            (macro-expr-binding-clause-shape-error arg)))))))
 
 (define (macro-expr-binding-clause-from-items
   [arg : AstExpr]
   [items : AstExprList]) : ResultMacroBindingClause
-  (match items
-    [(AstExprList.Cons name-expr rest)
+  (if (ast-expr-list-empty? (& items))
+    (macro-expr-binding-clause-shape-error arg)
+    (let
+      [name-expr : i64 (ast-expr-list-get (& items) 0 0)]
       (match (ast-expr-unspan (ast-node-get name-expr))
         [(AstExpr.Var name)
-          (macro-expr-binding-clause-from-name arg name (box-get rest))]
-        [_ (macro-expr-binding-clause-shape-error arg)])]
-    [_ (macro-expr-binding-clause-shape-error arg)]))
+          (macro-expr-binding-clause-from-name
+            arg
+            name
+            (ast-expr-list-tail-from-ref (& items) 1))]
+        [_ (macro-expr-binding-clause-shape-error arg)]))))
 
 (define (macro-expr-binding-clause-from-arg [arg : AstExpr]) : ResultMacroBindingClause
   (match (ast-expr-unspan arg)
@@ -47015,23 +47043,27 @@
             "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-binding-clause-list-from-args [args : AstExprList]) : ResultMacroBindingClauseList
-  (match args
-    [(AstExprList.Nil)
-      (ResultMacroBindingClauseList.Ok AstExprBindingClauseList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-expr-binding-clause-from-arg head-expr)
-          [(ResultMacroBindingClause.Ok clause)
-            (match (macro-expr-binding-clause-list-from-args rest)
-              [(ResultMacroBindingClauseList.Ok clauses)
-                (ResultMacroBindingClauseList.Ok
-                  (ast-expr-binding-clause-cons clause clauses))]
-              [(ResultMacroBindingClauseList.Err diag)
-                (ResultMacroBindingClauseList.Err diag)])]
-          [(ResultMacroBindingClause.Err diag)
-            (ResultMacroBindingClauseList.Err diag)]))]))
+  (let
+    [out : AstExprBindingClauseList
+      (ast-expr-binding-clause-list-with-capacity (struct-get (& args) len))]
+    (match (macro-expr-binding-clause-list-from-args-into (& args) 0 (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroBindingClauseList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
+
+(define (macro-expr-binding-clause-list-from-args-into
+  [args : (& args AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprBindingClauseList)]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (macro-expr-binding-clause-from-arg head-expr)
+        [(ResultMacroBindingClause.Ok clause)
+          (begin
+            (ast-expr-binding-clause-list-push out clause)
+            (macro-expr-binding-clause-list-from-args-into args (+ index 1) out))]
+        [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-signature-resolution-context
   [ctx : TcContext]
@@ -47127,21 +47159,29 @@
   [fallback-module : String]
   [expected : AstType]
   [args : AstExprList]) : ResultMacroCheck
-  (match args
-    [(AstExprList.Nil) ResultMacroCheck.Ok]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-check-operand ctx env fallback-module expected head)
-          [(ResultMacroCheck.Ok)
-            (macro-check-variadic-operands
-              ctx
-              env
-              fallback-module
-              expected
-              rest)]
-          [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))]))
+  (macro-check-variadic-operands-at ctx env fallback-module expected (& args) 0))
+
+(define (macro-check-variadic-operands-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [fallback-module : String]
+  [expected : AstType]
+  [args : (& args AstExprList)]
+  [index : i64]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (macro-check-operand ctx env fallback-module expected head)
+        [(ResultMacroCheck.Ok)
+          (macro-check-variadic-operands-at
+            ctx
+            env
+            fallback-module
+            expected
+            args
+            (+ index 1))]
+        [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-param-expr-clause?
   [ctx : TcContext]
@@ -47318,8 +47358,8 @@
     fallback-module
     type-env
     (& params)
+    (& args)
     0
-    args
     env
     capture-expr-types
     call-expr))
@@ -47330,42 +47370,41 @@
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]
   [index : i64]
-  [args : AstExprList]
   [env : CtfeEnv]
   [capture-expr-types : bool]
   [call-expr : AstExpr]) : ResultMacroEnv
-  (if (>= index (ast-macro-param-list-len params))
-    (match args
-      [(AstExprList.Nil) (ResultMacroEnv.Ok env)]
-      [_
+  (cond
+    [(>= index (ast-macro-param-list-len params))
+      (if (>= index (struct-get args len))
+        (ResultMacroEnv.Ok env)
         (ResultMacroEnv.Err
           (box
             (ctfe-diagnostic-at-expr
               call-expr
-              "macro call has too many arguments")))])
-    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param pname pty variadic)
-        (if variadic
-          (macro-bind-variadic-param
-            ctx
-            type-env
-            fallback-module
-            pname
-            pty
-            args
-            env)
-          (match args
-            [(AstExprList.Nil)
+              "macro call has too many arguments"))))]
+    [else
+      (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+        [(AstMacroParam.Param pname pty variadic)
+          (if variadic
+            (macro-bind-variadic-param
+              ctx
+              type-env
+              fallback-module
+              pname
+              pty
+              (ast-expr-list-tail-from-ref args index)
+              env)
+            (if (>= index (struct-get args len))
               (ResultMacroEnv.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     call-expr
-                    "macro call has too few arguments")))]
-            [(AstExprList.Cons arg rest-args)
+                    "macro call has too few arguments")))
               (let
+                [arg : i64 (ast-expr-list-get args index 0)]
                 [arg-expr : AstExpr (ast-node-get arg)]
-                [rest-args : AstExprList (box-get rest-args)]
                 (match (macro-bind-fixed-param
                   ctx
                   decls
@@ -47384,12 +47423,12 @@
                       fallback-module
                       type-env
                       params
+                      args
                       (+ index 1)
-                      rest-args
                       next-env
                       capture-expr-types
                       call-expr)]
-                  [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))]))])))
+                  [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
 
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
@@ -47497,15 +47536,26 @@
 (define (macro-generated-type-param-expr-list
   [env : CtfeEnv]
   [exprs : AstExprList]) : AstExprList
-  (match exprs
-    [(AstExprList.Nil) AstExprList.Nil]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        [rest-exprs : AstExprList (box-get rest)]
-        (ast-expr-cons
-          (macro-generated-type-param-expr env head-expr)
-          (macro-generated-type-param-expr-list env rest-exprs)))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (begin
+      (macro-generated-type-param-expr-list-into env (& exprs) 0 (&mut out))
+      out)))
+
+(define (macro-generated-type-param-expr-list-into
+  [env : CtfeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprList)]) : unit
+  (if (>= index (struct-get exprs len))
+    unit
+    (begin
+      (ast-expr-list-push
+        out
+        (macro-generated-type-param-expr
+          env
+          (ast-node-get (ast-expr-list-get exprs index 0))))
+      (macro-generated-type-param-expr-list-into env exprs (+ index 1) out))))
 
 (define (macro-generated-type-param-expr [env : CtfeEnv] [expr : AstExpr]) : i64
   (match expr
@@ -47543,46 +47593,46 @@
 
 (define (macro-generated-import-type-args-for-param
   [param : AstMacroParam]
-  [head : i64]
-  [rest-args : AstExprList]
   [params : (& params AstMacroParamList)]
-  [next-index : i64]
-  [args : AstExprList]
+  [args : (& args AstExprList)]
+  [index : i64]
   [env : CtfeEnv]) : AstExprList
   (match param
     [(AstMacroParam.Param _ ty variadic)
       (if variadic
-        (if (tc-macro-type-param-kind? ty)
-          (macro-generated-type-param-expr-list env args)
-          args)
+        (let
+          [remaining : AstExprList (ast-expr-list-tail-from-ref args index)]
+          (if (tc-macro-type-param-kind? ty)
+            (macro-generated-type-param-expr-list env remaining)
+            remaining))
         (ast-expr-cons
-          (macro-generated-import-type-arg ty head env)
-          (macro-generated-import-type-args-at params next-index rest-args env)))]))
+          (macro-generated-import-type-arg
+            ty
+            (ast-expr-list-get args index 0)
+            env)
+          (macro-generated-import-type-args-at params args (+ index 1) env)))]))
 
 (define (macro-generated-import-type-args
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
-  (macro-generated-import-type-args-at (& params) 0 args env))
+  (macro-generated-import-type-args-at (& params) (& args) 0 env))
 
 (define (macro-generated-import-type-args-at
   [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]
   [index : i64]
-  [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
   (if (>= index (ast-macro-param-list-len params))
-    args
-    (match args
-      [(AstExprList.Nil) AstExprList.Nil]
-      [(AstExprList.Cons head rest-args-box)
-        (macro-generated-import-type-args-for-param
-          (ast-macro-param-list-get params index (ast-macro-param-fallback))
-          head
-          (box-get rest-args-box)
-          params
-          (+ index 1)
-          args
-          env)])))
+    (ast-expr-list-tail-from-ref args index)
+    (if (>= index (struct-get args len))
+      (ast-expr-list-new)
+      (macro-generated-import-type-args-for-param
+        (ast-macro-param-list-get params index (ast-macro-param-fallback))
+        params
+        args
+        index
+        env))))
 
 (define (macro-rewrite-generated-import-call-with-decl
   [func-box : i64]
@@ -47855,7 +47905,7 @@
   (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
 (define (macro-vf-expr-list1 [a : i64]) : AstExprList
-  (ast-expr-cons a AstExprList.Nil))
+  (ast-expr-cons a (ast-expr-list-new)))
 
 (define (macro-vf-expr-list2 [a : i64] [b : i64]) : AstExprList
   (ast-expr-cons a (macro-vf-expr-list1 b)))
@@ -47889,7 +47939,7 @@
   (ast-expr-call (macro-vf-var name) args))
 
 (define (macro-vf-call0 [name : String]) : i64
-  (macro-vf-call name AstExprList.Nil))
+  (macro-vf-call name (ast-expr-list-new)))
 
 (define (macro-vf-call1 [name : String] [a : i64]) : i64
   (macro-vf-call name (macro-vf-expr-list1 a)))
@@ -48252,43 +48302,25 @@
   [fallback-module : String]
   [args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
-  (match args
-    [(AstExprList.Cons type-id rest1-box)
-      (let
-        [type-expr : AstExpr (ast-node-get type-id)]
-        [rest1 : AstExprList (box-get rest1-box)]
-        (match rest1
-          [(AstExprList.Cons vec-id rest2-box)
-            (let
-              [vec-expr : AstExpr (ast-node-get vec-id)]
-              [rest2 : AstExprList (box-get rest2-box)]
-              (match rest2
-                [(AstExprList.Cons prefix-id rest3-box)
-                  (match (box-get rest3-box)
-                    [(AstExprList.Nil)
-                      (match (macro-type-arg-with-fallback
-                        ctx
-                        decls
-                        fallback-module
-                        type-expr)
-                        [(ResultMacroTypeArg.Ok elem-ty)
-                          (match (macro-vf-name-expr vec-expr)
-                            [(TcMaybeString.Some vec-name)
-                              (match (macro-vf-name-expr
-                                (ast-node-get prefix-id))
-                                [(TcMaybeString.Some base)
-                                  (ResultMacroParsedDecls.Ok
-                                    (macro-vf-decls elem-ty vec-name base))]
-                                [(TcMaybeString.No)
-                                  (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
-                            [(TcMaybeString.No)
-                              (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
-                        [(ResultMacroTypeArg.Err diag)
-                          (ResultMacroParsedDecls.Err diag)])]
-                    [_ (macro-vector-family-fast-arity-error call-expr)])]
-                [_ (macro-vector-family-fast-arity-error call-expr)]))]
-          [_ (macro-vector-family-fast-arity-error call-expr)]))]
-    [_ (macro-vector-family-fast-arity-error call-expr)]))
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [type-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [vec-id : i64 (ast-expr-list-get (& args) 1 0)]
+      [prefix-id : i64 (ast-expr-list-get (& args) 2 0)]
+      [type-expr : AstExpr (ast-node-get type-id)]
+      [vec-expr : AstExpr (ast-node-get vec-id)]
+      (match (macro-type-arg-with-fallback ctx decls fallback-module type-expr)
+        [(ResultMacroTypeArg.Ok elem-ty)
+          (match (macro-vf-name-expr vec-expr)
+            [(TcMaybeString.Some vec-name)
+              (match (macro-vf-name-expr (ast-node-get prefix-id))
+                [(TcMaybeString.Some base)
+                  (ResultMacroParsedDecls.Ok
+                    (macro-vf-decls elem-ty vec-name base))]
+                [(TcMaybeString.No) (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
+            [(TcMaybeString.No) (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
+    (macro-vector-family-fast-arity-error call-expr)))
 
 ;; The core prelude macros below are deterministic syntax rewrites. Expanding
 ;; them in the compiler avoids running the CTFE evaluator for thousands of hot
@@ -48339,22 +48371,26 @@
   (ast-node-push (AstExpr.Literal (ast-lit-int value))))
 
 (define (macro-core-fast-and [args : AstExprList]) : i64
-  (match args
-    [(AstExprList.Nil) (macro-core-fast-bool true)]
-    [(AstExprList.Cons head rest)
-      (ast-expr-if
-        head
-        (macro-core-fast-and (box-get rest))
-        (macro-core-fast-bool false))]))
+  (macro-core-fast-and-at (& args) 0))
+
+(define (macro-core-fast-and-at [args : (& args AstExprList)] [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    (macro-core-fast-bool true)
+    (ast-expr-if
+      (ast-expr-list-get args index 0)
+      (macro-core-fast-and-at args (+ index 1))
+      (macro-core-fast-bool false))))
 
 (define (macro-core-fast-or [args : AstExprList]) : i64
-  (match args
-    [(AstExprList.Nil) (macro-core-fast-bool false)]
-    [(AstExprList.Cons head rest)
-      (ast-expr-if
-        head
-        (macro-core-fast-bool true)
-        (macro-core-fast-or (box-get rest)))]))
+  (macro-core-fast-or-at (& args) 0))
+
+(define (macro-core-fast-or-at [args : (& args AstExprList)] [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    (macro-core-fast-bool false)
+    (ast-expr-if
+      (ast-expr-list-get args index 0)
+      (macro-core-fast-bool true)
+      (macro-core-fast-or-at args (+ index 1)))))
 
 (define (macro-core-fast-arity-error [call-expr : AstExpr] [message : String]) : ResultMacroCompatCall
   (ResultMacroCompatCall.Err (box (ctfe-diagnostic-at-expr call-expr message))))
@@ -48363,27 +48399,25 @@
   [args : AstExprList]
   [is-unless : bool]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons cond rest)
-      (match (box-get rest)
-        [(AstExprList.Cons body tail)
-          (match (box-get tail)
-            [(AstExprList.Nil)
-              (let
-                [unit-expr : i64 (macro-core-fast-unit)]
-                (if is-unless
-                  (ResultMacroCompatCall.Ok (ast-expr-if cond unit-expr body))
-                  (ResultMacroCompatCall.Ok (ast-expr-if cond body unit-expr))))]
-            [_
-              (macro-core-fast-arity-error
-                call-expr
-                "macro call has too many arguments")])]
-        [(AstExprList.Nil)
-          (macro-core-fast-arity-error
-            call-expr
-            "macro call has too few arguments")])]
-    [(AstExprList.Nil)
-      (macro-core-fast-arity-error call-expr "macro call has too few arguments")]))
+  (let
+    [len : i64 (struct-get (& args) len)]
+    (cond
+      [(< len 2)
+        (macro-core-fast-arity-error
+          call-expr
+          "macro call has too few arguments")]
+      [(> len 2)
+        (macro-core-fast-arity-error
+          call-expr
+          "macro call has too many arguments")]
+      [else
+        (let
+          [cond : i64 (ast-expr-list-get (& args) 0 0)]
+          [body : i64 (ast-expr-list-get (& args) 1 0)]
+          [unit-expr : i64 (macro-core-fast-unit)]
+          (if is-unless
+            (ResultMacroCompatCall.Ok (ast-expr-if cond unit-expr body))
+            (ResultMacroCompatCall.Ok (ast-expr-if cond body unit-expr))))])))
 
 (define (macro-core-fast-cond-else? [test : i64]) : bool
   (match (ast-expr-unspan (ast-node-get test))
@@ -48391,21 +48425,29 @@
     [_ false]))
 
 (define (macro-core-fast-cond [clauses : AstExprClauseList]) : i64
-  (match clauses
-    [(AstExprClauseList.Nil) (macro-core-fast-var "core-cond-missing-else")]
-    [(AstExprClauseList.Cons clause rest)
-      (let
-        [test : i64 (struct-get clause first)]
-        [result : i64 (struct-get clause second)]
-        [rest : AstExprClauseList (box-get rest)]
-        (if (macro-core-fast-cond-else? test)
-          (match rest
-            [(AstExprClauseList.Nil) result]
-            [_ (macro-core-fast-var "core-cond-else-must-be-final")])
-          (match rest
-            [(AstExprClauseList.Nil)
-              (macro-core-fast-var "core-cond-missing-else")]
-            [_ (ast-expr-if test result (macro-core-fast-cond rest))])))]))
+  (macro-core-fast-cond-at (& clauses) 0))
+
+(define (macro-core-fast-cond-at
+  [clauses : (& clauses AstExprClauseList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get clauses len))
+    (macro-core-fast-var "core-cond-missing-else")
+    (let
+      [clause : AstExprClause
+        (ast-expr-clause-list-get clauses index (ast-expr-clause-fallback))]
+      [test : i64 (struct-get clause first)]
+      [result : i64 (struct-get clause second)]
+      [last? : bool (= (+ index 1) (struct-get clauses len))]
+      (if (macro-core-fast-cond-else? test)
+        (if last?
+          result
+          (macro-core-fast-var "core-cond-else-must-be-final"))
+        (if last?
+          (macro-core-fast-var "core-cond-missing-else")
+          (ast-expr-if
+            test
+            result
+            (macro-core-fast-cond-at clauses (+ index 1))))))))
 
 (define (macro-core-fast-cond-call [args : AstExprList]) : ResultMacroCompatCall
   (match (macro-expr-clause-list-from-args args)
@@ -48414,9 +48456,7 @@
     [(ResultMacroClauseList.Err diag) (ResultMacroCompatCall.Err diag)]))
 
 (define (macro-str-cat-fast-length [args : AstExprList]) : i64
-  (match args
-    [(AstExprList.Nil) 0]
-    [(AstExprList.Cons _ rest) (+ 1 (macro-str-cat-fast-length (box-get rest)))]))
+  (struct-get (& args) len))
 
 (define (macro-str-cat-fast-call
   [definition-module : String]
@@ -48428,7 +48468,7 @@
     args))
 
 (define (macro-str-cat-fast-list1 [a : i64]) : AstExprList
-  (ast-expr-cons a AstExprList.Nil))
+  (ast-expr-cons a (ast-expr-list-new)))
 
 (define (macro-str-cat-fast-list2 [a : i64] [b : i64]) : AstExprList
   (ast-expr-cons a (macro-str-cat-fast-list1 b)))
@@ -48481,50 +48521,35 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons type-id rest1-box)
-      (let
-        [type-expr : AstExpr (ast-node-get type-id)]
-        [rest1 : AstExprList (box-get rest1-box)]
-        (match rest1
-          [(AstExprList.Cons count-id rest2-box)
-            (match (box-get rest2-box)
-              [(AstExprList.Nil)
-                (match (macro-type-arg-with-fallback
-                  ctx
-                  decls
-                  (tc-context-module ctx)
-                  type-expr)
-                  [(ResultMacroTypeArg.Ok elem-ty)
-                    (match (macro-expand-expr
-                      ctx
-                      type-env
-                      decls
-                      depth
-                      (ast-node-get count-id))
-                      [(ResultMacroExpr.Ok ncount)
-                        (begin
-                          (tc-context-capture-active-pools! ctx)
-                          (macro-core-fast-profile-ok
-                            macro-name
-                            args
-                            (ast-expr-make-array elem-ty ncount)))]
-                      [(ResultMacroExpr.Err diag)
-                        (ResultMacroCompatCall.Err diag)])]
-                  [(ResultMacroTypeArg.Err diag)
-                    (ResultMacroCompatCall.Err diag)])]
-              [_
-                (macro-core-fast-arity-error
-                  call-expr
-                  "typecheck: make-array expects exactly two arguments")])]
-          [_
-            (macro-core-fast-arity-error
-              call-expr
-              "typecheck: make-array expects exactly two arguments")]))]
-    [_
-      (macro-core-fast-arity-error
-        call-expr
-        "typecheck: make-array expects exactly two arguments")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [type-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [count-id : i64 (ast-expr-list-get (& args) 1 0)]
+      [type-expr : AstExpr (ast-node-get type-id)]
+      (match (macro-type-arg-with-fallback
+        ctx
+        decls
+        (tc-context-module ctx)
+        type-expr)
+        [(ResultMacroTypeArg.Ok elem-ty)
+          (match (macro-expand-expr
+            ctx
+            type-env
+            decls
+            depth
+            (ast-node-get count-id))
+            [(ResultMacroExpr.Ok ncount)
+              (begin
+                (tc-context-capture-active-pools! ctx)
+                (macro-core-fast-profile-ok
+                  macro-name
+                  args
+                  (ast-expr-make-array elem-ty ncount)))]
+            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroCompatCall.Err diag)]))
+    (macro-core-fast-arity-error
+      call-expr
+      "typecheck: make-array expects exactly two arguments")))
 
 (define (macro-array-fast-array-length
   [ctx : TcContext]
@@ -48534,34 +48559,28 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons items-id rest-box)
-      (match (box-get rest-box)
-        [(AstExprList.Nil)
-          (match (macro-expand-expr
-            ctx
-            type-env
-            decls
-            depth
-            (ast-node-get items-id))
-            [(ResultMacroExpr.Ok nitems)
-              (begin
-                (tc-context-capture-active-pools! ctx)
-                (macro-core-fast-profile-ok
-                  macro-name
-                  args
-                  (macro-array-fast-private-call
-                    "__tl_array-length"
-                    (macro-str-cat-fast-list1 nitems))))]
-            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-        [_
-          (macro-core-fast-arity-error
-            call-expr
-            "typecheck: array-length expects exactly one argument")])]
-    [_
-      (macro-core-fast-arity-error
-        call-expr
-        "typecheck: array-length expects exactly one argument")]))
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
+      (match (macro-expand-expr
+        ctx
+        type-env
+        decls
+        depth
+        (ast-node-get items-id))
+        [(ResultMacroExpr.Ok nitems)
+          (begin
+            (tc-context-capture-active-pools! ctx)
+            (macro-core-fast-profile-ok
+              macro-name
+              args
+              (macro-array-fast-private-call
+                "__tl_array-length"
+                (macro-str-cat-fast-list1 nitems))))]
+        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
+    (macro-core-fast-arity-error
+      call-expr
+      "typecheck: array-length expects exactly one argument")))
 
 (define (macro-array-fast-array-ref
   [ctx : TcContext]
@@ -48571,49 +48590,35 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons items-id rest1-box)
-      (let
-        [rest1 : AstExprList (box-get rest1-box)]
-        (match rest1
-          [(AstExprList.Cons index-id rest2-box)
-            (match (box-get rest2-box)
-              [(AstExprList.Nil)
-                (match (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  depth
-                  (ast-node-get items-id))
-                  [(ResultMacroExpr.Ok nitems)
-                    (match (macro-expand-expr
-                      ctx
-                      type-env
-                      decls
-                      depth
-                      (ast-node-get index-id))
-                      [(ResultMacroExpr.Ok nindex)
-                        (begin
-                          (tc-context-capture-active-pools! ctx)
-                          (macro-core-fast-profile-ok
-                            macro-name
-                            args
-                            (ast-expr-array-ref nitems nindex)))]
-                      [(ResultMacroExpr.Err diag)
-                        (ResultMacroCompatCall.Err diag)])]
-                  [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-              [_
-                (macro-core-fast-arity-error
-                  call-expr
-                  "typecheck: array-ref expects exactly two arguments")])]
-          [_
-            (macro-core-fast-arity-error
-              call-expr
-              "typecheck: array-ref expects exactly two arguments")]))]
-    [_
-      (macro-core-fast-arity-error
-        call-expr
-        "typecheck: array-ref expects exactly two arguments")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [index-id : i64 (ast-expr-list-get (& args) 1 0)]
+      (match (macro-expand-expr
+        ctx
+        type-env
+        decls
+        depth
+        (ast-node-get items-id))
+        [(ResultMacroExpr.Ok nitems)
+          (match (macro-expand-expr
+            ctx
+            type-env
+            decls
+            depth
+            (ast-node-get index-id))
+            [(ResultMacroExpr.Ok nindex)
+              (begin
+                (tc-context-capture-active-pools! ctx)
+                (macro-core-fast-profile-ok
+                  macro-name
+                  args
+                  (ast-expr-array-ref nitems nindex)))]
+            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
+    (macro-core-fast-arity-error
+      call-expr
+      "typecheck: array-ref expects exactly two arguments")))
 
 (define (macro-array-fast-array-set
   [ctx : TcContext]
@@ -48623,67 +48628,44 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons items-id rest1-box)
-      (let
-        [rest1 : AstExprList (box-get rest1-box)]
-        (match rest1
-          [(AstExprList.Cons index-id rest2-box)
-            (let
-              [rest2 : AstExprList (box-get rest2-box)]
-              (match rest2
-                [(AstExprList.Cons value-id rest3-box)
-                  (match (box-get rest3-box)
-                    [(AstExprList.Nil)
-                      (match (macro-expand-expr
-                        ctx
-                        type-env
-                        decls
-                        depth
-                        (ast-node-get items-id))
-                        [(ResultMacroExpr.Ok nitems)
-                          (match (macro-expand-expr
-                            ctx
-                            type-env
-                            decls
-                            depth
-                            (ast-node-get index-id))
-                            [(ResultMacroExpr.Ok nindex)
-                              (match (macro-expand-expr
-                                ctx
-                                type-env
-                                decls
-                                depth
-                                (ast-node-get value-id))
-                                [(ResultMacroExpr.Ok nvalue)
-                                  (begin
-                                    (tc-context-capture-active-pools! ctx)
-                                    (macro-core-fast-profile-ok
-                                      macro-name
-                                      args
-                                      (ast-expr-array-set nitems nindex nvalue)))]
-                                [(ResultMacroExpr.Err diag)
-                                  (ResultMacroCompatCall.Err diag)])]
-                            [(ResultMacroExpr.Err diag)
-                              (ResultMacroCompatCall.Err diag)])]
-                        [(ResultMacroExpr.Err diag)
-                          (ResultMacroCompatCall.Err diag)])]
-                    [_
-                      (macro-core-fast-arity-error
-                        call-expr
-                        "typecheck: array-set! expects exactly three arguments")])]
-                [_
-                  (macro-core-fast-arity-error
-                    call-expr
-                    "typecheck: array-set! expects exactly three arguments")]))]
-          [_
-            (macro-core-fast-arity-error
-              call-expr
-              "typecheck: array-set! expects exactly three arguments")]))]
-    [_
-      (macro-core-fast-arity-error
-        call-expr
-        "typecheck: array-set! expects exactly three arguments")]))
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [index-id : i64 (ast-expr-list-get (& args) 1 0)]
+      [value-id : i64 (ast-expr-list-get (& args) 2 0)]
+      (match (macro-expand-expr
+        ctx
+        type-env
+        decls
+        depth
+        (ast-node-get items-id))
+        [(ResultMacroExpr.Ok nitems)
+          (match (macro-expand-expr
+            ctx
+            type-env
+            decls
+            depth
+            (ast-node-get index-id))
+            [(ResultMacroExpr.Ok nindex)
+              (match (macro-expand-expr
+                ctx
+                type-env
+                decls
+                depth
+                (ast-node-get value-id))
+                [(ResultMacroExpr.Ok nvalue)
+                  (begin
+                    (tc-context-capture-active-pools! ctx)
+                    (macro-core-fast-profile-ok
+                      macro-name
+                      args
+                      (ast-expr-array-set nitems nindex nvalue)))]
+                [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
+    (macro-core-fast-arity-error
+      call-expr
+      "typecheck: array-set! expects exactly three arguments")))
 
 (define (macro-array-fast-array-push
   [ctx : TcContext]
@@ -48693,49 +48675,35 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons items-id rest1-box)
-      (let
-        [rest1 : AstExprList (box-get rest1-box)]
-        (match rest1
-          [(AstExprList.Cons value-id rest2-box)
-            (match (box-get rest2-box)
-              [(AstExprList.Nil)
-                (match (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  depth
-                  (ast-node-get items-id))
-                  [(ResultMacroExpr.Ok nitems)
-                    (match (macro-expand-expr
-                      ctx
-                      type-env
-                      decls
-                      depth
-                      (ast-node-get value-id))
-                      [(ResultMacroExpr.Ok nvalue)
-                        (begin
-                          (tc-context-capture-active-pools! ctx)
-                          (macro-core-fast-profile-ok
-                            macro-name
-                            args
-                            (ast-expr-array-push nitems nvalue)))]
-                      [(ResultMacroExpr.Err diag)
-                        (ResultMacroCompatCall.Err diag)])]
-                  [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-              [_
-                (macro-core-fast-arity-error
-                  call-expr
-                  "typecheck: array-push! expects exactly two arguments")])]
-          [_
-            (macro-core-fast-arity-error
-              call-expr
-              "typecheck: array-push! expects exactly two arguments")]))]
-    [_
-      (macro-core-fast-arity-error
-        call-expr
-        "typecheck: array-push! expects exactly two arguments")]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [value-id : i64 (ast-expr-list-get (& args) 1 0)]
+      (match (macro-expand-expr
+        ctx
+        type-env
+        decls
+        depth
+        (ast-node-get items-id))
+        [(ResultMacroExpr.Ok nitems)
+          (match (macro-expand-expr
+            ctx
+            type-env
+            decls
+            depth
+            (ast-node-get value-id))
+            [(ResultMacroExpr.Ok nvalue)
+              (begin
+                (tc-context-capture-active-pools! ctx)
+                (macro-core-fast-profile-ok
+                  macro-name
+                  args
+                  (ast-expr-array-push nitems nvalue)))]
+            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
+    (macro-core-fast-arity-error
+      call-expr
+      "typecheck: array-push! expects exactly two arguments")))
 
 (define (macro-array-fast-expand
   [ctx : TcContext]
@@ -48826,25 +48794,33 @@
   [parts : i64]
   [index : i64]
   [args : AstExprList]) : i64
-  (match args
-    [(AstExprList.Nil) parts]
-    [(AstExprList.Cons head rest)
-      (macro-str-cat-fast-pack
+  (macro-str-cat-fast-pack-at definition-module parts index (& args) 0))
+
+(define (macro-str-cat-fast-pack-at
+  [definition-module : String]
+  [parts : i64]
+  [part-index : i64]
+  [args : (& args AstExprList)]
+  [arg-index : i64]) : i64
+  (if (>= arg-index (struct-get args len))
+    parts
+    (macro-str-cat-fast-pack-at
+      definition-module
+      (macro-str-cat-fast-call
         definition-module
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat-all-pack-part"
-          (macro-str-cat-fast-list3 parts (macro-core-fast-int index) head))
-        (+ index 1)
-        (box-get rest))]))
+        "stdlib.string.concat-all-pack-part"
+        (macro-str-cat-fast-list3
+          parts
+          (macro-core-fast-int part-index)
+          (ast-expr-list-get args arg-index 0)))
+      (+ part-index 1)
+      args
+      (+ arg-index 1))))
 
 (define (macro-str-cat-fast-nth [args : AstExprList] [index : i64]) : i64
-  (match args
-    [(AstExprList.Cons head rest)
-      (if (= index 0)
-        head
-        (macro-str-cat-fast-nth (box-get rest) (- index 1)))]
-    [(AstExprList.Nil) (macro-core-fast-string "")]))
+  (if (< index (struct-get (& args) len))
+    (ast-expr-list-get (& args) index 0)
+    (macro-core-fast-string "")))
 
 (define (macro-str-cat-fast-expand
   [definition-module : String]
@@ -49101,19 +49077,30 @@
   [decls : AstDeclList]
   [depth : i64]
   [exprs : AstExprList]) : ResultMacroExprList
-  (match exprs
-    [(AstExprList.Nil) (ResultMacroExprList.Ok (AstExprList.Nil))]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (macro-expand-expr ctx env decls depth head)
-          [(ResultMacroExpr.Ok nhead)
-            (match (macro-expand-exprs ctx env decls depth rest)
-              [(ResultMacroExprList.Ok nrest)
-                (ResultMacroExprList.Ok (ast-expr-cons nhead nrest))]
-              [(ResultMacroExprList.Err diag) (ResultMacroExprList.Err diag)])]
-          [(ResultMacroExpr.Err diag) (ResultMacroExprList.Err diag)]))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (match (macro-expand-exprs-into ctx env decls depth (& exprs) 0 (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroExprList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroExprList.Err diag)])))
+
+(define (macro-expand-exprs-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprList)]) : ResultMacroCheck
+  (if (>= index (struct-get exprs len))
+    (ResultMacroCheck.Ok)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (macro-expand-expr ctx env decls depth head)
+        [(ResultMacroExpr.Ok nhead)
+          (begin
+            (ast-expr-list-push out nhead)
+            (macro-expand-exprs-into ctx env decls depth exprs (+ index 1) out))]
+        [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-expand-arms
   [ctx : TcContext]
@@ -49124,7 +49111,7 @@
   [arms : AstMatchArmList]) : ResultMacroArms
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (macro-expand-arms-into
       ctx
       env
@@ -49146,7 +49133,7 @@
   [arms : (& arms AstMatchArmList)]
   [index : i64]
   [out : (&mut out AstMatchArmList)]) : ResultMacroCheck
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultMacroCheck.Ok)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -49219,12 +49206,13 @@
   (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
 (define (macro-compat-append-unit [exprs : AstExprList]) : AstExprList
-  (match exprs
-    [(AstExprList.Nil) (ast-expr-cons (macro-compat-unit-expr) AstExprList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (ast-expr-cons head (macro-compat-append-unit rest)))]))
+  (let
+    [out : AstExprList
+      (ast-expr-list-with-capacity (+ (struct-get (& exprs) len) 1))]
+    (begin
+      (ast-expr-list-append-from (&mut out) (& exprs) 0)
+      (ast-expr-list-push (&mut out) (macro-compat-unit-expr))
+      out)))
 
 (define (macro-compat-call-name [func : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan func)
@@ -49267,31 +49255,18 @@
   [args : AstExprList]
   [is-unless : bool]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (match args
-    [(AstExprList.Cons cond body)
-      (let
-        [cond : AstExpr (ast-node-get cond)]
-        [body : AstExprList (box-get body)]
-        (match body
-          [(AstExprList.Nil)
-            (ResultMacroCompatCall.Err
-              (box
-                (ctfe-diagnostic-at-expr
-                  call-expr
-                  (macro-compat-guard-message name))))]
-          [_
-            (macro-expand-compat-guard-body
-              ctx
-              env
-              decls
-              depth
-              cond
-              body
-              is-unless)]))]
-    [_
-      (ResultMacroCompatCall.Err
-        (box
-          (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name))))]))
+  (if (< (struct-get (& args) len) 2)
+    (ResultMacroCompatCall.Err
+      (box
+        (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name))))
+    (macro-expand-compat-guard-body
+      ctx
+      env
+      decls
+      depth
+      (ast-node-get (ast-expr-list-get (& args) 0 0))
+      (ast-expr-list-tail-from-ref (& args) 1)
+      is-unless)))
 
 (define (macro-expand-compat-call
   [ctx : TcContext]
@@ -50467,7 +50442,7 @@
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]
   [index : i64]) : MacroGeneratedSurfaceNameSet
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     refs
     (macro-generated-surface-pattern-list-refs-at
       patterns
@@ -50513,18 +50488,31 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match exprs
-    [(AstExprList.Nil) refs]
-    [(AstExprList.Cons head rest)
-      (macro-generated-surface-expr-list-refs
-        (box-get rest)
+  (macro-generated-surface-expr-list-refs-at
+    (& exprs)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-expr-list-refs-at
+  [exprs : (& exprs AstExprList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (struct-get exprs len))
+    refs
+    (macro-generated-surface-expr-list-refs-at
+      exprs
+      aliases
+      (macro-generated-surface-expr-refs
+        (ast-node-get (ast-expr-list-get exprs index 0))
         aliases
-        (macro-generated-surface-expr-refs
-          (ast-node-get head)
-          aliases
-          refs
-          alias-qualified?)
-        alias-qualified?)]))
+        refs
+        alias-qualified?)
+      alias-qualified?
+      (+ index 1))))
 
 (define (macro-generated-surface-let-binding-refs
   [bindings : AstLetBindingList]
@@ -50568,7 +50556,7 @@
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]
   [index : i64]) : MacroGeneratedSurfaceNameSet
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     refs
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
@@ -51252,7 +51240,7 @@
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]
   [index : i64]) : MacroGeneratedSurfaceNameSet
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     refs
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty cleanup)
@@ -51316,7 +51304,7 @@
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]
   [index : i64]) : MacroGeneratedSurfaceNameSet
-  (if (>= index (ast-variant-payload-cleanup-list-len items))
+  (if (>= index (struct-get items len))
     refs
     (macro-generated-surface-variant-cleanup-list-refs-at
       items
@@ -51350,7 +51338,7 @@
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]
   [index : i64]) : MacroGeneratedSurfaceNameSet
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     refs
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name payloads cleanups)
@@ -51576,7 +51564,7 @@
   [variants : (& variants AstVariantDefList)]
   [needed : MacroGeneratedSurfaceNameSet]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     false
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
@@ -52684,12 +52672,18 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons head rest)
-      (or
-        (macro-node-uses-macro? ctx decls head)
-        (macro-exprs-use-macro? ctx decls (box-get rest)))]))
+  (macro-exprs-use-macro-at? ctx decls (& exprs) 0))
+
+(define (macro-exprs-use-macro-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (macro-node-uses-macro? ctx decls (ast-expr-list-get exprs index 0))
+      (macro-exprs-use-macro-at? ctx decls exprs (+ index 1)))))
 
 (define (macro-arms-use-macro?
   [ctx : TcContext]
@@ -52702,7 +52696,7 @@
   [decls : AstDeclList]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (or
       (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -52927,13 +52921,16 @@
 ;; site additionally gates on `has-expr-type-macros` being false (type macros
 ;; expand from type positions the gate does not see).
 (define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons expr rest)
-      (let
-        [expr : AstExpr (ast-node-get expr)]
-        [rest : AstExprList (box-get rest)]
-        (or (macro-expr-might-fire? expr) (macro-expr-list-might-fire? rest)))]))
+  (macro-expr-list-might-fire-at? (& exprs) 0))
+
+(define (macro-expr-list-might-fire-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (macro-expr-might-fire? (ast-node-get (ast-expr-list-get exprs index 0)))
+      (macro-expr-list-might-fire-at? exprs (+ index 1)))))
 
 (define (macro-let-binding-list-might-fire? [bindings : AstLetBindingList]) : bool
   (match bindings
@@ -52955,7 +52952,7 @@
 (define (macro-match-arms-might-fire-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -53345,12 +53342,21 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) true]
-    [(AstExprList.Cons expr rest)
-      (and
-        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get expr))
-        (macro-expr-list-safe-after-inert-splice? ctx decls (box-get rest)))]))
+  (macro-expr-list-safe-after-inert-splice-at? ctx decls (& exprs) 0))
+
+(define (macro-expr-list-safe-after-inert-splice-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (struct-get exprs len))
+    true
+    (and
+      (macro-expr-safe-after-inert-splice?
+        ctx
+        decls
+        (ast-node-get (ast-expr-list-get exprs index 0)))
+      (macro-expr-list-safe-after-inert-splice-at? ctx decls exprs (+ index 1)))))
 
 (define (macro-let-bindings-safe-after-inert-splice?
   [ctx : TcContext]
@@ -53379,7 +53385,7 @@
   [decls : AstDeclList]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     true
     (and
       (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -53755,12 +53761,16 @@
   (ctfe-expr-has-type-literal? (ast-node-get id)))
 
 (define (ctfe-exprs-have-type-literal? [exprs : AstExprList]) : bool
-  (match exprs
-    [(AstExprList.Nil) false]
-    [(AstExprList.Cons head rest)
-      (or
-        (ctfe-node-has-type-literal? head)
-        (ctfe-exprs-have-type-literal? (box-get rest)))]))
+  (ctfe-exprs-have-type-literal-at? (& exprs) 0))
+
+(define (ctfe-exprs-have-type-literal-at?
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (ctfe-node-has-type-literal? (ast-expr-list-get exprs index 0))
+      (ctfe-exprs-have-type-literal-at? exprs (+ index 1)))))
 
 (define (ctfe-arms-have-type-literal? [arms : AstMatchArmList]) : bool
   (ctfe-arms-have-type-literal-at? (& arms) 0))
@@ -53768,7 +53778,7 @@
 (define (ctfe-arms-have-type-literal-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (or
       (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -55933,7 +55943,7 @@
   [cleanup : AstStructCleanup]
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     ResultTcUnit.Ok
     (match (tc-check-cleanup-struct-field
       ctx
@@ -56201,7 +56211,7 @@
   [cleanup : AstEnumCleanup]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     ResultTcUnit.Ok
     (match (tc-check-cleanup-enum-variant
       ctx

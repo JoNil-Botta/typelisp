@@ -104,6 +104,10 @@
   (Ok AstExprList SpecState)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultSpecExprListBuild
+  (Ok SpecState)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultSpecLetBindingList
   (Ok AstLetBindingList SpecState)
   (Err (Box CompilerDiagnostic)))
@@ -134,6 +138,10 @@
 
 (defenum ResultSpecSubExprList
   (Ok AstExprList)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultSpecSubExprListBuild
+  (Ok)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubLetBindingList
@@ -372,7 +380,7 @@
   [templates : SpecTemplateEnv]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecTemplateEnv
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     templates
     (spec-template-env-shadow-pattern-list-at
       (spec-template-env-shadow-pattern
@@ -805,7 +813,7 @@
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
-  (if (= (ast-field-def-list-len (& a)) (ast-field-def-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-field-list-eq-at (& a) (& b) 0)
     false))
 
@@ -813,7 +821,7 @@
   [a : (& a AstFieldDefList)]
   [b : (& b AstFieldDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-field-def-eq?
@@ -874,9 +882,7 @@
 (define (gen-variant-payload-cleanup-list-eq?
   [a : AstVariantPayloadCleanupList]
   [b : AstVariantPayloadCleanupList]) : bool
-  (if (=
-    (ast-variant-payload-cleanup-list-len (& a))
-    (ast-variant-payload-cleanup-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -884,7 +890,7 @@
   [a : (& a AstVariantPayloadCleanupList)]
   [b : (& b AstVariantPayloadCleanupList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-payload-cleanup-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-variant-payload-cleanup-eq?
@@ -909,7 +915,7 @@
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
-  (if (= (ast-variant-def-list-len (& a)) (ast-variant-def-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-variant-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -917,7 +923,7 @@
   [a : (& a AstVariantDefList)]
   [b : (& b AstVariantDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-variant-def-eq?
@@ -1139,30 +1145,37 @@
     [_ false]))
 
 (define (gen-key-exprs [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultGenKey
-  (match exprs
-    [(AstExprList.Nil) (ResultGenKey.Ok "none" fuel)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head-expr : AstExpr (ast-node-get head)]
-        (match (compiler-ctfe-eval head-expr env fuel)
-          [(ResultCtfe.Ok value head-fuel)
-            (match value
-              [(CompilerCtfeValue.String text)
-                (match (gen-key-exprs (box-get rest) env head-fuel)
-                  [(ResultGenKey.Ok tail tail-fuel)
-                    (ResultGenKey.Ok
-                      (string.append
-                        (spec-string-key text)
-                        (string.append "_" tail))
-                      tail-fuel)]
-                  [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
-              [_
-                (ResultGenKey.Err
-                  (box
-                    (spec-diagnostic-at-expr
-                      head-expr
-                      "generated-decl: key expression must evaluate to String")))])]
-          [(ResultCtfe.Err diag) (ResultGenKey.Err diag)]))]))
+  (gen-key-exprs-at (& exprs) 0 env fuel))
+
+(define (gen-key-exprs-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultGenKey
+  (if (>= index (struct-get exprs len))
+    (ResultGenKey.Ok "none" fuel)
+    (let
+      [head-id : i64 (ast-expr-list-get exprs index 0)]
+      [head-expr : AstExpr (ast-node-get head-id)]
+      (match (compiler-ctfe-eval head-expr env fuel)
+        [(ResultCtfe.Ok value head-fuel)
+          (match value
+            [(CompilerCtfeValue.String text)
+              (match (gen-key-exprs-at exprs (+ index 1) env head-fuel)
+                [(ResultGenKey.Ok tail tail-fuel)
+                  (ResultGenKey.Ok
+                    (string.append
+                      (spec-string-key text)
+                      (string.append "_" tail))
+                    tail-fuel)]
+                [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+            [_
+              (ResultGenKey.Err
+                (box
+                  (spec-diagnostic-at-expr
+                    head-expr
+                    "generated-decl: key expression must evaluate to String")))])]
+        [(ResultCtfe.Err diag) (ResultGenKey.Err diag)]))))
 
 (define (gen-full-key
   [module : String]
@@ -1703,7 +1716,7 @@
   [subs : SpecValueSubst]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecValueSubst
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     subs
     (spec-value-subst-remove-pattern-list-at
       (spec-value-subst-remove-pattern
@@ -1783,7 +1796,7 @@
   [subs : SpecTypeSubst]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecTypeSubst
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     subs
     (spec-type-subst-remove-pattern-list-at
       (spec-type-subst-remove-pattern
@@ -2047,21 +2060,34 @@
   [exprs : AstExprList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExprList
-  (match exprs
-    [(AstExprList.Nil) (ResultSpecExprList.Ok AstExprList.Nil state)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (spec-rewrite-expr head templates state)
-          [(ResultSpecExpr.Ok rewritten-head head-state)
-            (match (spec-rewrite-expr-list rest templates head-state)
-              [(ResultSpecExprList.Ok rewritten-rest rest-state)
-                (ResultSpecExprList.Ok
-                  (ast-expr-cons rewritten-head rewritten-rest)
-                  rest-state)]
-              [(ResultSpecExprList.Err diag) (ResultSpecExprList.Err diag)])]
-          [(ResultSpecExpr.Err diag) (ResultSpecExprList.Err diag)]))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (match (spec-rewrite-expr-list-at (& exprs) 0 templates state (&mut out))
+      [(ResultSpecExprListBuild.Ok next-state)
+        (ResultSpecExprList.Ok out next-state)]
+      [(ResultSpecExprListBuild.Err diag) (ResultSpecExprList.Err diag)])))
+
+(define (spec-rewrite-expr-list-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [templates : SpecTemplateEnv]
+  [state : SpecState]
+  [out : (&mut out AstExprList)]) : ResultSpecExprListBuild
+  (if (>= index (struct-get exprs len))
+    (ResultSpecExprListBuild.Ok state)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (spec-rewrite-expr head templates state)
+        [(ResultSpecExpr.Ok rewritten-head head-state)
+          (begin
+            (ast-expr-list-push out rewritten-head)
+            (spec-rewrite-expr-list-at
+              exprs
+              (+ index 1)
+              templates
+              head-state
+              out))]
+        [(ResultSpecExpr.Err diag) (ResultSpecExprListBuild.Err diag)]))))
 
 (define (spec-rewrite-let-bindings
   [bindings : AstLetBindingList]
@@ -2099,7 +2125,7 @@
   [state : SpecState]) : ResultSpecMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-rewrite-match-arms-at (& arms) 0 templates state (&mut out))
       [(ResultSpecMatchArmListBuild.Ok next-state)
         (ResultSpecMatchArmList.Ok out next-state)]
@@ -2111,7 +2137,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [out : (&mut out AstMatchArmList)]) : ResultSpecMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecMatchArmListBuild.Ok state)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -2165,71 +2191,45 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [fn-name : String]) : ResultSpecArgs
-  (spec-rewrite-specialized-args-at (& params) 0 args templates state fn-name))
+  (spec-rewrite-specialized-args-at
+    (& params)
+    (& args)
+    0
+    templates
+    state
+    fn-name))
 
 (define (spec-rewrite-specialized-args-at
   [params : (& params AstParamList)]
+  [args : (& args AstExprList)]
   [index : i64]
-  [args : AstExprList]
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [fn-name : String]) : ResultSpecArgs
-  (if (>= index (ast-param-list-len params))
-    (match args
-      [(AstExprList.Nil)
-        (ResultSpecArgs.Ok SpecValueList.Nil AstExprList.Nil state)]
-      [_
+  (cond
+    [(>= index (ast-param-list-len params))
+      (if (>= index (struct-get args len))
+        (ResultSpecArgs.Ok SpecValueList.Nil (ast-expr-list-new) state)
         (ResultSpecArgs.Err
-          (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])
-    (match args
-      [(AstExprList.Cons arg rest-args)
-        (let
-          [arg : AstExpr (ast-node-get arg)]
-          [rest-args : AstExprList (box-get rest-args)]
-          (match (ast-param-list-get params index (ast-param-fallback))
-            [(AstParam.Param param-name param-ty is-comptime)
-              (if is-comptime
-                (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
-                  [(ResultCtfe.Ok value _)
-                    (if (spec-type-kind? param-ty)
-                      (match value
-                        [(CompilerCtfeValue.Type _)
-                          (match (spec-rewrite-specialized-args-at
-                            params
-                            (+ index 1)
-                            rest-args
-                            templates
-                            state
-                            fn-name)
-                            [(ResultSpecArgs.Ok
-                                rest-values
-                                rest-runtime
-                                rest-state)
-                              (ResultSpecArgs.Ok
-                                (spec-value-cons value rest-values)
-                                rest-runtime
-                                rest-state)]
-                            [(ResultSpecArgs.Err diag)
-                              (ResultSpecArgs.Err diag)])]
-                        [_
-                          (ResultSpecArgs.Err
-                            (box
-                              (spec-diagnostic-at-expr
-                                arg
-                                (string.append
-                                  "comptime argument '"
-                                  (string.append
-                                    (intern-str param-name)
-                                    (string.append
-                                      "' for function '"
-                                      (string.append
-                                        fn-name
-                                        "' must be a type value such as `(type i64)`")))))))])
-                      (if (spec-value-runtime-type-matches? value param-ty)
+          (box (compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
+    [(>= index (struct-get args len))
+      (ResultSpecArgs.Err
+        (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))]
+    [else
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        (match (ast-param-list-get params index (ast-param-fallback))
+          [(AstParam.Param param-name param-ty is-comptime)
+            (if is-comptime
+              (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
+                [(ResultCtfe.Ok value _)
+                  (if (spec-type-kind? param-ty)
+                    (match value
+                      [(CompilerCtfeValue.Type _)
                         (match (spec-rewrite-specialized-args-at
                           params
+                          args
                           (+ index 1)
-                          rest-args
                           templates
                           state
                           fn-name)
@@ -2241,7 +2241,8 @@
                               (spec-value-cons value rest-values)
                               rest-runtime
                               rest-state)]
-                          [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])
+                          [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
+                      [_
                         (ResultSpecArgs.Err
                           (box
                             (spec-diagnostic-at-expr
@@ -2254,33 +2255,57 @@
                                     "' for function '"
                                     (string.append
                                       fn-name
+                                      "' must be a type value such as `(type i64)`")))))))])
+                    (if (spec-value-runtime-type-matches? value param-ty)
+                      (match (spec-rewrite-specialized-args-at
+                        params
+                        args
+                        (+ index 1)
+                        templates
+                        state
+                        fn-name)
+                        [(ResultSpecArgs.Ok rest-values rest-runtime rest-state)
+                          (ResultSpecArgs.Ok
+                            (spec-value-cons value rest-values)
+                            rest-runtime
+                            rest-state)]
+                        [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])
+                      (ResultSpecArgs.Err
+                        (box
+                          (spec-diagnostic-at-expr
+                            arg
+                            (string.append
+                              "comptime argument '"
+                              (string.append
+                                (intern-str param-name)
+                                (string.append
+                                  "' for function '"
+                                  (string.append
+                                    fn-name
+                                    (string.append
+                                      "' has type "
                                       (string.append
-                                        "' has type "
+                                        (spec-value-type-label value)
                                         (string.append
-                                          (spec-value-type-label value)
-                                          (string.append
-                                            ", expected "
-                                            (spec-type-key param-ty)))))))))))))]
-                  [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
-                (match (spec-rewrite-expr arg templates state)
-                  [(ResultSpecExpr.Ok rewritten-arg arg-state)
-                    (match (spec-rewrite-specialized-args-at
-                      params
-                      (+ index 1)
-                      rest-args
-                      templates
-                      arg-state
-                      fn-name)
-                      [(ResultSpecArgs.Ok values rest-runtime rest-state)
-                        (ResultSpecArgs.Ok
-                          values
-                          (ast-expr-cons rewritten-arg rest-runtime)
-                          rest-state)]
-                      [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
-                  [(ResultSpecExpr.Err diag) (ResultSpecArgs.Err diag)]))]))]
-      [_
-        (ResultSpecArgs.Err
-          (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])))
+                                          ", expected "
+                                          (spec-type-key param-ty)))))))))))))]
+                [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
+              (match (spec-rewrite-expr arg templates state)
+                [(ResultSpecExpr.Ok rewritten-arg arg-state)
+                  (match (spec-rewrite-specialized-args-at
+                    params
+                    args
+                    (+ index 1)
+                    templates
+                    arg-state
+                    fn-name)
+                    [(ResultSpecArgs.Ok values rest-runtime rest-state)
+                      (ResultSpecArgs.Ok
+                        values
+                        (ast-expr-cons rewritten-arg rest-runtime)
+                        rest-state)]
+                    [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
+                [(ResultSpecExpr.Err diag) (ResultSpecArgs.Err diag)]))]))]))
 
 (define (spec-build-specialization
   [params : AstParamList]
@@ -3879,21 +3904,27 @@
 (define (spec-substitute-values-expr-list
   [exprs : AstExprList]
   [subs : SpecValueSubst]) : ResultSpecSubExprList
-  (match exprs
-    [(AstExprList.Nil) (ResultSpecSubExprList.Ok AstExprList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (spec-substitute-values-expr head subs)
-          [(ResultSpecSubExpr.Ok rewritten-head)
-            (match (spec-substitute-values-expr-list rest subs)
-              [(ResultSpecSubExprList.Ok rewritten-rest)
-                (ResultSpecSubExprList.Ok
-                  (ast-expr-cons rewritten-head rewritten-rest))]
-              [(ResultSpecSubExprList.Err diag)
-                (ResultSpecSubExprList.Err diag)])]
-          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprList.Err diag)]))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (match (spec-substitute-values-expr-list-at (& exprs) 0 subs (&mut out))
+      [(ResultSpecSubExprListBuild.Ok) (ResultSpecSubExprList.Ok out)]
+      [(ResultSpecSubExprListBuild.Err diag) (ResultSpecSubExprList.Err diag)])))
+
+(define (spec-substitute-values-expr-list-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [subs : SpecValueSubst]
+  [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
+  (if (>= index (struct-get exprs len))
+    (ResultSpecSubExprListBuild.Ok)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (spec-substitute-values-expr head subs)
+        [(ResultSpecSubExpr.Ok rewritten-head)
+          (begin
+            (ast-expr-list-push out rewritten-head)
+            (spec-substitute-values-expr-list-at exprs (+ index 1) subs out))]
+        [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprListBuild.Err diag)]))))
 
 (define (spec-substitute-values-let-bindings
   [bindings : AstLetBindingList]
@@ -3928,7 +3959,7 @@
   [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-substitute-values-match-arms-at (& arms) 0 subs (&mut out))
       [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
       [(ResultSpecSubMatchArmListBuild.Err diag)
@@ -3939,7 +3970,7 @@
   [index : i64]
   [subs : SpecValueSubst]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -4689,21 +4720,27 @@
 (define (spec-substitute-types-expr-list
   [exprs : AstExprList]
   [subs : SpecTypeSubst]) : ResultSpecSubExprList
-  (match exprs
-    [(AstExprList.Nil) (ResultSpecSubExprList.Ok AstExprList.Nil)]
-    [(AstExprList.Cons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (match (spec-substitute-types-expr head subs)
-          [(ResultSpecSubExpr.Ok rewritten-head)
-            (match (spec-substitute-types-expr-list rest subs)
-              [(ResultSpecSubExprList.Ok rewritten-rest)
-                (ResultSpecSubExprList.Ok
-                  (ast-expr-cons rewritten-head rewritten-rest))]
-              [(ResultSpecSubExprList.Err diag)
-                (ResultSpecSubExprList.Err diag)])]
-          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprList.Err diag)]))]))
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    (match (spec-substitute-types-expr-list-at (& exprs) 0 subs (&mut out))
+      [(ResultSpecSubExprListBuild.Ok) (ResultSpecSubExprList.Ok out)]
+      [(ResultSpecSubExprListBuild.Err diag) (ResultSpecSubExprList.Err diag)])))
+
+(define (spec-substitute-types-expr-list-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [subs : SpecTypeSubst]
+  [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
+  (if (>= index (struct-get exprs len))
+    (ResultSpecSubExprListBuild.Ok)
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (match (spec-substitute-types-expr head subs)
+        [(ResultSpecSubExpr.Ok rewritten-head)
+          (begin
+            (ast-expr-list-push out rewritten-head)
+            (spec-substitute-types-expr-list-at exprs (+ index 1) subs out))]
+        [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprListBuild.Err diag)]))))
 
 (define (spec-substitute-types-let-bindings
   [bindings : AstLetBindingList]
@@ -4741,7 +4778,7 @@
   [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-substitute-types-match-arms-at (& arms) 0 subs (&mut out))
       [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
       [(ResultSpecSubMatchArmListBuild.Err diag)
@@ -4752,7 +4789,7 @@
   [index : i64]
   [subs : SpecTypeSubst]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)

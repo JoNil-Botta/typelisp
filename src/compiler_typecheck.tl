@@ -1263,7 +1263,7 @@
       (AstGeneratedDeclMeta.Some
         "policy-family"
         "GeneratedStruct"
-        AstExprList.Nil
+        (ast-expr-list-new)
         "policy-key")]
     [decl : AstDecl
       (ast-decl-comptime-decl-with-meta
@@ -2189,12 +2189,12 @@
   (AstPatternList.Cons (Box AstPattern) (Box AstPatternList)))
 (defenum AstExpr
   (AstExpr.Literal i64)
-  (AstExpr.Call (Box AstExpr) AstExprList)
-  (AstExpr.Tuple AstExprList)
+  (AstExpr.Call (Box AstExpr) FixtureExprList)
+  (AstExpr.Tuple FixtureExprList)
   (AstExpr.Match (Box AstExpr) AstPatternList))
-(defenum AstExprList
-  (AstExprList.Nil)
-  (AstExprList.Cons (Box AstExpr) (Box AstExprList)))")
+(defenum FixtureExprList
+  (FixtureExprList.Nil)
+  (FixtureExprList.Cons (Box AstExpr) (Box FixtureExprList)))")
 
 (define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
   (let
@@ -2206,7 +2206,7 @@
       (compiler-typecheck-inline-layout-ok? src "AstPattern")
       (compiler-typecheck-inline-layout-ok? src "AstPatternList")
       (compiler-typecheck-inline-layout-ok? src "AstExpr")
-      (compiler-typecheck-inline-layout-ok? src "AstExprList"))))
+      (compiler-typecheck-inline-layout-ok? src "FixtureExprList"))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken

@@ -1030,21 +1030,21 @@
       (string.copy resolved))))
 
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Nil) 0]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (lower-type-env-count (box-get rest))]
-    [(TcTypeEnv.Bind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) 0]
+    [(TcTypeEnvSpineStep.Cache rest-env) (lower-type-env-count rest-env)]
+    [(TcTypeEnvSpineStep.Bind _ _ rest-env)
+      (+ 1 (lower-type-env-count rest-env))]))
 
 (define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (lower-type-env-contains-reference? (box-get rest))]
-    [(TcTypeEnv.Bind _ ty rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) false]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (lower-type-env-contains-reference? rest-env)]
+    [(TcTypeEnvSpineStep.Bind _ ty rest-env)
       (if (tc-type-contains-reference? ty)
         true
-        (lower-type-env-contains-reference? (box-get rest)))]))
+        (lower-type-env-contains-reference? rest-env))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -1072,13 +1072,13 @@
 (define (lower-type-cache-from-env-into
   [env : TcTypeEnv]
   [cache : LowerTypeCache]) : LowerTypeCache
-  (match env
-    [(TcTypeEnv.Nil) cache]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (lower-type-cache-from-env-into (box-get rest) cache)]
-    [(TcTypeEnv.Bind name-id ty rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) cache]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (lower-type-cache-from-env-into rest-env cache)]
+    [(TcTypeEnvSpineStep.Bind name-id ty rest-env)
       (lower-type-cache-from-env-into
-        (box-get rest)
+        rest-env
         (lower-type-cache-add cache name-id ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
@@ -14932,13 +14932,13 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-env
-          [(TcTypeEnv.Nil)
+        (match (tc-type-env-spine-step cur-env)
+          [(TcTypeEnvSpineStep.Done)
             (begin
               (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
-          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
-          [(TcTypeEnv.Bind key ty rest)
+          [(TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
+          [(TcTypeEnvSpineStep.Bind key ty rest-env)
             (begin
               (if (= key cleanup-marker-id)
                 (match ty
@@ -14984,7 +14984,7 @@
                   unit))
               (if done
                 unit
-                (set! cur-env (box-get rest))))]))
+                (set! cur-env rest-env)))]))
       result)))
 
 (define (lower-emit-active-exits
@@ -15094,13 +15094,13 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-env
-          [(TcTypeEnv.Nil)
+        (match (tc-type-env-spine-step cur-env)
+          [(TcTypeEnvSpineStep.Done)
             (begin
               (set! result (ResultLowerState.Ok cur-state))
               (set! done true))]
-          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
-          [(TcTypeEnv.Bind key ty rest)
+          [(TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
+          [(TcTypeEnvSpineStep.Bind key ty rest-env)
             (begin
               ;; lint-allow: nested-if-ladder
               (if (= key loop-target-id)
@@ -15151,7 +15151,7 @@
                     unit)))
               (if done
                 unit
-                (set! cur-env (box-get rest))))]))
+                (set! cur-env rest-env)))]))
       result)))
 
 (define (lower-emit-active-loop-exits
@@ -15201,16 +15201,11 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
-  (match type-env
-    [(TcTypeEnv.Nil) (ResultLowerState.Ok state)]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (lower-emit-active-cleanups-with
-        ctx
-        cleanup-marker-id
-        state
-        env
-        (box-get rest))]
-    [(TcTypeEnv.Bind key ty rest)
+  (match (tc-type-env-spine-step type-env)
+    [(TcTypeEnvSpineStep.Done) (ResultLowerState.Ok state)]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (lower-emit-active-cleanups-with ctx cleanup-marker-id state env rest-env)]
+    [(TcTypeEnvSpineStep.Bind key ty rest-env)
       (if (= key cleanup-marker-id)
         (match ty
           [(AstType.Tuple types)
@@ -15225,7 +15220,7 @@
                   cleanup-marker-id
                   next-state
                   env
-                  (box-get rest))]
+                  rest-env)]
               [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
           [_
             (lower-emit-active-cleanups-with
@@ -15233,13 +15228,13 @@
               cleanup-marker-id
               state
               env
-              (box-get rest))])
+              rest-env)])
         (lower-emit-active-cleanups-with
           ctx
           cleanup-marker-id
           state
           env
-          (box-get rest)))]))
+          rest-env))]))
 
 (define (lower-emit-active-cleanups
   [ctx : TcContext]

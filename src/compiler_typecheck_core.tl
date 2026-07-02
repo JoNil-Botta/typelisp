@@ -54576,10 +54576,12 @@
                           (ResultMacroDeclsWithPaths.Ok
                             (macro-decl-list-append
                               (macro-decl-list-reverse out-rev)
-                              cur-decls)
+                              (ast-decl-list-prepend-builder decl rest))
                             (macro-decl-path-list-append
                               (macro-decl-path-list-reverse out-paths-rev)
-                              cur-paths)
+                              (ast-decl-path-list-prepend-builder
+                                decl-path
+                                rest-paths))
                             (macro-followup-work-at
                               cur-index
                               (+ cur-index 1)
@@ -54749,10 +54751,12 @@
                           (ResultMacroDeclsWithPaths.Ok
                             (macro-decl-list-append
                               (macro-decl-list-reverse out-rev)
-                              cur-decls)
+                              (ast-decl-list-prepend-builder decl rest))
                             (macro-decl-path-list-append
                               (macro-decl-path-list-reverse out-paths-rev)
-                              cur-paths)
+                              (ast-decl-path-list-prepend-builder
+                                decl-path
+                                rest-paths))
                             (macro-followup-work-at
                               cur-index
                               (+ cur-index 1)

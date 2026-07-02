@@ -3341,13 +3341,16 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (lower-compiler-program-with-decl-paths-mode-cache
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-pools : AstNodePoolContext (ast-node-pool-context-snapshot pools)]
+    (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
       entry-path
       program
       paths
       (CompilerLowerMode.Scalar)
       roots
-      (tltest-typecheck-cache-scope roots target))
+      (tltest-typecheck-cache-scope roots target)
+      pools)
       [(ResultCompilerLower.Ok ir spans)
         (match (source-tool-lowered-object-or-assembly-and-link
           source
@@ -3362,11 +3365,13 @@
           "test: failed to write assembly artifact")
           [(SourceToolCommandStatus.Err message)
             (begin
+              (compiler-driver-restore-source-pools! pools source-pools)
               (io.print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)]
           [(SourceToolCommandStatus.Ok)
             (begin
+              (compiler-driver-restore-source-pools! pools source-pools)
               (compiler-driver-reset-analysis-state!)
               (match (tltest-run-harness-output source bin-path target)
                 [(process.OkProcessOutput output)
@@ -3401,6 +3406,7 @@
                     1)]))])]
       [(ResultCompilerLower.Err diag)
         (begin
+          (compiler-driver-restore-source-pools! pools source-pools)
           (io.print-error
             (compiler-diagnostic-render
               (tltest-diagnostic-with-source-fallback source (box-get diag))))

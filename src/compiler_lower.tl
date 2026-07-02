@@ -43876,6 +43876,196 @@
     program
     (CompilerLowerMode.Scalar)))
 
+(define (lower-compiler-compaction-pools-for-source
+  [source-pools : AstNodePoolContext]) : AstNodePoolContext
+  (ast-node-pool-context-new-with-capacities
+    (lower-compiler-compaction-initial-capacity
+      (ast-node-pool-context-expr-len source-pools))
+    (lower-compiler-compaction-initial-capacity
+      (ast-node-pool-context-type-len source-pools))))
+
+(define (lower-compiler-compaction-initial-capacity [source-len : i64]) : i64
+  (let
+    [base : i64
+      (if (< source-len 4096)
+        source-len
+        (let
+          [quarter : i64 (/ source-len 4)]
+          (if (< quarter 4096)
+            4096
+            quarter)))]
+    (+ base 1024)))
+
+(define (lower-compiler-copy-decl-paths-into
+  [out : (&mut out AstDeclPathList)]
+  [paths : (& paths AstDeclPathList)]
+  [index : i64]) : unit
+  (if (>= index (ast-decl-path-list-len paths))
+    unit
+    (let
+      [path : String (ast-decl-path-list-get paths index "")]
+      (begin
+        (ast-decl-path-list-push out (string.copy (& path)))
+        (lower-compiler-copy-decl-paths-into out paths (+ index 1))))))
+
+(define (lower-compiler-copy-decl-paths [paths : AstDeclPathList]) : AstDeclPathList
+  (let
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity (ast-decl-path-list-len (& paths)))]
+    (begin
+      (lower-compiler-copy-decl-paths-into (&mut out) (& paths) 0)
+      out)))
+
+(define (lower-compiler-copy-decl-paths-with-pools
+  [pools : AstNodePoolContext]
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : AstDeclPathList
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [copied : AstDeclPathList (lower-compiler-copy-decl-paths paths)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            copied)))]
+    out))
+
+(define (lower-compiler-copy-string-with-pools
+  [pools : AstNodePoolContext]
+  [value : String]) : String
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : String
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [copied : String (string.copy (& value))]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            copied)))]
+    out))
+
+(define (lower-compiler-copy-string-vec-from
+  [roots : vector.StringVec]
+  [out : vector.StringVec]
+  [index : i64]
+  [count : i64]) : vector.StringVec
+  (if (>= index count)
+    out
+    (let
+      [value : String (vector.string-vec-get roots index "")]
+      (lower-compiler-copy-string-vec-from
+        roots
+        (vector.string-vec-push out (string.copy (& value)))
+        (+ index 1)
+        count))))
+
+(define (lower-compiler-copy-string-vec-with-pools
+  [pools : AstNodePoolContext]
+  [roots : vector.StringVec]) : vector.StringVec
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : vector.StringVec
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [count : i64 (vector.string-vec-len roots)]
+          [copied : vector.StringVec
+            (lower-compiler-copy-string-vec-from
+              roots
+              (vector.string-vec-with-capacity count)
+              0
+              count)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            copied)))]
+    out))
+
+(define (lower-compiler-copy-name-env [names : LowerNameEnv]) : LowerNameEnv
+  (match names
+    [(LowerNameEnv.Nil) LowerNameEnv.Nil]
+    [(LowerNameEnv.Bind source source-id logical rest)
+      (LowerNameEnv.Bind
+        (string.copy (& source))
+        source-id
+        (string.copy (& logical))
+        (box (lower-compiler-copy-name-env (box-get rest))))]))
+
+(define (lower-compiler-copy-name-env-with-pools
+  [pools : AstNodePoolContext]
+  [names : LowerNameEnv]) : LowerNameEnv
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : LowerNameEnv
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [copied : LowerNameEnv (lower-compiler-copy-name-env names)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            copied)))]
+    out))
+
+(define (lower-compiler-name-env-from-decls-with-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]) : LowerNameEnv
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : LowerNameEnv
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [built : LowerNameEnv
+            (lower-name-env-from-decls decls paths entry-path names)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            built)))]
+    out))
+
+(define (lower-compiler-name-env-add-clone-decls-with-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]) : LowerNameEnv
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [out : LowerNameEnv
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [built : LowerNameEnv
+            (lower-name-env-add-clone-decls decls paths entry-path names)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            built)))]
+    out))
+
+(define (lower-compiler-after-compact-noop [_pools : AstNodePoolContext]) : unit
+  unit)
+
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
   [entry-path : String]
   [program : AstProgram]
@@ -43884,6 +44074,27 @@
   [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-using-compact-pools
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (lower-compiler-compaction-pools-for-source pools)
+    lower-compiler-after-compact-noop))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-using-compact-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : vector.StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [compact-pools : AstNodePoolContext]
+  [after-compact : (-> AstNodePoolContext unit)]) : ResultCompilerLower
   (begin
     (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
@@ -43952,21 +44163,53 @@
                               (compiler-lower-profile-finish "clone_roots"))
                             (cfg compile-profile (compiler-lower-profile-start))
                             (let
-                              [checked-program : AstProgram
+                              [raw-checked-program : AstProgram
                                 (clone-augment-program-with-roots-and-pools
                                   clone-pools
                                   base-program
                                   clone-roots)]
-                              [checked-paths : AstDeclPathList base-paths]
+                              [compaction : AstProgramCompaction
+                                (ast-program-compact-with-pools
+                                  clone-pools
+                                  compact-pools
+                                  raw-checked-program)]
+                              [checked-program : AstProgram
+                                (match compaction
+                                  [(AstProgramCompaction compacted _) compacted])]
+                              [checked-pools : AstNodePoolContext
+                                (match compaction
+                                  [(AstProgramCompaction _ compacted-pools)
+                                    compacted-pools])]
+                              [checked-paths : AstDeclPathList
+                                (lower-compiler-copy-decl-paths-with-pools
+                                  checked-pools
+                                  base-paths)]
+                              [checked-entry-path : String
+                                (lower-compiler-copy-string-with-pools
+                                  checked-pools
+                                  entry-path)]
+                              [checked-cache-scope : String
+                                (lower-compiler-copy-string-with-pools
+                                  checked-pools
+                                  cache-scope)]
+                              [checked-stdlib-roots : vector.StringVec
+                                (lower-compiler-copy-string-vec-with-pools
+                                  checked-pools
+                                  stdlib-roots)]
+                              [checked-original-names : LowerNameEnv
+                                (lower-compiler-copy-name-env-with-pools
+                                  checked-pools
+                                  names)]
                               [checked-names : LowerNameEnv
                                 (match checked-program
                                   [(AstProgram.Program decls-box)
                                     (let
                                       [decls : AstDeclList (box-get decls-box)]
-                                      (lower-name-env-from-decls
+                                      (lower-compiler-name-env-from-decls-with-pools
+                                        checked-pools
                                         decls
                                         checked-paths
-                                        entry-path
+                                        checked-entry-path
                                         LowerNameEnv.Nil))])]
                               [lower-names : LowerNameEnv
                                 (if needs-specialization
@@ -43975,34 +44218,48 @@
                                       (let
                                         [decls : AstDeclList
                                           (box-get decls-box)]
-                                        (lower-name-env-add-clone-decls
+                                        (lower-compiler-name-env-add-clone-decls-with-pools
+                                          checked-pools
                                           decls
                                           checked-paths
-                                          entry-path
-                                          names))])
+                                          checked-entry-path
+                                          checked-original-names))])
                                   checked-names)]
                               (begin
-                                (ast-node-pool-context-install! clone-pools)
+                                (ast-node-pool-context-install! checked-pools)
+                                (after-compact checked-pools)
+                                (compiler-typecheck-reset-file-state!)
+                                (compiler-typecheck-reset-intern-key-caches!)
                                 (cfg
                                   compile-profile
                                   (compiler-lower-profile-finish
                                     "clone_augment_names"))
                                 (cfg
                                   compile-profile
+                                  (compiler-lower-profile-pools
+                                    "compact_checked"
+                                    checked-pools))
+                                (cfg
+                                  compile-profile
+                                  (compiler-lower-profile-program-counts
+                                    "compact_checked"
+                                    checked-program))
+                                (cfg
+                                  compile-profile
                                   (compiler-lower-profile-start))
                                 (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
                                   checked-program
                                   checked-paths
-                                  stdlib-roots
-                                  cache-scope
-                                  clone-pools)
+                                  checked-stdlib-roots
+                                  checked-cache-scope
+                                  checked-pools)
                                   [(ResultCompilerTypecheckChecked.Ok
                                       _
                                       ctx
                                       top-env)
                                     (begin
                                       (ast-node-pool-context-install!
-                                        clone-pools)
+                                        checked-pools)
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-finish
@@ -44011,12 +44268,12 @@
                                         compile-profile
                                         (compiler-lower-profile-pools
                                           "typecheck"
-                                          clone-pools))
+                                          checked-pools))
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-pools
                                           "pre_decls"
-                                          clone-pools))
+                                          checked-pools))
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-program-counts
@@ -44057,7 +44314,7 @@
                                               (box
                                                 (lower-diagnostic-with-path
                                                   (box-get diag)
-                                                  entry-path))))]))]
+                                                  checked-entry-path))))]))]
                                   [(ResultCompilerTypecheckChecked.Err diag)
                                     (begin
                                       (cfg
@@ -44130,6 +44387,27 @@
   [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (lower-compiler-compaction-pools-for-source pools)
+    lower-compiler-after-compact-noop))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : vector.StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [compact-pools : AstNodePoolContext]
+  [after-compact : (-> AstNodePoolContext unit)]) : ResultCompilerLower
   (begin
     (ast-node-pool-context-install! pools)
     (let
@@ -44141,14 +44419,16 @@
         (lower-entry-main-selection-install! selection)
         (let
           [result : ResultCompilerLower
-            (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+            (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-using-compact-pools
               entry-path
               program
               paths
               mode
               stdlib-roots
               cache-scope
-              pools)]
+              pools
+              compact-pools
+              after-compact)]
           (begin
             (lower-entry-main-selection-restore! prev-active prev-module)
             result))))))
@@ -44190,6 +44470,27 @@
   [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (lower-compiler-compaction-pools-for-source pools)
+    lower-compiler-after-compact-noop))
+
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : vector.StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [compact-pools : AstNodePoolContext]
+  [after-compact : (-> AstNodePoolContext unit)]) : ResultCompilerLower
   (begin
     (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
@@ -44219,14 +44520,16 @@
                 (cfg
                   compile-profile
                   (compiler-lower-profile-pools "macro_expand" pools))
-                (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+                (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
                   entry-path
                   expanded
                   expanded-paths
                   mode
                   stdlib-roots
                   cache-scope
-                  pools))]
+                  pools
+                  compact-pools
+                  after-compact))]
             [(ResultMacroExpand.Err diag)
               (begin
                 (cfg
@@ -44620,6 +44923,10 @@
     (intern-reset!)
     (lower-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)
+    (ast-node-pool-reset!)
+    (ty-node-pool-reset!)
+    (compiler-typecheck-reset-file-state!)
+    (lower-reset-file-state!)
     (match (parse-ast-source src)
       [(ResultAstProgram.Ok program)
         (if (lower-source-program-needs-loader? program)

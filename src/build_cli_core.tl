@@ -2636,6 +2636,7 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolDirectObjectStatus
@@ -2647,7 +2648,8 @@
     emit-entry
     crt-entry
     decls
-    paths)
+    paths
+    pools)
     [(ResultSourceToolString.Ok obj)
       (build-package-write-linux-direct-object-artifact
         kind
@@ -2744,12 +2746,13 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultSourceToolString
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultSourceToolString
   (if (and
     (compiler-backend-target-linux? target)
     (build-package-direct-object-mode? mode)
     (build-package-direct-object-size-ok? paths))
-    (match (compiler-driver-emit-package-loaded-object-image
+    (match (compiler-driver-emit-package-loaded-object-image-with-pools
       ""
       target
       true
@@ -2758,7 +2761,8 @@
       emit-entry
       crt-entry
       decls
-      paths)
+      paths
+      pools)
       [(ResultCompilerDriverObject.Ok image)
         (build-package-render-linux-direct-object kind image)]
       [(ResultCompilerDriverObject.Err diag)
@@ -3179,6 +3183,7 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [owned-paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
@@ -3186,7 +3191,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [direct-message : String]) : i64
-  (match (compiler-driver-emit-package-loaded
+  (match (compiler-driver-emit-package-loaded-with-pools
     ""
     target
     true
@@ -3195,7 +3200,8 @@
     emit-entry
     crt-entry
     decls
-    owned-paths)
+    owned-paths
+    pools)
     [(ResultCompilerDriver.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
@@ -3224,8 +3230,9 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [owned-paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
   [asm-path : String]) : SourceToolCommandStatus
-  (match (compiler-driver-emit-package-loaded
+  (match (compiler-driver-emit-package-loaded-with-pools
     ""
     target
     true
@@ -3234,7 +3241,8 @@
     emit-entry
     crt-entry
     decls
-    owned-paths)
+    owned-paths
+    pools)
     [(ResultCompilerDriver.Err diag)
       (SourceToolCommandStatus.Err (compiler-diagnostic-render (box-get diag)))]
     [(ResultCompilerDriver.Ok asm)
@@ -3394,6 +3402,8 @@
                     1)]
                 [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                   (let
+                    [source-pools : AstNodePoolContext
+                      (ast-node-pool-context-capture-active)]
                     [owned-paths : AstDeclPathList
                       (compiler-load-package-owned-paths-for-decls
                         name
@@ -3441,6 +3451,7 @@
                               crt-entry
                               decls
                               owned-paths
+                              source-pools
                               obj-path
                               artifact-path
                               effective-link-inputs)]
@@ -3454,6 +3465,7 @@
                                 crt-entry
                                 decls
                                 owned-paths
+                                source-pools
                                 asm-path)
                                 [(SourceToolCommandStatus.Err message)
                                   (begin
@@ -3480,6 +3492,7 @@
                                 crt-entry
                                 decls
                                 owned-paths
+                                source-pools
                                 asm-path
                                 obj-path
                                 artifact-path

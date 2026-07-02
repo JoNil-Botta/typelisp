@@ -57913,9 +57913,13 @@
     (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))
 
-(define (compiler-typecheck-reset-intern-owned-state!) : unit
+(define (compiler-typecheck-reset-intern-key-caches!) : unit
   (begin
-    (tc-marker-name-id-arena-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)
     (tc-source-qualified-variant-key-cache-reset!)))
+
+(define (compiler-typecheck-reset-intern-owned-state!) : unit
+  (begin
+    (tc-marker-name-id-arena-reset!)
+    (compiler-typecheck-reset-intern-key-caches!)))

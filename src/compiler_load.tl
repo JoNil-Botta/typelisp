@@ -725,6 +725,7 @@
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
+    (ast-node-pool-active-context-clear!)
     (compiler-load-surface-summaries-reset!)
     (set! compiler-load-surface-summary-load-depth 0)
     (if (compiler-load-session-cache-enabled?)

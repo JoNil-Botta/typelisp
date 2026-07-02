@@ -39,7 +39,8 @@
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
-  (pool-arena (Array i64)))
+  (pool-arena (Array i64))
+  (retired-pool-arena (Array i64)))
 
 (define (compiler-driver-state-new-from-pools-and-arena
   [expr-pool : AstExprNodePoolState]
@@ -55,19 +56,22 @@
     [lower-cell : (Array CompilerLowerArenaState)
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
+    [retired-pool-arena-cell : (Array i64) (array.make-array i64 1)]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
       (array-set! builtin-cell 0 (cbi.state-new))
       (array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (array-set! pool-arena-cell 0 pool-arena)
+      (array-set! retired-pool-arena-cell 0 0)
       (CompilerDriverState
         expr-cell
         type-cell
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
-        pool-arena-cell))))
+        pool-arena-cell
+        retired-pool-arena-cell))))
 
 (define (compiler-driver-state-new-from-pools
   [expr-pool : AstExprNodePoolState]
@@ -82,11 +86,16 @@
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        2097152
+        262144
+        pool-arena)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
-        (ast-expr-node-pool-state-init 2097152 pool-arena)
-        (ast-type-node-pool-state-init 262144 pool-arena)
-        pool-arena)]
+        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref (struct-get pools type-pool) 0)
+        (ast-node-pool-context-base-arena pools))]
     (begin
       (cbi.state-capture-from-globals!
         (array-ref (struct-get state builtin-ids) 0))
@@ -125,9 +134,7 @@
   (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
-  (ast-node-pools-state-install!
-    (array-ref (struct-get state expr-pool) 0)
-    (array-ref (struct-get state type-pool) 0)))
+  (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -137,9 +144,32 @@
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
   (array-ref (struct-get state pool-arena) 0))
 
+(define (compiler-driver-state-destroy-retired-pool-arena-cell!
+  [retired-cell : (Array i64)]) : unit
+  (let
+    [retired-arena : i64 (array-ref retired-cell 0)]
+    (if (= retired-arena 0)
+      unit
+      (begin
+        (array-set! retired-cell 0 0)
+        (unsafe
+          (arena.tl_arena_destroy retired-arena))))))
+
+(define (compiler-driver-state-destroy-retired-pool-arena!
+  [state : CompilerDriverState]) : unit
+  (compiler-driver-state-destroy-retired-pool-arena-cell!
+    (struct-get state retired-pool-arena)))
+
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
   (not (= (compiler-driver-state-owned-pool-arena state) 0)))
+
+(define (compiler-driver-state-clear-pool-backed-caches!) : unit
+  (begin
+    (compiler-load-session-floors-set! 0 0 0)
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)))
 
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -150,22 +180,26 @@
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
       [new-arena : i64 (arena.tl_arena_make)]
+      [pools : AstNodePoolContext
+        (ast-node-pool-context-new-with-capacities-in-arena
+          2097152
+          262144
+          new-arena)]
       (begin
-        (compiler-load-session-floors-set! 0 0 0)
-        (compiler-load-program-cache-clear!)
-        (compiler-load-runtime-prelude-cache-clear!)
-        (if (tc-prefix-snapshot-cache-active?)
-          unit
-          (tc-prefix-snapshot-cache-clear!))
-        (array-set! (struct-get state pool-arena) 0 new-arena)
+        (compiler-driver-state-destroy-retired-pool-arena! state)
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (array-set!
+          (struct-get state pool-arena)
+          0
+          (ast-node-pool-context-base-arena pools))
         (array-set!
           (struct-get state expr-pool)
           0
-          (ast-expr-node-pool-state-init 2097152 new-arena))
+          (array-ref (struct-get pools expr-pool) 0))
         (array-set!
           (struct-get state type-pool)
           0
-          (ast-type-node-pool-state-init 262144 new-arena))
+          (array-ref (struct-get pools type-pool) 0))
         (compiler-driver-state-install-pools! state)
         (unsafe
           (arena.tl_arena_destroy old-arena))))))
@@ -177,6 +211,138 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (intern-persistent-arena-reset!)))
+
+(define (compiler-driver-state-uncached-owned-pool-arena?
+  [state : CompilerDriverState]) : bool
+  (and
+    (compiler-driver-state-has-owned-pool-arena? state)
+    (not (compiler-driver-state-session-cache-enabled? state))))
+
+(define (compiler-driver-state-lower-compact-pools
+  [state : CompilerDriverState]
+  [source-pools : AstNodePoolContext]) : AstNodePoolContext
+  (if (compiler-driver-state-uncached-owned-pool-arena? state)
+    (let
+      [compact-arena : i64 (arena.tl_arena_make)]
+      (ast-node-pool-context-new-with-capacities-in-arena
+        (lower-compiler-compaction-initial-capacity
+          (ast-node-pool-context-expr-len source-pools))
+        (lower-compiler-compaction-initial-capacity
+          (ast-node-pool-context-type-len source-pools))
+        compact-arena))
+    (lower-compiler-compaction-pools-for-source source-pools)))
+
+(define (compiler-driver-state-release-obsolete-pool-arena-after-compact-cells!
+  [expr-cell : (Array AstExprNodePoolState)]
+  [type-cell : (Array AstTypeNodePoolState)]
+  [pool-arena-cell : (Array i64)]
+  [retired-cell : (Array i64)]
+  [compact-pools : AstNodePoolContext]) : unit
+  (let
+    [old-arena : i64 (array-ref pool-arena-cell 0)]
+    [new-arena : i64 (ast-node-pool-context-base-arena compact-pools)]
+    (if (or (= old-arena 0) (= old-arena new-arena))
+      unit
+      (begin
+        (compiler-driver-state-destroy-retired-pool-arena-cell! retired-cell)
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (array-set! pool-arena-cell 0 new-arena)
+        (array-set!
+          expr-cell
+          0
+          (array-ref (struct-get compact-pools expr-pool) 0))
+        (array-set!
+          type-cell
+          0
+          (array-ref (struct-get compact-pools type-pool) 0))
+        (unsafe
+          (arena.tl_arena_set new-arena))
+        (unsafe
+          (arena.tl_arena_destroy old-arena))))))
+
+(define compiler-driver-after-compact-active : bool
+  false)
+(define compiler-driver-after-compact-expr-cell : (Array AstExprNodePoolState)
+  (array.make-array AstExprNodePoolState 1))
+(define compiler-driver-after-compact-type-cell : (Array AstTypeNodePoolState)
+  (array.make-array AstTypeNodePoolState 1))
+(define compiler-driver-after-compact-pool-arena-cell : (Array i64)
+  (array.make-array i64 1))
+(define compiler-driver-after-compact-retired-cell : (Array i64)
+  (array.make-array i64 1))
+
+(define (compiler-driver-state-after-compact-noop [_pools : AstNodePoolContext]) : unit
+  unit)
+
+(define (compiler-driver-state-after-compact-clear-session-caches
+  [_pools : AstNodePoolContext]) : unit
+  (compiler-driver-state-clear-pool-backed-caches!))
+
+(define (compiler-driver-state-after-compact-installed-callback
+  [checked-pools : AstNodePoolContext]) : unit
+  (if compiler-driver-after-compact-active
+    (begin
+      (set! compiler-driver-after-compact-active false)
+      (compiler-driver-state-release-obsolete-pool-arena-after-compact-cells!
+        compiler-driver-after-compact-expr-cell
+        compiler-driver-after-compact-type-cell
+        compiler-driver-after-compact-pool-arena-cell
+        compiler-driver-after-compact-retired-cell
+        checked-pools))
+    unit))
+
+(define (compiler-driver-state-after-compact-callback
+  [state : CompilerDriverState]
+  [_compact-pools : AstNodePoolContext]) : (-> AstNodePoolContext unit)
+  (if (compiler-driver-state-session-cache-enabled? state)
+    compiler-driver-state-after-compact-clear-session-caches
+    (if (not (compiler-driver-state-uncached-owned-pool-arena? state))
+      compiler-driver-state-after-compact-noop
+      (begin
+        (set!
+          compiler-driver-after-compact-expr-cell
+          (struct-get state expr-pool))
+        (set!
+          compiler-driver-after-compact-type-cell
+          (struct-get state type-pool))
+        (set!
+          compiler-driver-after-compact-pool-arena-cell
+          (struct-get state pool-arena))
+        (set!
+          compiler-driver-after-compact-retired-cell
+          (struct-get state retired-pool-arena))
+        (set! compiler-driver-after-compact-active true)
+        compiler-driver-state-after-compact-installed-callback))))
+
+(define (compiler-driver-state-finish-lower-error-compact-pools!
+  [state : CompilerDriverState]
+  [active-pools : AstNodePoolContext]
+  [compact-pools : AstNodePoolContext]) : unit
+  (if (not (compiler-driver-state-uncached-owned-pool-arena? state))
+    unit
+    (let
+      [owned-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+      [active-arena : i64 (ast-node-pool-context-base-arena active-pools)]
+      [compact-arena : i64 (ast-node-pool-context-base-arena compact-pools)]
+      (if (= compact-arena owned-arena)
+        unit
+        (if (= active-arena compact-arena)
+          (compiler-driver-state-adopt-active-pool-arena-if-uncached! state)
+          (unsafe
+            (arena.tl_arena_destroy compact-arena)))))))
+
+(define (compiler-driver-state-adopt-active-pool-arena-if-uncached!
+  [state : CompilerDriverState]) : unit
+  (if (not (compiler-driver-state-uncached-owned-pool-arena? state))
+    unit
+    (let
+      [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+      [new-arena : i64
+        (ast-node-pool-context-base-arena
+          (compiler-driver-state-pool-context state))]
+      (if (= old-arena new-arena)
+        unit
+        (array-set! (struct-get state pool-arena) 0 new-arena)))))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
@@ -1461,36 +1627,56 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
+          (let
+            [compact-pools : AstNodePoolContext
+              (compiler-driver-state-lower-compact-pools state pools)]
+            [after-compact : (-> AstNodePoolContext unit)
+              (compiler-driver-state-after-compact-callback state compact-pools)]
+            (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+              input-path
+              (ast-program decls)
+              paths
+              (compiler-driver-lower-mode-for-target target mode)
               stdlib-roots
-              cfgs)
-            pools)
-            [(ResultCompilerLower.Ok program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (if (ast-node-pool-reader-type-exhausted?)
-                  (ResultCompilerDriverLowered.Err
-                    (box
-                      (compiler-driver-ty-node-pool-exhausted-diagnostic
-                        input-path)))
-                  (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ResultCompilerLower.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ResultCompilerDriverLowered.Err diag))]))]
+              (compiler-load-prelude-cache-key
+                "typecheck-prefix-lower"
+                stdlib-roots
+                cfgs)
+              pools
+              compact-pools
+              after-compact)
+              [(ResultCompilerLower.Ok program spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (if (ast-node-pool-reader-type-exhausted?)
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (compiler-driver-state-finish-lower-error-compact-pools!
+                        state
+                        pools
+                        compact-pools)
+                      (ResultCompilerDriverLowered.Err
+                        (box
+                          (compiler-driver-ty-node-pool-exhausted-diagnostic
+                            input-path))))
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (compiler-driver-state-adopt-active-pool-arena-if-uncached!
+                        state)
+                      (compiler-driver-lowered-from-pools program spans pools))))]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (ast-node-pool-context-capture-active! pools)
+                  (compiler-driver-state-finish-lower-error-compact-pools!
+                    state
+                    pools
+                    compact-pools)
+                  (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -1515,36 +1701,56 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
+          (let
+            [compact-pools : AstNodePoolContext
+              (compiler-driver-state-lower-compact-pools state pools)]
+            [after-compact : (-> AstNodePoolContext unit)
+              (compiler-driver-state-after-compact-callback state compact-pools)]
+            (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools-using-compact-pools
+              input-path
+              (ast-program decls)
+              paths
+              (compiler-driver-lower-mode-for-target target mode)
               stdlib-roots
-              cfgs)
-            pools)
-            [(ResultCompilerLower.Ok program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (if (ast-node-pool-reader-type-exhausted?)
-                  (ResultCompilerDriverLowered.Err
-                    (box
-                      (compiler-driver-ty-node-pool-exhausted-diagnostic
-                        input-path)))
-                  (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ResultCompilerLower.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ResultCompilerDriverLowered.Err diag))]))]
+              (compiler-load-prelude-cache-key
+                "typecheck-prefix-lower"
+                stdlib-roots
+                cfgs)
+              pools
+              compact-pools
+              after-compact)
+              [(ResultCompilerLower.Ok program spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (if (ast-node-pool-reader-type-exhausted?)
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (compiler-driver-state-finish-lower-error-compact-pools!
+                        state
+                        pools
+                        compact-pools)
+                      (ResultCompilerDriverLowered.Err
+                        (box
+                          (compiler-driver-ty-node-pool-exhausted-diagnostic
+                            input-path))))
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (compiler-driver-state-adopt-active-pool-arena-if-uncached!
+                        state)
+                      (compiler-driver-lowered-from-pools program spans pools))))]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (ast-node-pool-context-capture-active! pools)
+                  (compiler-driver-state-finish-lower-error-compact-pools!
+                    state
+                    pools
+                    compact-pools)
+                  (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -1754,20 +1960,25 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
-      input-path
-      (compiler-driver-load-and-lower-escaping-with-state
-        state
-        input-path
-        target
-        stdlib-roots
-        mode
-        (compiler-driver-target-cfgs target cfgs))
-      target
-      has-target
-      mode
-      opt-level
-      true)))
+    (let
+      [result : ResultCompilerDriverBuffer
+        (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+          input-path
+          (compiler-driver-load-and-lower-escaping-with-state
+            state
+            input-path
+            target
+            stdlib-roots
+            mode
+            (compiler-driver-target-cfgs target cfgs))
+          target
+          has-target
+          mode
+          opt-level
+          true)]
+      (begin
+        (compiler-driver-state-destroy-retired-pool-arena! state)
+        result))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -1780,21 +1991,26 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
-      input-path
-      (compiler-driver-load-and-lower-pic-image-with-state
-        state
-        input-path
-        target
-        stdlib-roots
-        mode
-        (compiler-driver-target-cfgs target cfgs))
-      target
-      has-target
-      mode
-      opt-level
-      false
-      false)))
+    (let
+      [result : ResultCompilerDriverPic
+        (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
+          input-path
+          (compiler-driver-load-and-lower-pic-image-with-state
+            state
+            input-path
+            target
+            stdlib-roots
+            mode
+            (compiler-driver-target-cfgs target cfgs))
+          target
+          has-target
+          mode
+          opt-level
+          false
+          false)]
+      (begin
+        (compiler-driver-state-destroy-retired-pool-arena! state)
+        result))))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]
@@ -1852,15 +2068,58 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-    input-path
-    (compiler-driver-lower-package-loaded input-path target mode decls paths)
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry))
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (compiler-driver-emit-package-loaded-with-pools
+      input-path
+      target
+      has-target
+      opt-level
+      mode
+      emit-entry
+      crt-entry
+      decls
+      paths
+      pools)))
+
+(define (compiler-driver-restore-source-pools!
+  [pools : AstNodePoolContext]
+  [source-pools : AstNodePoolContext]) : unit
+  (begin
+    (array-set!
+      (struct-get pools expr-pool)
+      0
+      (array-ref (struct-get source-pools expr-pool) 0))
+    (array-set!
+      (struct-get pools type-pool)
+      0
+      (array-ref (struct-get source-pools type-pool) 0))
+    (ast-node-pool-context-install! pools)))
+
+(define (compiler-driver-lower-package-loaded-with-pools
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
+  (let
+    [source-pools : AstNodePoolContext (ast-node-pool-context-snapshot pools)]
+    [result : ResultCompilerDriverLowered
+      (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+        input-path
+        (ast-program decls)
+        paths
+        (compiler-driver-lower-mode-for-target target mode)
+        (vector.string-vec-new)
+        (tc-prefix-default-cache-scope)
+        pools)
+        [(ResultCompilerLower.Ok program spans)
+          (compiler-driver-lowered-from-active-pools program spans)]
+        [(ResultCompilerLower.Err diag) (ResultCompilerDriverLowered.Err diag)])]
+    (begin
+      (compiler-driver-restore-source-pools! pools source-pools)
+      result)))
 
 (define (compiler-driver-lower-package-loaded
   [input-path : String]
@@ -1868,14 +2127,48 @@
   [mode : CompilerBackendMode]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriverLowered
-  (match (lower-compiler-program-with-decl-paths-mode
-    input-path
-    (ast-program decls)
-    paths
-    (compiler-driver-lower-mode-for-target target mode))
-    [(ResultCompilerLower.Ok program spans)
-      (compiler-driver-lowered-from-active-pools program spans)]
-    [(ResultCompilerLower.Err diag) (ResultCompilerDriverLowered.Err diag)]))
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (compiler-driver-lower-package-loaded-with-pools
+      input-path
+      target
+      mode
+      decls
+      paths
+      pools)))
+
+(define (compiler-driver-emit-package-loaded-with-pools
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerDriver
+  (let
+    [source-pools : AstNodePoolContext (ast-node-pool-context-snapshot pools)]
+    [result : ResultCompilerDriver
+      (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+        input-path
+        (compiler-driver-lower-package-loaded-with-pools
+          input-path
+          target
+          mode
+          decls
+          paths
+          pools)
+        target
+        has-target
+        mode
+        opt-level
+        emit-entry
+        crt-entry)]
+    (begin
+      (compiler-driver-restore-source-pools! pools source-pools)
+      result)))
 
 (define (compiler-driver-emit-package-loaded-object-image
   [input-path : String]
@@ -1887,15 +2180,52 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriverObject
-  (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
-    input-path
-    (compiler-driver-lower-package-loaded input-path target mode decls paths)
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry))
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (compiler-driver-emit-package-loaded-object-image-with-pools
+      input-path
+      target
+      has-target
+      opt-level
+      mode
+      emit-entry
+      crt-entry
+      decls
+      paths
+      pools)))
+
+(define (compiler-driver-emit-package-loaded-object-image-with-pools
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerDriverObject
+  (let
+    [source-pools : AstNodePoolContext (ast-node-pool-context-snapshot pools)]
+    [result : ResultCompilerDriverObject
+      (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
+        input-path
+        (compiler-driver-lower-package-loaded-with-pools
+          input-path
+          target
+          mode
+          decls
+          paths
+          pools)
+        target
+        has-target
+        mode
+        opt-level
+        emit-entry
+        crt-entry)]
+    (begin
+      (compiler-driver-restore-source-pools! pools source-pools)
+      result)))
 
 (define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
   [input-path : String]
@@ -2207,15 +2537,20 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
-  (compiler-driver-emit-ir-summary-lowered-result-with-level
-    (compiler-driver-load-and-lower-pic-image-with-state
-      state
-      input-path
-      target
-      stdlib-roots
-      mode
-      (compiler-driver-target-cfgs target cfgs))
-    opt-level))
+  (let
+    [result : ResultCompilerDriver
+      (compiler-driver-emit-ir-summary-lowered-result-with-level
+        (compiler-driver-load-and-lower-pic-image-with-state
+          state
+          input-path
+          target
+          stdlib-roots
+          mode
+          (compiler-driver-target-cfgs target cfgs))
+        opt-level)]
+    (begin
+      (compiler-driver-state-destroy-retired-pool-arena! state)
+      result)))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]

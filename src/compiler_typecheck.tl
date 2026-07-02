@@ -13,6 +13,12 @@
   [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
+(define (compiler-typecheck-reset-load-session!) : unit
+  (begin
+    (compiler-load-session-reset-pools!)
+    (compiler-load-session-reset-interns!)
+    (compiler-typecheck-reset-intern-owned-state!)))
+
 (define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -669,8 +675,7 @@
         "target/tc_prefix_entry_a.tl")
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-prefix-cache-check
         (compiler-typecheck-prefix-cache-source-b)
         "target/tc_prefix_entry_b.tl")

@@ -1875,8 +1875,7 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-prefix-cache-source-b)
         entry-b
@@ -1891,8 +1890,7 @@
       (if (>= tc-prefix-snapshot-cache-store-count 2)
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-prefix-cache-source-b)
         "target/tc_prefix_root_entry_c.tl"
@@ -1929,8 +1927,7 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
         entry-feature
@@ -1945,8 +1942,7 @@
       (if (>= tc-prefix-snapshot-cache-store-count 2)
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
         "target/tc_prefix_cfg_entry_feature_b.tl"
@@ -2012,8 +2008,7 @@
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
         unit
         (set! ok false))
@@ -2050,8 +2045,7 @@
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
         unit
         (set! ok false))
@@ -2104,16 +2098,14 @@
 
 (define (main) : i64
   (+ (root-score) (tc4004named.named-score)))")
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check
         root-then-named
         roots
         cfgs)
         unit
         (set! ok false))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check
         named-then-root
         roots
@@ -2139,8 +2131,7 @@
         entry
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
 
 (define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
@@ -2212,8 +2203,7 @@
       (io.write-file
         entry
         (compiler-typecheck-smoke-macro-dependency-entry-source))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
 
 (define (compiler-typecheck-smoke-surface-macro-provider-source) : String
@@ -2238,8 +2228,7 @@
       (io.write-file
         entry
         (compiler-typecheck-smoke-surface-macro-entry-source))
-      (compiler-load-session-reset-pools!)
-      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-reset-load-session!)
       (match (compiler-load-file-with-paths-and-roots-cfg
         entry
         (sym_i64_env.sym-i64-empty)
@@ -2451,16 +2440,18 @@
     (tc-source-dotted-alias-key-cache-reset!)
     (match (tc-source-name-lookup-key entry-ctx env "helper.value")
       [(ResultTcString.Ok key)
-        (and
-          (string.eq key "helper.module/value")
-          (=
-            (tc-source-dotted-alias-key-cache-get
-              (intern "entry.module")
-              (intern "helper.value"))
-            (intern "helper.module/value"))
-          (match (tc-source-name-lookup-key entry-ctx env "helper.value")
-            [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
-            [(ResultTcString.Err _) false]))]
+        (let
+          [module-id : i64 (intern "entry.module")]
+          [name-id : i64 (intern "helper.value")]
+          [lookup-id : i64 (intern "helper.module/value")]
+          (and
+            (string.eq key "helper.module/value")
+            (=
+              (tc-source-dotted-alias-key-cache-get module-id name-id)
+              lookup-id)
+            (match (tc-source-name-lookup-key entry-ctx env "helper.value")
+              [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
+              [(ResultTcString.Err _) false])))]
       [(ResultTcString.Err _) false])))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
@@ -2470,16 +2461,21 @@
     (tc-source-dotted-full-path-key-cache-reset!)
     (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
       [(ResultTcString.Ok key)
-        (and
-          (string.eq key "helper.module/value")
-          (=
-            (tc-source-dotted-full-path-key-cache-get
-              (intern "full.entry")
-              (intern "helper.module.value"))
-            (intern "helper.module/value"))
-          (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
-            [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
-            [(ResultTcString.Err _) false]))]
+        (let
+          [module-id : i64 (intern "full.entry")]
+          [name-id : i64 (intern "helper.module.value")]
+          [lookup-id : i64 (intern "helper.module/value")]
+          (and
+            (string.eq key "helper.module/value")
+            (=
+              (tc-source-dotted-full-path-key-cache-get module-id name-id)
+              lookup-id)
+            (match (tc-source-name-lookup-key
+              full-ctx
+              env
+              "helper.module.value")
+              [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
+              [(ResultTcString.Err _) false])))]
       [(ResultTcString.Err _) false])))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-ok?) : bool
@@ -2503,26 +2499,66 @@
       ok)))
 
 (define (compiler-typecheck-smoke-full-path-cache-derived-reset-ok?) : bool
+  (let
+    [module-id : i64 (intern "reset.entry")]
+    [name-id : i64 (intern "stdlib.json.stringify")]
+    [lookup-id : i64 (intern "stdlib.json/stringify")]
+    (begin
+      (tc-source-dotted-full-path-key-cache-reset!)
+      (tc-source-dotted-full-path-key-cache-put! module-id name-id lookup-id)
+      (let
+        [before : i64
+          (tc-source-dotted-full-path-key-cache-get module-id name-id)]
+        (begin
+          (macro-alias-derived-cache-reset!)
+          (and
+            (= before lookup-id)
+            (= (tc-source-dotted-full-path-key-cache-get module-id name-id) -2)))))))
+
+(define (compiler-typecheck-smoke-source-name-caches-intern-reset-ok?) : bool
   (begin
+    (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)
-    (tc-source-dotted-full-path-key-cache-put!
-      (intern "reset.entry")
-      (intern "stdlib.json.stringify")
-      (intern "stdlib.json/stringify"))
+    (tc-source-qualified-variant-key-cache-reset!)
     (let
-      [before : i64
-        (tc-source-dotted-full-path-key-cache-get
-          (intern "reset.entry")
-          (intern "stdlib.json.stringify"))]
+      [old-module-id : i64 (intern "generation.entry")]
+      [old-alias-name-id : i64 (intern "alias.value")]
+      [old-full-name-id : i64 (intern "full.path.value")]
+      [old-variant-name-id : i64 (intern "Choice.Full")]
+      [old-alias-value-id : i64 (intern "old.alias/value")]
+      [old-full-value-id : i64 (intern "old.full/value")]
+      [old-variant-value-id : i64 (intern "old.choice/Full")]
       (begin
-        (macro-alias-derived-cache-reset!)
-        (and
-          (= before (intern "stdlib.json/stringify"))
-          (=
-            (tc-source-dotted-full-path-key-cache-get
-              (intern "reset.entry")
-              (intern "stdlib.json.stringify"))
-            -2))))))
+        (tc-source-dotted-alias-key-cache-put!
+          old-module-id
+          old-alias-name-id
+          old-alias-value-id)
+        (tc-source-dotted-full-path-key-cache-put!
+          old-module-id
+          old-full-name-id
+          old-full-value-id)
+        (tc-source-qualified-variant-key-cache-put!
+          old-module-id
+          old-variant-name-id
+          old-variant-value-id)
+        (intern-reset!)
+        (compiler-typecheck-reset-intern-owned-state!)
+        (let
+          [module-id : i64 (intern "generation.entry")]
+          [alias-name-id : i64 (intern "alias.value")]
+          [full-name-id : i64 (intern "full.path.value")]
+          [variant-name-id : i64 (intern "Choice.Full")]
+          [alias-miss : i64
+            (tc-source-dotted-alias-key-cache-get module-id alias-name-id)]
+          [full-miss : i64
+            (tc-source-dotted-full-path-key-cache-get module-id full-name-id)]
+          [variant-miss : i64
+            (tc-source-qualified-variant-key-cache-get
+              module-id
+              variant-name-id)]
+          (begin
+            (compiler-typecheck-reset-file-state!)
+            (and (= alias-miss -2) (= full-miss -2) (= variant-miss -2))))))))
 
 (define (compiler-typecheck-smoke-qualified-enum-variant-precedence-source) : String
   "(module provider.enums)
@@ -2804,6 +2840,9 @@
     (unless
       (compiler-typecheck-smoke-full-path-cache-derived-reset-ok?)
       (io.panic "typecheck: full path derived cache reset smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-source-name-caches-intern-reset-ok?)
+      (io.panic "typecheck: source name cache intern reset smoke failed"))
     (unless
       (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
       (io.panic "typecheck: qualified enum variant precedence smoke failed"))

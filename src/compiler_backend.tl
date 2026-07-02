@@ -32482,6 +32482,7 @@ tl_memchr:
   [target : CompilerBackendTarget]) : ResultCompilerLower
   (begin
     (ci.intern-reset!)
+    (lower-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)
     (match (parse-ast-source-diagnostic-with-cfg
       "<source>"

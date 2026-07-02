@@ -8633,9 +8633,7 @@
   (set! tc-source-qualified-variant-key-cache-ready false))
 
 (define (tc-source-dotted-alias-key-cache-ensure!) : unit
-  (if (if tc-source-dotted-alias-key-cache-ready
-    (= tc-source-dotted-alias-key-cache-generation (intern-generation))
-    false)
+  (if tc-source-dotted-alias-key-cache-ready
     unit
     (let
       [i : i64 0]
@@ -8648,9 +8646,7 @@
         (set! tc-source-dotted-alias-key-cache-ready true)))))
 
 (define (tc-source-dotted-full-path-key-cache-ensure!) : unit
-  (if (if tc-source-dotted-full-path-key-cache-ready
-    (= tc-source-dotted-full-path-key-cache-generation (intern-generation))
-    false)
+  (if tc-source-dotted-full-path-key-cache-ready
     unit
     (let
       [i : i64 0]
@@ -8665,9 +8661,7 @@
         (set! tc-source-dotted-full-path-key-cache-ready true)))))
 
 (define (tc-source-qualified-variant-key-cache-ensure!) : unit
-  (if (if tc-source-qualified-variant-key-cache-ready
-    (= tc-source-qualified-variant-key-cache-generation (intern-generation))
-    false)
+  (if tc-source-qualified-variant-key-cache-ready
     unit
     (let
       [i : i64 0]
@@ -8961,13 +8955,13 @@
   [ctx : TcContext]
   [name : String]
   [name-id : i64]
-  [first-dot : i64]) : TcMaybeString
+  [first-dot : i64]
+  [current-module-id : i64]) : TcMaybeString
   (let
     [n : i64 (string.string-length name)]
     (if (or (<= first-dot 0) (>= first-dot (- n 1)))
       (TcMaybeString.No)
       (let
-        [current-module-id : i64 (intern (tc-context-module ctx))]
         [alias-id : i64 (intern-leading-dot-id name-id)]
         [cached : i64
           (tc-source-dotted-alias-key-cache-get current-module-id name-id)]
@@ -9054,9 +9048,9 @@
 (define (tc-source-dotted-full-path-key-from-id
   [ctx : TcContext]
   [name : String]
-  [name-id : i64]) : TcMaybeString
+  [name-id : i64]
+  [current-module-id : i64]) : TcMaybeString
   (let
-    [current-module-id : i64 (intern (tc-context-module ctx))]
     [cached : i64
       (tc-source-dotted-full-path-key-cache-get current-module-id name-id)]
     (if (= cached -2)
@@ -9103,7 +9097,11 @@
         (TcMaybeString.Some (intern-str cached))))))
 
 (define (tc-source-dotted-full-path-key [ctx : TcContext] [name : String]) : TcMaybeString
-  (tc-source-dotted-full-path-key-from-id ctx name (tc-name-id name)))
+  (tc-source-dotted-full-path-key-from-id
+    ctx
+    name
+    (tc-name-id name)
+    (intern (tc-context-module ctx))))
 
 (define (tc-unresolved-dotted-name-message [name : String]) : String
   (str_cat.str-cat
@@ -9229,13 +9227,24 @@
     [first-dot : i64 (intern-first-dot name-id)]
     (if (< first-dot 0)
       (ResultTcString.Ok name)
-      (match (tc-source-dotted-alias-key ctx name name-id first-dot)
-        [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-        [(TcMaybeString.No)
-          (match (tc-source-dotted-full-path-key-from-id ctx name name-id)
-            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-            [(TcMaybeString.No)
-              (ResultTcString.Err (tc-unresolved-dotted-name-message name))])]))))
+      (let
+        [current-module-id : i64 (intern (tc-context-module ctx))]
+        (match (tc-source-dotted-alias-key
+          ctx
+          name
+          name-id
+          first-dot
+          current-module-id)
+          [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+          [(TcMaybeString.No)
+            (match (tc-source-dotted-full-path-key-from-id
+              ctx
+              name
+              name-id
+              current-module-id)
+              [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+              [(TcMaybeString.No)
+                (ResultTcString.Err (tc-unresolved-dotted-name-message name))])])))))
 
 (define (tc-source-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (let
@@ -9280,12 +9289,12 @@
 (define (tc-enum-qualified-variant-lookup-key-from-id
   [ctx : TcContext]
   [name : String]
-  [name-id : i64]) : ResultTcString
+  [name-id : i64]
+  [module-id : i64]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
       [(TcContext _ _ registries module _)
         (let
-          [module-id : i64 (intern module)]
           [cached : i64
             (tc-source-qualified-variant-key-cache-get module-id name-id)]
           (if (= cached -2)
@@ -9347,7 +9356,11 @@
     (ResultTcString.Err "")))
 
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (tc-enum-qualified-variant-lookup-key-from-id ctx name (tc-name-id name)))
+  (tc-enum-qualified-variant-lookup-key-from-id
+    ctx
+    name
+    (tc-name-id name)
+    (intern (tc-context-module ctx))))
 
 (define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
@@ -9385,25 +9398,34 @@
               first-dot)
               [(TcMaybeString.Some key) (ResultTcString.Ok key)]
               [(TcMaybeString.No)
-                (match (tc-source-dotted-alias-key ctx name name-id first-dot)
-                  [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                  [(TcMaybeString.No)
-                    (match (tc-enum-qualified-variant-lookup-key-from-id
-                      ctx
-                      name
-                      name-id)
-                      [(ResultTcString.Ok key) (ResultTcString.Ok key)]
-                      [(ResultTcString.Err _)
-                        (match (tc-source-dotted-full-path-key-from-id
-                          ctx
-                          name
-                          name-id)
-                          [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                          [(TcMaybeString.No)
-                            (if (tc-source-name-bound-exact-id? env name-id)
-                              (ResultTcString.Ok name)
-                              (ResultTcString.Err
-                                (tc-unresolved-dotted-name-message name)))])])])])))))))
+                (let
+                  [current-module-id : i64 (intern (tc-context-module ctx))]
+                  (match (tc-source-dotted-alias-key
+                    ctx
+                    name
+                    name-id
+                    first-dot
+                    current-module-id)
+                    [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                    [(TcMaybeString.No)
+                      (match (tc-enum-qualified-variant-lookup-key-from-id
+                        ctx
+                        name
+                        name-id
+                        current-module-id)
+                        [(ResultTcString.Ok key) (ResultTcString.Ok key)]
+                        [(ResultTcString.Err _)
+                          (match (tc-source-dotted-full-path-key-from-id
+                            ctx
+                            name
+                            name-id
+                            current-module-id)
+                            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                            [(TcMaybeString.No)
+                              (if (tc-source-name-bound-exact-id? env name-id)
+                                (ResultTcString.Ok name)
+                                (ResultTcString.Err
+                                  (tc-unresolved-dotted-name-message name)))])])]))])))))))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]
@@ -56829,4 +56851,8 @@
     (set! ctfe-needs-metadata true)))
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
-  (tc-marker-name-id-arena-reset!))
+  (begin
+    (tc-marker-name-id-arena-reset!)
+    (tc-source-dotted-alias-key-cache-reset!)
+    (tc-source-dotted-full-path-key-cache-reset!)
+    (tc-source-qualified-variant-key-cache-reset!)))

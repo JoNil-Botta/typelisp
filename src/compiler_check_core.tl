@@ -66,6 +66,11 @@
 (define (compiler-check-reset-pools!) : unit
   (compiler-load-session-reset-pools!))
 
+(define (compiler-check-reset-interns!) : unit
+  (begin
+    (compiler-load-session-reset-interns!)
+    (compiler-typecheck-reset-intern-owned-state!)))
+
 (define (compiler-check-program-with-paths-cache
   [path : String]
   [decls : AstDeclList]

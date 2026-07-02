@@ -558,7 +558,7 @@
       (clone-local-helper-name type-name)
       (ast-param-cons
         (ast-param "x" (AstType.Var (intern local-type-name)) false)
-        AstParamList.Nil)
+        (ast-param-list-new))
       (AstType.Var (intern local-type-name))
       body)))
 
@@ -718,7 +718,7 @@
         (ast-param "x" (AstType.Var (intern local-type-name)) false)
         (ast-param-cons
           (ast-param "acc" (AstType.Var (intern local-type-name)) false)
-          AstParamList.Nil))
+          (ast-param-list-new)))
       (AstType.Var (intern local-type-name))
       body)))
 

@@ -55,6 +55,12 @@
     (make-array String 0)
     (LowerNameParent.None)))
 
+(define (lower-empty-global-name-cache) : LowerNameCache
+  (LowerNameCache
+    (hashmap.i64-i64-map-with-capacity 8)
+    (make-array String 0)
+    (LowerNameParent.None)))
+
 ;; #3759: LowerTypeCache.Some carries a `parent` marker. `LowerTypeParent.None`
 ;; is a complete cache (a miss = unbound). `LowerTypeParent.Global` marks a small
 ;; per-module overlay that, on a miss, falls through to the process-global
@@ -124,6 +130,17 @@
   (hashmap.i64-i64-map-with-capacity 8))
 (define lower-reach-active-body-used-types : hashmap.I64I64Map
   (hashmap.i64-i64-map-with-capacity 8))
+
+(define (lower-reach-scratch-globals-reset!) : unit
+  (begin
+    (set! lower-active-global-name-cache (lower-empty-global-name-cache))
+    (set!
+      lower-reach-active-runtime-paths
+      (hashmap.i64-i64-map-with-capacity 8))
+    (set!
+      lower-reach-active-body-used-types
+      (hashmap.i64-i64-map-with-capacity 8))
+    unit))
 
 (defenum LowerSpmdInlineHelper
   (No)
@@ -2962,6 +2979,7 @@
     (set! lower-entry-main-module "")
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
     (set! lower-spmd-inline-next-temp 0)
+    (lower-reach-scratch-globals-reset!)
     (set! lower-no-main-entry-prune-active false)))
 
 (define (lower-reset-intern-owned-state!) : unit
@@ -4276,13 +4294,15 @@
       (lower-reach-used-types-add-pattern-list-roots-at! patterns (+ index 1)))))
 
 (define (lower-reach-expr-list
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : AstExprList]) : LowerReachState
-  (lower-reach-expr-list-at all-functions names state (& exprs) 0))
+  (lower-reach-expr-list-at pools all-functions names state (& exprs) 0))
 
 (define (lower-reach-expr-list-at
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -4292,22 +4312,25 @@
     state
     (let
       [expr-id : i64 (ast-expr-list-get exprs index 0)]
-      [expr : AstExpr (ast-node-get expr-id)]
+      [expr : AstExpr (ast-node-pool-context-expr-get pools expr-id)]
       (lower-reach-expr-list-at
+        pools
         all-functions
         names
-        (lower-reach-expr all-functions names state expr)
+        (lower-reach-expr pools all-functions names state expr)
         exprs
         (+ index 1)))))
 
 (define (lower-reach-let-bindings
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstLetBindingList]) : LowerReachState
-  (lower-reach-let-bindings-at all-functions names state (& bindings) 0))
+  (lower-reach-let-bindings-at pools all-functions names state (& bindings) 0))
 
 (define (lower-reach-let-bindings-at
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -4318,22 +4341,25 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding _ _ value-box)
         (let
-          [value : AstExpr (ast-node-get value-box)]
+          [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
           (lower-reach-let-bindings-at
+            pools
             all-functions
             names
-            (lower-reach-expr all-functions names state value)
+            (lower-reach-expr pools all-functions names state value)
             bindings
             (+ index 1)))])))
 
 (define (lower-reach-match-arms
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [arms : AstMatchArmList]) : LowerReachState
-  (lower-reach-match-arms-at all-functions names state (& arms) 0))
+  (lower-reach-match-arms-at pools all-functions names state (& arms) 0))
 
 (define (lower-reach-match-arms-at
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -4344,24 +4370,33 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
           (begin
             (lower-reach-used-types-add-pattern-roots! pattern)
             (lower-reach-match-arms-at
+              pools
               all-functions
               names
-              (lower-reach-expr all-functions names state body)
+              (lower-reach-expr pools all-functions names state body)
               arms
               (+ index 1))))])))
 
 (define (lower-reach-resource-bindings
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstResourceBindingList]) : LowerReachState
-  (lower-reach-resource-bindings-at all-functions names state (& bindings) 0))
+  (lower-reach-resource-bindings-at
+    pools
+    all-functions
+    names
+    state
+    (& bindings)
+    0))
 
 (define (lower-reach-resource-bindings-at
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -4375,15 +4410,17 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding _ acquire-box cleanup-box)
         (let
-          [acquire : AstExpr (ast-node-get acquire-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [acquire : AstExpr (ast-node-pool-context-expr-get pools acquire-box)]
+          [cleanup : AstExpr (ast-node-pool-context-expr-get pools cleanup-box)]
           (lower-reach-resource-bindings-at
+            pools
             all-functions
             names
             (lower-reach-expr
+              pools
               all-functions
               names
-              (lower-reach-expr all-functions names state acquire)
+              (lower-reach-expr pools all-functions names state acquire)
               cleanup)
             bindings
             (+ index 1)))])))
@@ -5395,16 +5432,18 @@
               result)))))))
 
 (define (lower-reach-call-callee
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [callee : AstExpr]) : LowerReachState
-  (match (ast-expr-unspan callee)
+  (match (ast-expr-unspan-with-pools pools callee)
     [(AstExpr.Var name)
       (lower-reach-add-source all-functions names state (intern-str name))]
-    [_ (lower-reach-expr all-functions names state callee)]))
+    [_ (lower-reach-expr pools all-functions names state callee)]))
 
 (define (lower-reach-expr
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -5412,31 +5451,32 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name)
       (lower-reach-add-source all-functions names state (intern-str name))]
     [(AstExpr.Binary _ lhs-box rhs-box)
       (let
-        [lhs : AstExpr (ast-node-get lhs-box)]
-        [rhs : AstExpr (ast-node-get rhs-box)]
+        [lhs : AstExpr (ast-node-pool-context-expr-get pools lhs-box)]
+        [rhs : AstExpr (ast-node-pool-context-expr-get pools rhs-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state lhs)
+          (lower-reach-expr pools all-functions names state lhs)
           rhs))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Call callee-box args)
       (let
-        [callee : AstExpr (ast-node-get callee-box)]
+        [callee : AstExpr (ast-node-pool-context-expr-get pools callee-box)]
         [callee-state : LowerReachState
-          (lower-reach-call-callee all-functions names state callee)]
+          (lower-reach-call-callee pools all-functions names state callee)]
         [runtime-state : LowerReachState
-          (match (ast-expr-unspan callee)
+          (match (ast-expr-unspan-with-pools pools callee)
             [(AstExpr.Var name)
               (if (lower-reach-string-snapshot-source-call? name)
                 (lower-reach-add-string-snapshot-runtime
@@ -5445,37 +5485,48 @@
                   callee-state)
                 callee-state)]
             [_ callee-state])]
-        (lower-reach-expr-list all-functions names runtime-state args))]
+        (lower-reach-expr-list pools all-functions names runtime-state args))]
     [(AstExpr.If cond-box then-expr-box else-expr-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-expr : AstExpr (ast-node-get then-expr-box)]
-        [else-expr : AstExpr (ast-node-get else-expr-box)]
+        [cond : AstExpr (ast-node-pool-context-expr-get pools cond-box)]
+        [then-expr : AstExpr
+          (ast-node-pool-context-expr-get pools then-expr-box)]
+        [else-expr : AstExpr
+          (ast-node-pool-context-expr-get pools else-expr-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
           (lower-reach-expr
+            pools
             all-functions
             names
-            (lower-reach-expr all-functions names state cond)
+            (lower-reach-expr pools all-functions names state cond)
             then-expr)
           else-expr))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
+              pools
               all-functions
               names
-              (lower-reach-let-bindings all-functions names state bindings)
+              (lower-reach-let-bindings
+                pools
+                all-functions
+                names
+                state
+                bindings)
               body))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
+              pools
               all-functions
               names
               (lower-reach-add-string-snapshot-runtime
@@ -5484,111 +5535,120 @@
                 state)
               body))])]
     [(AstExpr.Tuple values)
-      (lower-reach-expr-list all-functions names state values)]
+      (lower-reach-expr-list pools all-functions names state values)]
     [(AstExpr.TupleRef value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.Array values)
-      (lower-reach-expr-list all-functions names state values)]
+      (lower-reach-expr-list pools all-functions names state values)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (lower-reach-expr all-functions names state len))]
+        [len : AstExpr (ast-node-pool-context-expr-get pools len-box)]
+        (lower-reach-expr pools all-functions names state len))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
+        [index : AstExpr (ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state array)
+          (lower-reach-expr pools all-functions names state array)
           index))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
+        [index : AstExpr (ast-node-pool-context-expr-get pools index-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
           (lower-reach-expr
+            pools
             all-functions
             names
-            (lower-reach-expr all-functions names state array)
+            (lower-reach-expr pools all-functions names state array)
             index)
           value))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state array)
+          (lower-reach-expr pools all-functions names state array)
           value))]
     [(AstExpr.StringRef text-box index-box)
       (let
-        [text : AstExpr (ast-node-get text-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [text : AstExpr (ast-node-pool-context-expr-get pools text-box)]
+        [index : AstExpr (ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state text)
+          (lower-reach-expr pools all-functions names state text)
           index))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (ast-node-pool-context-expr-get pools cond-box)]
+        [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state cond)
+          (lower-reach-expr pools all-functions names state cond)
           body))]
     [(AstExpr.Begin exprs)
-      (lower-reach-expr-list all-functions names state exprs)]
+      (lower-reach-expr-list pools all-functions names state exprs)]
     [(AstExpr.Unsafe exprs)
-      (lower-reach-expr-list all-functions names state exprs)]
+      (lower-reach-expr-list pools all-functions names state exprs)]
     [(AstExpr.Set _ value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Borrow _ _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
           (let
-            [value : AstExpr (ast-node-get value-box)]
+            [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
             (lower-reach-match-arms
+              pools
               all-functions
               names
-              (lower-reach-expr all-functions names state value)
+              (lower-reach-expr pools all-functions names state value)
               arms))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach _ _ source-box init-box body-box)
           (let
-            [source : AstExpr (ast-node-get source-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [source : AstExpr (ast-node-pool-context-expr-get pools source-box)]
+            [init : AstExpr (ast-node-pool-context-expr-get pools init-box)]
+            [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
+              pools
               all-functions
               names
               (lower-reach-expr
+                pools
                 all-functions
                 names
-                (lower-reach-expr all-functions names state source)
+                (lower-reach-expr pools all-functions names state source)
                 init)
               body))])]
     [(AstExpr.SpmdReduce reduce-box)
@@ -5602,20 +5662,25 @@
             map-expr-box
             reduce-expr-box)
           (let
-            [source : AstExpr (ast-node-get source-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [map-expr : AstExpr (ast-node-get map-expr-box)]
-            [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
+            [source : AstExpr (ast-node-pool-context-expr-get pools source-box)]
+            [init : AstExpr (ast-node-pool-context-expr-get pools init-box)]
+            [map-expr : AstExpr
+              (ast-node-pool-context-expr-get pools map-expr-box)]
+            [reduce-expr : AstExpr
+              (ast-node-pool-context-expr-get pools reduce-expr-box)]
             (lower-reach-expr
+              pools
               all-functions
               names
               (lower-reach-expr
+                pools
                 all-functions
                 names
                 (lower-reach-expr
+                  pools
                   all-functions
                   names
-                  (lower-reach-expr all-functions names state source)
+                  (lower-reach-expr pools all-functions names state source)
                   init)
                 map-expr)
               reduce-expr))])]
@@ -5633,68 +5698,77 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-node-pool-context-expr-get pools start-box)]
+            [end : AstExpr (ast-node-pool-context-expr-get pools end-box)]
+            [init : AstExpr (ast-node-pool-context-expr-get pools init-box)]
+            [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+            [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
             (lower-reach-expr
+              pools
               all-functions
               names
               (lower-reach-expr
+                pools
                 all-functions
                 names
                 (lower-reach-expr
+                  pools
                   all-functions
                   names
                   (lower-reach-expr
+                    pools
                     all-functions
                     names
-                    (lower-reach-expr all-functions names state start)
+                    (lower-reach-expr pools all-functions names state start)
                     end)
                   init)
                 value)
               body))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        [lane : AstExpr (ast-node-pool-context-expr-get pools lane-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state value)
+          (lower-reach-expr pools all-functions names state value)
           lane))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        [lane : AstExpr (ast-node-pool-context-expr-get pools lane-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state value)
+          (lower-reach-expr pools all-functions names state value)
           lane))]
     [(AstExpr.StructGet value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr (ast-node-pool-context-expr-get pools receiver-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state receiver)
+          (lower-reach-expr pools all-functions names state receiver)
           value))]
     [(AstExpr.WithRegion _ exprs)
-      (lower-reach-expr-list all-functions names state exprs)]
+      (lower-reach-expr-list pools all-functions names state exprs)]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (ast-node-pool-context-expr-get pools scratch-box)]
         (lower-reach-expr-list
+          pools
           all-functions
           names
           (lower-reach-expr
+            pools
             all-functions
             names
             (lower-reach-add-string-snapshot-runtime all-functions names state)
@@ -5702,132 +5776,144 @@
           exprs))]
     [(AstExpr.WithScratch exprs)
       (lower-reach-expr-list
+        pools
         all-functions
         names
         (lower-reach-add-string-snapshot-runtime all-functions names state)
         exprs)]
     [(AstExpr.InArena arena-box exprs)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (ast-node-pool-context-expr-get pools arena-box)]
         (lower-reach-expr-list
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state arena)
+          (lower-reach-expr pools all-functions names state arena)
           exprs))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (lower-reach-expr-list
+            pools
             all-functions
             names
-            (lower-reach-resource-bindings all-functions names state bindings)
+            (lower-reach-resource-bindings
+              pools
+              all-functions
+              names
+              state
+              bindings)
             body)])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state inner)
+          (lower-reach-expr pools all-functions names state inner)
           value))]
     [(AstExpr.TypeLiteral _) state]
     [(AstExpr.Init _) state]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Quote _) state]
     [(AstExpr.Quasiquote _) state]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.BracketClause items)
-      (lower-reach-expr-list all-functions names state items)]
+      (lower-reach-expr-list pools all-functions names state items)]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Break) state]
     [(AstExpr.Continue) state]
     [(AstExpr.PtrNull _) state]
     [(AstExpr.PtrNullCheck value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.PtrAddrOf _) state]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (lower-reach-expr all-functions names state ptr))]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        (lower-reach-expr pools all-functions names state ptr))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state ptr)
+          (lower-reach-expr pools all-functions names state ptr)
           value))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        [offset : AstExpr (ast-node-pool-context-expr-get pools offset-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state ptr)
+          (lower-reach-expr pools all-functions names state ptr)
           offset))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (lower-reach-expr all-functions names state ptr))]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        (lower-reach-expr pools all-functions names state ptr))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (lower-reach-expr all-functions names state ptr))]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        (lower-reach-expr pools all-functions names state ptr))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+        (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+        [len : AstExpr (ast-node-pool-context-expr-get pools len-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state ptr)
+          (lower-reach-expr pools all-functions names state ptr)
           len))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.BinaryData _) state]
     [(AstExpr.SpmdProgramIndex) state]
     [(AstExpr.SpmdProgramCount) state]
@@ -5836,48 +5922,53 @@
     [(AstExpr.ProgramEnvp) state]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-node-pool-context-expr-get pools leaf-box)]
+        [subleaf : AstExpr (ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state leaf)
+          (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-node-pool-context-expr-get pools leaf-box)]
+        [subleaf : AstExpr (ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state leaf)
+          (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-node-pool-context-expr-get pools leaf-box)]
+        [subleaf : AstExpr (ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state leaf)
+          (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-node-pool-context-expr-get pools leaf-box)]
+        [subleaf : AstExpr (ast-node-pool-context-expr-get pools subleaf-box)]
         (lower-reach-expr
+          pools
           all-functions
           names
-          (lower-reach-expr all-functions names state leaf)
+          (lower-reach-expr pools all-functions names state leaf)
           subleaf))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (lower-reach-expr all-functions names state index))]
+        [index : AstExpr (ast-node-pool-context-expr-get pools index-box)]
+        (lower-reach-expr pools all-functions names state index))]
     [(AstExpr.Syscall args)
-      (lower-reach-expr-list all-functions names state args)]))
+      (lower-reach-expr-list pools all-functions names state args)]))
 
 (define (lower-reach-global-decl
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -5885,20 +5976,21 @@
   (match decl
     [(AstDecl.Def _ _ expr-box)
       (let
-        [expr : AstExpr (ast-node-get expr-box)]
-        (lower-reach-expr all-functions names state expr))]
+        [expr : AstExpr (ast-node-pool-context-expr-get pools expr-box)]
+        (lower-reach-expr pools all-functions names state expr))]
     [(AstDecl.DefMacro _ _ _ _) state]
     [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-reach-global-decl all-functions names state inner))]
+        (lower-reach-global-decl pools all-functions names state inner))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-reach-global-decl all-functions names state inner))]
+        (lower-reach-global-decl pools all-functions names state inner))]
     [_ state]))
 
 (define (lower-reach-global-decls
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
@@ -5911,23 +6003,25 @@
         (match decl
           [(AstDecl.Def _ _ expr-box)
             (let
-              [expr : AstExpr (ast-node-get expr-box)]
+              [expr : AstExpr (ast-node-pool-context-expr-get pools expr-box)]
               (lower-reach-global-decls
+                pools
                 all-functions
                 names
-                (lower-reach-expr all-functions names state expr)
+                (lower-reach-expr pools all-functions names state expr)
                 rest))]
           [(AstDecl.DefMacro _ _ _ _)
-            (lower-reach-global-decls all-functions names state rest)]
+            (lower-reach-global-decls pools all-functions names state rest)]
           [(AstDecl.ComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (lower-reach-global-decls
+                pools
                 all-functions
                 names
-                (lower-reach-global-decl all-functions names state inner)
+                (lower-reach-global-decl pools all-functions names state inner)
                 rest))]
-          [_ (lower-reach-global-decls all-functions names state rest)]))]))
+          [_ (lower-reach-global-decls pools all-functions names state rest)]))]))
 
 (define (lower-reach-struct-field-cleanup-roots
   [all-functions : hashmap.StringI64Map]
@@ -6219,6 +6313,7 @@
     [(hashmap.StringI64MapMissing) (LowerMaybeFunctionBody.No)]))
 
 (define (lower-function-body-index-from-decls-in-module
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
@@ -6250,6 +6345,7 @@
             (let
               [next-module-str : String (intern-str next-module)]
               (lower-function-body-index-from-decls-in-module
+                pools
                 rest
                 rest-paths
                 entry-path
@@ -6268,8 +6364,9 @@
                 index))]
           [(AstDecl.DefFn name _ _ body-box _)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
               (lower-function-body-index-from-decls-in-module
+                pools
                 rest
                 rest-paths
                 entry-path
@@ -6291,6 +6388,7 @@
                   decl-path)))]
           [_
             (lower-function-body-index-from-decls-in-module
+              pools
               rest
               rest-paths
               entry-path
@@ -6303,6 +6401,7 @@
               index)]))]))
 
 (define (lower-function-body-index-from-decls
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
@@ -6311,6 +6410,7 @@
   (let
     [name-cache : LowerNameCache (lower-name-cache-from-env names)]
     (lower-function-body-index-from-decls-in-module
+      pools
       decls
       paths
       entry-path
@@ -6323,6 +6423,7 @@
       (lower-function-body-index-empty count))))
 
 (define (lower-reach-process
+  [pools : AstNodePoolContext]
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
   [body-index : LowerFunctionBodyIndex]
@@ -6345,12 +6446,23 @@
                       (intern body-path)
                       1))
                   (lower-reach-process
+                    pools
                     all-functions
                     names
                     body-index
-                    (lower-reach-expr all-functions body-names popped body)))]
+                    (lower-reach-expr
+                      pools
+                      all-functions
+                      body-names
+                      popped
+                      body)))]
               [(LowerMaybeFunctionBody.No)
-                (lower-reach-process all-functions names body-index popped)]))])]))
+                (lower-reach-process
+                  pools
+                  all-functions
+                  names
+                  body-index
+                  popped)]))])]))
 
 (define (lower-dispatch-variant-logical-name
   [module : String]
@@ -6784,7 +6896,11 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [expr-id : i64]) : hashmap.I64I64Map
-  (lower-used-types-add-expr pools used module (ast-node-get expr-id)))
+  (lower-used-types-add-expr
+    pools
+    used
+    module
+    (ast-node-pool-context-expr-get pools expr-id)))
 
 (define (lower-used-types-add-expr-list
   [pools : AstNodePoolContext]
@@ -8096,6 +8212,7 @@
               (lower-function-set-from-decls decls paths entry-path)]
             [body-index : LowerFunctionBodyIndex
               (lower-function-body-index-from-decls
+                pools
                 decls
                 paths
                 entry-path
@@ -8156,12 +8273,14 @@
                         clone-state)]
                     [global-state : LowerReachState
                       (lower-reach-global-decls
+                        pools
                         all-functions
                         name-cache
                         dispatch-state
                         decls)]
                     [reached-state : LowerReachState
                       (lower-reach-process
+                        pools
                         all-functions
                         name-cache
                         body-index
@@ -8241,6 +8360,7 @@
                       (arena.tl_arena_set prev-arena))
                     (LowerPrunedProgram.Program program paths))))]
             (begin
+              (lower-reach-scratch-globals-reset!)
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))

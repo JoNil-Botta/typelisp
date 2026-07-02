@@ -1078,6 +1078,83 @@
   "(defstruct CloneRootA (text String))
 (define (use-clone [x : CloneRootA]) : CloneRootA (clone x))")
 
+(define (compiler-driver-state-smoke-lower-reachability-source-a) : String
+  "(define (helper) : i64 41)
+(define (main) : i64 (helper))
+(define (dead-a) : i64 0)")
+
+(define (compiler-driver-state-smoke-lower-reachability-source-b) : String
+  "(define (helper) : i64 100)
+(define (main) : i64 (dead-a))
+(define (dead-a) : i64 200)")
+
+(define (compiler-driver-state-smoke-lower-reachability-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [paths : AstDeclPathList (ast-decl-path-list-new)]
+        (match (parse-ast-source-diagnostic-with-cfg-and-pools
+          "reach-state-a.tl"
+          (compiler-driver-state-smoke-lower-reachability-source-a)
+          (compiler-cfg-empty)
+          pools-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              "reach-state-b.tl"
+              (compiler-driver-state-smoke-lower-reachability-source-b)
+              (compiler-cfg-empty)
+              pools-b)
+              [(ResultAstProgramDiagnostic.Ok _)
+                (let
+                  [names : LowerNameEnv
+                    (match program-a
+                      [(AstProgram.Program decls-box)
+                        (lower-name-env-from-decls
+                          (box-get decls-box)
+                          paths
+                          "reach-state-a.tl"
+                          LowerNameEnv.Nil)])]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [pruned : LowerPrunedProgram
+                    (lower-prune-unreachable-functions
+                      pools-a
+                      "reach-state-a.tl"
+                      program-a
+                      paths
+                      names)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  [ok : bool
+                    (and
+                      (= active-before (ast-node-pool-context-expr-len pools-b))
+                      (= active-after active-before)
+                      (match pruned
+                        [(LowerPrunedProgram.Program kept-program _)
+                          (match kept-program
+                            [(AstProgram.Program kept-box)
+                              (let
+                                [kept : AstDeclList (box-get kept-box)]
+                                (and
+                                  (lower-test-decl-list-defines? kept "main")
+                                  (lower-test-decl-list-defines? kept "helper")
+                                  (not
+                                    (lower-test-decl-list-defines?
+                                      kept
+                                      "dead-a"))))])]))]
+                  (begin
+                    (compiler-driver-state-reset-file-state! state-b)
+                    ok))]
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lower-clone-roots-use-context?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1329,6 +1406,9 @@
     (unless
       (compiler-driver-state-smoke-lower-clone-roots-use-context?)
       (return 20))
+    (unless
+      (compiler-driver-state-smoke-lower-reachability-uses-context?)
+      (return 21))
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))

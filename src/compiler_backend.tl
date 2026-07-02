@@ -18258,7 +18258,11 @@
 ;; (self-moves / memory sources) falls through to the byte-identical naive path.
 (defenum CompilerBackendArgMoveSource
   (BackendArgMoveValue CompilerIrValue)
-  (BackendArgMoveReg String))
+  (BackendArgMoveReg String)
+  ;; The register-free (stack) cycle break: the move's source value was pushed
+  ;; onto the stack and is popped into `dest` here. Behaves like a memory source
+  ;; (source-reg "" -- never blocks another move); emit-arg-move renders `popq`.
+  (BackendArgMoveStackPop))
 
 (defenum CompilerBackendArgMove
   (BackendArgMove String CompilerBackendArgMoveSource))
@@ -18276,6 +18280,7 @@
   [source : CompilerBackendArgMoveSource]) : String
   (match source
     [(BackendArgMoveReg r) r]
+    [(BackendArgMoveStackPop) ""]
     [(BackendArgMoveValue value)
       (match value
         [(IrValueVar id)
@@ -18404,6 +18409,31 @@
                 oldreg
                 newreg)))])]))
 
+;; Redirect variant for the register-free (stack) cycle break: every move whose
+;; source register is `oldreg` (exactly one in a permutation cycle) reads the
+;; pushed stack temp -- a `popq dest` -- instead. Mirrors arg-move-list-redirect
+;; but targets the stack slot rather than a scavenged register.
+(define (compiler-backend-arg-move-list-redirect-to-stack
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]
+  [oldreg : String]) : CompilerBackendArgMoveList
+  (match moves
+    [(BackendArgMoveNil) BackendArgMoveNil]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest source)
+          (BackendArgMoveCons
+            (if (string.string-eq
+                  (compiler-backend-arg-move-source-reg assignments source)
+                  oldreg)
+              (BackendArgMove dest (BackendArgMoveStackPop))
+              move)
+            (box
+              (compiler-backend-arg-move-list-redirect-to-stack
+                assignments
+                (box-get rest)
+                oldreg)))])]))
+
 (define (compiler-backend-emit-arg-move
   [assignments : CompilerRegAssignmentList]
   [move : CompilerBackendArgMove]) : ResultCompilerBackend
@@ -18414,6 +18444,8 @@
           (if (string.string-eq r dest)
             (OkCompilerBackend "")
             (OkCompilerBackend (str_cat.str-cat "    movq " r ", " dest "\n")))]
+        [(BackendArgMoveStackPop)
+          (OkCompilerBackend (str_cat.str-cat "    popq " dest "\n"))]
         [(BackendArgMoveValue value)
           (compiler-backend-emit-load-value-with-plan assignments value dest)])]))
 
@@ -18444,7 +18476,11 @@
 ;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
 ;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
 ;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). "" if none,
-;; in which case the caller falls back to %r11 (no worse than the prior code).
+;; in which case the caller breaks the cycle through the stack (pushq/popq) -- a
+;; sound register-free swap, NOT the old raw %r11 fallback (SCAV1). In practice
+;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
+;; participate in a gp-parallel arg cycle nor hold a call-survivor), so "" is a
+;; saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
 (define (compiler-backend-arg-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]) : String
@@ -18506,24 +18542,50 @@
                         [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
                     [(ErrCompilerBackend m) (ErrCompilerBackend m)])
                   (let
-                    [temp : String
-                      (let
-                        [picked : String
-                          (compiler-backend-arg-temp-pick-reg assignments moves)]
-                        (if (string.string-eq picked "") "%r11" picked))]
-                    (match (compiler-backend-emit-arg-move-list
-                              assignments
-                              (compiler-backend-arg-move-list-redirect
+                    [picked : String
+                      ;; --cfg arg-cycle-stack forces the register-free break so a
+                      ;; forcing fixture can exercise the (otherwise cold) saturation
+                      ;; path -- see the SCAV1 note. Off, self-host is byte-identical.
+                      (cfg arg-cycle-stack
+                        ""
+                        (compiler-backend-arg-temp-pick-reg assignments moves))]
+                    (if (string.string-eq picked "")
+                      ;; No free scratch register at saturation: break the cycle
+                      ;; through the STACK -- `pushq srcreg` saves its value before
+                      ;; any move overwrites it, and its single consumer (each cycle
+                      ;; register is read exactly once) pops it back with `popq`. The
+                      ;; push/pop are balanced across the rotation (and across nested
+                      ;; breaks) and the FPO rsp-rebase compensates any frame ref in
+                      ;; the window -- the same register-free swap the phi
+                      ;; parallel-move uses when phi-temp-pick-reg finds none. This
+                      ;; replaces the old raw `movq srcreg, %r11` fallback, which was
+                      ;; neither occupancy-checked nor save/restore-wrapped and could
+                      ;; clobber a value homed in %r11 (SCAV1).
+                      (match (compiler-backend-emit-arg-move-list
                                 assignments
-                                moves
-                                srcreg
-                                temp))
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
-                          (string.string-append
-                            (str_cat.str-cat "    movq " srcreg ", " temp "\n")
-                            tail))]
-                      [(ErrCompilerBackend m) (ErrCompilerBackend m)]))))])])]))
+                                (compiler-backend-arg-move-list-redirect-to-stack
+                                  assignments
+                                  moves
+                                  srcreg))
+                        [(OkCompilerBackend tail)
+                          (OkCompilerBackend
+                            (string.string-append
+                              (str_cat.str-cat "    pushq " srcreg "\n")
+                              tail))]
+                        [(ErrCompilerBackend m) (ErrCompilerBackend m)])
+                      (match (compiler-backend-emit-arg-move-list
+                                assignments
+                                (compiler-backend-arg-move-list-redirect
+                                  assignments
+                                  moves
+                                  srcreg
+                                  picked))
+                        [(OkCompilerBackend tail)
+                          (OkCompilerBackend
+                            (string.string-append
+                              (str_cat.str-cat "    movq " srcreg ", " picked "\n")
+                              tail))]
+                        [(ErrCompilerBackend m) (ErrCompilerBackend m)])))))])])]))
 
 (define (compiler-backend-arg-moves-build-from
   [target : CompilerBackendTarget]

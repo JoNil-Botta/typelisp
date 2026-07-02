@@ -42232,6 +42232,32 @@ tl_memchr:
     (compiler-backend-string-contains? operand "(%rbp)")
     (compiler-backend-string-contains? operand "(%rsp)")))
 
+;; SCAV2: true iff `operand` is a RIP-relative global reference `SYM(%rip)` -- a
+;; load of a module-level global's contents. Its address is a fixed symbol, so
+;; the operand string uniquely identifies the memory location (equal strings =>
+;; equal addresses, distinct strings => distinct addresses), exactly like a stack
+;; slot. Indexed rip forms do not exist on x86-64, so a trailing "(%rip)" is
+;; unambiguous. Distinct from stack slots (which spell "(%rbp)"/"(%rsp)").
+(define (compiler-backend-peephole-global-rip-operand? [operand : String]) : bool
+  (let
+    [len : i64 (string.string-length operand)]
+    (and
+      (>= len 6)
+      (string.string-eq (string.substring operand (- len 6) 6) "(%rip)"))))
+
+;; SCAV2: memory operands the owner map may track by string identity -- rbp/rsp
+;; stack slots AND SYM(%rip) globals. Both are stable addresses whose contents
+;; change only via a store to that exact operand: a store to a slot clears just
+;; that slot's mirrors (movq-owners-transfer stack-slot arm); a store to a global
+;; or through any pointer, and every call, clears the whole map (the else arm /
+;; line-clobber-owners). Since a stack store cannot alias a global and vice
+;; versa, keeping a global mirror across a stack store (and a slot mirror across
+;; a global store's whole-map clear is moot) is sound.
+(define (compiler-backend-peephole-trackable-mem-operand? [operand : String]) : bool
+  (or
+    (compiler-backend-peephole-stack-slot-operand? operand)
+    (compiler-backend-peephole-global-rip-operand? operand)))
+
 ;; Local frame slots: every rsp-form slot (the rebased local frame; incoming
 ;; stack args stay on rbp in stage 1), plus the pre-rebase rbp spelling at
 ;; NEGATIVE offsets (needs-rbp functions), mirroring the historical exclusion
@@ -42732,10 +42758,12 @@ tl_memchr:
           (compiler-backend-peephole-owners-set-reg cleared src dst)
           cleared))]
     [(compiler-backend-peephole-owner-reg? dst)
+      ;; DST is a load/reg-reg dest: it mirrors a clean stack slot OR a SYM(%rip)
+      ;; global load (SCAV2); otherwise its contents become unknown.
       (compiler-backend-peephole-owners-set-reg
         owners
         dst
-        (if (compiler-backend-peephole-stack-slot-operand? src) src ""))]
+        (if (compiler-backend-peephole-trackable-mem-operand? src) src ""))]
     [else (compiler-backend-peephole-owners-empty)]))
 
 ;; Length of the leading non-space token (the mnemonic) starting at `i`.
@@ -42789,6 +42817,81 @@ tl_memchr:
             (= tlen 5)
             (compiler-backend-peephole-size-suffix-byte?
               (compiler-backend-peephole-byte-at data (+ i 4)))))))))
+
+;; SCAV2: true iff line [start,end) is `call <F>` where F is a runtime NORETURN
+;; abort helper (tl_oob_abort / tl_shift_abort / tl_div_abort / tl_region_abort /
+;; tl_oom_abort). A noreturn call never returns, so the textual fall-through into
+;; the next line is DEAD: the owner map is carried unchanged across it, so the
+;; guard-ok continuation label immediately after it (reached ONLY via the guard's
+;; own conditional jump, across which the register map is identical) sees the
+;; live map from the guard test -- see line-clobber-owners' label arm.
+(define (compiler-backend-peephole-line-noreturn-abort?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      (let
+        [e : i64 end]
+        (begin
+          (while (and (> e i) (= (compiler-backend-peephole-byte-at data (- e 1)) 32))
+            (set! e (- e 1)))
+          (or
+            (compiler-backend-peephole-range-eq? data i e "call tl_oob_abort")
+            (compiler-backend-peephole-range-eq? data i e "call tl_shift_abort")
+            (compiler-backend-peephole-range-eq? data i e "call tl_div_abort")
+            (compiler-backend-peephole-range-eq? data i e "call tl_region_abort")
+            (compiler-backend-peephole-range-eq? data i e "call tl_oom_abort")))))))
+
+;; True iff the byte range [start,end) of `data` contains `needle` as a substring.
+(define (compiler-backend-peephole-range-contains-substr?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [needle : String]) : bool
+  (let
+    [nlen : i64 (string.string-length needle)]
+    [nd : (Ptr u8) (unsafe (string-data needle))]
+    [i : i64 start]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= (+ i nlen) end))
+        (let
+          [k : i64 0]
+          [ok : bool true]
+          (begin
+            (while (and ok (< k nlen))
+              (begin
+                (if (=
+                  (compiler-backend-peephole-byte-at data (+ i k))
+                  (compiler-backend-peephole-byte-at nd k))
+                  unit
+                  (set! ok false))
+                (set! k (+ k 1))))
+            (if ok (set! found true) (set! i (+ i 1))))))
+      found)))
+
+;; SCAV2: true iff label line [start,end) is a guard-check CONTINUATION label --
+;; its name contains "_ok" (`..._bounds_ok.N`, `..._str_bounds_ok.N`,
+;; `..._make_array_len_ok.N`, ...) and does NOT contain "_fail". Such labels are
+;; backend-emitted per guard and targeted ONLY by that guard's own conditional
+;; jump (single live predecessor), so when the map was carried across a preceding
+;; noreturn abort it is valid here. Excluding any "_fail" is essential: inlined
+;; compound labels like `..._make_array_len_ok.2.8.array_push_fail.4:` are FAIL
+;; handlers (last component wins) that happen to carry an "_ok" inline-context
+;; prefix; carrying across them would be unsound. Numeric `1:` labels lack "_ok".
+;; Only consulted when prev-abort? holds.
+(define (compiler-backend-peephole-label-guard-ok?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (and
+    (compiler-backend-peephole-range-contains-substr? data start end "_ok")
+    (not
+      (compiler-backend-peephole-range-contains-substr? data start end "_fail"))))
 
 ;; Owner-map transfer for a non-movq line (everything `line-movq` does not parse
 ;; as a clean two-operand movq). Returns true when the line must conservatively
@@ -43091,10 +43194,13 @@ tl_memchr:
             (intern-hash-slice src i klen)))))))
 
 ;; Per-destination owner invalidation for a non-movq line.
+;;  * A NORETURN abort call (SCAV2): keep the map unchanged -- the fall-through is
+;;    dead, so nothing observes it until the guard-ok label below.
 ;;  * A LABEL: reset the whole map UNLESS the label is carry-safe (a provably
-;;    single-pred fall-through block), in which case carry the map across it.
-;;    This is the cross-block reload-elision win; soundness rests entirely on the
-;;    carry-safe set (compiler-backend-peephole-collect-carry-safe!).
+;;    single-pred fall-through block), OR (SCAV2) it is a guard-ok continuation
+;;    label reached immediately after a noreturn abort (`prev-abort?`): its only
+;;    live predecessor is the guard's conditional jump, across which the register
+;;    map is identical to the map carried through the abort, so the map is valid.
 ;;  * A whitelisted single-GP-dest q-op whose last operand is a tracked register:
 ;;    clear only that register's owner (everything else's reg<->slot mirror
 ;;    survives).
@@ -43104,10 +43210,17 @@ tl_memchr:
   [src : String]
   [data : (Ptr u8)]
   [start : i64]
-  [end : i64]) : CompilerBackendPeepholeOwners
+  [end : i64]
+  [prev-abort? : bool]) : CompilerBackendPeepholeOwners
   (cond
+    [(compiler-backend-peephole-line-noreturn-abort? data start end)
+      owners]
     [(compiler-backend-peephole-line-is-label? data start end)
-      (if (compiler-backend-peephole-label-carry-safe? src data start end)
+      (if (or
+        (compiler-backend-peephole-label-carry-safe? src data start end)
+        (and
+          prev-abort?
+          (compiler-backend-peephole-label-guard-ok? data start end)))
         owners
         (compiler-backend-peephole-owners-empty))]
     [(not (compiler-backend-peephole-line-clears-owners? data start end))
@@ -43139,7 +43252,8 @@ tl_memchr:
   [pending-line : String]
   [pending-owned? : bool]
   [pending-newline : bool]
-  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeEmitResult
+  [owners : CompilerBackendPeepholeOwners]
+  [prev-abort? : bool]) : CompilerBackendPeepholeEmitResult
   (match (compiler-backend-peephole-line-movq
     asm
     asm-data
@@ -43149,8 +43263,11 @@ tl_memchr:
     pending-owned?)
     [(CompilerBackendPeepholeMove src dst)
       (let
-        [is-slot : bool (compiler-backend-peephole-stack-slot-operand? src)]
-        ;; same-register elision: dst already mirrors this slot -> drop the reload.
+        ;; SCAV2: `src` is a trackable memory operand -- a stack slot OR a
+        ;; SYM(%rip) global load -- so the same reload-elision machinery CSEs
+        ;; repeated global-handle loads (drop, or reg-reg reuse).
+        [is-slot : bool (compiler-backend-peephole-trackable-mem-operand? src)]
+        ;; same-register elision: dst already mirrors this slot/global -> drop.
         [dst-owns : bool
           (and
             is-slot
@@ -43197,13 +43314,15 @@ tl_memchr:
               pending-line
               (unsafe (string-data pending-line))
               0
-              (string.string-length pending-line))
+              (string.string-length pending-line)
+              prev-abort?)
             (compiler-backend-peephole-line-clobber-owners
               owners
               asm
               asm-data
               pending-start
-              pending-end))]
+              pending-end
+              prev-abort?))]
         (CompilerBackendPeepholeEmitResult
           (compiler-backend-peephole-append-pending-line
             out
@@ -43214,6 +43333,23 @@ tl_memchr:
             pending-owned?
             pending-newline)
           next-owners))]))
+
+;; SCAV2: true iff the pending line (owned String or asm byte range) is a
+;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
+;; immediately after it carries the owner map (line-clobber-owners label arm).
+(define (compiler-backend-peephole-pending-noreturn-abort?
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [line : String]
+  [owned? : bool]) : bool
+  (if owned?
+    (compiler-backend-peephole-line-noreturn-abort?
+      (unsafe (string-data line))
+      0
+      (string.string-length line))
+    (compiler-backend-peephole-line-noreturn-abort? asm-data start end)))
 
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let
@@ -43229,6 +43365,8 @@ tl_memchr:
     [pending-line : String ""]
     [pending-owned? : bool false]
     [pending-newline : bool false]
+    ;; SCAV2: was the last EMITTED line a noreturn abort call?
+    [prev-abort? : bool false]
     [owners : CompilerBackendPeepholeOwners
       (compiler-backend-peephole-owners-empty)]
     (begin
@@ -43286,10 +43424,14 @@ tl_memchr:
                               pending-line
                               pending-owned?
                               pending-newline
-                              owners)]
+                              owners
+                              prev-abort?)]
                           (begin
                             (set! out (struct-get emit buf))
                             (set! owners (struct-get emit owners))))
+                        (set! prev-abort?
+                          (compiler-backend-peephole-pending-noreturn-abort?
+                            asm asm-data pending-start pending-end pending-line pending-owned?))
                         (set! pending-start 0)
                         (set! pending-end 0)
                         (set! pending-line forwarded-line)
@@ -43326,10 +43468,14 @@ tl_memchr:
                             pending-line
                             pending-owned?
                             pending-newline
-                            owners)]
+                            owners
+                            prev-abort?)]
                         (begin
                           (set! out (struct-get emit buf))
                           (set! owners (struct-get emit owners))))
+                      (set! prev-abort?
+                        (compiler-backend-peephole-pending-noreturn-abort?
+                          asm asm-data pending-start pending-end pending-line pending-owned?))
                       (set! pending-start i)
                       (set! pending-end end)
                       (set! pending-line "")
@@ -43364,7 +43510,8 @@ tl_memchr:
               pending-line
               pending-owned?
               pending-newline
-              owners)]
+              owners
+              prev-abort?)]
           (begin
             (set! out (struct-get emit buf))
             (set! owners (struct-get emit owners))))

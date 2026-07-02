@@ -1995,7 +1995,7 @@
 (comptime-decl
   (:generated vector-family ast-field-def-list-empty? "AstFieldDef")
   (define (ast-field-def-list-empty? [v : (& v AstFieldDefList)]) : bool
-    (= (ast-field-def-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-field-def-list-get "AstFieldDef")
@@ -2003,7 +2003,7 @@
     [v : (& v AstFieldDefList)]
     [index : i64]
     [fallback : AstFieldDef]) : AstFieldDef
-    (if (and (>= index 0) (< index (ast-field-def-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2058,7 +2058,7 @@
   [out : (&mut out AstFieldDefList)]
   [items : (& items AstFieldDefList)]
   [index : i64]) : unit
-  (if (>= index (ast-field-def-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-field-def-list-push
@@ -2069,7 +2069,7 @@
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
   (let
     [out : AstFieldDefList
-      (ast-field-def-list-with-capacity (+ 1 (ast-field-def-list-len (& rest))))]
+      (ast-field-def-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-field-def-list-push (&mut out) head)
       (ast-field-def-list-append-from (&mut out) (& rest) 0)
@@ -2136,7 +2136,7 @@
     [v : (& v AstVariantPayloadCleanupList)]
     [index : i64]
     [fallback : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
-    (if (and (>= index 0) (< index (ast-variant-payload-cleanup-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2193,7 +2193,7 @@
   [out : (&mut out AstVariantPayloadCleanupList)]
   [items : (& items AstVariantPayloadCleanupList)]
   [index : i64]) : unit
-  (if (>= index (ast-variant-payload-cleanup-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-variant-payload-cleanup-list-push
@@ -2242,7 +2242,7 @@
 (comptime-decl
   (:generated vector-family ast-variant-def-list-empty? "AstVariantDef")
   (define (ast-variant-def-list-empty? [v : (& v AstVariantDefList)]) : bool
-    (= (ast-variant-def-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-variant-def-list-get "AstVariantDef")
@@ -2250,7 +2250,7 @@
     [v : (& v AstVariantDefList)]
     [index : i64]
     [fallback : AstVariantDef]) : AstVariantDef
-    (if (and (>= index 0) (< index (ast-variant-def-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2305,7 +2305,7 @@
   [out : (&mut out AstVariantDefList)]
   [items : (& items AstVariantDefList)]
   [index : i64]) : unit
-  (if (>= index (ast-variant-def-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-variant-def-list-push
@@ -2316,8 +2316,7 @@
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
   (let
     [out : AstVariantDefList
-      (ast-variant-def-list-with-capacity
-        (+ 1 (ast-variant-def-list-len (& rest))))]
+      (ast-variant-def-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-variant-def-list-push (&mut out) head)
       (ast-variant-def-list-append-from (&mut out) (& rest) 0)
@@ -2329,7 +2328,7 @@
   (let
     [out : AstVariantPayloadCleanupList
       (ast-variant-payload-cleanup-list-with-capacity
-        (+ 1 (ast-variant-payload-cleanup-list-len (& rest))))]
+        (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-variant-payload-cleanup-list-push (&mut out) head)
       (ast-variant-payload-cleanup-list-append-from (&mut out) (& rest) 0)
@@ -2366,7 +2365,7 @@
 (comptime-decl
   (:generated vector-family ast-pattern-list-empty? "AstPattern")
   (define (ast-pattern-list-empty? [v : (& v AstPatternList)]) : bool
-    (= (ast-pattern-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-pattern-list-get "AstPattern")
@@ -2374,7 +2373,7 @@
     [v : (& v AstPatternList)]
     [index : i64]
     [fallback : AstPattern]) : AstPattern
-    (if (and (>= index 0) (< index (ast-pattern-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2425,7 +2424,7 @@
   [out : (&mut out AstPatternList)]
   [items : (& items AstPatternList)]
   [index : i64]) : unit
-  (if (>= index (ast-pattern-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-pattern-list-push
@@ -2436,7 +2435,7 @@
 (define (ast-pattern-list-tail [items : AstPatternList]) : AstPatternList
   (let
     [out : AstPatternList
-      (ast-pattern-list-with-capacity (- (ast-pattern-list-len (& items)) 1))]
+      (ast-pattern-list-with-capacity (- (struct-get (& items) len) 1))]
     (begin
       (ast-pattern-list-append-from (&mut out) (& items) 1)
       out)))
@@ -2444,7 +2443,7 @@
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (let
     [out : AstPatternList
-      (ast-pattern-list-with-capacity (+ 1 (ast-pattern-list-len (& rest))))]
+      (ast-pattern-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-pattern-list-push (&mut out) head)
       (ast-pattern-list-append-from (&mut out) (& rest) 0)
@@ -2525,7 +2524,7 @@
 (comptime-decl
   (:generated vector-family ast-match-arm-list-empty? "AstMatchArm")
   (define (ast-match-arm-list-empty? [v : (& v AstMatchArmList)]) : bool
-    (= (ast-match-arm-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-match-arm-list-get "AstMatchArm")
@@ -2533,7 +2532,7 @@
     [v : (& v AstMatchArmList)]
     [index : i64]
     [fallback : AstMatchArm]) : AstMatchArm
-    (if (and (>= index 0) (< index (ast-match-arm-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2588,7 +2587,7 @@
   [out : (&mut out AstMatchArmList)]
   [items : (& items AstMatchArmList)]
   [index : i64]) : unit
-  (if (>= index (ast-match-arm-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-match-arm-list-push
@@ -2599,8 +2598,7 @@
 (define (ast-match-arm-list-tail [items : AstMatchArmList]) : AstMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity
-        (- (ast-match-arm-list-len (& items)) 1))]
+      (ast-match-arm-list-with-capacity (- (struct-get (& items) len) 1))]
     (begin
       (ast-match-arm-list-append-from (&mut out) (& items) 1)
       out)))
@@ -2608,7 +2606,7 @@
 (define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (+ 1 (ast-match-arm-list-len (& rest))))]
+      (ast-match-arm-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-match-arm-list-push (&mut out) head)
       (ast-match-arm-list-append-from (&mut out) (& rest) 0)
@@ -2642,7 +2640,7 @@
 (comptime-decl
   (:generated vector-family ast-expr-list-empty? "i64")
   (define (ast-expr-list-empty? [v : (& v AstExprList)]) : bool
-    (= (ast-expr-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-expr-list-get "i64")
@@ -2650,7 +2648,7 @@
     [v : (& v AstExprList)]
     [index : i64]
     [fallback : i64]) : i64
-    (if (and (>= index 0) (< index (ast-expr-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2699,7 +2697,7 @@
   [out : (&mut out AstExprList)]
   [items : (& items AstExprList)]
   [index : i64]) : unit
-  (if (>= index (ast-expr-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-expr-list-push out (ast-expr-list-get items index 0))
@@ -2708,7 +2706,7 @@
 (define (ast-expr-list-tail [items : AstExprList]) : AstExprList
   (let
     [out : AstExprList
-      (ast-expr-list-with-capacity (- (ast-expr-list-len (& items)) 1))]
+      (ast-expr-list-with-capacity (- (struct-get (& items) len) 1))]
     (begin
       (ast-expr-list-append-from (&mut out) (& items) 1)
       out)))
@@ -2718,7 +2716,7 @@
   [index : i64]) : AstExprList
   (let
     [out : AstExprList
-      (ast-expr-list-with-capacity (- (ast-expr-list-len items) index))]
+      (ast-expr-list-with-capacity (- (struct-get items len) index))]
     (begin
       (ast-expr-list-append-from (&mut out) items index)
       out)))
@@ -2726,7 +2724,7 @@
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
   (let
     [out : AstExprList
-      (ast-expr-list-with-capacity (+ 1 (ast-expr-list-len (& rest))))]
+      (ast-expr-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-expr-list-push (&mut out) head)
       (ast-expr-list-append-from (&mut out) (& rest) 0)
@@ -2766,7 +2764,7 @@
 (comptime-decl
   (:generated vector-family ast-expr-clause-list-empty? "AstExprClause")
   (define (ast-expr-clause-list-empty? [v : (& v AstExprClauseList)]) : bool
-    (= (ast-expr-clause-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-expr-clause-list-get "AstExprClause")
@@ -2774,7 +2772,7 @@
     [v : (& v AstExprClauseList)]
     [index : i64]
     [fallback : AstExprClause]) : AstExprClause
-    (if (and (>= index 0) (< index (ast-expr-clause-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2829,7 +2827,7 @@
   [out : (&mut out AstExprClauseList)]
   [items : (& items AstExprClauseList)]
   [index : i64]) : unit
-  (if (>= index (ast-expr-clause-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-expr-clause-list-push
@@ -2840,8 +2838,7 @@
 (define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
   (let
     [out : AstExprClauseList
-      (ast-expr-clause-list-with-capacity
-        (- (ast-expr-clause-list-len (& items)) 1))]
+      (ast-expr-clause-list-with-capacity (- (struct-get (& items) len) 1))]
     (begin
       (ast-expr-clause-list-append-from (&mut out) (& items) 1)
       out)))
@@ -2849,8 +2846,7 @@
 (define (ast-expr-clause-cons [head : AstExprClause] [rest : AstExprClauseList]) : AstExprClauseList
   (let
     [out : AstExprClauseList
-      (ast-expr-clause-list-with-capacity
-        (+ 1 (ast-expr-clause-list-len (& rest))))]
+      (ast-expr-clause-list-with-capacity (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-expr-clause-list-push (&mut out) head)
       (ast-expr-clause-list-append-from (&mut out) (& rest) 0)
@@ -2906,7 +2902,7 @@
   (:generated vector-family ast-expr-binding-clause-list-empty? "AstExprBindingClause")
   (define (ast-expr-binding-clause-list-empty?
     [v : (& v AstExprBindingClauseList)]) : bool
-    (= (ast-expr-binding-clause-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-expr-binding-clause-list-get "AstExprBindingClause")
@@ -2914,7 +2910,7 @@
     [v : (& v AstExprBindingClauseList)]
     [index : i64]
     [fallback : AstExprBindingClause]) : AstExprBindingClause
-    (if (and (>= index 0) (< index (ast-expr-binding-clause-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -2971,7 +2967,7 @@
   [out : (&mut out AstExprBindingClauseList)]
   [items : (& items AstExprBindingClauseList)]
   [index : i64]) : unit
-  (if (>= index (ast-expr-binding-clause-list-len items))
+  (if (>= index (struct-get items len))
     unit
     (begin
       (ast-expr-binding-clause-list-push
@@ -2986,7 +2982,7 @@
   (let
     [out : AstExprBindingClauseList
       (ast-expr-binding-clause-list-with-capacity
-        (- (ast-expr-binding-clause-list-len (& items)) 1))]
+        (- (struct-get (& items) len) 1))]
     (begin
       (ast-expr-binding-clause-list-append-from (&mut out) (& items) 1)
       out)))
@@ -2997,7 +2993,7 @@
   (let
     [out : AstExprBindingClauseList
       (ast-expr-binding-clause-list-with-capacity
-        (+ 1 (ast-expr-binding-clause-list-len (& rest))))]
+        (+ 1 (struct-get (& rest) len)))]
     (begin
       (ast-expr-binding-clause-list-push (&mut out) head)
       (ast-expr-binding-clause-list-append-from (&mut out) (& rest) 0)
@@ -3803,7 +3799,7 @@
 (comptime-decl
   (:generated vector-family ast-dispatch-variant-list-empty? "AstDispatchVariant")
   (define (ast-dispatch-variant-list-empty? [v : (& v AstDispatchVariantList)]) : bool
-    (= (ast-dispatch-variant-list-len v) 0)))
+    (= (struct-get v len) 0)))
 
 (comptime-decl
   (:generated vector-family ast-dispatch-variant-list-get "AstDispatchVariant")
@@ -3811,7 +3807,7 @@
     [v : (& v AstDispatchVariantList)]
     [index : i64]
     [fallback : AstDispatchVariant]) : AstDispatchVariant
-    (if (and (>= index 0) (< index (ast-dispatch-variant-list-len v)))
+    (if (and (>= index 0) (< index (struct-get v len)))
       (array-ref (struct-get v slots) index)
       fallback)))
 
@@ -5512,13 +5508,13 @@
         [args : AstPatternList (box-get args-box)]
         (and
           (= name (ci.intern "Some"))
-          (= (ast-pattern-list-len (& args)) 1)
+          (= (struct-get (& args) len) 1)
           (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
             [(AstPattern.Tuple items-box)
               (let
                 [items : AstPatternList (box-get items-box)]
                 (and
-                  (= (ast-pattern-list-len (& items)) 2)
+                  (= (struct-get (& items) len) 2)
                   (match (ast-pattern-list-get
                     (& items)
                     0

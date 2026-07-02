@@ -371,7 +371,7 @@
   [templates : SpecTemplateEnv]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecTemplateEnv
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     templates
     (spec-template-env-shadow-pattern-list-at
       (spec-template-env-shadow-pattern
@@ -796,7 +796,7 @@
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
-  (if (= (ast-field-def-list-len (& a)) (ast-field-def-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-field-list-eq-at (& a) (& b) 0)
     false))
 
@@ -804,7 +804,7 @@
   [a : (& a AstFieldDefList)]
   [b : (& b AstFieldDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-field-def-eq?
@@ -865,9 +865,7 @@
 (define (gen-variant-payload-cleanup-list-eq?
   [a : AstVariantPayloadCleanupList]
   [b : AstVariantPayloadCleanupList]) : bool
-  (if (=
-    (ast-variant-payload-cleanup-list-len (& a))
-    (ast-variant-payload-cleanup-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -875,7 +873,7 @@
   [a : (& a AstVariantPayloadCleanupList)]
   [b : (& b AstVariantPayloadCleanupList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-payload-cleanup-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-variant-payload-cleanup-eq?
@@ -900,7 +898,7 @@
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
-  (if (= (ast-variant-def-list-len (& a)) (ast-variant-def-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (gen-variant-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -908,7 +906,7 @@
   [a : (& a AstVariantDefList)]
   [b : (& b AstVariantDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (gen-variant-def-eq?
@@ -1137,7 +1135,7 @@
   [index : i64]
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultGenKey.Ok "none" fuel)
     (let
       [head-id : i64 (ast-expr-list-get exprs index 0)]
@@ -1695,7 +1693,7 @@
   [subs : SpecValueSubst]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecValueSubst
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     subs
     (spec-value-subst-remove-pattern-list-at
       (spec-value-subst-remove-pattern
@@ -1769,7 +1767,7 @@
   [subs : SpecTypeSubst]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : SpecTypeSubst
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     subs
     (spec-type-subst-remove-pattern-list-at
       (spec-type-subst-remove-pattern
@@ -2010,8 +2008,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (spec-rewrite-expr-list-at (& exprs) 0 templates state (&mut out))
       [(ResultSpecExprListBuild.Ok next-state)
         (ResultSpecExprList.Ok out next-state)]
@@ -2023,7 +2020,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [out : (&mut out AstExprList)]) : ResultSpecExprListBuild
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultSpecExprListBuild.Ok state)
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -2075,7 +2072,7 @@
   [state : SpecState]) : ResultSpecMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-rewrite-match-arms-at (& arms) 0 templates state (&mut out))
       [(ResultSpecMatchArmListBuild.Ok next-state)
         (ResultSpecMatchArmList.Ok out next-state)]
@@ -2087,7 +2084,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [out : (&mut out AstMatchArmList)]) : ResultSpecMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecMatchArmListBuild.Ok state)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -2143,14 +2140,14 @@
   [fn-name : String]) : ResultSpecArgs
   (match params
     [(AstParamList.Nil)
-      (if (= (ast-expr-list-len (& args)) 0)
+      (if (= (struct-get (& args) len) 0)
         (ResultSpecArgs.Ok SpecValueList.Nil (ast-expr-list-new) state)
         (ResultSpecArgs.Err
           (box (compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
     [(AstParamList.Cons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
-        (if (> (ast-expr-list-len (& args)) 0)
+        (if (> (struct-get (& args) len) 0)
           (let
             [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
             [rest-args : AstExprList (ast-expr-list-tail args)]
@@ -3847,8 +3844,7 @@
   [exprs : AstExprList]
   [subs : SpecValueSubst]) : ResultSpecSubExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (spec-substitute-values-expr-list-at (& exprs) 0 subs (&mut out))
       [(ResultSpecSubExprListBuild.Ok) (ResultSpecSubExprList.Ok out)]
       [(ResultSpecSubExprListBuild.Err diag) (ResultSpecSubExprList.Err diag)])))
@@ -3858,7 +3854,7 @@
   [index : i64]
   [subs : SpecValueSubst]
   [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultSpecSubExprListBuild.Ok)
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -3902,7 +3898,7 @@
   [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-substitute-values-match-arms-at (& arms) 0 subs (&mut out))
       [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
       [(ResultSpecSubMatchArmListBuild.Err diag)
@@ -3913,7 +3909,7 @@
   [index : i64]
   [subs : SpecValueSubst]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -4664,8 +4660,7 @@
   [exprs : AstExprList]
   [subs : SpecTypeSubst]) : ResultSpecSubExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (spec-substitute-types-expr-list-at (& exprs) 0 subs (&mut out))
       [(ResultSpecSubExprListBuild.Ok) (ResultSpecSubExprList.Ok out)]
       [(ResultSpecSubExprListBuild.Err diag) (ResultSpecSubExprList.Err diag)])))
@@ -4675,7 +4670,7 @@
   [index : i64]
   [subs : SpecTypeSubst]
   [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultSpecSubExprListBuild.Ok)
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -4722,7 +4717,7 @@
   [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (spec-substitute-types-match-arms-at (& arms) 0 subs (&mut out))
       [(ResultSpecSubMatchArmListBuild.Ok) (ResultSpecSubMatchArmList.Ok out)]
       [(ResultSpecSubMatchArmListBuild.Err diag)
@@ -4733,7 +4728,7 @@
   [index : i64]
   [subs : SpecTypeSubst]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)

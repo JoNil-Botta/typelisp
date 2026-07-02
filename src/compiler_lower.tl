@@ -2770,7 +2770,7 @@
   [enum-name : String]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultTcEnv
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     (ResultTcEnv.Ok env)
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
@@ -3206,14 +3206,14 @@
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
   (match params
     [(AstParamList.Nil)
-      (if (= arg-index (ast-expr-list-len args))
+      (if (= arg-index (struct-get args len))
         (ResultLowerSpmdInlineSubst.Ok subst)
         (ResultLowerSpmdInlineSubst.Err
           (box (lower-diagnostic-at-expr origin "lower: arity mismatch"))))]
     [(AstParamList.Cons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
-        (if (< arg-index (ast-expr-list-len args))
+        (if (< arg-index (struct-get args len))
           (let
             [arg-id : i64 (ast-expr-list-get args arg-index 0)]
             [arg : AstExpr (lower-context-expr-get ctx arg-id)]
@@ -3252,8 +3252,7 @@
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerStringSet]) : ResultLowerAstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-list-len (& exprs)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (lower-spmd-inline-expr-list-into
       ctx
       env
@@ -3275,7 +3274,7 @@
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerStringSet]
   [out : (&mut out AstExprList)]) : ResultLowerAstExprList
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultLowerAstExprList.Ok (ast-expr-list-new))
     (let
       [head-id : i64 (ast-expr-list-get exprs index 0)]
@@ -3961,7 +3960,7 @@
   [fields : (& fields AstFieldDefList)]
   [module : String]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     roots
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -4003,7 +4002,7 @@
   [variants : (& variants AstVariantDefList)]
   [module : String]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     roots
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -4362,7 +4361,7 @@
 (define (lower-reach-used-types-add-pattern-list-roots-at!
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : unit
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     unit
     (begin
       (lower-reach-used-types-add-pattern-roots!
@@ -4382,7 +4381,7 @@
   [state : LowerReachState]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : LowerReachState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (let
       [expr-id : i64 (ast-expr-list-get exprs index 0)]
@@ -4427,7 +4426,7 @@
   [state : LowerReachState]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : LowerReachState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -4484,7 +4483,7 @@
   [roots : CloneNameList]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     roots
     (let
       [expr-id : i64 (ast-expr-list-get exprs index 0)]
@@ -4558,7 +4557,7 @@
   [scrut-ty : AstType]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     roots
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -4640,7 +4639,7 @@
             (cbi.compiler-builtin-lower-clone-id? lookup-id)
             (not bound)
             (not (lower-top-level-value-defined? ctx lookup-name)))
-            (if (= (ast-expr-list-len (& args)) 1)
+            (if (= (struct-get (& args) len) 1)
               (match (tc-expr
                 ctx
                 env
@@ -6013,7 +6012,7 @@
   [state : LowerReachState]
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : LowerReachState
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     state
     (let
       [next : LowerReachState
@@ -6483,7 +6482,7 @@
   [module : String]
   [names : LowerNameCache]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     out
     (match (ast-dispatch-variant-list-get
       variants
@@ -6582,7 +6581,7 @@
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
   [state : LowerReachState]) : LowerReachState
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     state
     (match (ast-dispatch-variant-list-get
       variants
@@ -6891,7 +6890,7 @@
   [module : String]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     used
     (lower-used-types-add-expr-list-at
       pools
@@ -6949,7 +6948,7 @@
   [module : String]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     used
     (lower-used-types-add-pattern-list-at
       pools
@@ -6995,7 +6994,7 @@
   [module : String]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     used
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -7404,7 +7403,7 @@
   [module : String]
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     used
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -7428,7 +7427,7 @@
   [module : String]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     used
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -8947,7 +8946,7 @@
   [variants : AstVariantDefList]
   [tag : i64]
   [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (if (>= tag (ast-variant-def-list-len (& variants)))
+  (if (>= tag (struct-get (& variants) len))
     globals
     (match (ast-variant-def-list-get
       (& variants)
@@ -8983,7 +8982,7 @@
   [variants : (& variants AstVariantDefList)]
   [max-size : i64]
   [index : i64]) : i64
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     max-size
     (let
       [size : i64
@@ -9642,12 +9641,12 @@
   [layout : TcInlineAggregateLayout]) : ResultLowerExpr
   (match values
     [(CompilerIrValueList.Nil)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch")))
         (match (ast-field-def-list-get
@@ -9932,12 +9931,12 @@
   [word-index : i64]) : ResultLowerExpr
   (match values
     [(CompilerIrValueList.Nil)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch")))
         (match (ast-field-def-list-get
@@ -10435,7 +10434,7 @@
           (if (and
             (lower-string-concat-builtin-name? (intern-str name))
             (lower-builtin-call-available? ctx env (intern-str name)))
-            (if (= (ast-expr-list-len (& args)) 2)
+            (if (= (struct-get (& args) len) 2)
               (let
                 [left : AstExpr
                   (tc-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
@@ -10506,7 +10505,7 @@
   [index : i64]
   [acc : CompilerIrValueList]
   [count : i64]) : ResultLowerStringValues
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultLowerStringValues.Ok state acc count)
     (let
       [expr : AstExpr
@@ -10691,7 +10690,7 @@
   [fields : (& fields AstFieldDefList)]
   [stack : LowerStringSet]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     true
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty _)
@@ -10725,7 +10724,7 @@
   [variants : (& variants AstVariantDefList)]
   [stack : LowerStringSet]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     true
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ fields _)
@@ -11638,12 +11637,12 @@
   [layout : TcInlineAggregateLayout]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerState.Ok state)
         (ResultLowerState.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerState.Err
           (box (lower-diagnostic "lower: constructor arity mismatch")))
         (match (ast-field-def-list-get
@@ -11955,7 +11954,7 @@
   [args : AstPatternList]) : ResultLowerEnv
   (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
     [(AstType.Box inner-node)
-      (if (= (ast-pattern-list-len (& args)) 1)
+      (if (= (struct-get (& args) len) 1)
         (let
           [inner : AstPattern
             (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))]
@@ -12810,7 +12809,7 @@
 (define (lower-pattern-list-refutable-at?
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : bool
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     false
     (if (lower-pattern-refutable?
       (ast-pattern-list-get patterns index (ast-pattern-fallback)))
@@ -12862,7 +12861,7 @@
   [patterns : (& patterns AstPatternList)]
   [index : i64]
   [types : AstTypeList]) : bool
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     (match types
       [(AstTypeList.Nil) false]
       [_ true])
@@ -12896,7 +12895,7 @@
   [field-name : String]
   [cursor : i64]
   [index : i64]) : ResultLowerFieldInfo
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     (ResultLowerFieldInfo.Err
       (box
         (lower-diagnostic
@@ -13828,7 +13827,7 @@
   [variants : AstVariantDefList]
   [index : i64]
   [done-label : String]) : ResultLowerState
-  (if (>= index (ast-variant-def-list-len (& variants)))
+  (if (>= index (struct-get (& variants) len))
     (ResultLowerState.Ok
       (lower-state-finish-block
         (lower-state-emit state (CompilerIrInstr.Jump done-label))
@@ -15575,7 +15574,7 @@
         (lower-arena-builtin-symbol-id name-id)
         CompilerIrValueList.Nil
         result-ty)
-      (if (= (ast-expr-list-len (& args)) 1)
+      (if (= (struct-get (& args) len) 1)
         (let
           [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
           (match (lower-expr ctx state env type-env arg)
@@ -15603,7 +15602,7 @@
   [state : LowerState]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 0)
+  (if (= (struct-get (& args) len) 0)
     (lower-runtime-call-values
       state
       "tl_tls_current_arena_load"
@@ -15619,7 +15618,7 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
@@ -16513,7 +16512,7 @@
   [types : AstTypeList]) : ResultLowerCallArgs
   (match types
     [(AstTypeList.Nil)
-      (if (= arg-index (ast-expr-list-len args))
+      (if (= arg-index (struct-get args len))
         (ResultLowerCallArgs.Ok
           state
           CompilerIrValueList.Nil
@@ -16521,7 +16520,7 @@
         (ResultLowerCallArgs.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstTypeList.Cons expected rest-types)
-      (if (< arg-index (ast-expr-list-len args))
+      (if (< arg-index (struct-get args len))
         (let
           [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
           [expected : AstType (tc-context-type-get ctx expected)]
@@ -16618,12 +16617,12 @@
   [types : AstTypeList]) : ResultLowerArgs
   (match types
     [(AstTypeList.Nil)
-      (if (= arg-index (ast-expr-list-len args))
+      (if (= arg-index (struct-get args len))
         (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
         (ResultLowerArgs.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstTypeList.Cons expected rest-types)
-      (if (< arg-index (ast-expr-list-len args))
+      (if (< arg-index (struct-get args len))
         (let
           [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
           [expected : AstType (tc-context-type-get ctx expected)]
@@ -17876,7 +17875,7 @@
                 [(cbi.compiler-builtin-lower-string-ref-call-id? name)
                   (ResultTcType.Ok (AstType.Char))]
                 [(cbi.compiler-builtin-lower-clone-id? name)
-                  (if (= (ast-expr-list-len (& args)) 1)
+                  (if (= (struct-get (& args) len) 1)
                     (lower-expr-result-type-fast
                       ctx
                       env
@@ -18014,7 +18013,7 @@
   [type-cache : LowerTypeCache]
   [exprs : AstExprList]) : ResultTcType
   (let
-    [len : i64 (ast-expr-list-len (& exprs))]
+    [len : i64 (struct-get (& exprs) len)]
     (if (= len 0)
       (ResultTcType.Ok (AstType.Unit))
       (lower-expr-result-type-fast
@@ -18033,7 +18032,7 @@
   [env : sym_i64_env.SymI64Env]
   [patterns : (& patterns AstPatternList)]
   [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     env
     (lower-pattern-list-bind-local-names-at
       (lower-pattern-bind-local-names
@@ -18121,7 +18120,7 @@
   [arms : (& arms AstMatchArmList)]
   [index : i64]
   [want : AstType]) : ResultTcType
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultTcType.Ok want)
     (match (lower-match-arm-result-type-fast
       ctx
@@ -20536,7 +20535,7 @@
   [value-index : i64]
   [types : AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (if (>= value-index (ast-expr-list-len values))
+  (if (>= value-index (struct-get values len))
     (ResultLowerState.Ok state)
     (match types
       [(AstTypeList.Nil)
@@ -20656,7 +20655,7 @@
   [elem-ty : AstType]
   [elem-size : i64]
   [offset : i64]) : ResultLowerState
-  (if (>= value-index (ast-expr-list-len values))
+  (if (>= value-index (struct-get values len))
     (ResultLowerState.Ok state)
     (let
       [value : AstExpr (ast-node-get (ast-expr-list-get values value-index 0))]
@@ -21847,12 +21846,12 @@
   [types : AstTypeList]) : ResultLowerArgs
   (match types
     [(AstTypeList.Nil)
-      (if (= arg-index (ast-expr-list-len args))
+      (if (= arg-index (struct-get args len))
         (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
         (ResultLowerArgs.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(AstTypeList.Cons expected rest-types)
-      (if (< arg-index (ast-expr-list-len args))
+      (if (< arg-index (struct-get args len))
         (let
           [arg : AstExpr (ast-node-get (ast-expr-list-get args arg-index 0))]
           [expected : AstType (tc-context-type-get ctx expected)]
@@ -22964,7 +22963,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 3)
+  (if (= (struct-get (& args) len) 3)
     (let
       [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [start : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -22981,7 +22980,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -23031,7 +23030,7 @@
   [expected-ty : AstType]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
@@ -23559,7 +23558,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
@@ -23599,7 +23598,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
@@ -23632,7 +23631,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -23715,7 +23714,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -24391,7 +24390,7 @@
                         [(and
                             builtin-available
                             (cbi.compiler-builtin-lower-clone-id? name-id))
-                          (if (= (ast-expr-list-len (& args)) 1)
+                          (if (= (struct-get (& args) len) 1)
                             (lower-clone-call
                               ctx
                               state
@@ -24506,7 +24505,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [arr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr-result-type-fast
@@ -24869,7 +24868,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [leaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [subleaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -24927,7 +24926,7 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (lower-xgetbv
       ctx
       state
@@ -25232,7 +25231,7 @@
   [result-ty : AstType]
   [origin : AstExpr]
   [tail : AstExprList]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& tail)) 0)
+  (if (= (struct-get (& tail) len) 0)
     (lower-atomic-pointer-emit-update
       ctx
       state
@@ -25258,7 +25257,7 @@
   [result-ty : AstType]
   [origin : AstExpr]
   [tail : AstExprList]) : ResultLowerExpr
-  (if (= (ast-expr-list-len (& tail)) 1)
+  (if (= (struct-get (& tail) len) 1)
     (let
       [new-value : AstExpr (ast-node-get (ast-expr-list-get (& tail) 0 0))]
       (match (lower-expr-expected
@@ -25298,7 +25297,7 @@
   [tail0 : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (> (ast-expr-list-len (& tail0)) 0)
+  (if (> (struct-get (& tail0) len) 0)
     (let
       [value : AstExpr (ast-node-get (ast-expr-list-get (& tail0) 0 0))]
       [tail1 : AstExprList (ast-expr-list-tail-from-ref (& tail0) 1)]
@@ -25354,7 +25353,7 @@
       (match ptr-lowered
         [(LowerExpr.Expr ptr-state ptr-ir _)
           (if (lower-atomic-pointer-load-name? name)
-            (if (= (ast-expr-list-len (& tail0)) 0)
+            (if (= (struct-get (& tail0) len) 0)
               (lower-atomic-pointer-emit-load
                 ctx
                 ptr-state
@@ -25389,7 +25388,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (> (ast-expr-list-len (& args)) 0)
+  (if (> (struct-get (& args) len) 0)
     (let
       [ptr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [tail0 : AstExprList (ast-expr-list-tail-from-ref (& args) 1)]
@@ -25604,7 +25603,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [elem-ty : AstType (lower-atomic-elem-type symbol)]
-    [count : i64 (ast-expr-list-len (& args))]
+    [count : i64 (struct-get (& args) len)]
     (if (= count 0)
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: atomic helper expects arguments")))
@@ -27780,7 +27779,7 @@
   [type-env : TcTypeEnv]
   [args : (& args AstExprList)]
   [index : i64]) : ResultLowerArgs
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -27841,7 +27840,7 @@
   [type-env : TcTypeEnv]
   [args : (& args AstExprList)]
   [index : i64]) : ResultLowerArgs
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -28141,7 +28140,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]) : ResultLowerExpr
   (let
-    [len : i64 (ast-expr-list-len exprs)]
+    [len : i64 (struct-get exprs len)]
     (if (>= index len)
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
@@ -28186,7 +28185,7 @@
   [index : i64]
   [expected-ty : AstType]) : ResultLowerExpr
   (let
-    [len : i64 (ast-expr-list-len exprs)]
+    [len : i64 (struct-get exprs len)]
     (if (>= index len)
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
@@ -29853,7 +29852,7 @@
   [lane-locals : hashmap.StringI64Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : i64
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     0
     (let
       [expr : AstExpr (ast-node-get (ast-expr-list-get exprs expr-index 0))]
@@ -30000,7 +29999,7 @@
   [scrut-lanes : i64]
   [lane-locals : hashmap.StringI64Map]
   [index : i64]) : hashmap.StringI64Map
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     lane-locals
     (lower-masked-vector-pattern-list-locals-at
       patterns
@@ -30041,7 +30040,7 @@
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : i64
-  (if (>= arm-index (ast-match-arm-list-len arms))
+  (if (>= arm-index (struct-get arms len))
     0
     (match (ast-match-arm-list-get arms arm-index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -30641,7 +30640,7 @@
   [lane-locals : hashmap.StringI64Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     false
     (or
       (lower-masked-vector-body-has-varying-if-with-locals?
@@ -31012,7 +31011,7 @@
   [lane-locals : hashmap.StringI64Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     false
     (or
       (lower-masked-vector-body-has-varying-while-with-locals?
@@ -31339,7 +31338,7 @@
   [lane-locals : hashmap.StringI64Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     false
     (or
       (lower-masked-vector-body-has-varying-match-with-locals?
@@ -31439,7 +31438,7 @@
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : bool
-  (if (>= arm-index (ast-match-arm-list-len arms))
+  (if (>= arm-index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms arm-index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -31795,7 +31794,7 @@
   [enum-locals : LowerStringSet]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     false
     (or
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
@@ -31878,7 +31877,7 @@
   [enum-locals : LowerStringSet]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : bool
-  (if (>= arm-index (ast-match-arm-list-len arms))
+  (if (>= arm-index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms arm-index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -32107,7 +32106,7 @@
   [index : String]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     false
     (or
       (lower-masked-vector-body-has-bool-array-lane?
@@ -32344,7 +32343,7 @@
   [index : String]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : LowerArrayVarSet
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     (lower-array-var-set-empty)
     (lower-array-var-set-merge
       (lower-masked-vector-array-vars
@@ -32382,7 +32381,7 @@
   [index : String]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : LowerArrayVarSet
-  (if (>= arm-index (ast-match-arm-list-len arms))
+  (if (>= arm-index (struct-get arms len))
     (lower-array-var-set-empty)
     (match (ast-match-arm-list-get arms arm-index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -32519,7 +32518,7 @@
 (define (lower-match-arms-have-array-read-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -32533,7 +32532,7 @@
 (define (lower-vector-expr-list-has-array-read-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-vector-body-has-array-read?
@@ -32643,7 +32642,7 @@
 (define (lower-vector-expr-list-has-spmd-shuffle-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-vector-body-has-spmd-shuffle?
@@ -32762,7 +32761,7 @@
   [type-env : TcTypeEnv]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-vector-body-has-atomic-call?
@@ -32859,7 +32858,7 @@
 (define (lower-spmd-expr-list-has-mul-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-spmd-expr-has-mul?
@@ -35515,7 +35514,7 @@
   [lanes : i64]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : ResultLowerExpr
-  (if (>= expr-index (ast-expr-list-len exprs))
+  (if (>= expr-index (struct-get exprs len))
     (ResultLowerExpr.Ok
       (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
     (let
@@ -35534,7 +35533,7 @@
         [(ResultLowerExpr.Ok lowered)
           (match lowered
             [(LowerExpr.Expr next-state value ty)
-              (if (= (+ expr-index 1) (ast-expr-list-len exprs))
+              (if (= (+ expr-index 1) (struct-get exprs len))
                 (ResultLowerExpr.Ok (LowerExpr.Expr next-state value ty))
                 (lower-avx512-masked-begin-at
                   ctx
@@ -38290,7 +38289,7 @@
       [pattern : AstPattern
         (ast-pattern-list-get (& patterns) 0 (ast-pattern-fallback))]
       [rest-patterns : AstPatternList (ast-pattern-list-tail patterns)]
-      (if (>= field-index (ast-field-def-list-len fields))
+      (if (>= field-index (struct-get fields len))
         (ResultLowerEnv.Err
           (box (lower-diagnostic "lower: struct pattern arity mismatch")))
         (match (ast-field-def-list-get
@@ -39386,7 +39385,7 @@
   [env : sym_i64_env.SymI64Env]
   [exprs : AstExprList]) : bool
   (let
-    [len : i64 (ast-expr-list-len (& exprs))]
+    [len : i64 (struct-get (& exprs) len)]
     (if (= len 0)
       false
       (lower-tail-expr-candidate?
@@ -39405,7 +39404,7 @@
   [env : sym_i64_env.SymI64Env]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pat body-box)
@@ -39534,7 +39533,7 @@
 (define (lower-rvo-expr-list-has-early-return-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-rvo-node-has-early-return? (ast-expr-list-get exprs index 0))
@@ -39557,7 +39556,7 @@
 (define (lower-rvo-match-arms-have-early-return-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -39819,7 +39818,7 @@
   [type-env : TcTypeEnv]
   [args : (& args AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     true
     (and
       (lower-rvo-arg-cannot-alias-sret?
@@ -40207,7 +40206,7 @@
   [type-env : TcTypeEnv]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (let
       [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -40385,7 +40384,7 @@
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
   (let
-    [len : i64 (ast-expr-list-len exprs)]
+    [len : i64 (struct-get exprs len)]
     (if (>= index len)
       (ResultLowerState.Ok
         (lower-state-emit
@@ -41979,7 +41978,7 @@
   [fields : (& fields AstFieldDefList)]
   [acc : AstExprList]
   [index : i64]) : ResultAstExprList
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     (ResultAstExprList.Ok acc)
     (match (lower-struct-cleanup-field-exprs
       ctx
@@ -42019,7 +42018,7 @@
               (ast-param value-name struct-ty false)
               AstParamList.Nil)]
           [body : AstExpr
-            (if (= (ast-expr-list-len (& exprs)) 0)
+            (if (= (struct-get (& exprs) len) 0)
               (AstExpr.Literal AstLiteral.Unit)
               (AstExpr.Begin exprs))]
           (lower-function-escaping
@@ -42157,7 +42156,7 @@
   [names : LowerNameCache]
   [dispatch-name : String]
   [wanted : AstDispatchIsa]) : TcMaybeString
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     (TcMaybeString.No)
     (match (ast-dispatch-variant-list-get
       variants
@@ -42678,7 +42677,7 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]
   [functions : CompilerIrFunctionList]) : ResultLowerFunction
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     (ResultLowerFunction.Ok functions spans)
     (match (lower-dispatch-lower-variant
       ctx
@@ -43926,7 +43925,7 @@
 (define (lower-source-expr-list-has-import-call-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (or
       (lower-source-node-has-import-call? (ast-expr-list-get exprs index 0))
@@ -43949,7 +43948,7 @@
 (define (lower-source-match-arms-have-import-call-at?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)

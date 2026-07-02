@@ -2973,7 +2973,7 @@
       (match (parse-ast-expr-list dispatch pools s)
         [(ResultAstExprList.Ok exprs)
           (let
-            [n : i64 (ast-expr-list-len (& exprs))]
+            [n : i64 (struct-get (& exprs) len)]
             (cond
               [(= n 0) (ResultAstExpr.Err missing-message)]
               [(= n 1) (ResultAstExpr.Ok (ast-expr-list-get (& exprs) 0 0))]
@@ -4731,7 +4731,7 @@
     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-syscall-count [args : AstExprList]) : i64
-  (ast-expr-list-len (& args)))
+  (struct-get (& args) len))
 
 ;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
 ;; arguments (1 to 7 operands total). Typechecking requires an enclosing
@@ -6978,7 +6978,7 @@
     [_ (ResultAstDecl.Err "parse: malformed include-bin")]))
 
 (define (parse-ast-test-body [pools : AstNodePoolContext] [exprs : AstExprList]) : i64
-  (if (= (ast-expr-list-len (& exprs)) 1)
+  (if (= (struct-get (& exprs) len) 1)
     (ast-expr-list-get (& exprs) 0 0)
     (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs))))
 
@@ -7753,7 +7753,7 @@
         (+ (ast-decl-tag decl) (ast-decl-list-tag-sum rest)))]))
 
 (define (compiler-parse-expr-list-count [exprs : AstExprList]) : i64
-  (ast-expr-list-len (& exprs)))
+  (struct-get (& exprs) len))
 
 (define (compiler-parse-macro-call-node-ok?
   [call-expr : i64]
@@ -8061,7 +8061,7 @@
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : AstDispatchVariantList]) : bool
-  (if (= (ast-dispatch-variant-list-len (& variants)) 3)
+  (if (= (struct-get (& variants) len) 3)
     (match (ast-dispatch-variant-list-get
       (& variants)
       0
@@ -8118,7 +8118,7 @@
                 [(AstDeclList.Nil)
                   (and
                     (= name (intern "id"))
-                    (= (ast-dispatch-variant-list-len (& variants)) 1)
+                    (= (struct-get (& variants) len) 1)
                     (match (ast-dispatch-variant-list-get
                       (& variants)
                       0
@@ -8956,7 +8956,7 @@
                 [(AstDeclList.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Begin exprs)
-                      (if (>= (ast-expr-list-len (& exprs)) 2)
+                      (if (>= (struct-get (& exprs) len) 2)
                         (let
                           [first : AstExpr
                             (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
@@ -9017,7 +9017,7 @@
                 [(AstDeclList.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Call _ args)
-                      (if (= (ast-expr-list-len (& args)) 1)
+                      (if (= (struct-get (& args) len) 1)
                         (let
                           [arg : AstExpr
                             (ast-node-get (ast-expr-list-get (& args) 0 0))]
@@ -9065,7 +9065,7 @@
 (define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
     [(AstExpr.Begin exprs)
-      (if (= (ast-expr-list-len (& exprs)) 2)
+      (if (= (struct-get (& exprs) len) 2)
         (let
           [first : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
           [last : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
@@ -9088,7 +9088,7 @@
     [_ false]))
 
 (define (compiler-parse-guard-call-args-ok? [args : AstExprList]) : bool
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [cond : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [body-arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
@@ -9098,7 +9098,7 @@
     false))
 
 (define (compiler-parse-call-arg-count [args : AstExprList]) : i64
-  (ast-expr-list-len (& args)))
+  (struct-get (& args) len))
 
 (define (compiler-parse-call-body-ok?
   [source : String]
@@ -9372,7 +9372,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-field-count [fields : AstFieldDefList]) : i64
-  (ast-field-def-list-len (& fields)))
+  (struct-get (& fields) len))
 
 (define (compiler-parse-field-cleanup-score [cleanup : AstFieldCleanup]) : i64
   (match cleanup
@@ -9386,7 +9386,7 @@
 (define (compiler-parse-field-cleanup-list-score-at
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : i64
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     0
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ _ cleanup)
@@ -9408,7 +9408,7 @@
 (define (compiler-parse-variant-payload-cleanup-list-score-at
   [cleanups : (& cleanups AstVariantPayloadCleanupList)]
   [index : i64]) : i64
-  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+  (if (>= index (struct-get cleanups len))
     0
     (+
       (compiler-parse-variant-payload-cleanup-score
@@ -9427,7 +9427,7 @@
 (define (compiler-parse-variant-list-cleanup-score-at
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : i64
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     0
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ _ cleanups)
@@ -10403,9 +10403,9 @@
                               (match (ast-expr-unspan callee)
                                 [(AstExpr.Var name)
                                   (and
-                                    (= (ast-expr-list-len (& call-args)) 0)
+                                    (= (struct-get (& call-args) len) 0)
                                     (string.eq (intern-str name) "arena-make")
-                                    (= (ast-expr-list-len (& body-exprs)) 1))]
+                                    (= (struct-get (& body-exprs) len) 1))]
                                 [_ false]))]
                           [_ false]))]
                     [_ false])]
@@ -10440,7 +10440,7 @@
                 [(AstDeclList.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.WithScratch body-exprs)
-                      (= (ast-expr-list-len (& body-exprs)) 2)]
+                      (= (struct-get (& body-exprs) len) 2)]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
@@ -10475,7 +10475,7 @@
                           [(AstExpr.Var name)
                             (and
                               (string.eq (intern-str name) "arena")
-                              (= (ast-expr-list-len (& body-exprs)) 2))]
+                              (= (struct-get (& body-exprs) len) 2))]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]

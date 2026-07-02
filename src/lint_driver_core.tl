@@ -897,7 +897,7 @@
   [patterns : (& patterns AstPatternList)]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     refs
     (selfhost-lint-dead-pattern-list-refs-at
       patterns
@@ -931,7 +931,7 @@
   [exprs : AstExprList]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-expr-list-len (& exprs)))
+  (if (>= index (struct-get (& exprs) len))
     refs
     (selfhost-lint-dead-expr-list-refs-from
       exprs
@@ -963,7 +963,7 @@
   [arms : (& arms AstMatchArmList)]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     refs
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
@@ -1344,7 +1344,7 @@
   [fields : (& fields AstFieldDefList)]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     refs
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty cleanup)
@@ -1387,7 +1387,7 @@
   [items : (& items AstVariantPayloadCleanupList)]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-variant-payload-cleanup-list-len items))
+  (if (>= index (struct-get items len))
     refs
     (selfhost-lint-dead-variant-cleanup-list-refs-at
       items
@@ -1408,7 +1408,7 @@
   [variants : (& variants AstVariantDefList)]
   [refs : vector.StringVec]
   [index : i64]) : vector.StringVec
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     refs
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name payloads cleanups)
@@ -1425,7 +1425,7 @@
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
   [refs : vector.StringVec]) : vector.StringVec
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     refs
     (match (ast-dispatch-variant-list-get
       variants

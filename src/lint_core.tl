@@ -557,7 +557,7 @@
     [_ false]))
 
 (define (lint-single-arg-call? [args : AstExprList]) : bool
-  (= (ast-expr-list-len (& args)) 1))
+  (= (struct-get (& args) len) 1))
 
 (define (lint-not-call? [expr : AstExpr]) : bool
   (match expr
@@ -594,7 +594,7 @@
 (define (lint-expr-list-has-return-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -650,7 +650,7 @@
 (define (lint-expr-list-has-side-effect-at?
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -660,7 +660,7 @@
 
 (define (lint-expr-list-last-guard-branch? [exprs : AstExprList]) : bool
   (let
-    [n : i64 (ast-expr-list-len (& exprs))]
+    [n : i64 (struct-get (& exprs) len)]
     (if (= n 0)
       true
       (lint-guard-ladder-branch?
@@ -689,7 +689,7 @@
 
 (define (lint-expr-list-last-value-branch? [exprs : AstExprList]) : bool
   (let
-    [n : i64 (ast-expr-list-len (& exprs))]
+    [n : i64 (struct-get (& exprs) len)]
     (if (= n 0)
       false
       (lint-value-ladder-branch?
@@ -995,7 +995,7 @@
   [head : AstExpr]
   [rest : AstExprList]
   [acc : LintFindings]) : LintFindings
-  (if (= (ast-expr-list-len (& rest)) 0)
+  (if (= (struct-get (& rest) len) 0)
     acc
     (if (lint-diverging-call-expr? head)
       (lint-findings-add
@@ -1229,7 +1229,7 @@
   (lint-expr-list-render-at (& exprs) 0))
 
 (define (lint-expr-list-render-at [exprs : (& exprs AstExprList)] [index : i64]) : String
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     ""
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -1294,7 +1294,7 @@
   [op : String]
   [args : (& args AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     false
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -1320,7 +1320,7 @@
 (define (lint-str-cat-args-have-nested-at?
   [args : (& args AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     false
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -1351,7 +1351,7 @@
   [op : String]
   [args : (& args AstExprList)]
   [index : i64]) : String
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     ""
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -1382,7 +1382,7 @@
   [op : String]
   [args : (& args AstExprList)]
   [index : i64]) : i64
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     0
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -1689,7 +1689,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     false
     (if (lint-pattern-uses-import?
       (ast-pattern-list-get patterns index (ast-pattern-fallback))
@@ -1743,7 +1743,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     false
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -1779,7 +1779,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     false
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
@@ -2137,7 +2137,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     false
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def _ ty cleanup)
@@ -2194,7 +2194,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-variant-payload-cleanup-list-len items))
+  (if (>= index (struct-get items len))
     false
     (if (lint-variant-payload-cleanup-uses-import?
       (ast-variant-payload-cleanup-list-get
@@ -2221,7 +2221,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     false
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def _ payloads cleanups)
@@ -2243,7 +2243,7 @@
   [index : i64]
   [alias : String]
   [module-name : String]) : bool
-  (if (>= index (ast-dispatch-variant-list-len variants))
+  (if (>= index (struct-get variants len))
     false
     (match (ast-dispatch-variant-list-get
       variants
@@ -2779,11 +2779,11 @@
   [target-name : String]) : LintCopyOnUpdateArgCheck
   (match fields
     [(LintNameList.Nil)
-      (if (= index (ast-expr-list-len args))
+      (if (= index (struct-get args len))
         (LintCopyOnUpdateArgCheck true 0 0 "")
         (lint-copy-on-update-arg-check-invalid))]
     [(LintNameList.Cons field rest-fields)
-      (if (>= index (ast-expr-list-len args))
+      (if (>= index (struct-get args len))
         (lint-copy-on-update-arg-check-invalid)
         (let
           [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -2947,7 +2947,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-copy-on-update-expr-list-at
       exprs
@@ -3011,7 +3011,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintCopyOnUpdateState]
   [index : i64]) : LintCopyOnUpdateState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body)
@@ -3225,7 +3225,7 @@
 (define (lint-copy-on-update-field-names-at
   [fields : (& fields AstFieldDefList)]
   [index : i64]) : LintNameList
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     LintNameList.Nil
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def name _ _)
@@ -3511,7 +3511,7 @@
     [_ false]))
 
 (define (lint-single-element-array-expr-list-count [exprs : AstExprList]) : i64
-  (ast-expr-list-len (& exprs)))
+  (struct-get (& exprs) len))
 
 (define (lint-single-element-array-callee-name [expr : AstExpr]) : String
   (match expr
@@ -3549,14 +3549,14 @@
 (define (lint-single-element-array-args-second-int?
   [args : AstExprList]
   [value : i64]) : bool
-  (if (> (ast-expr-list-len (& args)) 1)
+  (if (> (struct-get (& args) len) 1)
     (lint-single-element-array-int-literal?
       (ast-node-get (ast-expr-list-get (& args) 1 0))
       value)
     false))
 
 (define (lint-single-element-array-first-arg-name [args : AstExprList]) : String
-  (if (> (ast-expr-list-len (& args)) 0)
+  (if (> (struct-get (& args) len) 0)
     (lint-single-element-array-var-name
       (ast-node-get (ast-expr-list-get (& args) 0 0)))
     ""))
@@ -3665,7 +3665,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-single-element-array-expr-list-at
       exprs
@@ -3709,7 +3709,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintSingleElementArrayState]
   [index : i64]) : LintSingleElementArrayState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body)
@@ -4177,7 +4177,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-unused-assignment-note-reads-list-at
       exprs
@@ -4207,7 +4207,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintUnusedAssignmentState]
   [index : i64]) : LintUnusedAssignmentState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body)
@@ -4488,7 +4488,7 @@
   [index : i64]
   [state : LintUnusedAssignmentState]
   [after-terminal : bool]) : LintUnusedAssignmentState
-  (if (or after-terminal (>= index (ast-expr-list-len exprs)))
+  (if (or after-terminal (>= index (struct-get exprs len)))
     state
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -4913,7 +4913,7 @@
     [_ ""]))
 
 (define (lint-redundant-function-name-generated-head [args : AstExprList]) : String
-  (if (= (ast-expr-list-len (& args)) 0)
+  (if (= (struct-get (& args) len) 0)
     ""
     (match (ast-expr-unspan (ast-node-get (ast-expr-list-get (& args) 0 0)))
       [(AstExpr.Call fn-head _)
@@ -4921,7 +4921,7 @@
       [_ ""])))
 
 (define (lint-redundant-function-name-literal-module [args : AstExprList]) : String
-  (if (= (ast-expr-list-len (& args)) 0)
+  (if (= (struct-get (& args) len) 0)
     ""
     (match (ast-expr-unspan (ast-node-get (ast-expr-list-get (& args) 0 0)))
       [(AstExpr.Var name) (lint-module-default-alias (intern-str name))]
@@ -4936,7 +4936,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-redundant-function-name-quoted-expr-list-at
       exprs
@@ -4954,7 +4954,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-redundant-function-name-macro-expr-list-at
       exprs
@@ -5090,7 +5090,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintRedundantFunctionNameState]
   [index : i64]) : LintRedundantFunctionNameState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body)
@@ -5409,7 +5409,7 @@
   [patterns : (& patterns AstPatternList)]
   [state : LintUnusedVariableState]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     state
     (lint-unused-variable-pattern-list-bindings-at
       patterns
@@ -5546,7 +5546,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-unused-variable-expr-list-at
       exprs
@@ -5565,7 +5565,7 @@
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     state
     (lint-unused-variable-quasiquote-expr-list-at
       exprs
@@ -5595,7 +5595,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintUnusedVariableState]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body)
@@ -5933,7 +5933,7 @@
   [arms : (& arms AstMatchArmList)]
   [state : LintUnusedVariableState]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
@@ -6487,7 +6487,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     acc
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -6521,7 +6521,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     acc
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -6600,7 +6600,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     acc
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -6613,7 +6613,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (ast-expr-list-len (& rest)) 0)
+            (if (= (struct-get (& rest) len) 0)
               (lint-walk-expr head threshold with-padding)
               (lint-walk-discarded-expr head threshold with-padding))]
           (lint-walk-value-sequence-expr-list-after-terminal-at
@@ -6630,7 +6630,7 @@
   (lint-walk-tail-sequence-expr-list-after-terminal exprs threshold acc false))
 
 (define (lint-expr-list-single? [exprs : AstExprList]) : bool
-  (= (ast-expr-list-len (& exprs)) 1))
+  (= (struct-get (& exprs) len) 1))
 
 (define (lint-add-single-begin
   [exprs : AstExprList]
@@ -6658,7 +6658,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     acc
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -6671,7 +6671,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (ast-expr-list-len (& rest)) 0)
+            (if (= (struct-get (& rest) len) 0)
               (lint-walk-tail-expr head threshold with-padding)
               (lint-walk-discarded-expr head threshold with-padding))]
           (lint-walk-tail-sequence-expr-list-after-terminal-at
@@ -6820,7 +6820,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     acc
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -7023,7 +7023,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     acc
     (let
       [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -7036,7 +7036,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (ast-expr-list-len (& rest)) 0)
+            (if (= (struct-get (& rest) len) 0)
               (lint-walk-tail-expr head threshold with-padding)
               (lint-walk-expr head threshold with-padding))]
           (lint-walk-tail-expr-list-after-terminal-at
@@ -7058,7 +7058,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     acc
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
@@ -7223,7 +7223,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     acc
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]

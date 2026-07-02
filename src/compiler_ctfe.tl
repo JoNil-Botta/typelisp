@@ -717,13 +717,13 @@
   (ctfe-reflect-info-lookup-from infos key (- (struct-get infos len) 1)))
 
 (define (ctfe-reflect-field-def-count [fields : AstFieldDefList]) : i64
-  (ast-field-def-list-len (& fields)))
+  (struct-get (& fields) len))
 
 (define (ctfe-reflect-field-list-from-fields-into
   [fields : (& fields AstFieldDefList)]
   [index : i64]
   [out : CtfeReflectFieldList]) : CtfeReflectFieldList
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (struct-get fields len))
     out
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def name ty _)
@@ -742,13 +742,13 @@
       (ctfe-reflect-field-def-count fields))))
 
 (define (ctfe-reflect-variant-def-count [variants : AstVariantDefList]) : i64
-  (ast-variant-def-list-len (& variants)))
+  (struct-get (& variants) len))
 
 (define (ctfe-reflect-variant-list-from-variants-into
   [variants : (& variants AstVariantDefList)]
   [index : i64]
   [out : CtfeReflectVariantList]) : CtfeReflectVariantList
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (struct-get variants len))
     out
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name payloads _)
@@ -2374,7 +2374,7 @@
                 (string.append name " expects a String argument"))))])]))
 
 (define (ctfe-expr-arg-count [args : AstExprList]) : i64
-  (ast-expr-list-len (& args)))
+  (struct-get (& args) len))
 
 (define (ctfe-expr-arg [args : AstExprList] [index : i64] [env : CtfeEnv]) : AstExpr
   (ctfe-ast-get env (ast-expr-list-get (& args) index 0)))
@@ -5576,7 +5576,7 @@
         "struct-get in compile-time evaluation requires a stdlib.comptime well-known value"))))
 
 (define (ctfe-pattern-list-length [lst : AstPatternList]) : i64
-  (ast-pattern-list-len (& lst)))
+  (struct-get (& lst) len))
 
 (define (ctfe-pattern-list-nth [lst : AstPatternList] [index : i64]) : AstPattern
   (ast-pattern-list-get (& lst) index AstPattern.Wildcard))
@@ -5587,7 +5587,7 @@
     (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))))
 
 (define (ctfe-match-arm-list-length [lst : AstMatchArmList]) : i64
-  (ast-match-arm-list-len (& lst)))
+  (struct-get (& lst) len))
 
 (define (ctfe-match-arm-list-nth
   [lst : AstMatchArmList]
@@ -5968,13 +5968,13 @@
   [index : i64]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)
     (let
       [head : AstExpr (ctfe-ast-get env (ast-expr-list-get exprs index 0))]
       (match (compiler-ctfe-eval head env fuel)
         [(ResultCtfe.Ok value head-fuel)
-          (if (= (+ index 1) (ast-expr-list-len exprs))
+          (if (= (+ index 1) (struct-get exprs len))
             (ResultCtfe.Ok value head-fuel)
             (ctfe-eval-begin-at exprs (+ index 1) env head-fuel))]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))))
@@ -6062,7 +6062,7 @@
   [index : i64]
   [values : CtfeValueList]
   [env : CtfeEnv]) : CtfePatternMatch
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     (match values
       [(CtfeValueList.Nil) (CtfePatternMatch.Matched env)]
       [_ (CtfePatternMatch.No)])
@@ -6242,7 +6242,7 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm")))
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -6291,7 +6291,7 @@
   (let
     [out : AstExprList
       (ast-expr-list-with-capacity
-        (+ (ast-expr-list-len (& left)) (ast-expr-list-len (& right))))]
+        (+ (struct-get (& left) len) (struct-get (& right) len)))]
     (begin
       (ast-expr-list-append-from (&mut out) (& left) 0)
       (ast-expr-list-append-from (&mut out) (& right) 0)
@@ -6573,7 +6573,7 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteTypeList
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultCtfeQuoteTypeList.Ok AstTypeList.Nil fuel)
     (let
       [head-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get exprs index 0))]
@@ -6599,7 +6599,7 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteType
-  (if (= (ast-expr-list-len (& args)) 1)
+  (if (= (struct-get (& args) len) 1)
     (let
       [elem-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get (& args) 0 0))]
       (match (ctfe-expr-to-type elem-expr origin env fuel)
@@ -6624,12 +6624,12 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteType
-  (if (or (= (ast-expr-list-len (& args)) 1) (= (ast-expr-list-len (& args)) 2))
+  (if (or (= (struct-get (& args) len) 1) (= (struct-get (& args) len) 2))
     (let
       [elem-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get (& args) 0 0))]
       (match (ctfe-expr-to-type elem-expr origin env fuel)
         [(ResultCtfeQuoteType.Ok elem-ty elem-fuel)
-          (if (= (ast-expr-list-len (& args)) 1)
+          (if (= (struct-get (& args) len) 1)
             (ResultCtfeQuoteType.Ok
               (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)
               elem-fuel)
@@ -6658,11 +6658,11 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteType
-  (if (>= index (ast-expr-list-len args))
+  (if (>= index (struct-get args len))
     (ctfe-type-expr-error origin)
     (let
       [head-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get args index 0))]
-      (if (= (+ index 1) (ast-expr-list-len args))
+      (if (= (+ index 1) (struct-get args len))
         (match (ctfe-expr-to-type head-expr origin env fuel)
           [(ResultCtfeQuoteType.Ok ret-ty next-fuel)
             (ResultCtfeQuoteType.Ok
@@ -6697,7 +6697,7 @@
   [env : CtfeEnv]
   [fuel : i64]
   [mutable : bool]) : ResultCtfeQuoteType
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [region-expr : AstExpr
         (ctfe-ast-get env (ast-expr-list-get (& args) 0 0))]
@@ -6726,7 +6726,7 @@
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteType
-  (if (= (ast-expr-list-len (& args)) 2)
+  (if (= (struct-get (& args) len) 2)
     (let
       [region-expr : AstExpr
         (ctfe-ast-get env (ast-expr-list-get (& args) 0 0))]
@@ -6756,7 +6756,7 @@
   [index : i64]
   [env : CtfeEnv]
   [origin : AstExpr]) : ResultCtfeQuoteLifetimeList
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultCtfeQuoteLifetimeList.Ok AstLifetimeList.Nil)
     (let
       [head-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get exprs index 0))]
@@ -6785,7 +6785,7 @@
   [env : CtfeEnv]
   [fuel : i64]
   [is-struct : bool]) : ResultCtfeQuoteType
-  (if (> (ast-expr-list-len (& args)) 0)
+  (if (> (struct-get (& args) len) 0)
     (let
       [name-expr : AstExpr (ctfe-ast-get env (ast-expr-list-get (& args) 0 0))]
       [lifetime-exprs : AstExprList (ast-expr-list-tail-from-ref (& args) 1)]
@@ -7036,7 +7036,7 @@
   [env : CtfeEnv]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteExprList
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (struct-get exprs len))
     (ResultCtfeQuoteExprList.Ok (ast-expr-list-new) fuel)
     (let
       [head : AstExpr (ctfe-ast-get env (ast-expr-list-get exprs index 0))]
@@ -7109,7 +7109,7 @@
 (define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
   (let
     [out : AstPatternList
-      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
+      (ast-pattern-list-with-capacity (struct-get (& patterns) len))]
     (begin
       (ctfe-quote-pattern-list-into (& patterns) 0 env (&mut out))
       out)))
@@ -7119,7 +7119,7 @@
   [index : i64]
   [env : CtfeEnv]
   [out : (&mut out AstPatternList)]) : unit
-  (if (>= index (ast-pattern-list-len patterns))
+  (if (>= index (struct-get patterns len))
     unit
     (begin
       (ast-pattern-list-push
@@ -7236,7 +7236,7 @@
   [quasiquote : bool]) : ResultCtfeQuoteArms
   (let
     [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (ast-match-arm-list-len (& arms)))]
+      (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (match (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out))
       [(ResultCtfeQuoteArmsBuild.Ok out-fuel)
         (ResultCtfeQuoteArms.Ok out out-fuel)]
@@ -7249,7 +7249,7 @@
   [fuel : i64]
   [quasiquote : bool]
   [out : (&mut out AstMatchArmList)]) : ResultCtfeQuoteArmsBuild
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (struct-get arms len))
     (ResultCtfeQuoteArmsBuild.Ok fuel)
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
@@ -8489,7 +8489,7 @@
   [a : AstPatternList]
   [b : AstPatternList]) : bool
   (and
-    (= (ast-pattern-list-len (& a)) (ast-pattern-list-len (& b)))
+    (= (struct-get (& a) len) (struct-get (& b) len))
     (ctfe-pattern-list-eq-in-env-at env (& a) (& b) 0)))
 
 (define (ctfe-pattern-list-eq-in-env-at
@@ -8497,7 +8497,7 @@
   [a : (& a AstPatternList)]
   [b : (& b AstPatternList)]
   [index : i64]) : bool
-  (if (>= index (ast-pattern-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (ctfe-pattern-eq-in-env
@@ -8608,7 +8608,7 @@
   [a : AstMatchArmList]
   [b : AstMatchArmList]) : bool
   (and
-    (= (ast-match-arm-list-len (& a)) (ast-match-arm-list-len (& b)))
+    (= (struct-get (& a) len) (struct-get (& b) len))
     (ctfe-match-arm-list-eq-in-env-at env (& a) (& b) 0)))
 
 (define (ctfe-match-arm-list-eq-in-env-at
@@ -8616,7 +8616,7 @@
   [a : (& a AstMatchArmList)]
   [b : (& b AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (ast-match-arm-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (ctfe-match-arm-eq-in-env
@@ -9466,7 +9466,7 @@
   [env : CtfeEnv]
   [a : AstExprList]
   [b : AstExprList]) : bool
-  (if (= (ast-expr-list-len (& a)) (ast-expr-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (ctfe-expr-list-eq-at-in-env env (& a) (& b) 0)
     false))
 
@@ -9475,7 +9475,7 @@
   [a : (& a AstExprList)]
   [b : (& b AstExprList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (ctfe-expr-eq-in-env
@@ -9502,7 +9502,7 @@
   [env : CtfeEnv]
   [a : AstExprClauseList]
   [b : AstExprClauseList]) : bool
-  (if (= (ast-expr-clause-list-len (& a)) (ast-expr-clause-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (ctfe-expr-clause-list-eq-at-in-env env (& a) (& b) 0)
     false))
 
@@ -9511,7 +9511,7 @@
   [a : (& a AstExprClauseList)]
   [b : (& b AstExprClauseList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-clause-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (ctfe-expr-clause-eq-in-env
@@ -9540,9 +9540,7 @@
   [env : CtfeEnv]
   [a : AstExprBindingClauseList]
   [b : AstExprBindingClauseList]) : bool
-  (if (=
-    (ast-expr-binding-clause-list-len (& a))
-    (ast-expr-binding-clause-list-len (& b)))
+  (if (= (struct-get (& a) len) (struct-get (& b) len))
     (ctfe-expr-binding-clause-list-eq-at-in-env env (& a) (& b) 0)
     false))
 
@@ -9551,7 +9549,7 @@
   [a : (& a AstExprBindingClauseList)]
   [b : (& b AstExprBindingClauseList)]
   [index : i64]) : bool
-  (if (>= index (ast-expr-binding-clause-list-len a))
+  (if (>= index (struct-get a len))
     true
     (and
       (ctfe-expr-binding-clause-eq-in-env
@@ -9716,7 +9714,7 @@
   (ast-expr-cons head tail))
 
 (define (ctfe-expr-list-length [lst : AstExprList]) : i64
-  (ast-expr-list-len (& lst)))
+  (struct-get (& lst) len))
 
 (define (ctfe-expr-list-empty? [lst : AstExprList]) : bool
   (ast-expr-list-empty? (& lst)))
@@ -9728,7 +9726,7 @@
   (struct-get clause second))
 
 (define (ctfe-expr-clause-list-length [lst : AstExprClauseList]) : i64
-  (ast-expr-clause-list-len (& lst)))
+  (struct-get (& lst) len))
 
 (define (ctfe-expr-clause-list-empty? [lst : AstExprClauseList]) : bool
   (ast-expr-clause-list-empty? (& lst)))
@@ -9747,7 +9745,7 @@
   (ast-expr-clause-list-tail lst))
 
 (define (ctfe-expr-clause-list-nth [lst : AstExprClauseList] [index : i64]) : AstExprClause
-  (if (or (< index 0) (>= index (ast-expr-clause-list-len (& lst))))
+  (if (or (< index 0) (>= index (struct-get (& lst) len)))
     (ast-expr-clause
       (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
       (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))
@@ -9769,8 +9767,7 @@
   [env : CtfeEnv]
   [lst : AstExprClauseList]) : AstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-clause-list-len (& lst)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& lst) len))]
     (begin
       (ctfe-expr-clause-list->expr-list-into env (& lst) 0 (&mut out))
       out)))
@@ -9780,7 +9777,7 @@
   [lst : (& lst AstExprClauseList)]
   [index : i64]
   [out : (&mut out AstExprList)]) : unit
-  (if (>= index (ast-expr-clause-list-len lst))
+  (if (>= index (struct-get lst len))
     unit
     (begin
       (ast-expr-list-push
@@ -9806,7 +9803,7 @@
   (struct-get clause init))
 
 (define (ctfe-expr-binding-clause-list-length [lst : AstExprBindingClauseList]) : i64
-  (ast-expr-binding-clause-list-len (& lst)))
+  (struct-get (& lst) len))
 
 (define (ctfe-expr-binding-clause-list-empty? [lst : AstExprBindingClauseList]) : bool
   (ast-expr-binding-clause-list-empty? (& lst)))
@@ -9835,7 +9832,7 @@
 (define (ctfe-expr-binding-clause-list-nth
   [lst : AstExprBindingClauseList]
   [index : i64]) : AstExprBindingClause
-  (if (or (< index 0) (>= index (ast-expr-binding-clause-list-len (& lst))))
+  (if (or (< index 0) (>= index (struct-get (& lst) len)))
     (ctfe-expr-binding-clause-empty-default)
     (ast-expr-binding-clause-list-get
       (& lst)
@@ -9876,8 +9873,7 @@
   [env : CtfeEnv]
   [lst : AstExprBindingClauseList]) : AstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-binding-clause-list-len (& lst)))]
+    [out : AstExprList (ast-expr-list-with-capacity (struct-get (& lst) len))]
     (begin
       (ctfe-expr-binding-clause-list->expr-list-into env (& lst) 0 (&mut out))
       out)))
@@ -9887,7 +9883,7 @@
   [lst : (& lst AstExprBindingClauseList)]
   [index : i64]
   [out : (&mut out AstExprList)]) : unit
-  (if (>= index (ast-expr-binding-clause-list-len lst))
+  (if (>= index (struct-get lst len))
     unit
     (begin
       (ast-expr-list-push
@@ -10025,7 +10021,7 @@
   (ast-expr-list-tail lst))
 
 (define (ctfe-expr-list-nth [lst : AstExprList] [index : i64]) : i64
-  (if (or (< index 0) (>= index (ast-expr-list-len (& lst))))
+  (if (or (< index 0) (>= index (struct-get (& lst) len)))
     (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
     (ast-expr-list-get (& lst) index 0)))
 

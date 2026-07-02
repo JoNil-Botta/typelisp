@@ -518,6 +518,33 @@
 (define (compiler-reg-sysv-integer-register-count) : i64
   (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers)))
 
+;; M-G3 stage 2 (FPO): %rbp as the 6th callee-saved pool register. Only enabled
+;; per-function by the backend (compiler-reg-set-rbp-pool-enabled!) when the
+;; function is frame-pointer-omission eligible (Linux, scalar opt2 path): the
+;; prologue then addresses the frame purely rsp-relative, freeing %rbp to home a
+;; value exactly like r12-r15/rbx (prologue-saved to a frame slot). %rbp is added
+;; LAST so functions needing five or fewer CSRs keep their existing assignments.
+;; The flag defaults to false, so every non-backend planning path (regalloc unit
+;; tests, SIMD/AVX config, stack-only plans) sees the historical 14-register pool.
+(define compiler-reg-rbp-pool-enabled : bool
+  false)
+
+(define (compiler-reg-set-rbp-pool-enabled! [on : bool]) : unit
+  (set! compiler-reg-rbp-pool-enabled on))
+
+(define (compiler-reg-sysv-integer-registers-with-rbp) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%r12"
+    (compiler-reg-string-cons
+      "%r13"
+      (compiler-reg-string-cons
+        "%r14"
+        (compiler-reg-string-cons
+          "%r15"
+          (compiler-reg-string-cons
+            "%rbx"
+            (compiler-reg-string-cons "%rbp" CompilerRegStringNil)))))))
+
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that
 ;; would need prologue/epilogue save/restore, and are used only for intervals
@@ -14651,7 +14678,33 @@
 (define (compiler-reg-greedy-integer-pool-for-abi
   [abi : CompilerRegTargetAbi]) : CompilerRegStringList
   (match abi
-    [(CompilerRegAbiLinux) (compiler-reg-greedy-integer-pool)]
+    ;; M-G3 stage 2: when the backend enabled the per-function FPO flag, %rbp
+    ;; joins as the LAST callee-saved register (index 14; the caller-saved
+    ;; boundary stays 9 -- compiler-reg-greedy-caller-saved-count is derived
+    ;; from the base pool, unchanged). Functions needing <= 5 CSRs keep their
+    ;; previous homes.
+    [(CompilerRegAbiLinux)
+      (if compiler-reg-rbp-pool-enabled
+        (compiler-reg-string-cons
+          "%rax"
+          (compiler-reg-string-cons
+          "%rsi"
+          (compiler-reg-string-cons
+          "%rdi"
+          (compiler-reg-string-cons
+          "%r9"
+          (compiler-reg-string-cons
+            "%rcx"
+            (compiler-reg-string-cons
+              "%rdx"
+              (compiler-reg-string-cons
+                "%r10"
+                (compiler-reg-string-cons
+                  "%r11"
+                  (compiler-reg-string-cons
+                    "%r8"
+                    (compiler-reg-sysv-integer-registers-with-rbp))))))))))
+        (compiler-reg-greedy-integer-pool))]
     [(CompilerRegAbiWindows)
       ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
       ;; epilogue (compiler-backend-emit-save-callee-regs) saves only the SysV

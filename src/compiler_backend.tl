@@ -4030,7 +4030,9 @@
     (compiler-backend-callee-needs-save? assignments "%r12")
     (compiler-backend-callee-needs-save? assignments "%r13")
     (compiler-backend-callee-needs-save? assignments "%r14")
-    (compiler-backend-callee-needs-save? assignments "%r15")))
+    (compiler-backend-callee-needs-save? assignments "%r15")
+    ;; M-G3 stage 2: %rbp is the 6th pool CSR in FPO functions.
+    (compiler-backend-callee-needs-save? assignments "%rbp")))
 
 ;; Callee-saved registers are spilled to frame slots that sit just below the
 ;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
@@ -4041,9 +4043,13 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments)
-    (if (compiler-backend-callee-needs-save? assignments "%rbx")
-      (+ vars 5)
-      (+ vars 4))
+    ;; M-G3 stage 2: %rbp (idx 5, FPO functions only) sits below %rbx like %rbx
+    ;; sits below r12-r15 -- reserved only when the plan homes a value there.
+    (if (compiler-backend-callee-needs-save? assignments "%rbp")
+      (+ vars 6)
+      (if (compiler-backend-callee-needs-save? assignments "%rbx")
+        (+ vars 5)
+        (+ vars 4)))
     vars))
 
 ;; #2386: reserve a second var-region for the word1 stack slots of any group var
@@ -4070,7 +4076,8 @@
   [vars : i64]
   [has-group-vars : bool]) : i64
   (let
-    [base : i64 (+ vars 5)]
+    ;; M-G3 stage 2: 6 covers the largest callee-save area (r12-r15, rbx, rbp).
+    [base : i64 (+ vars 6)]
     (if has-group-vars
       (+ base vars)
       base)))
@@ -4209,6 +4216,22 @@
                 (string.string-append
                   (compiler-backend-emit-windows-seh-stackalloc target frame)
                   (compiler-backend-emit-windows-seh-endprologue target))))))))))
+
+;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
+;; body was proven rsp-constant and fully rebased by compiler-backend-rsp-
+;; rebase). The +8 replaces the omitted `pushq %rbp`: it keeps %rsp 16-aligned
+;; at every call exactly as before AND leaves every frame slot at the same
+;; ABSOLUTE address as the rbp world, so the rebase bias is unchanged. The
+;; matching epilogue (`addq $(frame+8), %rsp`) is produced by the rebase
+;; pass's `leave` rewrite.
+(define (compiler-backend-emit-function-entry-fpo
+  [symbol : String]
+  [frame : i64]) : String
+  (str_cat.str-cat
+    symbol
+    ":\n    subq $"
+    (string.int->string (+ frame 8))
+    ", %rsp\n"))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
@@ -4644,15 +4667,24 @@
     [r14 : bool (compiler-backend-callee-needs-save? assignments "%r14")]
     [r15 : bool (compiler-backend-callee-needs-save? assignments "%r15")]
     [rbx : bool (compiler-backend-callee-needs-save? assignments "%rbx")]
+    ;; M-G3 stage 2: %rbp (slot idx 5, allocated LAST) extends the contiguous
+    ;; pop run. Sound: a plan can only home a value in %rbp on the FPO path,
+    ;; where the epilogue `leave` is rewritten to `addq $N,%rsp` (never reads
+    ;; %rbp), so `popq %rbp` restoring the caller's value early is fine; if
+    ;; the FPO audit fails on an rbp-planned function it is DEMOTED (re-planned
+    ;; without %rbp), so `popq %rbp` can never precede a real `leave`.
+    [rbp : bool (compiler-backend-callee-needs-save? assignments "%rbp")]
     (or
-      (and r12 r13 (not r14) (not r15) (not rbx))
-      (and r12 r13 r14 (not r15) (not rbx))
-      (and r12 r13 r14 r15 (not rbx))
-      (and r12 r13 r14 r15 rbx))))
+      (and r12 r13 (not r14) (not r15) (not rbx) (not rbp))
+      (and r12 r13 r14 (not r15) (not rbx) (not rbp))
+      (and r12 r13 r14 r15 (not rbx) (not rbp))
+      (and r12 r13 r14 r15 rbx (not rbp))
+      (and r12 r13 r14 r15 rbx rbp))))
 
 (define (compiler-backend-callee-save-pop-start-idx
   [assignments : CompilerRegAssignmentList]) : i64
   (cond
+    [(compiler-backend-callee-needs-save? assignments "%rbp") 5]
     [(compiler-backend-callee-needs-save? assignments "%rbx") 4]
     [(compiler-backend-callee-needs-save? assignments "%r15") 3]
     [(compiler-backend-callee-needs-save? assignments "%r14") 2]
@@ -4676,14 +4708,19 @@
         (compiler-backend-callee-save-pop-start-idx assignments))
       ", %rsp\n")
     (string.string-append
-      (compiler-backend-emit-pop-callee-reg assignments "%rbx")
+      ;; %rbp's slot (idx 5) is the lowest address, so it pops FIRST.
+      (compiler-backend-emit-pop-callee-reg assignments "%rbp")
       (string.string-append
-        (compiler-backend-emit-pop-callee-reg assignments "%r15")
+        (compiler-backend-emit-pop-callee-reg assignments "%rbx")
         (string.string-append
-          (compiler-backend-emit-pop-callee-reg assignments "%r14")
+          (compiler-backend-emit-pop-callee-reg assignments "%r15")
           (string.string-append
-            (compiler-backend-emit-pop-callee-reg assignments "%r13")
-            (compiler-backend-emit-pop-callee-reg assignments "%r12")))))))
+            (compiler-backend-emit-pop-callee-reg assignments "%r14")
+            (string.string-append
+              (compiler-backend-emit-pop-callee-reg assignments "%r13")
+              (compiler-backend-emit-pop-callee-reg
+                assignments
+                "%r12"))))))))
 
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -4696,7 +4733,17 @@
         (compiler-backend-emit-save-callee-reg assignments vars "%r14" 2)
         (string.string-append
           (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)
-          (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4))))))
+          (string.string-append
+            (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4)
+            ;; M-G3 stage 2: %rbp saved like any other CSR (slot idx 5). The
+            ;; slot operand is a frame reference; in the (FPO-only) functions
+            ;; that home values in %rbp it is rebased to an rsp-relative form,
+            ;; so the save works without the rbp frame base.
+            (compiler-backend-emit-save-callee-reg
+              assignments
+              vars
+              "%rbp"
+              5)))))))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -4704,14 +4751,20 @@
   (if (compiler-backend-callee-save-pop-eligible? assignments)
     (compiler-backend-emit-restore-callee-regs-pop assignments vars)
     (string.string-append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rbp" 5)
       (string.string-append
-        (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
+        (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
         (string.string-append
-          (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+          (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
           (string.string-append
-            (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
-            (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))))
+            (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+            (string.string-append
+              (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
+              (compiler-backend-emit-restore-callee-reg
+                assignments
+                vars
+                "%r12"
+                0))))))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label
@@ -5715,11 +5768,29 @@
   ;; scratch/result reg). Now %rax is in the allocator pool, so a var homed in %rax
   ;; is a valid address base -- using it directly elides the `movq %rax,<scav>` reload
   ;; (the value-home conflict is still handled by `avoid`).
+  ;;
+  ;; M-G3 stage 2 (#rbp-base): a %rbp home must NEVER appear as a memory-operand
+  ;; BASE. In FPO functions %rbp is a pool value register, but the rsp-rebase
+  ;; pass (and the peephole slot recognizers) identify frame references
+  ;; textually by "(%rbp" -- a pool deref `off(%rbp)` would be rewritten as a
+  ;; frame slot (miscompile). Excluding %rbp here routes such bases through the
+  ;; staged scratch-copy path (`movq %rbp, %rSCAV`), preserving the invariant
+  ;; that every "(%rbp" in emitted text is a frame reference. SIB INDEX position
+  ;; (",%rbp,") is fine -- the recognizers only match the base spelling.
   (and
     (not (string.string-eq home ""))
+    (not (string.string-eq home "%rbp"))
     (if (string.string-eq avoid "")
       true
       (not (string.string-eq home avoid)))))
+
+;; #rbp-base: filter for direct address-base candidates read straight off
+;; value-scalar-register (the fused gep load/store paths) -- "" forces the
+;; staged/scavenged path, exactly like a non-register home.
+(define (compiler-backend-address-base-filter [home : String]) : String
+  (if (string.string-eq home "%rbp")
+    ""
+    home))
 
 (define (compiler-backend-address-base-home
   [assignments : CompilerRegAssignmentList]
@@ -5890,6 +5961,14 @@
         (if (= size 2)
           "%r11w"
           "%r11b"))]
+    ;; M-G3 stage 2: %rbp is a pool register in FPO functions; without this arm
+    ;; the else-fallback would silently substitute %r15 parts (miscompile).
+    [(string.string-eq reg "%rbp")
+      (if (= size 4)
+        "%ebp"
+        (if (= size 2)
+          "%bp"
+          "%bpl"))]
     [else
       (if (= size 4)
         "%r15d"
@@ -9918,6 +9997,10 @@
         (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
       (if (and
         (not (string-eq lhs-reg ""))
+        ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
+        ;; reference and silently rebased by the FPO rsp-rebase pass
+        ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
+        (not (string-eq lhs-reg "%rbp"))
         (not (string-eq lhs-reg dst-home))
         (not (string-eq imm "$0"))
         (= (compiler-backend-type-size ty) 8)
@@ -10291,7 +10374,14 @@
                   (if (and
                     (string-eq mnem "add")
                     (not (string-eq lhs-reg ""))
-                    (not (string-eq rhs-reg "")))
+                    (not (string-eq rhs-reg ""))
+                    ;; #rbp-base: %rbp must not land in the SIB BASE slot
+                    ;; ("(%rbp," fails the FPO audit). Addition commutes, so
+                    ;; an rbp-homed lhs swaps into the INDEX slot; only the
+                    ;; both-rbp case (lhs == rhs == %rbp) falls through.
+                    (not (and
+                      (string-eq lhs-reg "%rbp")
+                      (string-eq rhs-reg "%rbp"))))
                     ;; bucket a (two-address tie): when both operands already live in
                     ;; registers and the op is add, emit a 3-address LEA so the
                     ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
@@ -10300,9 +10390,9 @@
                     (OkCompilerBackend
                       (str-cat
                         "    leaq ("
-                        lhs-reg
+                        (if (string-eq lhs-reg "%rbp") rhs-reg lhs-reg)
                         ","
-                        rhs-reg
+                        (if (string-eq lhs-reg "%rbp") lhs-reg rhs-reg)
                         "), "
                         dst-home
                         "\n"))
@@ -11751,7 +11841,8 @@
             ;; staging copy -- the compare only READS the addressing base, so the
             ;; home register is used directly (the load below self-elides).
             [base-home : String
-              (compiler-backend-value-scalar-register assignments base)]
+              (compiler-backend-address-base-filter
+                (compiler-backend-value-scalar-register assignments base))]
             [scav-base : String
               (if (string-eq base-home "")
                 (compiler-backend-scavenge-reg-here
@@ -12177,8 +12268,10 @@
   ;; through to the staged/scavenged path.
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    ;; #rbp-base: never leaq off a %rbp base (frame-spelling collision).
     [base-reg : String
-      (compiler-backend-value-scalar-register assignments base)]
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register assignments base))]
     (if (if (string.string-eq dst-home "")
       false
       (not (string.string-eq base-reg "")))
@@ -12798,7 +12891,10 @@
   (if (<= size 0)
     (OkCompilerBackend "")
     (let
-      [dst-home : String (compiler-backend-value-register-home assignments dst)]
+      ;; #rbp-base: both homes serve as memory-operand bases in the chunk copies.
+      [dst-home : String
+        (compiler-backend-address-base-filter
+          (compiler-backend-value-register-home assignments dst))]
       [dst-reg : String
         (if (string-eq dst-home "")
           (compiler-backend-scavenge-reg-here protect protect-n "%r10")
@@ -12809,7 +12905,8 @@
         [(OkCompilerBackend dst-asm)
           (let
             [src-home : String
-              (compiler-backend-value-register-home assignments src)]
+              (compiler-backend-address-base-filter
+                (compiler-backend-value-register-home assignments src))]
             [src-exclude-base : (Array String)
               (compiler-backend-one-exclude dst-reg)]
             [src-exclude : (Array String)
@@ -13231,7 +13328,8 @@
         ;; address before writing, and home equality means the allocator proved
         ;; the base value dead after this load.
         [base-home : String
-          (compiler-backend-value-scalar-register assignments base)]
+          (compiler-backend-address-base-filter
+            (compiler-backend-value-scalar-register assignments base))]
         [base-reg : String
           (if (string-eq base-reg-in "")
             (if (string-eq base-home "")
@@ -13277,7 +13375,8 @@
         [scale : i64 (compiler-backend-type-size elem-ty)]
         [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
         [base-home : String
-          (compiler-backend-value-scalar-register assignments base)]
+          (compiler-backend-address-base-filter
+            (compiler-backend-value-scalar-register assignments base))]
         [offset-home : String
           (compiler-backend-value-scalar-register assignments offset)]
         [use-base-home? : bool
@@ -13432,7 +13531,8 @@
     ;; (the 2nd load reads its address operand before writing, and afterwards
     ;; the base register is no longer needed).
     [base-home : String
-      (compiler-backend-value-scalar-register assignments base)]
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register assignments base))]
     [dst0-home : String
       (compiler-backend-var-register-home assignments load-dst0)]
     [base-reg : String
@@ -13654,7 +13754,8 @@
         [value-home : String
           (compiler-backend-value-scalar-register assignments value)]
         [base-home : String
-          (compiler-backend-value-scalar-register assignments base)]
+          (compiler-backend-address-base-filter
+            (compiler-backend-value-scalar-register assignments base))]
         [offset-home : String
           (compiler-backend-value-scalar-register assignments offset)]
         ;; M-G (B2, M-C2 for stores): base AND index both register-homed with a
@@ -30085,6 +30186,30 @@
 (define compiler-backend-rsp-rebase-keep-count : i64
   0)
 
+;; M-G3 stage 2: result of the LAST rsp-rebase invocation (true = audit passed
+;; and the returned text is the rewritten one). The caller picks the prologue
+;; (FPO subq vs rbp push/mov/sub) and the demotion path from this.
+(define compiler-backend-rsp-rebase-last-ok : bool
+  true)
+
+;; M-G3 stage 2: %rbp-pool permission for the CURRENT function's plan. True
+;; except during the demotion retry (see the _rbp-pool-flag note in
+;; emit-function for why this is a global, not a parameter).
+(define compiler-backend-emit-function-allow-rbp : bool
+  true)
+
+;; M-G3 stage 2 census: functions emitted frame-pointer-free / whose final plan
+;; homes a value in %rbp / demoted (FPO audit failed on an rbp-planned function
+;; -> re-planned without %rbp).
+(define compiler-backend-fpo-count : i64
+  0)
+
+(define compiler-backend-fpo-rbp-plan-count : i64
+  0)
+
+(define compiler-backend-fpo-demote-count : i64
+  0)
+
 ;; Index of the first "(%rbp" occurrence in [start,end), or -1.
 (define (compiler-backend-rsp-rebase-find-rbp
   [data : (Ptr u8)]
@@ -30150,9 +30275,40 @@
       (if neg (- 0 v) v))))
 
 ;; Rewrite one function's POST-PROLOGUE text to rsp-relative frame addressing
-;; (`-K(%rbp)` -> `(frame+delta-K)(%rsp)`); returns the ORIGINAL text when the
+;; (`X(%rbp)` -> `(frame+delta+X)(%rsp)`); returns the ORIGINAL text when the
 ;; rsp-constancy audit fails (the function keeps rbp addressing).
-(define (compiler-backend-rsp-rebase [text : String] [frame : i64]) : String
+;;
+;; M-G3 stage 2 (`fpo` = true, Linux only): the function is emitted
+;; frame-pointer-FREE. The caller's prologue is `subq $(frame+8), %rsp` (the +8
+;; replaces the omitted `pushq %rbp`, keeping 16-alignment AND every absolute
+;; slot address identical to the rbp world, so the rebase formula and bias are
+;; UNCHANGED). Differences from the stage-1 (behavior-neutral) mode:
+;;   * POSITIVE rbp offsets (incoming stack args 16+8k(%rbp), tail-call final
+;;     stack-arg stores) are rebased with the SAME formula -- the virtual rbp
+;;     sits at rsp+frame post-prologue in both worlds.
+;;   * `leave` becomes `addq $(frame+8+delta), %rsp` (there is no rbp frame to
+;;     reset from). Requires a tracked rsp (valid); delta is normally 0.
+;;   * the pop-restore epilogue `leaq slot,%rsp; popq CSR...` is TRACKED instead
+;;     of ending validity: the leaq operand was just rebased on the same line
+;;     (exactly one frame ref), so the new rsp is known (delta goes negative --
+;;     the "epilogue tail"); the pops keep decrementing delta and the final
+;;     `leave` rewrite folds the remainder. Negative delta stays a hard audit
+;;     failure outside this recognized shape.
+;;   * any OTHER rsp write (`movq %rbp,%rsp`, untracked leaq) FAILS the audit
+;;     (stage 1 merely ended validity) -- without a frame pointer there is no
+;;     way to re-establish rsp.
+;; On audit failure the caller either re-runs in stage-1 mode (plan has no %rbp
+;; home -> keep-rbp, byte-identical) or DEMOTES (re-plans the function without
+;; %rbp in the pool and re-emits).
+;;
+;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
+;; reference -- %rbp pool VALUES never appear as memory-operand bases (the
+;; emitters stage them through a scratch; see address-base-filter) and bare
+;; `%rbp` register operands contain no "(%rbp".
+(define (compiler-backend-rsp-rebase
+  [text : String]
+  [frame : i64]
+  [fpo : bool]) : String
   (let
     [n : i64 (string.string-length text)]
     [data : (Ptr u8)
@@ -30163,6 +30319,9 @@
     [delta : i64 0]
     [valid : bool true]
     [ok : bool true]
+    [tail : bool false]
+    [last-noff : i64 -1]
+    [ref-count : i64 0]
     (begin
       (while (and ok (< i n))
         (let
@@ -30189,6 +30348,7 @@
                     unit)
                   (set! delta 0)
                   (set! valid true)
+                  (set! tail false)
                   (set!
                     buf
                     (compiler-backend-peephole-append-line-range
@@ -30219,14 +30379,43 @@
                         end
                         ", %rsp"))]
                   (begin
+                    (set! last-noff -1)
+                    (set! ref-count 0)
                     ;; popq MEM computes its address AFTER the rsp increment.
                     (if (and valid pop?)
                       (begin
                         (set! delta (- delta 8))
-                        (if (< delta 0)
+                        ;; negative delta is legal only inside the FPO epilogue
+                        ;; tail (the pops after a rebased `leaq slot,%rsp`).
+                        (if (and (< delta 0) (not (and fpo tail)))
                           (set! ok false)
                           unit))
                       unit)
+                    (if (and fpo leave?)
+                      ;; FPO: no rbp frame to `leave` from -- unwind rsp
+                      ;; directly (prologue reserved frame+8; a negative delta
+                      ;; folds the pop-restore epilogue tail when present).
+                      (begin
+                        (if (not valid)
+                          (set! ok false)
+                          (let
+                            [amount : i64 (+ (+ frame 8) delta)]
+                            (if (< amount 0)
+                              (set! ok false)
+                              (if (= amount 0)
+                                unit
+                                (set!
+                                  buf
+                                  (compiler-backend-peephole-append-line
+                                    buf
+                                    (str_cat.str-cat
+                                      "    addq $"
+                                      (string.int->string amount)
+                                      ", %rsp")
+                                    nl))))))
+                        (set! valid false)
+                        (set! tail false))
+                      (begin
                     ;; frame-reference rewrite
                     (let
                       [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
@@ -30270,8 +30459,12 @@
                                               data
                                               ks
                                               p)]
-                                          (if (>= k 0)
-                                            ;; incoming stack-arg slot: keep rbp
+                                          (if (and (>= k 0) (not fpo))
+                                            ;; incoming stack-arg slot: keep
+                                            ;; rbp (stage 1 -- %rbp is live).
+                                            ;; In FPO mode positive offsets
+                                            ;; rebase with the SAME formula
+                                            ;; (virtual rbp = rsp+frame).
                                             unit
                                             (let
                                               [noff : i64 (+ (+ frame delta) k)]
@@ -30296,6 +30489,8 @@
                                                     (text_buf.text-buf-append
                                                       buf
                                                       "(%rsp)"))
+                                                  (set! last-noff noff)
+                                                  (set! ref-count (+ ref-count 1))
                                                   (set! cursor (+ p 6))))))))))
                                   (set!
                                     p
@@ -30365,13 +30560,34 @@
                             (if (< delta 0)
                               (set! ok false)
                               unit))
-                          ;; unknown rsp write (leaq slot,%rsp epilogue,
-                          ;; movq %rbp,%rsp, ...): rsp no longer tracked.
-                          (set! valid false)))
+                          (if fpo
+                            ;; FPO: only the pop-restore epilogue's
+                            ;; `leaq slot,%rsp` is provable -- the slot operand
+                            ;; was rebased on THIS line (exactly one frame
+                            ;; ref), so the new rsp is P + last-noff, i.e.
+                            ;; delta -= last-noff (the epilogue tail). Any
+                            ;; other rsp write is unrecoverable without a
+                            ;; frame pointer.
+                            (if (and
+                              valid
+                              (not tail)
+                              (= ref-count 1)
+                              (compiler-backend-peephole-range-eq?
+                                data
+                                m
+                                te
+                                "leaq"))
+                              (begin
+                                (set! tail true)
+                                (set! delta (- delta last-noff)))
+                              (set! ok false))
+                            ;; unknown rsp write (leaq slot,%rsp epilogue,
+                            ;; movq %rbp,%rsp, ...): rsp no longer tracked.
+                            (set! valid false))))
                       unit)
                     (if leave?
                       (set! valid false)
-                      unit)))))
+                      unit)))))))
             (set!
               i
               (if (< end n)
@@ -30379,11 +30595,13 @@
                 end)))))
       (if ok
         (begin
+          (set! compiler-backend-rsp-rebase-last-ok true)
           (set!
             compiler-backend-rsp-rebase-ok-count
             (+ compiler-backend-rsp-rebase-ok-count 1))
           (text_buf.text-buf-render buf))
         (begin
+          (set! compiler-backend-rsp-rebase-last-ok false)
           (set!
             compiler-backend-rsp-rebase-keep-count
             (+ compiler-backend-rsp-rebase-keep-count 1))
@@ -30424,6 +30642,24 @@
         [_ra-grp-mask : unit
           (compiler-reg-set-group-class-masks!
             (struct-get program-index group-word-class-masks))]
+        ;; M-G3 stage 2: enable %rbp as the 6th CSR for this function's plan --
+        ;; Linux scalar-opt2 text path only. The allow-rbp GLOBAL is false only
+        ;; on the DEMOTION retry (the FPO audit failed on an rbp-planned
+        ;; function). NOTE: this is deliberately a global rather than a 14th
+        ;; emit-function parameter -- the published SEED stage0 miscompiles the
+        ;; 14th parameter's USES to constant 0 (the spill from 72(%rbp) is
+        ;; emitted but the read is lowered as `xorl %r9d,%r9d`), which HEAD's
+        ;; own codegen does not do; a parameter would therefore work in
+        ;; s1-compiled compilers but not the seed-compiled s1, diverging the
+        ;; bootstrap fixpoint. The flag is set unconditionally per function so
+        ;; no state leaks across functions.
+        [_rbp-pool-flag : unit
+          (compiler-reg-set-rbp-pool-enabled!
+            (and
+              compiler-backend-emit-function-allow-rbp
+              (compiler-backend-target-linux? target)
+              (compiler-backend-mode-scalar? mode)
+              compiler-backend-scalar-registers-enabled))]
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
@@ -30799,62 +31035,141 @@
                               false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
-                        (OkCompilerBackend
+                        [post-prologue : String
                           (str_cat.str-cat
-                            (compiler-backend-function-symbol-map-comment
-                              program-index
-                              name)
-                            ".globl "
-                            symbol
-                            "\n"
-                            (compiler-backend-emit-function-entry
+                            (compiler-backend-mode-prologue mode)
+                            (compiler-backend-emit-save-callee-regs
+                              assignments
+                              slot-vars)
+                            (compiler-backend-emit-windows-main-argv-capture
                               target
-                              symbol
-                              frame)
-                            ""
-                            ""
-                            ;; M-G3 stage 1: rebase the whole post-prologue
-                            ;; text (CSR saves, param spills, body, shared
-                            ;; return epilogue) to rsp-relative frame
-                            ;; addressing; on audit failure it stays on rbp.
-                            (compiler-backend-rsp-rebase
-                              (str_cat.str-cat
-                                (compiler-backend-mode-prologue mode)
-                                (compiler-backend-emit-save-callee-regs
-                                  assignments
-                                  slot-vars)
-                                (compiler-backend-emit-windows-main-argv-capture
-                                  target
-                                  name
-                                  emit-entry
-                                  plan)
-                                (compiler-backend-emit-linux-crt-main-argv-capture
-                                  target
-                                  name
+                              name
+                              emit-entry
+                              plan)
+                            (compiler-backend-emit-linux-crt-main-argv-capture
+                              target
+                              name
+                              crt-entry
+                              plan)
+                            (if (and
+                              (string.string-eq name "main")
+                              (or
+                                (compiler-backend-target-windows? target)
+                                (and
                                   crt-entry
-                                  plan)
-                                (if (and
-                                  (string.string-eq name "main")
-                                  (or
-                                    (compiler-backend-target-windows? target)
-                                    (and
-                                      crt-entry
-                                      (compiler-backend-target-linux? target))))
-                                  (compiler-backend-global-initializers
-                                    globals
-                                    program-index)
-                                  "")
-                                spills
-                                body
-                                (compiler-backend-return-epilogue
-                                  name
-                                  assignments
-                                  slot-vars
-                                  emit-blocks-list)
-                                "")
-                              frame)
-                            (compiler-backend-emit-windows-seh-endproc target)
-                            "\n")))]
+                                  (compiler-backend-target-linux? target))))
+                              (compiler-backend-global-initializers
+                                globals
+                                program-index)
+                              "")
+                            spills
+                            body
+                            (compiler-backend-return-epilogue
+                              name
+                              assignments
+                              slot-vars
+                              emit-blocks-list)
+                            "")]
+                        ;; M-G3 stage 2: attempt frame-pointer omission on the
+                        ;; Linux text path (Win64 keeps the rbp prologue: its
+                        ;; SEH unwind uses `.seh_setframe %rbp` because the
+                        ;; in-body rsp dips -- c-abi calls, cycle-break pushes
+                        ;; -- require a frame register for valid unwind info).
+                        ;; Stage-1 mode (fpo=false) elsewhere, byte-identical.
+                        [fpo-attempt : bool
+                          (compiler-backend-target-linux? target)]
+                        [rebased : String
+                          (compiler-backend-rsp-rebase
+                            post-prologue
+                            frame
+                            fpo-attempt)]
+                        [fpo-ok : bool
+                          (and
+                            fpo-attempt
+                            compiler-backend-rsp-rebase-last-ok)]
+                        (if (and
+                          fpo-attempt
+                          (not fpo-ok)
+                          (compiler-backend-plan-uses-reg? assignments "%rbp"))
+                          ;; DEMOTE: the FPO audit failed but the plan homes a
+                          ;; value in %rbp (which has no frame base to fall
+                          ;; back to) -- re-plan and re-emit without %rbp in
+                          ;; the pool. The retry cannot demote again
+                          ;; (allow-rbp=false => no %rbp homes).
+                          (begin
+                            (set!
+                              compiler-backend-fpo-demote-count
+                              (+ compiler-backend-fpo-demote-count 1))
+                            (set! compiler-backend-emit-function-allow-rbp false)
+                            (let
+                              [demoted : ResultCompilerBackend
+                                (compiler-backend-emit-function
+                                  target
+                                  mode
+                                  func
+                                  functions
+                                  globals
+                                  global-types
+                                  externs
+                                  plan
+                                  program-index
+                                  spans
+                                  span-index
+                                  emit-entry
+                                  crt-entry)]
+                              (begin
+                                (set!
+                                  compiler-backend-emit-function-allow-rbp
+                                  true)
+                                demoted)))
+                          (let
+                            [_fpo-census : unit
+                              (if fpo-ok
+                                (begin
+                                  (set!
+                                    compiler-backend-fpo-count
+                                    (+ compiler-backend-fpo-count 1))
+                                  (if (compiler-backend-plan-uses-reg?
+                                    assignments
+                                    "%rbp")
+                                    (set!
+                                      compiler-backend-fpo-rbp-plan-count
+                                      (+ compiler-backend-fpo-rbp-plan-count 1))
+                                    unit))
+                                unit)]
+                            (OkCompilerBackend
+                              (str_cat.str-cat
+                                (compiler-backend-function-symbol-map-comment
+                                  program-index
+                                  name)
+                                ".globl "
+                                symbol
+                                "\n"
+                                (if fpo-ok
+                                  (compiler-backend-emit-function-entry-fpo
+                                    symbol
+                                    frame)
+                                  (compiler-backend-emit-function-entry
+                                    target
+                                    symbol
+                                    frame))
+                                ""
+                                ""
+                                (if fpo-ok
+                                  rebased
+                                  (if fpo-attempt
+                                    ;; FPO audit failed with no %rbp in the
+                                    ;; plan: keep-rbp exactly as stage 1 (the
+                                    ;; stage-1 pass may still rebase locals or
+                                    ;; return the text byte-identical).
+                                    (compiler-backend-rsp-rebase
+                                      post-prologue
+                                      frame
+                                      false)
+                                    rebased))
+                                (compiler-backend-emit-windows-seh-endproc
+                                  target)
+                                "\n")))))]
                     [(ErrCompilerBackend message)
                       (let
                         [_addr-forward-done : unit
@@ -31424,7 +31739,9 @@
                 ""
                 ;; M-G3 stage 1: adapters go through the same rsp rebase as
                 ;; user functions (their `movq %rbp,%rsp` epilogue ends rsp
-                ;; validity; no frame refs follow it).
+                ;; validity; no frame refs follow it). Stage 2: adapters keep
+                ;; the rbp prologue (fpo=false) -- their raw epilogue resets
+                ;; rsp from rbp and they never home values in %rbp.
                 (compiler-backend-rsp-rebase
                   (string.string-append
                     spills
@@ -31454,7 +31771,8 @@
                                     target)
                                   "\n")))
                             "")))))
-                  frame)
+                  frame
+                  false)
                 ""))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
@@ -36331,8 +36649,18 @@ tl_memchr:
                                   "|keep-rbp="
                                   (string.int->string
                                     compiler-backend-rsp-rebase-keep-count)
-                                  "\n"
-                                  ""))))
+                                  "|fpo="
+                                  (string.int->string
+                                    compiler-backend-fpo-count)
+                                  (str_cat.str-cat
+                                    "|rbp-pool="
+                                    (string.int->string
+                                      compiler-backend-fpo-rbp-plan-count)
+                                    "|demote="
+                                    (string.int->string
+                                      compiler-backend-fpo-demote-count)
+                                    "\n"
+                                    "")))))
                           (OkCompilerBackendBuffer buf))))]
                   [(ErrCompilerBackendBuffer message)
                     (begin
@@ -36359,6 +36687,10 @@ tl_memchr:
     (compiler-backend-peephole-carry-safe-reset!)
     (set! compiler-backend-rsp-rebase-ok-count 0)
     (set! compiler-backend-rsp-rebase-keep-count 0)
+    (set! compiler-backend-fpo-count 0)
+    (set! compiler-backend-fpo-rbp-plan-count 0)
+    (set! compiler-backend-fpo-demote-count 0)
+    (set! compiler-backend-emit-function-allow-rbp true)
     (cfg
       regalloc-census
       (begin
@@ -39473,6 +39805,13 @@ tl_memchr:
   (and
     (compiler-backend-peephole-register-operand? src)
     (not (string.string-eq src "%r10"))
+    ;; #rbp-base (M-G3 stage 2): never fold a %rbp base into a memory operand.
+    ;; In FPO functions %rbp is a pool value register and the emitters stage
+    ;; rbp-based derefs through a scratch precisely so that "(%rbp" only ever
+    ;; spells a frame reference; folding would recreate `DISP(%rbp)` which the
+    ;; slot recognizers above treat as a frame slot (rbp-write invalidation is
+    ;; not modeled for slot keys).
+    (not (string.string-eq src "%rbp"))
     (string.string-eq dst "%r10")
     (compiler-backend-peephole-mem-base-r10? next-src)
     (compiler-backend-peephole-register-operand? next-dst)))

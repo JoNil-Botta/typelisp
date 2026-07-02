@@ -399,7 +399,7 @@
         (ResultSpannedSexpr.Err
           (token.SourceError
             (read-mismatched-close-message close-tag t span)
-            open-span))]
+            span))]
       [else
         (match (read-form-spanned-result toks cur)
           [(ResultSpannedSexpr.Ok head)

@@ -8391,13 +8391,13 @@
       "(define]"
       "reader: mismatched delimiter: expected ')' but found ']' at 1:8"
       1
-      1)
+      8)
     (compiler-parse-reader-diagnostic-ok?
       "wrong-close-bracket.tl"
       "[define)"
       "reader: mismatched delimiter: expected ']' but found ')' at 1:8"
       1
-      1)))
+      8)))
 
 (define (compiler-parse-float-literal-ok?) : bool
   (match (parse-ast-source "(define (main) : f64 1.5)")

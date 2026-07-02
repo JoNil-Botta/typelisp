@@ -12668,34 +12668,57 @@
                         true-jcc
                         false-jcc))))]
               [(CompilerBackendNoImmediate)
+                ;; GAP6a: register-homed rhs is the compare operand directly.
+                ;; ptr-asm loads the pointer into scav-base first; rhs is live
+                ;; across it, so scav-base already avoids rhs-home. A spilled rhs
+                ;; still stages (cmp mem,mem illegal -- scav-base is the memory
+                ;; operand here).
                 (let
-                  [scav-rhs : String
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-scavenge-exclude-with scav-base)
-                      6
-                      "%r8")]
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    rhs
-                    scav-rhs)
-                    [(OkCompilerBackend rhs-asm)
-                      (OkCompilerBackend
+                  [rhs-home : String
+                    (compiler-backend-value-scalar-register assignments rhs)]
+                  (if (not (string-eq rhs-home ""))
+                    (OkCompilerBackend
+                      (string-append
+                        ptr-asm
                         (string-append
-                          ptr-asm
+                          (compiler-backend-emit-compare-memory-flags
+                            rhs-home
+                            scav-base)
+                          (compiler-backend-emit-compare-branch-jumps
+                            function
+                            true-label
+                            false-label
+                            fallthrough
+                            true-jcc
+                            false-jcc))))
+                  (let
+                    [scav-rhs : String
+                      (compiler-backend-scavenge-reg-here
+                        (compiler-backend-scavenge-exclude-with scav-base)
+                        6
+                        "%r8")]
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      rhs
+                      scav-rhs)
+                      [(OkCompilerBackend rhs-asm)
+                        (OkCompilerBackend
                           (string-append
-                            rhs-asm
+                            ptr-asm
                             (string-append
-                              (compiler-backend-emit-compare-memory-flags
-                                scav-rhs
-                                scav-base)
-                              (compiler-backend-emit-compare-branch-jumps
-                                function
-                                true-label
-                                false-label
-                                fallthrough
-                                true-jcc
-                                false-jcc)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])]
+                              rhs-asm
+                              (string-append
+                                (compiler-backend-emit-compare-memory-flags
+                                  scav-rhs
+                                  scav-base)
+                                (compiler-backend-emit-compare-branch-jumps
+                                  function
+                                  true-label
+                                  false-label
+                                  fallthrough
+                                  true-jcc
+                                  false-jcc)))))]
+                      [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
@@ -12763,35 +12786,62 @@
                             true-jcc
                             false-jcc))))]
                   [(CompilerBackendNoImmediate)
+                    ;; GAP6a: a register-homed rhs is the compare's register
+                    ;; operand directly -- no `movq %rhs-home, %scratch` staging.
+                    ;; The compare only READS rhs, and base-asm loads base into
+                    ;; scav-base FIRST; rhs is live across that load, so the base
+                    ;; scavenge already avoids rhs-home (exactly the invariant the
+                    ;; staged path below relied on: scav-base != rhs-home, or the
+                    ;; staged rhs load would read a clobbered home). A SPILLED rhs
+                    ;; must still stage into a scratch -- `cmp mem, mem` is illegal
+                    ;; (addr is already the memory operand).
                     (let
-                      [scav-rhs : String
-                        (compiler-backend-scavenge-reg-here
-                          (compiler-backend-scavenge-exclude-with scav-base)
-                          6
-                          "%r8")]
-                      (match (compiler-backend-emit-load-value-with-plan
-                        assignments
-                        rhs
-                        scav-rhs)
-                        [(OkCompilerBackend rhs-asm)
-                          (OkCompilerBackend
+                      [rhs-home : String
+                        (compiler-backend-value-scalar-register assignments rhs)]
+                      (if (not (string-eq rhs-home ""))
+                        (OkCompilerBackend
+                          (string-append
+                            base-asm
                             (string-append
-                              base-asm
+                              (compiler-backend-emit-compare-memory-address-flags
+                                rhs-home
+                                addr)
+                              (compiler-backend-emit-compare-branch-jumps
+                                function
+                                true-label
+                                false-label
+                                fallthrough
+                                true-jcc
+                                false-jcc))))
+                      (let
+                        [scav-rhs : String
+                          (compiler-backend-scavenge-reg-here
+                            (compiler-backend-scavenge-exclude-with scav-base)
+                            6
+                            "%r8")]
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          scav-rhs)
+                          [(OkCompilerBackend rhs-asm)
+                            (OkCompilerBackend
                               (string-append
-                                rhs-asm
+                                base-asm
                                 (string-append
-                                  (compiler-backend-emit-compare-memory-address-flags
-                                    scav-rhs
-                                    addr)
-                                  (compiler-backend-emit-compare-branch-jumps
-                                    function
-                                    true-label
-                                    false-label
-                                    fallthrough
-                                    true-jcc
-                                    false-jcc)))))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)]))])]
+                                  rhs-asm
+                                  (string-append
+                                    (compiler-backend-emit-compare-memory-address-flags
+                                      scav-rhs
+                                      addr)
+                                    (compiler-backend-emit-compare-branch-jumps
+                                      function
+                                      true-label
+                                      false-label
+                                      fallthrough
+                                      true-jcc
+                                      false-jcc)))))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)]))))])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
         [(CompilerBackendNoI64)
           (ErrCompilerBackend

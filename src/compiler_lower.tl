@@ -2755,26 +2755,39 @@
   [module : String]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
-  (match variants
-    [(AstVariantDefList.Nil) (ResultTcEnv.Ok env)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (match (lower-module-local-type-env-bind-qualified-id-if-free
+  (lower-module-local-type-env-add-variants-at
+    top-env
+    env
+    module
+    enum-name
+    (& variants)
+    0))
+
+(define (lower-module-local-type-env-add-variants-at
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [enum-name : String]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-variant-def-list-len variants))
+    (ResultTcEnv.Ok env)
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (match (lower-module-local-type-env-bind-qualified-id-if-free
+          top-env
+          env
+          module
+          name)
+          [(ResultTcEnv.Ok next-env)
+            (lower-module-local-type-env-add-variants-at
               top-env
-              env
+              next-env
               module
-              name)
-              [(ResultTcEnv.Ok next-env)
-                (lower-module-local-type-env-add-variants
-                  top-env
-                  next-env
-                  module
-                  enum-name
-                  rest)]
-              [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))]))
+              enum-name
+              variants
+              (+ index 1))]
+          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])])))
 
 (define (lower-module-local-type-env-add-decl
   [top-env : TcTypeEnv]
@@ -3941,26 +3954,35 @@
   [roots : CloneNameList]
   [variants : AstVariantDefList]
   [module : String]) : CloneNameList
-  (match variants
-    [(AstVariantDefList.Nil) roots]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (lower-clone-root-add-variant-list
-              ctx
-              decls
-              able
-              (lower-clone-root-add-type-list
-                ctx
-                decls
-                able
-                roots
-                fields
-                module)
-              rest
-              module)]))]))
+  (lower-clone-root-add-variant-list-at
+    ctx
+    decls
+    able
+    roots
+    (& variants)
+    module
+    0))
+
+(define (lower-clone-root-add-variant-list-at
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [variants : (& variants AstVariantDefList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-variant-def-list-len variants))
+    roots
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (lower-clone-root-add-variant-list-at
+          ctx
+          decls
+          able
+          (lower-clone-root-add-type-list ctx decls able roots fields module)
+          variants
+          module
+          (+ index 1))])))
 
 (define (lower-clone-root-add-named-deps-in-module
   [ctx : TcContext]
@@ -7347,16 +7369,24 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [variants : AstVariantDefList]) : hashmap.I64I64Map
-  (match variants
-    [(AstVariantDefList.Nil) used]
-    [(AstVariantDefList.Cons variant rest)
-      (match variant
-        [(AstVariantDef.Def _ fields _)
-          (lower-used-types-add-variant-list
-            pools
-            (lower-used-types-add-type-list pools used module fields)
-            module
-            (box-get rest))])]))
+  (lower-used-types-add-variant-list-at pools used module (& variants) 0))
+
+(define (lower-used-types-add-variant-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-variant-def-list-len variants))
+    used
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (lower-used-types-add-variant-list-at
+          pools
+          (lower-used-types-add-type-list pools used module fields)
+          module
+          variants
+          (+ index 1))])))
 
 (define (lower-type-decl? [decl : AstDecl]) : bool
   (match decl
@@ -8866,47 +8896,56 @@
   [variants : AstVariantDefList]
   [tag : i64]
   [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (match variants
-    [(AstVariantDefList.Nil) globals]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def variant-name fields _)
-            (let
-              [next : CompilerIrGlobalList
-                (match fields
-                  [(AstTypeList.Nil)
-                    (let
-                      [object-name : String
-                        (lower-nullary-variant-object-name
-                          enum-name
-                          (intern-str variant-name))]
-                      (compiler-ir-global-cons
-                        (CompilerIrGlobal.Global
-                          object-name
-                          (AstType.I64)
-                          (CompilerIrValue.I64 tag))
-                        globals))]
-                  [_ globals])]
-              (lower-nullary-variant-globals enum-name rest (+ tag 1) next))]))]))
+  (if (>= tag (ast-variant-def-list-len (& variants)))
+    globals
+    (match (ast-variant-def-list-get
+      (& variants)
+      tag
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def variant-name fields _)
+        (let
+          [next : CompilerIrGlobalList
+            (match fields
+              [(AstTypeList.Nil)
+                (let
+                  [object-name : String
+                    (lower-nullary-variant-object-name
+                      enum-name
+                      (intern-str variant-name))]
+                  (compiler-ir-global-cons
+                    (CompilerIrGlobal.Global
+                      object-name
+                      (AstType.I64)
+                      (CompilerIrValue.I64 tag))
+                    globals))]
+              [_ globals])]
+          (lower-nullary-variant-globals enum-name variants (+ tag 1) next))])))
 
 (define (lower-enum-variants-storage-size
   [ctx : TcContext]
   [variants : AstVariantDefList]
   [max-size : i64]) : i64
-  (match variants
-    [(AstVariantDefList.Nil) max-size]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        [size : i64 (lower-variant-storage-size ctx variant)]
-        (lower-enum-variants-storage-size
+  (lower-enum-variants-storage-size-at ctx (& variants) max-size 0))
+
+(define (lower-enum-variants-storage-size-at
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [max-size : i64]
+  [index : i64]) : i64
+  (if (>= index (ast-variant-def-list-len variants))
+    max-size
+    (let
+      [size : i64
+        (lower-variant-storage-size
           ctx
-          rest
-          (if (> size max-size)
-            size
-            max-size)))]))
+          (ast-variant-def-list-get variants index (ast-variant-def-fallback)))]
+      (lower-enum-variants-storage-size-at
+        ctx
+        variants
+        (if (> size max-size)
+          size
+          max-size)
+        (+ index 1)))))
 
 (define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
   (match (tc-context-enum-variants ctx enum-name)
@@ -10611,24 +10650,35 @@
   [subst : TcLifetimeSubst]
   [variants : AstVariantDefList]
   [stack : LowerStringSet]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) true]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (and
-              (lower-supported-reference-type-list-subst-with-stack?
-                ctx
-                subst
-                fields
-                stack)
-              (lower-supported-reference-variant-list-with-stack?
-                ctx
-                subst
-                rest
-                stack))]))]))
+  (lower-supported-reference-variant-list-with-stack-at?
+    ctx
+    subst
+    (& variants)
+    stack
+    0))
+
+(define (lower-supported-reference-variant-list-with-stack-at?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [variants : (& variants AstVariantDefList)]
+  [stack : LowerStringSet]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    true
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (and
+          (lower-supported-reference-type-list-subst-with-stack?
+            ctx
+            subst
+            fields
+            stack)
+          (lower-supported-reference-variant-list-with-stack-at?
+            ctx
+            subst
+            variants
+            stack
+            (+ index 1)))])))
 
 (define (lower-supported-reference-struct-args-with-stack?
   [ctx : TcContext]
@@ -13716,69 +13766,68 @@
   [variants : AstVariantDefList]
   [index : i64]
   [done-label : String]) : ResultLowerState
-  (match variants
-    [(AstVariantDefList.Nil)
-      (ResultLowerState.Ok
-        (lower-state-finish-block
-          (lower-state-emit state (CompilerIrInstr.Jump done-label))
-          done-label))]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match (lower-state-fresh-label state "capture_enum_variant")
-          [(LowerLabel.Label variant-label-state variant-label)
-            (match (lower-state-fresh-label
-              variant-label-state
-              "capture_enum_next")
-              [(LowerLabel.Label next-label-state next-label)
-                (match (lower-state-alloc-var next-label-state)
-                  [(LowerAlloc.Alloc cond-state cond-var)
-                    (let
-                      [branch-state : LowerState
-                        (lower-state-finish-block
+  (if (>= index (ast-variant-def-list-len (& variants)))
+    (ResultLowerState.Ok
+      (lower-state-finish-block
+        (lower-state-emit state (CompilerIrInstr.Jump done-label))
+        done-label))
+    (let
+      [variant : AstVariantDef
+        (ast-variant-def-list-get (& variants) index (ast-variant-def-fallback))]
+      (match (lower-state-fresh-label state "capture_enum_variant")
+        [(LowerLabel.Label variant-label-state variant-label)
+          (match (lower-state-fresh-label
+            variant-label-state
+            "capture_enum_next")
+            [(LowerLabel.Label next-label-state next-label)
+              (match (lower-state-alloc-var next-label-state)
+                [(LowerAlloc.Alloc cond-state cond-var)
+                  (let
+                    [branch-state : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
                           (lower-state-emit
-                            (lower-state-emit
-                              cond-state
-                              (CompilerIrInstr.BinOp
-                                cond-var
-                                CompilerIrBinOp.Eq
-                                tag
-                                (CompilerIrValue.I64 index)
-                                (AstType.Bool)))
-                            (CompilerIrInstr.Branch
-                              (CompilerIrValue.Var cond-var)
-                              variant-label
-                              next-label))
-                          variant-label)]
-                      (match variant
-                        [(AstVariantDef.Def _ fields _)
-                          (match (lower-capture-snapshot-type-list
-                            ctx
-                            branch-state
-                            env
-                            type-env
-                            src
-                            dst
-                            fields
-                            8)
-                            [(ResultLowerState.Ok copied-state)
-                              (lower-capture-snapshot-enum-variants
-                                ctx
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    copied-state
-                                    (CompilerIrInstr.Jump done-label))
-                                  next-label)
-                                env
-                                type-env
-                                src
-                                dst
-                                tag
-                                rest
-                                (+ index 1)
-                                done-label)]
-                            [(ResultLowerState.Err message)
-                              (ResultLowerState.Err message)])]))])])]))]))
+                            cond-state
+                            (CompilerIrInstr.BinOp
+                              cond-var
+                              CompilerIrBinOp.Eq
+                              tag
+                              (CompilerIrValue.I64 index)
+                              (AstType.Bool)))
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var cond-var)
+                            variant-label
+                            next-label))
+                        variant-label)]
+                    (match variant
+                      [(AstVariantDef.Def _ fields _)
+                        (match (lower-capture-snapshot-type-list
+                          ctx
+                          branch-state
+                          env
+                          type-env
+                          src
+                          dst
+                          fields
+                          8)
+                          [(ResultLowerState.Ok copied-state)
+                            (lower-capture-snapshot-enum-variants
+                              ctx
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  copied-state
+                                  (CompilerIrInstr.Jump done-label))
+                                next-label)
+                              env
+                              type-env
+                              src
+                              dst
+                              tag
+                              variants
+                              (+ index 1)
+                              done-label)]
+                          [(ResultLowerState.Err message)
+                            (ResultLowerState.Err message)])]))])])]))))
 
 (define (lower-capture-snapshot-enum-value
   [ctx : TcContext]
@@ -17322,13 +17371,17 @@
       [(ResultTcEnumDecl.Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
-            (match variants
-              [(AstVariantDefList.Nil)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: init requires enum with at least one variant")))]
-              [(AstVariantDefList.Cons variant _)
+            (if (ast-variant-def-list-empty? (& variants))
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    "lower: init requires enum with at least one variant")))
+              (let
+                [variant : AstVariantDef
+                  (ast-variant-def-list-get
+                    (& variants)
+                    0
+                    (ast-variant-def-fallback))]
                 (match variant
                   [(AstVariantDef.Def variant-name fields _)
                     (let
@@ -17365,7 +17418,7 @@
                             (lower-diagnostic
                               (string.append
                                 "lower: unknown variant "
-                                lookup-name))))))])])])]
+                                lookup-name))))))])))])]
       [(ResultTcEnumDecl.Err message)
         (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
 
@@ -17422,13 +17475,17 @@
       [(ResultTcEnumDecl.Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
-            (match variants
-              [(AstVariantDefList.Nil)
-                (ResultLowerState.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: init requires enum with at least one variant")))]
-              [(AstVariantDefList.Cons variant _)
+            (if (ast-variant-def-list-empty? (& variants))
+              (ResultLowerState.Err
+                (box
+                  (lower-diagnostic
+                    "lower: init requires enum with at least one variant")))
+              (let
+                [variant : AstVariantDef
+                  (ast-variant-def-list-get
+                    (& variants)
+                    0
+                    (ast-variant-def-fallback))]
                 (match variant
                   [(AstVariantDef.Def variant-name fields _)
                     (let
@@ -17466,7 +17523,7 @@
                             (lower-diagnostic
                               (string.append
                                 "lower: unknown variant "
-                                lookup-name))))))])])])]
+                                lookup-name))))))])))])]
       [(ResultTcEnumDecl.Err message)
         (ResultLowerState.Err (box (lower-diagnostic message)))])))
 
@@ -25903,9 +25960,14 @@
         [(TcEnumDecl cleanup variants)
           (if (ast-enum-cleanup? cleanup)
             false
-            (match variants
-              [(AstVariantDefList.Nil) false]
-              [(AstVariantDefList.Cons variant _)
+            (if (ast-variant-def-list-empty? (& variants))
+              false
+              (let
+                [variant : AstVariantDef
+                  (ast-variant-def-list-get
+                    (& variants)
+                    0
+                    (ast-variant-def-fallback))]
                 (match variant
                   [(AstVariantDef.Def _ fields _)
                     (let
@@ -25917,7 +25979,7 @@
                             enum-name
                             enum-ty
                             fields))]
-                      (lower-init-default-share-safe-type-list? ctx field-types))])]))])]
+                      (lower-init-default-share-safe-type-list? ctx field-types))]))))])]
     [(ResultTcEnumDecl.Err _) false]))
 
 (define (lower-init-default-share-safe? [ctx : TcContext] [ty : AstType]) : bool
@@ -54375,8 +54437,8 @@
           (ast-variant-def
             "UsedA"
             AstTypeList.Nil
-            AstVariantPayloadCleanupList.Nil)
-          AstVariantDefList.Nil))
+            (ast-variant-payload-cleanup-list-new))
+          (ast-variant-def-list-new)))
       (ast-decl-cons
         (ast-decl-def-enum
           "DeadEnum"
@@ -54385,8 +54447,8 @@
             (ast-variant-def
               "DeadA"
               AstTypeList.Nil
-              AstVariantPayloadCleanupList.Nil)
-            AstVariantDefList.Nil))
+              (ast-variant-payload-cleanup-list-new))
+            (ast-variant-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-struct
             "UsedBox"
@@ -54435,8 +54497,8 @@
           (ast-variant-def
             "OkIoString"
             AstTypeList.Nil
-            AstVariantPayloadCleanupList.Nil)
-          AstVariantDefList.Nil))
+            (ast-variant-payload-cleanup-list-new))
+          (ast-variant-def-list-new)))
       (ast-decl-cons
         (ast-decl-def-enum
           "io.DeadResult"
@@ -54445,8 +54507,8 @@
             (ast-variant-def
               "DeadResultA"
               AstTypeList.Nil
-              AstVariantPayloadCleanupList.Nil)
-            AstVariantDefList.Nil))
+              (ast-variant-payload-cleanup-list-new))
+            (ast-variant-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn
             "main"

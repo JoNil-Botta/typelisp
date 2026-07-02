@@ -5070,46 +5070,48 @@
   [index : i64]) : ResultTcUnit
   (match specs
     [(TcStdlibVariantSpecList.Nil)
-      (match variants
-        [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-        [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra variant")])]
+      (if (>= index (ast-variant-def-list-len (& variants)))
+        ResultTcUnit.Ok
+        (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))]
     [(TcStdlibVariantSpecList.Cons expected-name expected-payloads rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 11))
-        (match variants
-          [(AstVariantDefList.Nil)
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (str_cat.str-cat "missing variant " expected-name))]
-          [(AstVariantDefList.Cons variant rest-variants)
-            (let
-              [rest-variants : AstVariantDefList (box-get rest-variants)]
-              [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
-              (match variant
-                [(AstVariantDef.Def actual-name actual-payloads _)
-                  (if (not (string.eq (intern-str actual-name) expected-name))
-                    (tc-stdlib-well-known-mismatch
-                      type-name
-                      (str_cat.str-cat
-                        "expected variant "
-                        expected-name
-                        " at index "
-                        (string.int->string index)))
-                    (match (tc-stdlib-check-payload-specs
-                      ctx
-                      type-name
+        (if (>= index (ast-variant-def-list-len (& variants)))
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str_cat.str-cat "missing variant " expected-name))
+          (let
+            [variant : AstVariantDef
+              (ast-variant-def-list-get
+                (& variants)
+                index
+                (ast-variant-def-fallback))]
+            [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
+            (match variant
+              [(AstVariantDef.Def actual-name actual-payloads _)
+                (if (not (string.eq (intern-str actual-name) expected-name))
+                  (tc-stdlib-well-known-mismatch
+                    type-name
+                    (str_cat.str-cat
+                      "expected variant "
                       expected-name
-                      actual-payloads
-                      expected-payloads
-                      0)
-                      [(ResultTcUnit.Ok)
-                        (tc-stdlib-check-variant-specs
-                          ctx
-                          type-name
-                          rest-variants
-                          rest-specs
-                          (+ index 1))]
-                      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))]))
+                      " at index "
+                      (string.int->string index)))
+                  (match (tc-stdlib-check-payload-specs
+                    ctx
+                    type-name
+                    expected-name
+                    actual-payloads
+                    expected-payloads
+                    0)
+                    [(ResultTcUnit.Ok)
+                      (tc-stdlib-check-variant-specs
+                        ctx
+                        type-name
+                        variants
+                        rest-specs
+                        (+ index 1))]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))))]))
 
 (define (tc-stdlib-check-struct
   [ctx : TcContext]
@@ -10265,16 +10267,20 @@
 (define (tc-source-variant-list-policy-ok
   [ctx : TcContext]
   [variants : AstVariantDefList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (match (tc-source-type-list-policy-ok ctx fields)
-              [(ResultTcUnit.Ok) (tc-source-variant-list-policy-ok ctx rest)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-source-variant-list-policy-ok-at ctx (& variants) 0))
+
+(define (tc-source-variant-list-policy-ok-at
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-variant-def-list-len variants))
+    ResultTcUnit.Ok
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (match (tc-source-type-list-policy-ok ctx fields)
+          [(ResultTcUnit.Ok)
+            (tc-source-variant-list-policy-ok-at ctx variants (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-decl-lifetime-name-allowed?
   [params : AstLifetimeList]
@@ -10351,17 +10357,25 @@
   [ctx : TcContext]
   [params : AstLifetimeList]
   [variants : AstVariantDefList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (match (tc-source-type-list-lifetimes-policy-ok ctx params fields)
-              [(ResultTcUnit.Ok)
-                (tc-source-variant-list-lifetimes-policy-ok ctx params rest)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-source-variant-list-lifetimes-policy-ok-at ctx params (& variants) 0))
+
+(define (tc-source-variant-list-lifetimes-policy-ok-at
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-variant-def-list-len variants))
+    ResultTcUnit.Ok
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (match (tc-source-type-list-lifetimes-policy-ok ctx params fields)
+          [(ResultTcUnit.Ok)
+            (tc-source-variant-list-lifetimes-policy-ok-at
+              ctx
+              params
+              variants
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-source-default-aggregate-layout-finite-ok
   [ctx : TcContext]
@@ -13636,32 +13650,42 @@
   [enum-name : String]
   [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : ResultTcEnv
-  (match variants
-    [(AstVariantDefList.Nil) (ResultTcEnv.Ok env)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name fields _)
-            (let
-              [scoped-enum : String
-                (compiler-symbol-module-key module enum-name)]
-              [constructor-ty : AstType
-                (tc-enum-variant-constructor-type
-                  ctx
-                  scoped-enum
-                  lifetimes
-                  fields)]
-              (tc-bind-enum-variants-in-module
-                ctx
-                (tc-bind-alias-id-if-free
-                  env
-                  (tc-module-name-id module name)
-                  constructor-ty)
-                module
-                enum-name
-                lifetimes
-                rest))]))]))
+  (tc-bind-enum-variants-in-module-at
+    ctx
+    env
+    module
+    enum-name
+    lifetimes
+    (& variants)
+    0))
+
+(define (tc-bind-enum-variants-in-module-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [enum-name : String]
+  [lifetimes : AstLifetimeList]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-variant-def-list-len variants))
+    (ResultTcEnv.Ok env)
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name fields _)
+        (let
+          [scoped-enum : String (compiler-symbol-module-key module enum-name)]
+          [constructor-ty : AstType
+            (tc-enum-variant-constructor-type ctx scoped-enum lifetimes fields)]
+          (tc-bind-enum-variants-in-module-at
+            ctx
+            (tc-bind-alias-id-if-free
+              env
+              (tc-module-name-id module name)
+              constructor-ty)
+            module
+            enum-name
+            lifetimes
+            variants
+            (+ index 1)))])))
 
 (define (tc-build-top-env-list
   [ctx : TcContext]
@@ -13867,43 +13891,60 @@
   [enum-name : String]
   [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
-  (match variants
-    [(AstVariantDefList.Nil) env]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name fields _)
+  (tc-bind-enum-variant-aliases-at
+    ctx
+    env
+    alias
+    importer-module
+    source-module
+    import-unqualified
+    enum-name
+    lifetimes
+    (& variants)
+    0))
+
+(define (tc-bind-enum-variant-aliases-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [enum-name : String]
+  [lifetimes : AstLifetimeList]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : TcTypeEnv
+  (if (>= index (ast-variant-def-list-len variants))
+    env
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name fields _)
+        (let
+          [constructor-ty : AstType
+            (tc-enum-variant-constructor-type ctx enum-name lifetimes fields)]
+          (tc-bind-enum-variant-aliases-at
+            ctx
             (let
-              [constructor-ty : AstType
-                (tc-enum-variant-constructor-type
+              [_note : unit
+                (tc-unqualified-import-note-value!
                   ctx
-                  enum-name
-                  lifetimes
-                  fields)]
-              (tc-bind-enum-variant-aliases
-                ctx
-                (let
-                  [_note : unit
-                    (tc-unqualified-import-note-value!
-                      ctx
-                      env
-                      alias
-                      importer-module
-                      source-module
-                      import-unqualified
-                      name)]
-                  (tc-bind-alias-id-if-free
-                    env
-                    (tc-module-name-id alias name)
-                    constructor-ty))
-                alias
-                importer-module
-                source-module
-                import-unqualified
-                enum-name
-                lifetimes
-                rest))]))]))
+                  env
+                  alias
+                  importer-module
+                  source-module
+                  import-unqualified
+                  name)]
+              (tc-bind-alias-id-if-free
+                env
+                (tc-module-name-id alias name)
+                constructor-ty))
+            alias
+            importer-module
+            source-module
+            import-unqualified
+            enum-name
+            lifetimes
+            variants
+            (+ index 1)))])))
 
 ;; Alias construction runs after the canonical top env is built, so reuse the
 ;; existing `module/name` type instead of recomputing each imported decl type.
@@ -14527,27 +14568,38 @@
   [scoped-enum : String]
   [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
-  (match variants
-    [(AstVariantDefList.Nil) env]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name fields _)
-            (let
-              [constructor-ty : AstType
-                (tc-enum-variant-constructor-type
-                  ctx
-                  scoped-enum
-                  lifetimes
-                  fields)]
-              (tc-bind-enum-variants-local
-                ctx
-                (tc-bind-id env name constructor-ty)
-                enum-name
-                scoped-enum
-                lifetimes
-                rest))]))]))
+  (tc-bind-enum-variants-local-at
+    ctx
+    env
+    enum-name
+    scoped-enum
+    lifetimes
+    (& variants)
+    0))
+
+(define (tc-bind-enum-variants-local-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [scoped-enum : String]
+  [lifetimes : AstLifetimeList]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : TcTypeEnv
+  (if (>= index (ast-variant-def-list-len variants))
+    env
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name fields _)
+        (let
+          [constructor-ty : AstType
+            (tc-enum-variant-constructor-type ctx scoped-enum lifetimes fields)]
+          (tc-bind-enum-variants-local-at
+            ctx
+            (tc-bind-id env name constructor-ty)
+            enum-name
+            scoped-enum
+            lifetimes
+            variants
+            (+ index 1)))])))
 
 (define (tc-module-local-env-add-decl
   [ctx : TcContext]
@@ -17478,26 +17530,39 @@
   [variants : AstVariantDefList]
   [stack : TcStringList]
   [owner-proof : bool]) : TcThreadTransferClass
-  (match variants
-    [(AstVariantDefList.Nil) (TcThreadTransferClass.Shareable)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ payloads _)
-            (tc-thread-transfer-class-merge
-              (tc-thread-transfer-type-list-class
-                ctx
-                env
-                payloads
-                stack
-                owner-proof)
-              (tc-thread-transfer-variant-list-class
-                ctx
-                env
-                rest
-                stack
-                owner-proof))]))]))
+  (tc-thread-transfer-variant-list-class-at
+    ctx
+    env
+    (& variants)
+    stack
+    owner-proof
+    0))
+
+(define (tc-thread-transfer-variant-list-class-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [variants : (& variants AstVariantDefList)]
+  [stack : TcStringList]
+  [owner-proof : bool]
+  [index : i64]) : TcThreadTransferClass
+  (if (>= index (ast-variant-def-list-len variants))
+    (TcThreadTransferClass.Shareable)
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ payloads _)
+        (tc-thread-transfer-class-merge
+          (tc-thread-transfer-type-list-class
+            ctx
+            env
+            payloads
+            stack
+            owner-proof)
+          (tc-thread-transfer-variant-list-class-at
+            ctx
+            env
+            variants
+            stack
+            owner-proof
+            (+ index 1)))])))
 
 (define (tc-thread-transfer-struct-class
   [ctx : TcContext]
@@ -25643,17 +25708,25 @@
   [ctx : TcContext]
   [variants : AstVariantDefList]
   [stack : TcStringList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (match (tc-inline-aggregate-type-list-finite-ok ctx fields stack)
-              [(ResultTcUnit.Ok)
-                (tc-inline-aggregate-variants-finite-ok ctx rest stack)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (tc-inline-aggregate-variants-finite-ok-at ctx (& variants) stack 0))
+
+(define (tc-inline-aggregate-variants-finite-ok-at
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [stack : TcStringList]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-variant-def-list-len variants))
+    ResultTcUnit.Ok
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (match (tc-inline-aggregate-type-list-finite-ok ctx fields stack)
+          [(ResultTcUnit.Ok)
+            (tc-inline-aggregate-variants-finite-ok-at
+              ctx
+              variants
+              stack
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
 (define (tc-inline-aggregate-nominal-finite-ok
   [ctx : TcContext]
@@ -25927,60 +26000,72 @@
   [max-size : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
-  (match variants
-    [(AstVariantDefList.Nil)
-      (ResultTcInlineAggregateLayout.Ok
-        (TcInlineAggregateLayout.Enum
-          (tc-align-up max-size max-align)
-          max-align
-          TcInlineVariantLayoutList.Nil))]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def variant-name fields _)
-            (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
-              [(ResultTcInlinePayloadFieldsLayout.Ok payload-layout)
-                (match payload-layout
-                  [(TcInlinePayloadFieldsLayout.Fields
-                      variant-size
-                      variant-align
-                      payloads)
-                    (let
-                      [next-size : i64 (tc-max-i64 max-size variant-size)]
-                      [next-align : i64 (tc-max-i64 max-align variant-align)]
-                      (match (tc-inline-aggregate-variants-layout
-                        ctx
-                        rest
-                        next-size
-                        next-align
-                        stack)
-                        [(ResultTcInlineAggregateLayout.Ok rest-layout)
-                          (match rest-layout
-                            [(TcInlineAggregateLayout.Enum
+  (tc-inline-aggregate-variants-layout-at
+    ctx
+    (& variants)
+    max-size
+    max-align
+    stack
+    0))
+
+(define (tc-inline-aggregate-variants-layout-at
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [max-size : i64]
+  [max-align : i64]
+  [stack : TcStringList]
+  [index : i64]) : ResultTcInlineAggregateLayout
+  (if (>= index (ast-variant-def-list-len variants))
+    (ResultTcInlineAggregateLayout.Ok
+      (TcInlineAggregateLayout.Enum
+        (tc-align-up max-size max-align)
+        max-align
+        TcInlineVariantLayoutList.Nil))
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def variant-name fields _)
+        (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
+          [(ResultTcInlinePayloadFieldsLayout.Ok payload-layout)
+            (match payload-layout
+              [(TcInlinePayloadFieldsLayout.Fields
+                  variant-size
+                  variant-align
+                  payloads)
+                (let
+                  [next-size : i64 (tc-max-i64 max-size variant-size)]
+                  [next-align : i64 (tc-max-i64 max-align variant-align)]
+                  (match (tc-inline-aggregate-variants-layout-at
+                    ctx
+                    variants
+                    next-size
+                    next-align
+                    stack
+                    (+ index 1))
+                    [(ResultTcInlineAggregateLayout.Ok rest-layout)
+                      (match rest-layout
+                        [(TcInlineAggregateLayout.Enum
+                            enum-size
+                            enum-align
+                            rest-variants)
+                          (begin
+                            (cfg compile-profile (tc-lp-note 6))
+                            (ResultTcInlineAggregateLayout.Ok
+                              (TcInlineAggregateLayout.Enum
                                 enum-size
                                 enum-align
-                                rest-variants)
-                              (begin
-                                (cfg compile-profile (tc-lp-note 6))
-                                (ResultTcInlineAggregateLayout.Ok
-                                  (TcInlineAggregateLayout.Enum
-                                    enum-size
-                                    enum-align
-                                    (TcInlineVariantLayoutList.Cons
-                                      (TcInlineVariantLayout.Variant
-                                        (intern-str variant-name)
-                                        variant-size
-                                        variant-align
-                                        payloads)
-                                      (box rest-variants)))))]
-                            [(TcInlineAggregateLayout.Struct _ _ _)
-                              (ResultTcInlineAggregateLayout.Err
-                                "typecheck: internal inline enum layout mismatch")])]
-                        [(ResultTcInlineAggregateLayout.Err message)
-                          (ResultTcInlineAggregateLayout.Err message)]))])]
-              [(ResultTcInlinePayloadFieldsLayout.Err message)
-                (ResultTcInlineAggregateLayout.Err message)])]))]))
+                                (TcInlineVariantLayoutList.Cons
+                                  (TcInlineVariantLayout.Variant
+                                    (intern-str variant-name)
+                                    variant-size
+                                    variant-align
+                                    payloads)
+                                  (box rest-variants)))))]
+                        [(TcInlineAggregateLayout.Struct _ _ _)
+                          (ResultTcInlineAggregateLayout.Err
+                            "typecheck: internal inline enum layout mismatch")])]
+                    [(ResultTcInlineAggregateLayout.Err message)
+                      (ResultTcInlineAggregateLayout.Err message)]))])]
+          [(ResultTcInlinePayloadFieldsLayout.Err message)
+            (ResultTcInlineAggregateLayout.Err message)])])))
 
 (define (tc-inline-aggregate-enum-layout-with-stack
   [ctx : TcContext]
@@ -27088,29 +27173,25 @@
   [ctx : TcContext]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcResultInfo
-  (match variants
-    [(AstVariantDefList.Cons first tail)
-      (let
-        [tail : AstVariantDefList (box-get tail)]
-        (match tail
-          [(AstVariantDefList.Cons second AstVariantDefList.Nil)
-            (match first
-              [(AstVariantDef.Def first-name first-fields _)
-                (match second
-                  [(AstVariantDef.Def second-name second-fields _)
-                    (tc-result-info-two-variants
-                      ctx
-                      enum-name
-                      (intern-str first-name)
-                      first-fields
-                      (intern-str second-name)
-                      second-fields)])])]
-          [_
-            (ResultTcResultInfo.Err
-              "typecheck: try requires Result-like enum with exactly two variants")]))]
-    [_
-      (ResultTcResultInfo.Err
-        "typecheck: try requires Result-like enum with exactly two variants")]))
+  (if (= (ast-variant-def-list-len (& variants)) 2)
+    (let
+      [first : AstVariantDef
+        (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))]
+      [second : AstVariantDef
+        (ast-variant-def-list-get (& variants) 1 (ast-variant-def-fallback))]
+      (match first
+        [(AstVariantDef.Def first-name first-fields _)
+          (match second
+            [(AstVariantDef.Def second-name second-fields _)
+              (tc-result-info-two-variants
+                ctx
+                enum-name
+                (intern-str first-name)
+                first-fields
+                (intern-str second-name)
+                second-fields)])]))
+    (ResultTcResultInfo.Err
+      "typecheck: try requires Result-like enum with exactly two variants")))
 
 (define (tc-result-info [ctx : TcContext] [ty : AstType]) : ResultTcResultInfo
   (match (tc-type-strip-region ty)
@@ -29079,46 +29160,26 @@
   [variants : AstVariantDefList]
   [enum-name : String]
   [variant-name : String]) : bool
-  (match variants
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match rest
-          [(AstVariantDefList.Nil)
-            (match variant
-              [(AstVariantDef.Def name _ _)
-                (tc-variant-name-matches?
-                  ctx
-                  enum-name
-                  variant-name
-                  (intern-str name))])]
-          [_ false]))]
-    [_ false]))
+  (if (= (ast-variant-def-list-len (& variants)) 1)
+    (match (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (tc-variant-name-matches? ctx enum-name variant-name (intern-str name))])
+    false))
 
 (define (tc-enum-single-matching-variant-name
   [ctx : TcContext]
   [variants : AstVariantDefList]
   [enum-name : String]
   [pattern-name : String]) : TcMaybeString
-  (match variants
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match rest
-          [(AstVariantDefList.Nil)
-            (match variant
-              [(AstVariantDef.Def name _ _)
-                (let
-                  [variant-name : String (intern-str name)]
-                  (if (tc-variant-name-matches?
-                    ctx
-                    enum-name
-                    pattern-name
-                    variant-name)
-                    (TcMaybeString.Some variant-name)
-                    (TcMaybeString.No)))])]
-          [_ (TcMaybeString.No)]))]
-    [_ (TcMaybeString.No)]))
+  (if (= (ast-variant-def-list-len (& variants)) 1)
+    (match (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (let
+          [variant-name : String (intern-str name)]
+          (if (tc-variant-name-matches? ctx enum-name pattern-name variant-name)
+            (TcMaybeString.Some variant-name)
+            (TcMaybeString.No)))])
+    (TcMaybeString.No)))
 
 (define (tc-variant-pattern-irrefutable?
   [ctx : TcContext]
@@ -29359,25 +29420,30 @@
   [enum-name : String]
   [variants : AstVariantDefList]
   [arms : AstMatchArmList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (let
-              [variant-name : String (intern-str name)]
-              (if (tc-match-arms-cover-variant? ctx arms enum-name variant-name)
-                (tc-enum-variants-exhaustive-ok ctx enum-name rest arms)
-                (if (tc-match-arms-mention-variant?
-                  ctx
-                  arms
-                  enum-name
-                  variant-name)
-                  (ResultTcUnit.Err "typecheck: non-exhaustive match")
-                  (ResultTcUnit.Err
-                    (tc-match-missing-variant-message variant-name)))))]))]))
+  (tc-enum-variants-exhaustive-ok-at ctx enum-name (& variants) arms 0))
+
+(define (tc-enum-variants-exhaustive-ok-at
+  [ctx : TcContext]
+  [enum-name : String]
+  [variants : (& variants AstVariantDefList)]
+  [arms : AstMatchArmList]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-variant-def-list-len variants))
+    ResultTcUnit.Ok
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (let
+          [variant-name : String (intern-str name)]
+          (if (tc-match-arms-cover-variant? ctx arms enum-name variant-name)
+            (tc-enum-variants-exhaustive-ok-at
+              ctx
+              enum-name
+              variants
+              arms
+              (+ index 1))
+            (if (tc-match-arms-mention-variant? ctx arms enum-name variant-name)
+              (ResultTcUnit.Err "typecheck: non-exhaustive match")
+              (ResultTcUnit.Err (tc-match-missing-variant-message variant-name)))))])))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
   (tc-match-arms-have-catchall-at? (& arms) 0))
@@ -30532,21 +30598,22 @@
               (ResultTcUnit.Err (tc-init-cleanup-owning-message ctx enum-ty))
               (match (tc-init-aggregate-layout-ok field-ctx enum-ty)
                 [(ResultTcUnit.Ok)
-                  (match variants
-                    [(AstVariantDefList.Nil)
-                      (ResultTcUnit.Err
-                        "typecheck: init requires enum with at least one variant")]
-                    [(AstVariantDefList.Cons variant _)
-                      (match variant
-                        [(AstVariantDef.Def _ fields _)
-                          (tc-init-type-list-supported
+                  (if (ast-variant-def-list-empty? (& variants))
+                    (ResultTcUnit.Err
+                      "typecheck: init requires enum with at least one variant")
+                    (match (ast-variant-def-list-get
+                      (& variants)
+                      0
+                      (ast-variant-def-fallback))
+                      [(AstVariantDef.Def _ fields _)
+                        (tc-init-type-list-supported
+                          field-ctx
+                          env
+                          (tc-init-enum-fields-for-result
                             field-ctx
-                            env
-                            (tc-init-enum-fields-for-result
-                              field-ctx
-                              enum-name
-                              enum-ty
-                              fields))])])]
+                            enum-name
+                            enum-ty
+                            fields))]))]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
       [(ResultTcEnumDecl.Err message) (ResultTcUnit.Err message)])))
 
@@ -41964,13 +42031,21 @@
 
 (define (macro-generated-fingerprint-payload-cleanup-list
   [cleanups : AstVariantPayloadCleanupList]) : String
-  (match cleanups
-    [(AstVariantPayloadCleanupList.Nil) "payload-cleanups:nil"]
-    [(AstVariantPayloadCleanupList.Cons head rest)
-      (macro-generated-fingerprint-join
-        "payload-cleanups:cons"
-        (macro-generated-fingerprint-payload-cleanup head)
-        (macro-generated-fingerprint-payload-cleanup-list (box-get rest)))]))
+  (macro-generated-fingerprint-payload-cleanup-list-at (& cleanups) 0))
+
+(define (macro-generated-fingerprint-payload-cleanup-list-at
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]) : String
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    "payload-cleanups:nil"
+    (macro-generated-fingerprint-join
+      "payload-cleanups:cons"
+      (macro-generated-fingerprint-payload-cleanup
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (macro-generated-fingerprint-payload-cleanup-list-at cleanups (+ index 1)))))
 
 (define (macro-generated-fingerprint-variant [variant : AstVariantDef]) : String
   (match variant
@@ -41983,13 +42058,18 @@
 
 (define (macro-generated-fingerprint-variant-list
   [variants : AstVariantDefList]) : String
-  (match variants
-    [(AstVariantDefList.Nil) "variants:nil"]
-    [(AstVariantDefList.Cons head rest)
-      (macro-generated-fingerprint-join
-        "variants:cons"
-        (macro-generated-fingerprint-variant head)
-        (macro-generated-fingerprint-variant-list (box-get rest)))]))
+  (macro-generated-fingerprint-variant-list-at (& variants) 0))
+
+(define (macro-generated-fingerprint-variant-list-at
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : String
+  (if (>= index (ast-variant-def-list-len variants))
+    "variants:nil"
+    (macro-generated-fingerprint-join
+      "variants:cons"
+      (macro-generated-fingerprint-variant
+        (ast-variant-def-list-get variants index (ast-variant-def-fallback)))
+      (macro-generated-fingerprint-variant-list-at variants (+ index 1)))))
 
 (define (macro-generated-fingerprint-fn-export [export : AstFnExport]) : String
   (match export
@@ -50757,46 +50837,75 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match items
-    [(AstVariantPayloadCleanupList.Nil) refs]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (macro-generated-surface-variant-cleanup-list-refs
-        (box-get rest)
+  (macro-generated-surface-variant-cleanup-list-refs-at
+    (& items)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-variant-cleanup-list-refs-at
+  [items : (& items AstVariantPayloadCleanupList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-variant-payload-cleanup-list-len items))
+    refs
+    (macro-generated-surface-variant-cleanup-list-refs-at
+      items
+      aliases
+      (macro-generated-surface-variant-cleanup-refs
+        (ast-variant-payload-cleanup-list-get
+          items
+          index
+          (ast-variant-payload-cleanup-fallback))
         aliases
-        (macro-generated-surface-variant-cleanup-refs
-          cleanup
-          aliases
-          refs
-          alias-qualified?)
-        alias-qualified?)]))
+        refs
+        alias-qualified?)
+      alias-qualified?
+      (+ index 1))))
 
 (define (macro-generated-surface-variant-def-list-refs
   [variants : AstVariantDefList]
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match variants
-    [(AstVariantDefList.Nil) refs]
-    [(AstVariantDefList.Cons variant rest)
-      (match variant
-        [(AstVariantDef.Def name payloads cleanups)
-          (macro-generated-surface-variant-def-list-refs
-            (box-get rest)
+  (macro-generated-surface-variant-def-list-refs-at
+    (& variants)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-variant-def-list-refs-at
+  [variants : (& variants AstVariantDefList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-variant-def-list-len variants))
+    refs
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name payloads cleanups)
+        (macro-generated-surface-variant-def-list-refs-at
+          variants
+          aliases
+          (macro-generated-surface-variant-cleanup-list-refs
+            cleanups
             aliases
-            (macro-generated-surface-variant-cleanup-list-refs
-              cleanups
+            (macro-generated-surface-type-list-refs
+              payloads
               aliases
-              (macro-generated-surface-type-list-refs
-                payloads
+              (macro-generated-surface-name-id-ref
                 aliases
-                (macro-generated-surface-name-id-ref
-                  aliases
-                  refs
-                  name
-                  alias-qualified?)
+                refs
+                name
                 alias-qualified?)
               alias-qualified?)
-            alias-qualified?)])]))
+            alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-extern-abi-refs
   [abi : AstExternAbi]
@@ -50995,16 +51104,22 @@
 (define (macro-generated-surface-variant-list-needed?
   [variants : AstVariantDefList]
   [needed : MacroGeneratedSurfaceNameSet]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) false]
-    [(AstVariantDefList.Cons variant rest)
-      (match variant
-        [(AstVariantDef.Def name _ _)
-          (or
-            (macro-generated-surface-name-set-contains?
-              needed
-              (intern-str name))
-            (macro-generated-surface-variant-list-needed? (box-get rest) needed))])]))
+  (macro-generated-surface-variant-list-needed-at? (& variants) needed 0))
+
+(define (macro-generated-surface-variant-list-needed-at?
+  [variants : (& variants AstVariantDefList)]
+  [needed : MacroGeneratedSurfaceNameSet]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (or
+          (macro-generated-surface-name-set-contains? needed (intern-str name))
+          (macro-generated-surface-variant-list-needed-at?
+            variants
+            needed
+            (+ index 1)))])))
 
 (define (macro-generated-surface-decl-variant-needed?
   [decl : AstDecl]
@@ -55490,84 +55605,106 @@
   [enum-cleanup : AstEnumCleanup]
   [payloads : AstTypeList]
   [payload-cleanups : AstVariantPayloadCleanupList]) : ResultTcUnit
+  (tc-check-cleanup-enum-payloads-at
+    ctx
+    env
+    enum-name
+    variant-name
+    enum-cleanup
+    payloads
+    (& payload-cleanups)
+    0))
+
+(define (tc-check-cleanup-enum-payloads-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [variant-name : String]
+  [enum-cleanup : AstEnumCleanup]
+  [payloads : AstTypeList]
+  [payload-cleanups : (& payload-cleanups AstVariantPayloadCleanupList)]
+  [cleanup-index : i64]) : ResultTcUnit
   (match payloads
     [(AstTypeList.Nil)
-      (match payload-cleanups
-        [(AstVariantPayloadCleanupList.Nil) ResultTcUnit.Ok]
-        [_
-          (ResultTcUnit.Err
-            "typecheck: malformed enum payload cleanup metadata")])]
+      (if (>=
+        cleanup-index
+        (ast-variant-payload-cleanup-list-len payload-cleanups))
+        ResultTcUnit.Ok
+        (ResultTcUnit.Err "typecheck: malformed enum payload cleanup metadata"))]
     [(AstTypeList.Cons payload-box rest-payloads-box)
-      (match payload-cleanups
-        [(AstVariantPayloadCleanupList.Cons payload-cleanup rest-cleanups-box)
-          (let
-            [payload-ty : AstType (ty-node-get payload-box)]
-            [resolved-ty : AstType
-              (tc-type-strip-region (tc-resolve-type ctx payload-ty))]
-            [rest-payloads : AstTypeList (box-get rest-payloads-box)]
-            [rest-cleanups : AstVariantPayloadCleanupList
-              (box-get rest-cleanups-box)]
-            [payload-cleanup-owning : bool
-              (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
-            [step : ResultTcUnit
-              (if (not (ast-enum-cleanup? enum-cleanup))
-                (if (ast-variant-payload-cleanup? payload-cleanup)
+      (if (>=
+        cleanup-index
+        (ast-variant-payload-cleanup-list-len payload-cleanups))
+        (ResultTcUnit.Err "typecheck: malformed enum payload cleanup metadata")
+        (let
+          [payload-cleanup : AstVariantPayloadCleanup
+            (ast-variant-payload-cleanup-list-get
+              payload-cleanups
+              cleanup-index
+              (ast-variant-payload-cleanup-fallback))]
+          [payload-ty : AstType (ty-node-get payload-box)]
+          [resolved-ty : AstType
+            (tc-type-strip-region (tc-resolve-type ctx payload-ty))]
+          [rest-payloads : AstTypeList (box-get rest-payloads-box)]
+          [payload-cleanup-owning : bool
+            (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
+          [step : ResultTcUnit
+            (if (not (ast-enum-cleanup? enum-cleanup))
+              (if (ast-variant-payload-cleanup? payload-cleanup)
+                (ResultTcUnit.Err
+                  (tc-enum-payload-cleanup-outside-message
+                    enum-name
+                    variant-name))
+                (if payload-cleanup-owning
                   (ResultTcUnit.Err
-                    (tc-enum-payload-cleanup-outside-message
+                    (tc-enum-payload-cleanup-owning-without-owned-message
                       enum-name
-                      variant-name))
+                      variant-name
+                      resolved-ty))
+                  ResultTcUnit.Ok))
+              (match payload-cleanup
+                [(AstVariantPayloadCleanup.Owned)
+                  (if payload-cleanup-owning
+                    ResultTcUnit.Ok
+                    (ResultTcUnit.Err
+                      (tc-enum-payload-owned-non-cleanup-message
+                        enum-name
+                        variant-name
+                        resolved-ty)))]
+                [(AstVariantPayloadCleanup.Fn cleanup-name)
                   (if payload-cleanup-owning
                     (ResultTcUnit.Err
                       (tc-enum-payload-cleanup-owning-without-owned-message
                         enum-name
                         variant-name
                         resolved-ty))
-                    ResultTcUnit.Ok))
-                (match payload-cleanup
-                  [(AstVariantPayloadCleanup.Owned)
-                    (if payload-cleanup-owning
-                      ResultTcUnit.Ok
-                      (ResultTcUnit.Err
-                        (tc-enum-payload-owned-non-cleanup-message
-                          enum-name
-                          variant-name
-                          resolved-ty)))]
-                  [(AstVariantPayloadCleanup.Fn cleanup-name)
-                    (if payload-cleanup-owning
-                      (ResultTcUnit.Err
-                        (tc-enum-payload-cleanup-owning-without-owned-message
-                          enum-name
-                          variant-name
-                          resolved-ty))
-                      (tc-check-enum-payload-cleanup-fn
-                        ctx
-                        env
+                    (tc-check-enum-payload-cleanup-fn
+                      ctx
+                      env
+                      enum-name
+                      variant-name
+                      cleanup-name
+                      resolved-ty))]
+                [(AstVariantPayloadCleanup.No)
+                  (if payload-cleanup-owning
+                    (ResultTcUnit.Err
+                      (tc-enum-payload-cleanup-owning-without-owned-message
                         enum-name
                         variant-name
-                        cleanup-name
-                        resolved-ty))]
-                  [(AstVariantPayloadCleanup.No)
-                    (if payload-cleanup-owning
-                      (ResultTcUnit.Err
-                        (tc-enum-payload-cleanup-owning-without-owned-message
-                          enum-name
-                          variant-name
-                          resolved-ty))
-                      ResultTcUnit.Ok)]))]
-            (match step
-              [(ResultTcUnit.Ok)
-                (tc-check-cleanup-enum-payloads
-                  ctx
-                  env
-                  enum-name
-                  variant-name
-                  enum-cleanup
-                  rest-payloads
-                  rest-cleanups)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-        [_
-          (ResultTcUnit.Err
-            "typecheck: malformed enum payload cleanup metadata")])]))
+                        resolved-ty))
+                    ResultTcUnit.Ok)]))]
+          (match step
+            [(ResultTcUnit.Ok)
+              (tc-check-cleanup-enum-payloads-at
+                ctx
+                env
+                enum-name
+                variant-name
+                enum-cleanup
+                rest-payloads
+                payload-cleanups
+                (+ cleanup-index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]))
 
 (define (tc-check-cleanup-enum-variant
   [ctx : TcContext]
@@ -55592,15 +55729,32 @@
   [enum-name : String]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefList.Nil) ResultTcUnit.Ok]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match (tc-check-cleanup-enum-variant ctx env enum-name cleanup variant)
-          [(ResultTcUnit.Ok)
-            (tc-check-cleanup-enum-variants ctx env enum-name cleanup rest)]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))
+  (tc-check-cleanup-enum-variants-at ctx env enum-name cleanup (& variants) 0))
+
+(define (tc-check-cleanup-enum-variants-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-variant-def-list-len variants))
+    ResultTcUnit.Ok
+    (match (tc-check-cleanup-enum-variant
+      ctx
+      env
+      enum-name
+      cleanup
+      (ast-variant-def-list-get variants index (ast-variant-def-fallback)))
+      [(ResultTcUnit.Ok)
+        (tc-check-cleanup-enum-variants-at
+          ctx
+          env
+          enum-name
+          cleanup
+          variants
+          (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-cleanup-enum-decl
   [ctx : TcContext]

@@ -1598,24 +1598,41 @@
 (define (tltest-reach-mark-variant-payload-cleanups
   [cleanups : AstVariantPayloadCleanupList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match cleanups
-    [(AstVariantPayloadCleanupList.Nil) names]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (tltest-reach-mark-variant-payload-cleanups
-        (box-get rest)
-        (tltest-reach-mark-variant-payload-cleanup cleanup names))]))
+  (tltest-reach-mark-variant-payload-cleanups-at (& cleanups) names 0))
+
+(define (tltest-reach-mark-variant-payload-cleanups-at
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    names
+    (tltest-reach-mark-variant-payload-cleanups-at
+      cleanups
+      (tltest-reach-mark-variant-payload-cleanup
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback))
+        names)
+      (+ index 1))))
 
 (define (tltest-reach-mark-variant-cleanups
   [variants : AstVariantDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match variants
-    [(AstVariantDefList.Nil) names]
-    [(AstVariantDefList.Cons variant rest)
-      (match variant
-        [(AstVariantDef.Def _ _ cleanups)
-          (tltest-reach-mark-variant-cleanups
-            (box-get rest)
-            (tltest-reach-mark-variant-payload-cleanups cleanups names))])]))
+  (tltest-reach-mark-variant-cleanups-at (& variants) names 0))
+
+(define (tltest-reach-mark-variant-cleanups-at
+  [variants : (& variants AstVariantDefList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-variant-def-list-len variants))
+    names
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (tltest-reach-mark-variant-cleanups-at
+          variants
+          (tltest-reach-mark-variant-payload-cleanups cleanups names)
+          (+ index 1))])))
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match decl

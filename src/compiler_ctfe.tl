@@ -796,11 +796,11 @@
   [decls : AstDeclList]
   [module : String]
   [infos : CtfeReflectInfoList]) : CtfeReflectInfoList
-  (match decls
-    [(AstDeclList.Nil) infos]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) infos]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
@@ -948,11 +948,11 @@
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
 (define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 1]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 1]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
         (match decl
           [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
@@ -11089,16 +11089,16 @@
           (ast-variant-def-list-new)))]
     (AstProgram.Program
       (box
-        (AstDeclList.Cons
+        (ast-decl-cons-boxed
           (AstDecl.DefStruct
             (intern "Record")
             (AstStructRepr.Default)
             (AstStructCleanup.No)
             fields)
           (box
-            (AstDeclList.Cons
+            (ast-decl-cons-boxed
               (AstDecl.DefEnum (intern "Status") (AstEnumCleanup.No) variants)
-              (box AstDeclList.Nil))))))))
+              (box (ast-decl-list-new)))))))))
 
 (define (compiler-ctfe-reflection-from-program-ok?) : bool
   (let

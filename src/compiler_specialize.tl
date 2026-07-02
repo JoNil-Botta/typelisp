@@ -402,11 +402,11 @@
       (+ index 1))))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
-  (match decls
-    [(AstDeclList.Nil) (SpecTemplateList.Nil)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (SpecTemplateList.Nil)]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -437,33 +437,38 @@
     [(hashmap.StringStringMapMissing) (SpecMaybeString.None)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) (ast-decl-cons decl AstDeclList.Nil)]
-    [(AstDeclList.Cons head rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (ast-decl-cons head (spec-decl-list-append-one rest decl)))]))
+  (let
+    [out : AstDeclList
+      (ast-decl-list-with-capacity (+ (ast-decl-list-len (& decls)) 1))]
+    (begin
+      (ast-decl-list-append-from (&mut out) (& decls) 0)
+      (ast-decl-list-push (&mut out) decl)
+      out)))
 
 (define (spec-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
-  (match front
-    [(AstDeclList.Nil) back]
-    [(AstDeclList.Cons head rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (ast-decl-cons head (spec-decl-list-append rest back)))]))
+  (let
+    [out : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& front)) (ast-decl-list-len (& back))))]
+    (begin
+      (ast-decl-list-append-from (&mut out) (& front) 0)
+      (ast-decl-list-append-from (&mut out) (& back) 0)
+      out)))
 
 (define (spec-decl-path-list-append
   [front : AstDeclPathList]
   [back : AstDeclPathList]) : AstDeclPathList
-  (match front
-    [(AstDeclPathList.Nil) back]
-    [(AstDeclPathList.Cons head rest)
-      (let
-        [rest : AstDeclPathList (box-get rest)]
-        (ast-decl-path-cons head (spec-decl-path-list-append rest back)))]))
+  (let
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+ (ast-decl-path-list-len (& front)) (ast-decl-path-list-len (& back))))]
+    (begin
+      (ast-decl-path-list-append-from (&mut out) (& front) 0)
+      (ast-decl-path-list-append-from (&mut out) (& back) 0)
+      out)))
 
 (define (gen-single-decl-list [decl : AstDecl]) : AstDeclList
-  (ast-decl-cons decl AstDeclList.Nil))
+  (ast-decl-cons decl (ast-decl-list-new)))
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
@@ -1011,17 +1016,15 @@
             (gen-maybe-import-alias-eq? a-alias b-alias))])]))
 
 (define (gen-decl-list-eq? [a : AstDeclList] [b : AstDeclList]) : bool
-  (match a
-    [(AstDeclList.Nil)
-      (match b
-        [(AstDeclList.Nil) true]
+  (match (ast-decl-list-step a)
+    [(AstDeclListStep.Nil)
+      (match (ast-decl-list-step b)
+        [(AstDeclListStep.Nil) true]
         [_ false])]
-    [(AstDeclList.Cons a-head a-rest)
-      (match b
-        [(AstDeclList.Cons b-head b-rest)
-          (and
-            (gen-decl-eq? a-head b-head)
-            (gen-decl-list-eq? (box-get a-rest) (box-get b-rest)))]
+    [(AstDeclListStep.Cons a-head a-rest)
+      (match (ast-decl-list-step b)
+        [(AstDeclListStep.Cons b-head b-rest)
+          (and (gen-decl-eq? a-head b-head) (gen-decl-list-eq? a-rest b-rest))]
         [_ false])]))
 
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
@@ -1303,7 +1306,7 @@
           module)]
       [(GenMaybeEntry.Some existing)
         (if (gen-decl-eq? existing template)
-          (ResultGenDecl.Ok AstDeclList.Nil registry module)
+          (ResultGenDecl.Ok (ast-decl-list-new) registry module)
           (ResultGenDecl.Err (box (gen-incompatible-diag item key))))])))
 
 (define (gen-metadata-arg-key
@@ -1360,45 +1363,85 @@
   [module : String]
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecls
-  (match decls
-    [(AstDeclList.Nil) (ResultGenDecls.Ok AstDeclList.Nil registry module)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match (gen-rewrite-decl decl module registry env)
-          [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
-            (match (gen-rewrite-decls rest decl-module decl-registry env)
-              [(ResultGenDecls.Ok rewritten-rest rest-registry rest-module)
-                (ResultGenDecls.Ok
-                  (spec-decl-list-append rewritten-decls rewritten-rest)
-                  rest-registry
-                  rest-module)]
-              [(ResultGenDecls.Err diag) (ResultGenDecls.Err diag)])]
-          [(ResultGenDecl.Err diag) (ResultGenDecls.Err diag)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [cursor : AstDeclList decls]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [cur-registry : GenRegistry registry]
+    [cur-module : String module]
+    [result : ResultGenDecls
+      (ResultGenDecls.Err
+        (box
+          (compiler-diagnostic-simple
+            "<internal>"
+            1
+            1
+            "generated-decl normalization did not finish")))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil)
+            (begin
+              (set! result (ResultGenDecls.Ok out cur-registry cur-module))
+              (set! done true))]
+          [(AstDeclListStep.Cons decl rest)
+            (match (gen-rewrite-decl decl cur-module cur-registry env)
+              [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
+                (begin
+                  (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
+                  (set! cur-registry decl-registry)
+                  (set! cur-module decl-module)
+                  (set! cursor rest))]
+              [(ResultGenDecl.Err diag)
+                (begin
+                  (set! result (ResultGenDecls.Err diag))
+                  (set! done true))])]))
+      result)))
 
 (define (gen-path-list-head-or [paths : AstDeclPathList] [fallback : String]) : String
-  (match paths
-    [(AstDeclPathList.Cons path _) path]
-    [(AstDeclPathList.Nil) fallback]))
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Cons path _) path]
+    [(AstDeclPathListStep.Nil) fallback]))
 
 (define (gen-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
-  (match paths
-    [(AstDeclPathList.Cons _ rest-box)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Cons _ rest-box)
       (let
-        [rest : AstDeclPathList (box-get rest-box)]
+        [rest : AstDeclPathList rest-box]
         rest)]
-    [(AstDeclPathList.Nil) AstDeclPathList.Nil]))
+    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]))
 
 (define (gen-path-list-for-decls
   [decls : AstDeclList]
   [path : String]
   [rest-paths : AstDeclPathList]) : AstDeclPathList
-  (match decls
-    [(AstDeclList.Nil) rest-paths]
-    [(AstDeclList.Cons _ rest-box)
-      (let
-        [rest : AstDeclList (box-get rest-box)]
-        (ast-decl-path-cons path (gen-path-list-for-decls rest path rest-paths)))]))
+  (let
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+
+          (ast-decl-list-len (& decls))
+          (ast-decl-path-list-len (& rest-paths))))]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-decl-path-list-push (&mut out) path)
+          (set! index (+ index 1))))
+      (ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
+      out)))
+
+(define (gen-path-list-push-for-decls
+  [out : (&mut out AstDeclPathList)]
+  [decls : AstDeclList]
+  [path : String]
+  [index : i64]) : unit
+  (if (>= index (ast-decl-list-len (& decls)))
+    unit
+    (begin
+      (ast-decl-path-list-push out path)
+      (gen-path-list-push-for-decls out decls path (+ index 1)))))
 
 (define (gen-rewrite-decls-with-paths
   [decls : AstDeclList]
@@ -1407,43 +1450,58 @@
   [module : String]
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDeclsWithPaths
-  (match decls
-    [(AstDeclList.Nil)
-      (ResultGenDeclsWithPaths.Ok
-        AstDeclList.Nil
-        AstDeclPathList.Nil
-        registry
-        module)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String (gen-path-list-head-or paths fallback-path)]
-        [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
-        (match (gen-rewrite-decl decl module registry env)
-          [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
-            (match (gen-rewrite-decls-with-paths
-              rest
-              rest-paths
-              fallback-path
-              decl-module
-              decl-registry
-              env)
-              [(ResultGenDeclsWithPaths.Ok
-                  rewritten-rest
-                  rewritten-rest-paths
-                  rest-registry
-                  rest-module)
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-cursor : AstDeclList decls]
+    [path-cursor : AstDeclPathList paths]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [cur-registry : GenRegistry registry]
+    [cur-module : String module]
+    [result : ResultGenDeclsWithPaths
+      (ResultGenDeclsWithPaths.Err
+        (box
+          (compiler-diagnostic-simple
+            "<internal>"
+            1
+            1
+            "generated-decl normalization with paths did not finish")))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step decl-cursor)
+          [(AstDeclListStep.Nil)
+            (begin
+              (set!
+                result
                 (ResultGenDeclsWithPaths.Ok
-                  (spec-decl-list-append rewritten-decls rewritten-rest)
-                  (gen-path-list-for-decls
-                    rewritten-decls
-                    decl-path
-                    rewritten-rest-paths)
-                  rest-registry
-                  rest-module)]
-              [(ResultGenDeclsWithPaths.Err diag)
-                (ResultGenDeclsWithPaths.Err diag)])]
-          [(ResultGenDecl.Err diag) (ResultGenDeclsWithPaths.Err diag)]))]))
+                  out
+                  out-paths
+                  cur-registry
+                  cur-module))
+              (set! done true))]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [decl-path : String
+                (gen-path-list-head-or path-cursor fallback-path)]
+              (match (gen-rewrite-decl decl cur-module cur-registry env)
+                [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
+                  (begin
+                    (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
+                    (gen-path-list-push-for-decls
+                      (&mut out-paths)
+                      rewritten-decls
+                      decl-path
+                      0)
+                    (set! cur-registry decl-registry)
+                    (set! cur-module decl-module)
+                    (set! decl-cursor rest)
+                    (set! path-cursor (gen-path-list-tail path-cursor)))]
+                [(ResultGenDecl.Err diag)
+                  (begin
+                    (set! result (ResultGenDeclsWithPaths.Err diag))
+                    (set! done true))]))]))
+      result)))
 
 (define (gen-normalize-program-active [program : AstProgram]) : ResultGenProgram
   (match program
@@ -1548,12 +1606,12 @@
     [_ false]))
 
 (define (gen-decls-needed? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (if (gen-decl-needs-normalize? decl)
         true
-        (gen-decls-needed? (box-get rest)))]))
+        (gen-decls-needed? rest))]))
 
 (define (spec-value-runtime-type-matches?
   [value : CompilerCtfeValue]
@@ -4928,24 +4986,42 @@
   [decls : AstDeclList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecls
-  (match decls
-    [(AstDeclList.Nil) (ResultSpecDecls.Ok AstDeclList.Nil state)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match (spec-rewrite-decl decl templates state)
-          [(ResultSpecDecl.Ok maybe-decl decl-state)
-            (match (spec-rewrite-decls rest templates decl-state)
-              [(ResultSpecDecls.Ok rewritten-rest rest-state)
-                (match maybe-decl
-                  [(SpecMaybeDecl.None)
-                    (ResultSpecDecls.Ok rewritten-rest rest-state)]
-                  [(SpecMaybeDecl.Some rewritten-decl)
-                    (ResultSpecDecls.Ok
-                      (ast-decl-cons rewritten-decl rewritten-rest)
-                      rest-state)])]
-              [(ResultSpecDecls.Err diag) (ResultSpecDecls.Err diag)])]
-          [(ResultSpecDecl.Err diag) (ResultSpecDecls.Err diag)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [cursor : AstDeclList decls]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [cur-state : SpecState state]
+    [result : ResultSpecDecls
+      (ResultSpecDecls.Err
+        (box
+          (compiler-diagnostic-simple
+            "<internal>"
+            1
+            1
+            "specialization rewrite did not finish")))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil)
+            (begin
+              (set! result (ResultSpecDecls.Ok out cur-state))
+              (set! done true))]
+          [(AstDeclListStep.Cons decl rest)
+            (match (spec-rewrite-decl decl templates cur-state)
+              [(ResultSpecDecl.Ok maybe-decl decl-state)
+                (begin
+                  (set! cur-state decl-state)
+                  (match maybe-decl
+                    [(SpecMaybeDecl.None) unit]
+                    [(SpecMaybeDecl.Some rewritten-decl)
+                      (ast-decl-list-push (&mut out) rewritten-decl)])
+                  (set! cursor rest))]
+              [(ResultSpecDecl.Err diag)
+                (begin
+                  (set! result (ResultSpecDecls.Err diag))
+                  (set! done true))])]))
+      result)))
 
 (define (spec-rewrite-decls-with-paths
   [decls : AstDeclList]
@@ -4953,45 +5029,57 @@
   [fallback-path : String]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDeclsWithPaths
-  (match decls
-    [(AstDeclList.Nil)
-      (ResultSpecDeclsWithPaths.Ok AstDeclList.Nil AstDeclPathList.Nil state)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String (gen-path-list-head-or paths fallback-path)]
-        [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
-        (match (spec-rewrite-decl decl templates state)
-          [(ResultSpecDecl.Ok maybe-decl decl-state)
-            (match (spec-rewrite-decls-with-paths
-              rest
-              rest-paths
-              fallback-path
-              templates
-              decl-state)
-              [(ResultSpecDeclsWithPaths.Ok
-                  rewritten-rest
-                  rewritten-rest-paths
-                  rest-state)
-                (match maybe-decl
-                  [(SpecMaybeDecl.None)
-                    (ResultSpecDeclsWithPaths.Ok
-                      rewritten-rest
-                      rewritten-rest-paths
-                      rest-state)]
-                  [(SpecMaybeDecl.Some rewritten-decl)
-                    (ResultSpecDeclsWithPaths.Ok
-                      (ast-decl-cons rewritten-decl rewritten-rest)
-                      (ast-decl-path-cons decl-path rewritten-rest-paths)
-                      rest-state)])]
-              [(ResultSpecDeclsWithPaths.Err diag)
-                (ResultSpecDeclsWithPaths.Err diag)])]
-          [(ResultSpecDecl.Err diag) (ResultSpecDeclsWithPaths.Err diag)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-cursor : AstDeclList decls]
+    [path-cursor : AstDeclPathList paths]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [cur-state : SpecState state]
+    [result : ResultSpecDeclsWithPaths
+      (ResultSpecDeclsWithPaths.Err
+        (box
+          (compiler-diagnostic-simple
+            "<internal>"
+            1
+            1
+            "specialization rewrite with paths did not finish")))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step decl-cursor)
+          [(AstDeclListStep.Nil)
+            (begin
+              (set!
+                result
+                (ResultSpecDeclsWithPaths.Ok out out-paths cur-state))
+              (set! done true))]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [decl-path : String
+                (gen-path-list-head-or path-cursor fallback-path)]
+              (match (spec-rewrite-decl decl templates cur-state)
+                [(ResultSpecDecl.Ok maybe-decl decl-state)
+                  (begin
+                    (set! cur-state decl-state)
+                    (match maybe-decl
+                      [(SpecMaybeDecl.None) unit]
+                      [(SpecMaybeDecl.Some rewritten-decl)
+                        (begin
+                          (ast-decl-list-push (&mut out) rewritten-decl)
+                          (ast-decl-path-list-push (&mut out-paths) decl-path))])
+                    (set! decl-cursor rest)
+                    (set! path-cursor (gen-path-list-tail path-cursor)))]
+                [(ResultSpecDecl.Err diag)
+                  (begin
+                    (set! result (ResultSpecDeclsWithPaths.Err diag))
+                    (set! done true))]))]))
+      result)))
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
   (if (string.eq fallback-path "")
-    AstDeclPathList.Nil
-    (gen-path-list-for-decls decls fallback-path AstDeclPathList.Nil)))
+    (ast-decl-path-list-new)
+    (gen-path-list-for-decls decls fallback-path (ast-decl-path-list-new))))
 
 (define (compiler-specialize-program-active [program : AstProgram]) : ResultSpecProgram
   (match (gen-normalize-program-active program)
@@ -5008,7 +5096,7 @@
                   decls
                   (spec-template-env-from-list templates)
                   (SpecState.State
-                    AstDeclList.Nil
+                    (ast-decl-list-new)
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
@@ -5043,7 +5131,7 @@
                   fallback-path
                   (spec-template-env-from-list templates)
                   (SpecState.State
-                    AstDeclList.Nil
+                    (ast-decl-list-new)
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
@@ -5135,11 +5223,11 @@
 (define (compiler-specialize-decl-list-defines?
   [decls : AstDeclList]
   [name : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -5327,11 +5415,11 @@
 (define (compiler-specialize-decl-list-count-defs
   [decls : AstDeclList]
   [name : String]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -5371,11 +5459,11 @@
 (define (compiler-specialize-decl-list-count-visible
   [decls : AstDeclList]
   [name : String]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [tail-count : i64
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)
@@ -5765,8 +5853,8 @@
         [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(AstProgram.Program decls-box)
-              (match (box-get decls-box)
-                [(AstDeclList.Cons decl _)
+              (match (ast-decl-list-step (box-get decls-box))
+                [(AstDeclListStep.Cons decl _)
                   (match decl
                     [(AstDecl.ComptimeDecl meta template-box)
                       (and
@@ -5784,7 +5872,7 @@
                             (string.eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
-                [(AstDeclList.Nil) false])])]
+                [(AstDeclListStep.Nil) false])])]
         [(ResultSpecProgram.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 

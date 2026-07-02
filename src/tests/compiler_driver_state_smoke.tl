@@ -123,7 +123,7 @@
     [state-a : CompilerDriverState
       (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [program : AstProgram (ast-program AstDeclList.Nil)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
     [ok : bool true]
     (begin
       (compiler-driver-state-apply-session-flags! state-a)
@@ -133,9 +133,9 @@
         (set! ok false))
       (compiler-load-runtime-prelude-cache-store
         "prelude-key"
-        AstDeclList.Nil
-        AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
+        (ast-decl-module-list-new)
         (sym_i64_env.sym-i64-empty))
       (compiler-load-session-floors-set! 2 3 4)
       (compiler-driver-state-apply-session-flags! state-b)
@@ -313,8 +313,8 @@
   [type-cell : (Array i64)]) : bool
   (match program
     [(AstProgram.Program decls-box)
-      (match (box-get decls-box)
-        [(AstDeclList.Cons
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons
             (AstDecl.DefFn _ _ (AstType.Ptr inner-id) body-id _)
             _)
           (begin
@@ -392,7 +392,7 @@
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons field (ast-field-def-list-new)))]
-    (ast-program (ast-decl-cons decl AstDeclList.Nil))))
+    (ast-program (ast-decl-cons decl (ast-decl-list-new)))))
 
 (define (compiler-driver-state-smoke-clone-generated-ctor?
   [pools : AstNodePoolContext]
@@ -400,12 +400,12 @@
   [name : String]) : bool
   (match program
     [(AstProgram.Program decls-box)
-      (match (box-get decls-box)
-        [(AstDeclList.Cons _ rest)
-          (match (box-get rest)
-            [(AstDeclList.Cons decl tail)
-              (match (box-get tail)
-                [(AstDeclList.Nil)
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons _ rest)
+          (match (ast-decl-list-step rest)
+            [(AstDeclListStep.Cons decl tail)
+              (match (ast-decl-list-step tail)
+                [(AstDeclListStep.Nil)
                   (match decl
                     [(AstDecl.DefFn fn-name _ _ body _)
                       (and
@@ -495,20 +495,15 @@
 (define (compiler-driver-state-smoke-specialized-scale-decls-ok?
   [pools : AstNodePoolContext]
   [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (match decl
         [(AstDecl.DefFn name _ _ body _)
           (if (string.eq (intern-str name) "__tl_specialized_scale_i64_7_none")
             (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
-            (compiler-driver-state-smoke-specialized-scale-decls-ok?
-              pools
-              (box-get rest)))]
-        [_
-          (compiler-driver-state-smoke-specialized-scale-decls-ok?
-            pools
-            (box-get rest))])]))
+            (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest))]
+        [_ (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest)])]))
 
 (define (compiler-driver-state-smoke-specialized-scale-program-ok?
   [pools : AstNodePoolContext]
@@ -720,7 +715,7 @@
           (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
-            AstDeclPathList.Nil
+            (ast-decl-path-list-new)
             (vector.string-vec-new)
             (tc-prefix-default-cache-scope)
             pools)
@@ -940,7 +935,7 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [program : AstProgram (ast-program AstDeclList.Nil)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
     (begin
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
@@ -1001,7 +996,7 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [program : AstProgram (ast-program AstDeclList.Nil)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
     (begin
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
@@ -1096,7 +1091,7 @@
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
-        [paths : AstDeclPathList AstDeclPathList.Nil]
+        [paths : AstDeclPathList (ast-decl-path-list-new)]
         (match (parse-ast-source-diagnostic-with-cfg-and-pools
           "clone-state-a.tl"
           (compiler-driver-state-smoke-lower-clone-roots-source-a)

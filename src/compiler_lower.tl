@@ -571,12 +571,7 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-decl-list-count [decls : AstDeclList]) : i64
-    (match decls
-      [(AstDeclList.Nil) 0]
-      [(AstDeclList.Cons _ rest)
-        (let
-          [rest : AstDeclList (box-get rest)]
-          (+ 1 (compiler-lower-profile-decl-list-count rest)))])))
+    (ast-decl-list-len (& decls))))
 
 (cfg
   compile-profile
@@ -1707,22 +1702,22 @@
   [entry-path : String]
   [scan : LowerEntryMainScan]
   [module : String]) : LowerEntryMainScan
-  (match decls
-    [(AstDeclList.Nil) scan]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) scan]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
+                [path-rest : AstDeclPathList path-rest]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
             (lower-entry-main-scan-decls-in-module
@@ -1940,48 +1935,32 @@
   [names : LowerNameEnv]
   [module : String]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 (intern module)]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) entry-path])]
-              [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
-                      path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-module-id next-module))]
-                [_
-                  (begin
-                    (set!
-                      cur-names
-                      (lower-name-env-add-decl-in-module
-                        cur-names
-                        entry-path
-                        decl-path
-                        (intern-str cur-module-id)
-                        decl))
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          [decl-path : String
+            (ast-decl-path-list-get (& paths) index entry-path)]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (set!
+                  cur-names
+                  (lower-name-env-add-decl-in-module
+                    cur-names
+                    entry-path
+                    decl-path
+                    (intern-str cur-module-id)
+                    decl))])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-add-clone-decl-in-module
@@ -2028,48 +2007,32 @@
   [names : LowerNameEnv]
   [module : String]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 (intern module)]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) entry-path])]
-              [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
-                      path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-module-id next-module))]
-                [_
-                  (begin
-                    (set!
-                      cur-names
-                      (lower-name-env-add-clone-decl-in-module
-                        cur-names
-                        entry-path
-                        decl-path
-                        (intern-str cur-module-id)
-                        decl))
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          [decl-path : String
+            (ast-decl-path-list-get (& paths) index entry-path)]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (set!
+                  cur-names
+                  (lower-name-env-add-clone-decl-in-module
+                    cur-names
+                    entry-path
+                    decl-path
+                    (intern-str cur-module-id)
+                    decl))])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-add-clone-decls
@@ -2315,69 +2278,41 @@
   [module : String]
   [path-aware : bool]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [target-module-id : i64 (intern target-module)]
     [cur-module-id : i64 (intern module)]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) entry-path])]
-              [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
-                      path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-module-id next-module)
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
-                [(AstDecl.Import _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
-                [(AstDecl.IncludeStr _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
-                [(AstDecl.IncludeBin _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
-                [(AstDecl.Test _ _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
-                [_
-                  (begin
-                    (if (= cur-module-id target-module-id)
-                      (set!
-                        cur-names
-                        (lower-name-env-add-decl-alias-in-module
-                          cur-names
-                          entry-path
-                          decl-path
-                          alias
-                          (intern-str cur-module-id)
-                          decl
-                          path-aware))
-                      unit)
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          [decl-path : String
+            (ast-decl-path-list-get (& paths) index entry-path)]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Import _) unit]
+              [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeBin _ _) unit]
+              [(AstDecl.Test _ _ _) unit]
+              [_
+                (if (= cur-module-id target-module-id)
+                  (set!
+                    cur-names
+                    (lower-name-env-add-decl-alias-in-module
+                      cur-names
+                      entry-path
+                      decl-path
+                      alias
+                      (intern-str cur-module-id)
+                      decl
+                      path-aware))
+                  unit)])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-add-module-aliases-cache
@@ -2389,101 +2324,84 @@
   [alias : String]
   [module-id : i64]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 module-id]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-module-id next-module)
-                    (set! cur-decls rest))]
-                [(AstDecl.Import _) (set! cur-decls rest)]
-                [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
-                [(AstDecl.IncludeBin _ _) (set! cur-decls rest)]
-                [(AstDecl.Test _ _ _) (set! cur-decls rest)]
-                [_
-                  (begin
-                    (if (= cur-module-id target-module-id)
-                      (set!
-                        cur-names
-                        (lower-name-env-add-decl-alias-in-module-cache
-                          cur-names
-                          base-cache
-                          alias
-                          target-module
-                          decl))
-                      unit)
-                    (set! cur-decls rest))]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Import _) unit]
+              [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeBin _ _) unit]
+              [(AstDecl.Test _ _ _) unit]
+              [_
+                (if (= cur-module-id target-module-id)
+                  (set!
+                    cur-names
+                    (lower-name-env-add-decl-alias-in-module-cache
+                      cur-names
+                      base-cache
+                      alias
+                      target-module
+                      decl))
+                  unit)])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [_paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
   [module : String]
   [path-aware : bool]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 (intern module)]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
-                      path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-              (begin
-                (match decl
-                  [(AstDecl.Import
-                      (AstImportSpec.Spec
-                        _
-                        _
-                        (AstMaybeModuleName.Some target-module)
-                        (AstMaybeImportAlias.Some alias)
-                        _))
-                    (set!
-                      cur-names
-                      (lower-name-env-add-module-aliases
-                        all-decls
-                        all-paths
-                        entry-path
-                        cur-names
-                        target-module
-                        (lower-import-alias-key
-                          (intern-str cur-module-id)
-                          alias)
-                        ""
-                        path-aware))]
-                  [_ unit])
-                (match decl
-                  [(AstDecl.Module next-module)
-                    (set! cur-module-id next-module)]
-                  [_ unit])
-                (set! cur-decls rest)
-                (set! cur-paths rest-paths)))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match decl
+              [(AstDecl.Import
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target-module)
+                    (AstMaybeImportAlias.Some alias)
+                    _))
+                (set!
+                  cur-names
+                  (lower-name-env-add-module-aliases
+                    all-decls
+                    all-paths
+                    entry-path
+                    cur-names
+                    target-module
+                    (lower-import-alias-key (intern-str cur-module-id) alias)
+                    ""
+                    path-aware))]
+              [_ unit])
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_ unit])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-with-import-aliases
@@ -2506,63 +2424,52 @@
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [_paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
   [target-current-module : String]
   [current-module : String]
   [path-aware : bool]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [target-module-id : i64 (intern target-current-module)]
     [cur-module-id : i64 (intern current-module)]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
-                      path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-              (begin
-                (match decl
-                  [(AstDecl.Import
-                      (AstImportSpec.Spec
-                        _
-                        _
-                        (AstMaybeModuleName.Some target-module)
-                        (AstMaybeImportAlias.Some alias)
-                        _))
-                    (if (= cur-module-id target-module-id)
-                      (set!
-                        cur-names
-                        (lower-name-env-add-module-aliases
-                          all-decls
-                          all-paths
-                          entry-path
-                          cur-names
-                          target-module
-                          alias
-                          ""
-                          path-aware))
-                      unit)]
-                  [_ unit])
-                (match decl
-                  [(AstDecl.Module next-module)
-                    (set! cur-module-id next-module)]
-                  [_ unit])
-                (set! cur-decls rest)
-                (set! cur-paths rest-paths)))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match decl
+              [(AstDecl.Import
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target-module)
+                    (AstMaybeImportAlias.Some alias)
+                    _))
+                (if (= cur-module-id target-module-id)
+                  (set!
+                    cur-names
+                    (lower-name-env-add-module-aliases
+                      all-decls
+                      all-paths
+                      entry-path
+                      cur-names
+                      target-module
+                      alias
+                      ""
+                      path-aware))
+                  unit)]
+              [_ unit])
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_ unit])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-with-import-aliases-in-module
@@ -2591,45 +2498,43 @@
   [target-current-module-id : i64]
   [current-module-id : i64]) : LowerNameEnv
   (let
-    [cur-decls : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 current-module-id]
     (begin
-      (while (match cur-decls
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur-decls
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              (begin
-                (match decl
-                  [(AstDecl.Import
-                      (AstImportSpec.Spec
-                        _
-                        _
-                        (AstMaybeModuleName.Some target-module)
-                        (AstMaybeImportAlias.Some alias)
-                        _))
-                    (if (= cur-module-id target-current-module-id)
-                      (set!
-                        cur-names
-                        (lower-name-env-add-module-aliases-cache
-                          all-decls
-                          base-cache
-                          cur-names
-                          target-module
-                          (intern target-module)
-                          alias
-                          (intern "")))
-                      unit)]
-                  [_ unit])
-                (match decl
-                  [(AstDecl.Module next-module)
-                    (set! cur-module-id next-module)]
-                  [_ unit])
-                (set! cur-decls rest)))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match decl
+              [(AstDecl.Import
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target-module)
+                    (AstMaybeImportAlias.Some alias)
+                    _))
+                (if (= cur-module-id target-current-module-id)
+                  (set!
+                    cur-names
+                    (lower-name-env-add-module-aliases-cache
+                      all-decls
+                      base-cache
+                      cur-names
+                      target-module
+                      (intern target-module)
+                      alias
+                      (intern "")))
+                  unit)]
+              [_ unit])
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_ unit])
+            (set! index (+ index 1)))))
       cur-names)))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
@@ -2910,83 +2815,78 @@
   [target-module : String]
   [target-module-id : i64]
   [module-id : i64]) : ResultLowerModuleLocalEnv
-  (match decls
-    [(AstDeclList.Nil)
-      (ResultLowerModuleLocalEnv.Ok type-env names local-type-env local-names)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-module-local-envs-list
-              top-env
-              rest
-              type-env
-              local-type-env
-              names
-              local-names
-              name-cache
-              target-module
-              target-module-id
-              next-module)]
-          [_
-            (if (= module-id target-module-id)
-              (match (lower-module-local-type-env-add-decl
-                top-env
-                type-env
-                target-module
-                decl)
-                [(ResultTcEnv.Ok next-type-env)
-                  ;; #3759: rebind the same decl onto a fresh local-only base.
-                  ;; lower-module-local-type-env-add-decl resolves every type
-                  ;; against top-env (passed separately), so the bindings are
-                  ;; identical to next-type-env's local additions -- only the base
-                  ;; env differs. This isolates the module-local type bindings for
-                  ;; the per-module type-cache overlay.
+  (let
+    [cur-type-env : TcTypeEnv type-env]
+    [cur-local-type-env : TcTypeEnv local-type-env]
+    [cur-names : LowerNameEnv names]
+    [cur-local-names : LowerNameEnv local-names]
+    [cur-module-id : i64 module-id]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [result : ResultLowerModuleLocalEnv
+      (ResultLowerModuleLocalEnv.Err "lower: module local env walk")]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (if (= cur-module-id target-module-id)
                   (match (lower-module-local-type-env-add-decl
                     top-env
-                    local-type-env
+                    cur-type-env
                     target-module
                     decl)
-                    [(ResultTcEnv.Ok next-local-type-env)
-                      (lower-module-local-envs-list
+                    [(ResultTcEnv.Ok next-type-env)
+                      (match (lower-module-local-type-env-add-decl
                         top-env
-                        rest
-                        next-type-env
-                        next-local-type-env
-                        (lower-name-env-add-local-decl
-                          names
-                          name-cache
-                          target-module
-                          decl)
-                        ;; #3759: accumulate the module-local name bindings on a
-                        ;; fresh base for the name-cache overlay; dispatch logical
-                        ;; names still resolve against the full `names` env.
-                        (lower-name-env-add-local-decl-resolve
-                          local-names
-                          names
-                          name-cache
-                          target-module
-                          decl)
-                        name-cache
+                        cur-local-type-env
                         target-module
-                        target-module-id
-                        module-id)]
+                        decl)
+                        [(ResultTcEnv.Ok next-local-type-env)
+                          (let
+                            [next-names : LowerNameEnv
+                              (lower-name-env-add-local-decl
+                                cur-names
+                                name-cache
+                                target-module
+                                decl)]
+                            [next-local-names : LowerNameEnv
+                              (lower-name-env-add-local-decl-resolve
+                                cur-local-names
+                                cur-names
+                                name-cache
+                                target-module
+                                decl)]
+                            (begin
+                              (set! cur-type-env next-type-env)
+                              (set! cur-local-type-env next-local-type-env)
+                              (set! cur-names next-names)
+                              (set! cur-local-names next-local-names)))]
+                        [(ResultTcEnv.Err message)
+                          (begin
+                            (set!
+                              result
+                              (ResultLowerModuleLocalEnv.Err message))
+                            (set! done true))])]
                     [(ResultTcEnv.Err message)
-                      (ResultLowerModuleLocalEnv.Err message)])]
-                [(ResultTcEnv.Err message)
-                  (ResultLowerModuleLocalEnv.Err message)])
-              (lower-module-local-envs-list
-                top-env
-                rest
-                type-env
-                local-type-env
-                names
-                local-names
-                name-cache
-                target-module
-                target-module-id
-                module-id))]))]))
+                      (begin
+                        (set! result (ResultLowerModuleLocalEnv.Err message))
+                        (set! done true))])
+                  unit)])
+            (set! index (+ index 1)))))
+      (if done
+        result
+        (ResultLowerModuleLocalEnv.Ok
+          cur-type-env
+          cur-names
+          cur-local-type-env
+          cur-local-names)))))
 
 (define (lower-module-local-envs
   [ctx : TcContext]
@@ -3861,54 +3761,48 @@
   [entry-path : String]
   [module : String]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match decls
-    [(AstDeclList.Nil) out]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-function-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              (intern-str next-module)
-              out)]
-          [_
-            (lower-function-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              (match (lower-function-logical-name-from-decl
-                entry-path
-                decl-path
-                module
-                decl)
-                ;; #3792: assign each distinct function name a dense slot
-                ;; (0..N-1, its insertion order) instead of a constant 1, so the
-                ;; prune reachability `reachable` set can key on that i64 slot.
-                ;; Skip names already present so the slot stays a bijection
-                ;; (string-i64-map-len is the live-entry count == next free slot).
-                [(TcMaybeString.Some logical-name)
-                  (if (hashmap.string-i64-map-contains? out logical-name)
-                    out
-                    (hashmap.string-i64-map-put
-                      out
-                      logical-name
-                      (hashmap.string-i64-map-len out)))]
-                [(TcMaybeString.No) out]))]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [cur-module : String module]
+    [cur-out : hashmap.StringI64Map out]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          [decl-path : String
+            (ast-decl-path-list-get (& paths) index entry-path)]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module)
+                (set! cur-module (intern-str next-module))]
+              [_
+                (set!
+                  cur-out
+                  (match (lower-function-logical-name-from-decl
+                    entry-path
+                    decl-path
+                    cur-module
+                    decl)
+                    ;; #3792: assign each distinct function name a dense slot
+                    ;; (0..N-1, its insertion order) instead of a constant 1, so
+                    ;; prune reachability `reachable` can key on that i64 slot.
+                    ;; Skip names already present so the slot stays a bijection.
+                    [(TcMaybeString.Some logical-name)
+                      (if (hashmap.string-i64-map-contains?
+                        cur-out
+                        logical-name)
+                        cur-out
+                        (hashmap.string-i64-map-put
+                          cur-out
+                          logical-name
+                          (hashmap.string-i64-map-len cur-out)))]
+                    [(TcMaybeString.No) cur-out]))])
+            (set! index (+ index 1)))))
+      cur-out)))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
@@ -4035,11 +3929,11 @@
   [roots : CloneNameList]
   [name : String]
   [module : String]) : CloneNameList
-  (match decls
-    [(AstDeclList.Nil) roots]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) roots]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (lower-clone-root-add-named-deps-in-module
@@ -5311,16 +5205,12 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match decl
-                [(AstDecl.Unsafe inner-box)
-                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (set! cur (ast-decl-cons (box-get template-box) rest))]
+              [rest : AstDeclList rest]
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.Def _ _ expr-box)
                   (let
                     [decl-ctx : TcContext
@@ -6013,11 +5903,11 @@
   [names : LowerNameCache]
   [state : LowerReachState]
   [decls : AstDeclList]) : LowerReachState
-  (match decls
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Def _ _ expr-box)
             (let
@@ -6104,19 +5994,19 @@
   [module : String]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
-  (match decls
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest) (box-get path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest) path-rest]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         [next : LowerReachState
           (match decl
             [(AstDecl.DefStruct _ _ cleanup fields)
@@ -6208,37 +6098,33 @@
   [target-module : String]
   [target-module-id : i64]
   [module-id : i64]) : LowerNameEnv
-  (match decls
-    [(AstDeclList.Nil) base-names]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-function-body-local-names-in-module-resolve
-              rest
-              base-names
-              resolve-names
-              base-cache
-              target-module
-              target-module-id
-              next-module)]
-          [_
-            (lower-function-body-local-names-in-module-resolve
-              rest
-              (if (= module-id target-module-id)
-                (lower-name-env-add-local-decl-resolve
-                  base-names
-                  resolve-names
-                  base-cache
-                  target-module
-                  decl)
-                base-names)
-              resolve-names
-              base-cache
-              target-module
-              target-module-id
-              module-id)]))]))
+  (let
+    [out : LowerNameEnv base-names]
+    [cur-module-id : i64 module-id]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (if (= cur-module-id target-module-id)
+                  (set!
+                    out
+                    (lower-name-env-add-local-decl-resolve
+                      out
+                      resolve-names
+                      base-cache
+                      target-module
+                      decl))
+                  unit)])
+            (set! index (+ index 1)))))
+      out)))
 
 ;; #3786: build a small per-module overlay name cache holding only the module's
 ;; import aliases + local decl names; misses fall through to the shared global
@@ -6286,14 +6172,23 @@
     [_ 0]))
 
 (define (lower-function-decl-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (+
-          (lower-function-decl-count-one decl)
-          (lower-function-decl-count rest)))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (+
+              out
+              (lower-function-decl-count-one
+                (array-ref
+                  (struct-get decls slots)
+                  (+ (struct-get decls offset) index)))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (lower-function-body-index-add
   [index : LowerFunctionBodyIndex]
@@ -6334,23 +6229,23 @@
   [base-name-cache : LowerNameCache]
   [module-name-cache : LowerNameCache]
   [index : LowerFunctionBodyIndex]) : LowerFunctionBodyIndex
-  (match decls
-    [(AstDeclList.Nil) index]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) index]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
+                [path-rest : AstDeclPathList path-rest]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-        (match decl
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+        (match (ast-decl-unwrapped decl)
           [(AstDecl.Module next-module)
             (let
               [next-module-str : String (intern-str next-module)]
@@ -6394,71 +6289,6 @@
                   module-name-cache
                   body
                   decl-path)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (lower-function-body-index-from-decls-in-module
-                (ast-decl-cons template rest)
-                (ast-decl-path-cons decl-path rest-paths)
-                entry-path
-                module
-                all-decls
-                all-paths
-                base-names
-                base-name-cache
-                module-name-cache
-                index))]
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDecl.DefFn name _ _ body-box _)
-                  (let
-                    [body : AstExpr (ast-node-get body-box)]
-                    (lower-function-body-index-from-decls-in-module
-                      rest
-                      rest-paths
-                      entry-path
-                      module
-                      all-decls
-                      all-paths
-                      base-names
-                      base-name-cache
-                      module-name-cache
-                      (lower-function-body-index-add
-                        index
-                        (lower-decl-logical-name
-                          entry-path
-                          decl-path
-                          module
-                          (intern-str name))
-                        module-name-cache
-                        body
-                        decl-path)))]
-                [(AstDecl.ComptimeDecl _ _)
-                  (lower-function-body-index-from-decls-in-module
-                    (ast-decl-cons inner rest)
-                    (ast-decl-path-cons decl-path rest-paths)
-                    entry-path
-                    module
-                    all-decls
-                    all-paths
-                    base-names
-                    base-name-cache
-                    module-name-cache
-                    index)]
-                [_
-                  (lower-function-body-index-from-decls-in-module
-                    rest
-                    rest-paths
-                    entry-path
-                    module
-                    all-decls
-                    all-paths
-                    base-names
-                    base-name-cache
-                    module-name-cache
-                    index)]))]
           [_
             (lower-function-body-index-from-decls-in-module
               rest
@@ -6580,40 +6410,37 @@
 
 (define (lower-dispatch-variant-set-from-decls-in-module
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
+  [_paths : AstDeclPathList]
+  [_entry-path : String]
   [module : String]
   [names : LowerNameCache]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match decls
-    [(AstDeclList.Nil) out]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-dispatch-variant-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              (intern-str next-module)
-              names
-              out)]
-          [_
-            (lower-dispatch-variant-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              names
-              (lower-dispatch-variant-set-add-decl decl module names out))]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [cur-module : String module]
+    [cur-out : hashmap.StringI64Map out]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module)
+                (set! cur-module (intern-str next-module))]
+              [_
+                (set!
+                  cur-out
+                  (lower-dispatch-variant-set-add-decl
+                    decl
+                    cur-module
+                    names
+                    cur-out))])
+            (set! index (+ index 1)))))
+      cur-out)))
 
 (define (lower-dispatch-variant-set-from-decls
   [decls : AstDeclList]
@@ -6707,11 +6534,11 @@
   [module : String]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
-  (match decls
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (lower-reach-add-dispatch-variant-roots-in-module
@@ -7669,19 +7496,19 @@
   [reachable-paths : hashmap.I64I64Map]
   [used : hashmap.I64I64Map]
   [covered : bool]) : LowerUsedTypePathSeed
-  (match decls
-    [(AstDeclList.Nil) (LowerUsedTypePathSeed.Seed used covered)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (LowerUsedTypePathSeed.Seed used covered)]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest) (box-get path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest) path-rest]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-path-seed-in-module
@@ -7722,19 +7549,19 @@
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [used : hashmap.I64I64Map]) : hashmap.I64I64Map
-  (match decls
-    [(AstDeclList.Nil) used]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) used]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest) (box-get path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest) path-rest]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-from-kept-decls-in-module
@@ -7818,11 +7645,11 @@
   [decls : AstDeclList]
   [module : String]
   [used : hashmap.I64I64Map]) : hashmap.I64I64Map
-  (match decls
-    [(AstDeclList.Nil) used]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) used]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-add-type-decl-deps-in-module
@@ -8025,23 +7852,25 @@
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
-  (match decls
-    [(AstDeclList.Nil)
-      (LowerFilteredReachable.Filtered AstDeclList.Nil AstDeclPathList.Nil)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
+      (LowerFilteredReachable.Filtered
+        (ast-decl-list-new)
+        (ast-decl-path-list-new))]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
+                [path-rest : AstDeclPathList path-rest]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
             (match (lower-filter-reachable-in-module
@@ -8055,8 +7884,8 @@
               used-types)
               [(LowerFilteredReachable.Filtered rest-decls rest-paths)
                 (LowerFilteredReachable.Filtered
-                  (ast-decl-cons decl rest-decls)
-                  (ast-decl-path-cons decl-path rest-paths))])]
+                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (ast-decl-path-list-prepend-builder decl-path rest-paths))])]
           [_
             (match (lower-filter-reachable-in-module
               rest
@@ -8078,8 +7907,8 @@
                   used-types
                   decl)
                   (LowerFilteredReachable.Filtered
-                    (ast-decl-cons decl rest-decls)
-                    (ast-decl-path-cons decl-path rest-paths))
+                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (ast-decl-path-list-prepend-builder decl-path rest-paths))
                   (LowerFilteredReachable.Filtered rest-decls rest-paths))])]))]))
 
 ;; Keep decls and paths in lockstep so pruning does not repeat the same
@@ -8183,19 +8012,19 @@
   [module : String]
   [all-functions : hashmap.StringI64Map]
   [state : LowerReachState]) : LowerReachState
-  (match decls
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) entry-path])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest) (box-get path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest) path-rest]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
             (lower-reach-add-export-roots-in-module
@@ -8288,106 +8117,121 @@
                   (set!
                     lower-reach-active-body-used-types
                     (lower-used-types-precise-empty))
-                  (match (lower-reach-process
-                    all-functions
-                    name-cache
-                    body-index
-                    (lower-reach-global-decls
-                      all-functions
-                      name-cache
+                  (let
+                    [main-state : LowerReachState
+                      (lower-reach-add-logical
+                        all-functions
+                        (LowerReachState.State
+                          (hashmap.i64-i64-map-with-capacity 8192)
+                          LowerStringSet.Nil)
+                        "main")]
+                    [export-state : LowerReachState
+                      (lower-reach-add-export-roots-in-module
+                        decls
+                        paths
+                        entry-path
+                        ""
+                        all-functions
+                        main-state)]
+                    [cleanup-state : LowerReachState
+                      (lower-reach-cleanup-metadata-roots-in-module
+                        all-functions
+                        decls
+                        paths
+                        entry-path
+                        ""
+                        name-cache
+                        export-state)]
+                    [clone-state : LowerReachState
+                      (lower-reach-add-clone-root-helpers
+                        all-functions
+                        name-cache
+                        clone-roots
+                        cleanup-state)]
+                    [dispatch-state : LowerReachState
                       (lower-reach-add-dispatch-variant-roots
                         all-functions
                         decls
                         name-cache
-                        (lower-reach-add-clone-root-helpers
-                          all-functions
-                          name-cache
-                          clone-roots
-                          (lower-reach-cleanup-metadata-roots-in-module
-                            all-functions
-                            decls
-                            paths
-                            entry-path
-                            ""
-                            name-cache
-                            (lower-reach-add-export-roots-in-module
+                        clone-state)]
+                    [global-state : LowerReachState
+                      (lower-reach-global-decls
+                        all-functions
+                        name-cache
+                        dispatch-state
+                        decls)]
+                    [reached-state : LowerReachState
+                      (lower-reach-process
+                        all-functions
+                        name-cache
+                        body-index
+                        global-state)]
+                    (match reached-state
+                      [(LowerReachState.State reachable _)
+                        (let
+                          [reachable-runtime-paths : hashmap.I64I64Map
+                            lower-reach-active-runtime-paths]
+                          [type-path-seed : LowerUsedTypePathSeed
+                            (lower-used-types-path-seed-in-module
+                              pools
                               decls
                               paths
                               entry-path
                               ""
-                              all-functions
-                              (lower-reach-add-logical
-                                all-functions
-                                (LowerReachState.State
-                                  (hashmap.i64-i64-map-with-capacity 8192)
-                                  LowerStringSet.Nil)
-                                "main")))))
-                      decls))
-                    [(LowerReachState.State reachable _)
-                      (let
-                        [reachable-runtime-paths : hashmap.I64I64Map
-                          lower-reach-active-runtime-paths]
-                        [type-path-seed : LowerUsedTypePathSeed
-                          (lower-used-types-path-seed-in-module
-                            pools
-                            decls
-                            paths
-                            entry-path
-                            ""
-                            reachable-runtime-paths
-                            lower-reach-active-body-used-types
-                            true)]
-                        [used-types : hashmap.I64I64Map
-                          (match type-path-seed
-                            [(LowerUsedTypePathSeed.Seed
-                                reachable-path-type-names
-                                type-paths-covered)
-                              (if type-paths-covered
-                                (hashmap.i64-i64-map-with-capacity 8)
-                                (lower-used-types-expand-fixed
-                                  pools
-                                  decls
-                                  (lower-used-types-from-kept-decls-in-module
+                              reachable-runtime-paths
+                              lower-reach-active-body-used-types
+                              true)]
+                          [used-types : hashmap.I64I64Map
+                            (match type-path-seed
+                              [(LowerUsedTypePathSeed.Seed
+                                  reachable-path-type-names
+                                  type-paths-covered)
+                                (if type-paths-covered
+                                  (hashmap.i64-i64-map-with-capacity 8)
+                                  (lower-used-types-expand-fixed
                                     pools
                                     decls
-                                    paths
-                                    entry-path
-                                    ""
-                                    all-functions
-                                    reachable
-                                    dispatch-variants
-                                    reachable-path-type-names)))])]
-                        [scratch-head : i64 (arena.tl_arena_current)]
-                        (begin
-                          ;; Materialize the pruned program back in the persistent
-                          ;; arena before rewinding the scratch arena.
-                          (unsafe
-                            (arena.tl_arena_set prev-arena))
-                          (let
-                            [filtered : LowerFilteredReachable
-                              (lower-filter-reachable-decls-and-paths
-                                decls
-                                paths
-                                entry-path
-                                all-functions
-                                reachable
-                                dispatch-variants
-                                used-types)]
-                            [pruned : LowerPrunedProgram
-                              (match filtered
-                                [(LowerFilteredReachable.Filtered
-                                    filtered-decls
-                                    filtered-paths)
-                                  (LowerPrunedProgram.Program
-                                    (ast-program filtered-decls)
-                                    filtered-paths)])]
-                            [new-prev-arena : i64 (arena.tl_arena_current)]
-                            (begin
-                              (unsafe
-                                (arena.tl_arena_set scratch-head)
-                                (arena.tl_region_reset mark)
-                                (arena.tl_arena_set new-prev-arena))
-                              pruned))))]))
+                                    (lower-used-types-from-kept-decls-in-module
+                                      pools
+                                      decls
+                                      paths
+                                      entry-path
+                                      ""
+                                      all-functions
+                                      reachable
+                                      dispatch-variants
+                                      reachable-path-type-names)))])]
+                          [scratch-head : i64 (arena.tl_arena_current)]
+                          (begin
+                            ;; Materialize the pruned program back in the persistent
+                            ;; arena before rewinding the scratch arena.
+                            (unsafe
+                              (arena.tl_arena_set prev-arena))
+                            (let
+                              [filtered : LowerFilteredReachable
+                                (lower-filter-reachable-decls-and-paths
+                                  decls
+                                  paths
+                                  entry-path
+                                  all-functions
+                                  reachable
+                                  dispatch-variants
+                                  used-types)]
+                              [pruned : LowerPrunedProgram
+                                (match filtered
+                                  [(LowerFilteredReachable.Filtered
+                                      filtered-decls
+                                      filtered-paths)
+                                    (LowerPrunedProgram.Program
+                                      (ast-program filtered-decls)
+                                      filtered-paths)])]
+                              [new-prev-arena : i64 (arena.tl_arena_current)]
+                              (begin
+                                (unsafe
+                                  (arena.tl_arena_set scratch-head)
+                                  (arena.tl_region_reset mark)
+                                  (arena.tl_arena_set new-prev-arena))
+                                pruned))))])))
                 (let
                   [scratch-head : i64 (arena.tl_arena_current)]
                   (begin
@@ -13264,11 +13108,11 @@
   (or (string.eq path "stdlib/atomic.tl") (string.eq path "atomic.tl")))
 
 (define (lower-program-imports-atomic? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import (AstImportSpec.Spec _ path _ _ _))
             (or
@@ -42065,12 +41909,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcType
-  (match decl
-    [(AstDecl.Def name _ _)
-      (match (tc-lookup-id env name)
-        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-        [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env decl)])]
-    [_ (tc-top-decl-type-with-env ctx env decl)]))
+  (let
+    [actual : AstDecl (ast-decl-unwrapped decl)]
+    (match actual
+      [(AstDecl.Def name _ _)
+        (match (tc-lookup-id env name)
+          [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+          [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env actual)])]
+      [_ (tc-top-decl-type-with-env ctx env actual)])))
 
 ;; Record `name -> body span` into the provenance table (#605). A function whose
 ;;
@@ -43218,53 +43064,37 @@
   [names : LowerNameEnv]
   [module : String]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match decls
-    [(AstDeclList.Nil) out]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-rvo-early-return-functions-from-decls-in-module
-              rest
-              names
-              (intern-str next-module)
-              out)]
-          [(AstDecl.Unsafe inner-box)
-            (lower-rvo-early-return-functions-from-decls-in-module
-              (ast-decl-cons (box-get inner-box) rest)
-              names
-              module
-              out)]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (lower-rvo-early-return-functions-from-decls-in-module
-              (ast-decl-cons (box-get template-box) rest)
-              names
-              module
-              out)]
-          [(AstDecl.DefFn name _ _ body-box _)
-            (let
-              [next-out : hashmap.StringI64Map
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [cur-module : String module]
+    [cur-out : hashmap.StringI64Map out]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index))]
+          (begin
+            (match (ast-decl-unwrapped decl)
+              [(AstDecl.Module next-module)
+                (set! cur-module (intern-str next-module))]
+              [(AstDecl.DefFn name _ _ body-box _)
                 (if (lower-rvo-node-has-early-return? body-box)
-                  (hashmap.string-i64-map-put
-                    out
-                    (lower-current-decl-logical-name
-                      names
-                      module
-                      (intern-str name))
-                    1)
-                  out)]
-              (lower-rvo-early-return-functions-from-decls-in-module
-                rest
-                names
-                module
-                next-out))]
-          [_
-            (lower-rvo-early-return-functions-from-decls-in-module
-              rest
-              names
-              module
-              out)]))]))
+                  (set!
+                    cur-out
+                    (hashmap.string-i64-map-put
+                      cur-out
+                      (lower-current-decl-logical-name
+                        names
+                        cur-module
+                        (intern-str name))
+                      1))
+                  unit)]
+              [_ unit])
+            (set! index (+ index 1)))))
+      cur-out)))
 
 (define (lower-rvo-early-return-functions-from-decls
   [decls : AstDeclList]
@@ -43290,7 +43120,7 @@
     [dispatch-variants : hashmap.StringI64Map
       (lower-dispatch-variant-set-from-decls
         decls
-        AstDeclPathList.Nil
+        (ast-decl-path-list-new)
         "<source>"
         dispatch-name-cache)]
     (begin
@@ -43326,11 +43156,11 @@
 ;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
 ;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module [decls : AstDeclList]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module _) decls]
           [_
@@ -43338,7 +43168,7 @@
               [kept-rest : AstDeclList
                 (lower-skip-runtime-until-next-module rest)]
               (if (lower-type-decl? decl)
-                (ast-decl-cons decl kept-rest)
+                (ast-decl-list-prepend-builder decl kept-rest)
                 kept-rest))]))]))
 
 (define (lower-decls-in-module
@@ -43372,8 +43202,8 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil)
             (begin
               (set!
                 result
@@ -43385,14 +43215,10 @@
                       (lower-extern-list-reverse cur-externs)
                       cur-spans))))
               (set! done true))]
-          [(AstDeclList.Cons decl rest)
+          [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match decl
-                [(AstDecl.Unsafe inner-box)
-                  (let
-                    [inner : AstDecl (box-get inner-box)]
-                    (set! cur-decls (ast-decl-cons inner rest)))]
+              [rest : AstDeclList rest]
+              (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def name _ expr-box)
                   (let
@@ -43780,10 +43606,8 @@
                         (begin
                           (set! result (ResultLowerDecls.Err message))
                           (set! done true))]))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (let
-                    [template : AstDecl (box-get template-box)]
-                    (set! cur-decls (ast-decl-cons template rest)))]))]))
+                [(AstDecl.Unsafe _) (set! cur-decls rest)]
+                [(AstDecl.ComptimeDecl _ _) (set! cur-decls rest)]))]))
       result)))
 
 (define (lower-compiler-program-checked-with-names-mode
@@ -43857,7 +43681,7 @@
     [(ResultSpecProgram.Ok specialized)
       (match (typecheck-compiler-specialized-program-with-paths-checked
         specialized
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerTypecheckChecked.Ok _ ctx top-env)
           (let
             [alias-names : LowerNameEnv
@@ -43867,7 +43691,7 @@
                     [decls : AstDeclList (box-get decls-box)]
                     (lower-name-env-with-import-aliases
                       decls
-                      AstDeclPathList.Nil
+                      (ast-decl-path-list-new)
                       "<source>"
                       LowerNameEnv.Nil
                       false))])]
@@ -43932,7 +43756,7 @@
       [needs-specialization : bool (compiler-specialize-needed? program)]
       [specialized-paths : AstDeclPathList
         (if needs-specialization
-          AstDeclPathList.Nil
+          (ast-decl-path-list-new)
           paths)]
       [names : LowerNameEnv
         (match program
@@ -44318,15 +44142,15 @@
 (define (lower-source-decls-define-module?
   [decls : AstDeclList]
   [module : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (match decl
         [(AstDecl.Module name)
           (if (string.eq (intern-str name) module)
             true
-            (lower-source-decls-define-module? (box-get rest) module))]
-        [_ (lower-source-decls-define-module? (box-get rest) module)])]))
+            (lower-source-decls-define-module? rest module))]
+        [_ (lower-source-decls-define-module? rest module)])]))
 
 (define (lower-source-stdlib-import-needs-loader?
   [all-decls : AstDeclList]
@@ -44634,12 +44458,12 @@
 (define (lower-source-decls-need-loader?
   [decls : AstDeclList]
   [all-decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (lower-source-decl-needs-loader? decl all-decls)
-        (lower-source-decls-need-loader? (box-get rest) all-decls))]))
+        (lower-source-decls-need-loader? rest all-decls))]))
 
 (define (lower-source-program-needs-loader? [program : AstProgram]) : bool
   (match program
@@ -45376,7 +45200,7 @@
             "stdlib/tl"
             (ast-decl-path-cons
               "stdlib/tl"
-              (ast-decl-path-cons "stdlib/tl" AstDeclPathList.Nil))))))))
+              (ast-decl-path-cons "stdlib/tl" (ast-decl-path-list-new)))))))))
 
 (define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdlib-string-wrapper-prune-source))
@@ -45500,7 +45324,7 @@
 (define (compiler-lower-stdlib-hash-string-paths) : AstDeclPathList
   (ast-decl-path-cons
     "stdlib/hash.tl"
-    (ast-decl-path-cons "app.tl" AstDeclPathList.Nil)))
+    (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string.string-length [s : String]) : i64 40)
@@ -45808,7 +45632,7 @@
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
@@ -45904,7 +45728,7 @@
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
@@ -45974,7 +45798,7 @@
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
@@ -49466,7 +49290,7 @@
       "gen.tl"
       (ast-decl-path-cons
         "lib.tl"
-        (ast-decl-path-cons "app.tl" AstDeclPathList.Nil)))))
+        (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))))
 
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
   (match (parse-ast-source (compiler-lower-generated-path-source))
@@ -49500,7 +49324,7 @@
     "lib.tl"
     (ast-decl-path-cons
       "lib.tl"
-      (ast-decl-path-cons "app.tl" AstDeclPathList.Nil))))
+      (ast-decl-path-cons "app.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-module-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-symbol-source))
@@ -49534,7 +49358,7 @@
     "stdlib/runtime.tl"
     (ast-decl-path-cons
       "app/src/main.tl"
-      (ast-decl-path-cons "" AstDeclPathList.Nil))))
+      (ast-decl-path-cons "" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-package-owned-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-package-owned-symbol-source))
@@ -49571,7 +49395,7 @@
       (match (lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)
@@ -49857,13 +49681,13 @@
         (lower-function-decl-count
           (ast-decl-cons
             (ast-decl-comptime-decl (ast-decl-unsafe fn))
-            AstDeclList.Nil))
+            (ast-decl-list-new)))
         1)
       (=
         (lower-function-decl-count
           (ast-decl-cons
             (ast-decl-unsafe (ast-decl-comptime-decl fn))
-            AstDeclList.Nil))
+            (ast-decl-list-new)))
         1))))
 
 (define (compiler-lower-module-specialize-source) : String
@@ -49875,7 +49699,7 @@
 (define (compiler-lower-module-specialize-paths) : AstDeclPathList
   (ast-decl-path-cons
     "app.tl"
-    (ast-decl-path-cons "app.tl" AstDeclPathList.Nil)))
+    (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))
 
 (define (compiler-lower-module-specialize-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-specialize-source))
@@ -52414,7 +52238,7 @@
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
@@ -52474,7 +52298,7 @@
     (compiler-lower-with-scratch-string-source)))
 
 (define (compiler-lower-runtime-substring-scratch-paths) : AstDeclPathList
-  (ast-decl-path-cons "stdlib/runtime.tl" AstDeclPathList.Nil))
+  (ast-decl-path-cons "stdlib/runtime.tl" (ast-decl-path-list-new)))
 
 (define (compiler-lower-runtime-substring-call-source) : String
   (string.append
@@ -52544,7 +52368,7 @@
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
-        AstDeclPathList.Nil)
+        (ast-decl-path-list-new))
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
@@ -54639,19 +54463,19 @@
       ok)))
 
 (define (lower-test-decl-list-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons _ rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons _ rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (+ 1 (lower-test-decl-list-count rest)))]))
 
 (define (lower-test-decl-list-defines? [decls : AstDeclList] [name : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.DefFn found _ _ _ _)
             (if (string.eq (intern-str found) name)
@@ -54677,7 +54501,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (if (lower-test-decl-list-defines?
-                (ast-decl-cons inner AstDeclList.Nil)
+                (ast-decl-cons inner (ast-decl-list-new))
                 name)
                 true
                 (lower-test-decl-list-defines? rest name)))]
@@ -54685,7 +54509,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (if (lower-test-decl-list-defines?
-                (ast-decl-cons inner AstDeclList.Nil)
+                (ast-decl-cons inner (ast-decl-list-new))
                 name)
                 true
                 (lower-test-decl-list-defines? rest name)))]
@@ -54724,7 +54548,7 @@
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
-              AstDeclList.Nil)))))))
+              (ast-decl-list-new))))))))
 
 (define (compiler-lower-ast-dce-no-main-program) : AstProgram
   (ast-program
@@ -54740,7 +54564,7 @@
           (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
-        AstDeclList.Nil))))
+        (ast-decl-list-new)))))
 
 (define (compiler-lower-macro-body-dce-program) : AstProgram
   (ast-program
@@ -54764,7 +54588,7 @@
             (ast-expr-call
               (ast-node-push (AstExpr.Var (intern "macro-only-helper")))
               (ast-expr-list-new)))
-          AstDeclList.Nil)))))
+          (ast-decl-list-new))))))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-program) : AstProgram
   (ast-program
@@ -54784,7 +54608,7 @@
               (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-            AstDeclList.Nil))))))
+            (ast-decl-list-new)))))))
 
 (define (compiler-lower-stdlib-comptime-runtime-skip-keeps-types-ok?) : bool
   (let
@@ -54810,7 +54634,7 @@
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-              AstDeclList.Nil))))]
+              (ast-decl-list-new)))))]
     [kept : AstDeclList (lower-skip-runtime-until-next-module decls)]
     (and
       (= (lower-test-decl-list-count kept) 3)
@@ -54845,7 +54669,7 @@
                     (ast-param-list-new)
                     (AstType.I64)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-                  AstDeclList.Nil))))))]
+                  (ast-decl-list-new)))))))]
     [names : LowerNameEnv
       (match program
         [(AstProgram.Program decls-box)
@@ -54853,14 +54677,14 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls
               decls
-              AstDeclPathList.Nil
+              (ast-decl-path-list-new)
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-test-prune-unreachable-functions
         "entry.tl"
         program
-        AstDeclPathList.Nil
+        (ast-decl-path-list-new)
         names)]
     (match pruned
       [(LowerPrunedProgram.Program kept-program _)
@@ -54940,7 +54764,7 @@
                 (ast-param-list-new)
                 (AstType.Struct (intern "UsedBox"))
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-              AstDeclList.Nil)))))))
+              (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-paths) : AstDeclPathList
   (ast-decl-path-cons
@@ -54951,7 +54775,7 @@
         "types.tl"
         (ast-decl-path-cons
           "types.tl"
-          (ast-decl-path-cons "entry.tl" AstDeclPathList.Nil))))))
+          (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-program) : AstProgram
   (ast-program
@@ -54981,14 +54805,14 @@
             (ast-param-list-new)
             (AstType.Enum (intern "ResultIoString"))
             (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-          AstDeclList.Nil)))))
+          (ast-decl-list-new))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-paths) : AstDeclPathList
   (ast-decl-path-cons
     "types.tl"
     (ast-decl-path-cons
       "types.tl"
-      (ast-decl-path-cons "entry.tl" AstDeclPathList.Nil))))
+      (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-type-decl-dce-arena-support-program) : AstProgram
   (ast-program
@@ -55037,7 +54861,7 @@
                     (ast-param-list-new)
                     (AstType.Struct (intern "ThreadBox"))
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-                  AstDeclList.Nil)))))))))
+                  (ast-decl-list-new))))))))))
 
 (define (compiler-lower-type-decl-dce-arena-support-paths) : AstDeclPathList
   (ast-decl-path-cons
@@ -55052,7 +54876,7 @@
             "entry.tl"
             (ast-decl-path-cons
               "thread.tl"
-              (ast-decl-path-cons "entry.tl" AstDeclPathList.Nil))))))))
+              (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
   (let
@@ -55090,7 +54914,7 @@
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-              AstDeclList.Nil)))))))
+              (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-paths) : AstDeclPathList
   (ast-decl-path-cons
@@ -55099,7 +54923,7 @@
       "types.tl"
       (ast-decl-path-cons
         "entry.tl"
-        (ast-decl-path-cons "entry.tl" AstDeclPathList.Nil)))))
+        (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
   (ast-program
@@ -55143,7 +54967,7 @@
                             (ast-pattern-list-new))))
                       (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                     (ast-match-arm-list-new))))
-              AstDeclList.Nil)))))))
+              (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-paths) : AstDeclPathList
   (ast-decl-path-cons
@@ -55154,7 +54978,7 @@
         "geom.tl"
         (ast-decl-path-cons
           "entry.tl"
-          (ast-decl-path-cons "entry.tl" AstDeclPathList.Nil))))))
+          (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
@@ -55167,7 +54991,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls
               decls
-              AstDeclPathList.Nil
+              (ast-decl-path-list-new)
               "entry.tl"
               LowerNameEnv.Nil))])]
     [no-main-names : LowerNameEnv
@@ -55177,20 +55001,20 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls
               decls
-              AstDeclPathList.Nil
+              (ast-decl-path-list-new)
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-test-prune-unreachable-functions
         "entry.tl"
         program
-        AstDeclPathList.Nil
+        (ast-decl-path-list-new)
         names)]
     [no-main-pruned : LowerPrunedProgram
       (lower-test-prune-unreachable-functions
         "entry.tl"
         no-main-program
-        AstDeclPathList.Nil
+        (ast-decl-path-list-new)
         no-main-names)]
     (match pruned
       [(LowerPrunedProgram.Program kept-program _)
@@ -55345,14 +55169,14 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls
               decls
-              AstDeclPathList.Nil
+              (ast-decl-path-list-new)
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
       (lower-test-prune-unreachable-functions
         "entry.tl"
         program
-        AstDeclPathList.Nil
+        (ast-decl-path-list-new)
         names)]
     (match pruned
       [(LowerPrunedProgram.Program kept-program _)
@@ -55369,7 +55193,7 @@
   (match (lower-compiler-program-with-decl-paths
     "entry.tl"
     (compiler-lower-stdlib-comptime-runtime-dce-program)
-    AstDeclPathList.Nil)
+    (ast-decl-path-list-new))
     [(ResultCompilerLower.Ok lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions externs)
@@ -55398,14 +55222,14 @@
             [names : LowerNameEnv
               (lower-name-env-from-decls
                 decls
-                AstDeclPathList.Nil
+                (ast-decl-path-list-new)
                 "entry.tl"
                 LowerNameEnv.Nil)]
             [pruned : LowerPrunedProgram
               (lower-test-prune-unreachable-functions
                 "entry.tl"
                 program
-                AstDeclPathList.Nil
+                (ast-decl-path-list-new)
                 names)]
             (match pruned
               [(LowerPrunedProgram.Program kept-program _)

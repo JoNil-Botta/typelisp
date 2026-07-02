@@ -5,7 +5,7 @@
 
 (define (main) : i64
   (match (compiler-load-decls-with-module-and-roots-cfg-root
-    AstDeclList.Nil
+    (ast-decl-list-new)
     "src/tests/compiler_load_decls_nil_smoke.tl"
     ""
     ""

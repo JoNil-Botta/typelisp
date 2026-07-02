@@ -14,12 +14,12 @@
 (define (compiler-driver-pic-smoke-paths-contain?
   [paths : AstDeclPathList]
   [needle : String]) : bool
-  (match paths
-    [(AstDeclPathList.Nil) false]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) false]
+    [(AstDeclPathListStep.Cons path rest)
       (or
         (compiler-driver-pic-smoke-contains? path needle)
-        (compiler-driver-pic-smoke-paths-contain? (box-get rest) needle))]))
+        (compiler-driver-pic-smoke-paths-contain? rest needle))]))
 
 (define (compiler-driver-pic-smoke-output-ok?
   [output : CompilerBackendPicOutput]) : bool

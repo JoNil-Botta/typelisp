@@ -1816,7 +1816,7 @@
   [entry-path : String]) : AstDeclPathList
   (ast-decl-path-cons
     (compiler-load-join-root-path root "tc_prefix_shared.tl")
-    (ast-decl-path-cons entry-path AstDeclPathList.Nil)))
+    (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
 
 (define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : vector.StringVec
   (vector.string-vec-push (vector.string-vec-new) root))
@@ -1824,14 +1824,14 @@
 (define (compiler-typecheck-smoke-paths-contain?
   [paths : AstDeclPathList]
   [needle : String]) : bool
-  (match paths
-    [(AstDeclPathList.Nil) false]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) false]
+    [(AstDeclPathListStep.Cons path rest)
       (or
         (compiler-load-string-contains?
           (compiler-load-normalize-path path)
           needle)
-        (compiler-typecheck-smoke-paths-contain? (box-get rest) needle))]))
+        (compiler-typecheck-smoke-paths-contain? rest needle))]))
 
 (define (compiler-typecheck-smoke-prefix-cache-check-cfg
   [src : String]
@@ -2338,7 +2338,7 @@
           [(ResultAstProgramDiagnostic.Ok entry-program)
             (match (typecheck-compiler-program-with-paths-checked
               entry-program
-              AstDeclPathList.Nil)
+              (ast-decl-path-list-new))
               [(ResultCompilerTypecheckChecked.Ok _ _ _)
                 (set!
                   ok
@@ -2487,7 +2487,7 @@
         [(ResultAstProgramDiagnostic.Ok program)
           (match (typecheck-compiler-program-with-paths-checked
             program
-            AstDeclPathList.Nil)
+            (ast-decl-path-list-new))
             [(ResultCompilerTypecheckChecked.Ok _ ctx env)
               (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
                 (tc-context-with-module ctx "full.entry")
@@ -2654,7 +2654,7 @@
         [(ResultAstProgramDiagnostic.Ok program)
           (match (typecheck-compiler-program-with-paths-checked
             program
-            AstDeclPathList.Nil)
+            (ast-decl-path-list-new))
             [(ResultCompilerTypecheckChecked.Ok _ ctx env)
               (let
                 [entry-ctx : TcContext

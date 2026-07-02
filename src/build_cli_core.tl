@@ -2662,11 +2662,11 @@
   512)
 
 (define (build-package-direct-object-owned-path-count [paths : AstDeclPathList]) : i64
-  (match paths
-    [(AstDeclPathList.Nil) 0]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) 0]
+    [(AstDeclPathListStep.Cons path rest)
       (let
-        [tail : AstDeclPathList (box-get rest)]
+        [tail : AstDeclPathList rest]
         (+
           (if (> (string.string-length path) 0)
             1
@@ -2694,7 +2694,7 @@
       (build-package-direct-object-test-paths
         (- count 1)
         path
-        (ast-decl-path-cons path out)))))
+        (ast-decl-path-list-prepend-builder path out)))))
 
 (cfg
   test
@@ -2705,16 +2705,16 @@
         (build-package-direct-object-test-paths
           budget
           "pkg.tl"
-          AstDeclPathList.Nil)]
+          (ast-decl-path-list-new))]
       [over : AstDeclPathList
         (build-package-direct-object-test-paths
           (+ budget 1)
           "pkg.tl"
-          AstDeclPathList.Nil)]
+          (ast-decl-path-list-new))]
       [mixed : AstDeclPathList
         (ast-decl-path-cons
           ""
-          (ast-decl-path-cons "pkg.tl" AstDeclPathList.Nil))]
+          (ast-decl-path-cons "pkg.tl" (ast-decl-path-list-new)))]
       (and
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
@@ -3235,15 +3235,14 @@
         (build-package-write-assembly asm-path asm target))]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
-  (match paths
-    [(AstDeclPathList.Nil) AstDeclPathList.Nil]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
+    [(AstDeclPathListStep.Cons path rest)
       (let
-        [tail : AstDeclPathList
-          (build-package-doctest-paths owner (box-get rest))]
+        [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
         (if (build-package-tlci-stdlib-path? owner path)
           tail
-          (ast-decl-path-cons path tail)))]))
+          (ast-decl-path-list-prepend-builder path tail)))]))
 
 (define (build-package-closure-doctest-status
   [owner : String]

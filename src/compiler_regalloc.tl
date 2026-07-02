@@ -4171,6 +4171,16 @@
         [(CompilerRegNoType) false])]
     [(CompilerRegNoType) false]))
 
+;; M-C2: the overlap waiver admits every REGISTER-ELIGIBLE non-group value,
+;; not just CPU scalars. The scalar-type? restriction predated handle register
+;; eligibility (M-A/M-A2): when it was written, 8-byte handle values
+;; (Array/String/enum/struct descriptors) were categorically stack-homed, so
+;; scalar-only merely mirrored global eligibility. The waiver's value-carry
+;; proof (single-def direct-copy chain => one register holds the shared bit
+;; pattern) is representation-based and type-agnostic for anything the backend
+;; moves with a plain movq; register groups never reach this test (both sides
+;; are refused via group-vars in compiler-reg-coalesce-vars-compatible?), and
+;; the float check keeps GP/XMM classes apart exactly as before.
 (define (compiler-reg-same-value-overlap-eligible?
   [types : CompilerRegVarTypes]
   [left : i64]
@@ -4180,8 +4190,8 @@
       (match (compiler-reg-var-types-lookup types right)
         [(CompilerRegSomeType right-ty)
           (and
-            (compiler-reg-scalar-type? left-ty)
-            (compiler-reg-scalar-type? right-ty)
+            (compiler-reg-register-eligible-type? left-ty)
+            (compiler-reg-register-eligible-type? right-ty)
             (if (compiler-reg-float-type? left-ty)
               (compiler-reg-float-type? right-ty)
               (not (compiler-reg-float-type? right-ty))))]

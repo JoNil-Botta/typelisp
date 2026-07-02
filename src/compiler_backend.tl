@@ -11747,11 +11747,18 @@
             ;; immediately dereferenced by the compare (dead after), so a single
             ;; scavenged base suffices. In the NoImmediate sub-branch scav-rhs must
             ;; exclude this base (both live across the cmp) -- see below.
+            ;; M-C2: a register-homed base needs neither the scavenge nor the
+            ;; staging copy -- the compare only READS the addressing base, so the
+            ;; home register is used directly (the load below self-elides).
+            [base-home : String
+              (compiler-backend-value-scalar-register assignments base)]
             [scav-base : String
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-addr-scavenge-exclude)
-                0
-                "%r10")]
+              (if (string-eq base-home "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r10")
+                base-home)]
             [addr : String (compiler-backend-base-address disp scav-base)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
@@ -13217,13 +13224,23 @@
         ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
         ;; the caller-supplied register (the gep-pair shares one base across both
         ;; loads so the 2nd doesn't reload).
+        ;; M-C2: a register-homed base is used DIRECTLY as the addressing base --
+        ;; the constant-offset form only READS it, so no staging copy or scavenge
+        ;; is needed (emit-load-value-with-plan then elides the self-move). A dst
+        ;; home equal to the base home is legal: `movq off(%rX), %rX` reads the
+        ;; address before writing, and home equality means the allocator proved
+        ;; the base value dead after this load.
+        [base-home : String
+          (compiler-backend-value-scalar-register assignments base)]
         [base-reg : String
           (if (string-eq base-reg-in "")
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-addr-scavenge-exclude)
-              0
-              "%r10")
+            (if (string-eq base-home "")
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10")
+              base-home)
             base-reg-in)]
         [addr : String (compiler-backend-base-address disp base-reg)]
         (match (compiler-backend-emit-load-value-with-plan
@@ -13407,16 +13424,31 @@
     ;; exclusion only changes emergency picks, i.e. only the buggy case.
     [dst1-home : String
       (compiler-backend-var-register-home assignments load-dst1)]
+    ;; M-C2: when the shared base is register-homed, address both loads off the
+    ;; home directly -- no staging copy (the 1st load's materialization becomes
+    ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
+    ;; load's dst home must differ from the base home, or load0 would clobber
+    ;; the base register load1 still needs. dst1's home MAY equal the base home
+    ;; (the 2nd load reads its address operand before writing, and afterwards
+    ;; the base register is no longer needed).
+    [base-home : String
+      (compiler-backend-value-scalar-register assignments base)]
+    [dst0-home : String
+      (compiler-backend-var-register-home assignments load-dst0)]
     [base-reg : String
-      (compiler-backend-scavenge-reg
-        load-dst0
-        (if (string-eq dst1-home "")
-          (compiler-backend-addr-scavenge-exclude)
-          (compiler-backend-one-exclude dst1-home))
-        (if (string-eq dst1-home "")
-          0
-          1)
-        "%r10")]
+      (if (and
+        (not (string-eq base-home ""))
+        (not (string-eq base-home dst0-home)))
+        base-home
+        (compiler-backend-scavenge-reg
+          load-dst0
+          (if (string-eq dst1-home "")
+            (compiler-backend-addr-scavenge-exclude)
+            (compiler-backend-one-exclude dst1-home))
+          (if (string-eq dst1-home "")
+            0
+            1)
+          "%r10"))]
     (match (compiler-backend-emit-load-from-gep
       assignments
       load-dst0

@@ -479,34 +479,36 @@
   [items : AstDeclList]
   [out : AstDeclList]) : AstDeclList
   (let
-    [cur : AstDeclList items]
-    [result : AstDeclList out]
-    [done : bool false]
+    [index : i64 (- (ast-decl-list-len (& items)) 1)]
+    [result : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& items)) (ast-decl-list-len (& out))))]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder decl result))
-              (set! cur (box-get rest)))]))
+      (while (>= index 0)
+        (begin
+          (ast-decl-list-push
+            (&mut result)
+            (ast-decl-list-get (& items) index (ast-decl-fallback)))
+          (set! index (- index 1))))
+      (ast-decl-list-append-from (&mut result) (& out) 0)
       result)))
 
 (define (tltest-path-list-reverse-onto
   [items : AstDeclPathList]
   [out : AstDeclPathList]) : AstDeclPathList
   (let
-    [cur : AstDeclPathList items]
-    [result : AstDeclPathList out]
-    [done : bool false]
+    [index : i64 (- (ast-decl-path-list-len (& items)) 1)]
+    [result : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+ (ast-decl-path-list-len (& items)) (ast-decl-path-list-len (& out))))]
     (begin
-      (while (not done)
-        (match (ast-decl-path-list-step cur)
-          [(AstDeclPathListStep.Nil) (set! done true)]
-          [(AstDeclPathListStep.Cons path rest)
-            (begin
-              (set! result (ast-decl-path-list-prepend-builder path result))
-              (set! cur (box-get rest)))]))
+      (while (>= index 0)
+        (begin
+          (ast-decl-path-list-push
+            (&mut result)
+            (ast-decl-path-list-get (& items) index ""))
+          (set! index (- index 1))))
+      (ast-decl-path-list-append-from (&mut result) (& out) 0)
       result)))
 
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
@@ -521,7 +523,7 @@
           [(AstDeclListStep.Cons _ rest)
             (begin
               (set! count (+ count 1))
-              (set! cur (box-get rest)))]))
+              (set! cur rest))]))
       count)))
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
@@ -564,7 +566,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest-decls : AstDeclList (box-get rest)]
+              [rest-decls : AstDeclList rest]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -573,7 +575,7 @@
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons _ path-rest)
                     (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      [path-rest : AstDeclPathList path-rest]
                       path-rest)]
                   [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (begin
@@ -594,36 +596,23 @@
                       unit)]
                   [(AstDecl.Import _)
                     (begin
-                      (set!
-                        runtime-decls-out
-                        (ast-decl-list-prepend-builder decl runtime-decls-out))
-                      (set!
-                        runtime-paths-out
-                        (ast-decl-path-list-prepend-builder
-                          decl-path
-                          runtime-paths-out)))]
+                      (ast-decl-list-push (&mut runtime-decls-out) decl)
+                      (ast-decl-path-list-push
+                        (&mut runtime-paths-out)
+                        decl-path))]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
                   [_
                     (if (tltest-main-decl? decl)
                       unit
                       (begin
-                        (set!
-                          runtime-decls-out
-                          (ast-decl-list-prepend-builder decl runtime-decls-out))
-                        (set!
-                          runtime-paths-out
-                          (ast-decl-path-list-prepend-builder
-                            decl-path
-                            runtime-paths-out))))])
+                        (ast-decl-list-push (&mut runtime-decls-out) decl)
+                        (ast-decl-path-list-push
+                          (&mut runtime-paths-out)
+                          decl-path)))])
                 (set! cur-decls rest-decls)
                 (set! cur-paths rest-paths)))]))
-      (InlineCollect.Collect
-        (tltest-decl-list-reverse-onto runtime-decls-out (ast-decl-list-new))
-        (tltest-path-list-reverse-onto
-          runtime-paths-out
-          (ast-decl-path-list-new))
-        test-items))))
+      (InlineCollect.Collect runtime-decls-out runtime-paths-out test-items))))
 
 (define (tltest-collect
   [source : String]
@@ -1570,7 +1559,7 @@
           [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (tltest-reach-mark-runtime-helper-root decl result))
-              (set! cur (box-get rest)))]))
+              (set! cur rest))]))
       result)))
 
 (define (tltest-reach-mark-struct-cleanup
@@ -1724,7 +1713,7 @@
           [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (tltest-reach-mark-decl decl result))
-              (set! cur (box-get rest)))]))
+              (set! cur rest))]))
       result)))
 
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
@@ -1816,7 +1805,7 @@
             (match (ast-decl-path-list-step cur-paths)
               [(AstDeclPathListStep.Nil)
                 (begin
-                  (set! cur-decls (box-get rest))
+                  (set! cur-decls rest)
                   (set! cur-paths (ast-decl-path-list-new)))]
               [(AstDeclPathListStep.Cons decl-path path-rest)
                 (begin
@@ -1831,20 +1820,12 @@
                       (not (tltest-owned-test-path? target-path decl-path))
                       (tltest-generated-comptime-decl? decl)))
                     (begin
-                      (set!
-                        result-decls
-                        (ast-decl-list-prepend-builder decl result-decls))
-                      (set!
-                        result-paths
-                        (ast-decl-path-list-prepend-builder
-                          decl-path
-                          result-paths)))
+                      (ast-decl-list-push (&mut result-decls) decl)
+                      (ast-decl-path-list-push (&mut result-paths) decl-path))
                     unit)
-                  (set! cur-decls (box-get rest))
-                  (set! cur-paths (box-get path-rest)))])]))
-      (InlineRuntimeDecls.Decls
-        (tltest-decl-list-reverse-onto result-decls (ast-decl-list-new))
-        (tltest-path-list-reverse-onto result-paths (ast-decl-path-list-new))))))
+                  (set! cur-decls rest)
+                  (set! cur-paths path-rest))])]))
+      (InlineRuntimeDecls.Decls result-decls result-paths))))
 
 (define (tltest-prune-runtime-decls
   [source : String]
@@ -2152,7 +2133,7 @@
     [(AstDeclPathListStep.Cons path rest)
       (if (= index 0)
         path
-        (tltest-path-at (box-get rest) (- index 1)))]))
+        (tltest-path-at rest (- index 1)))]))
 
 (define (tltest-decl-name [decl : AstDecl]) : String
   (match decl
@@ -2176,7 +2157,7 @@
     [(AstDeclListStep.Cons decl rest)
       (if (= index 0)
         (tltest-decl-name decl)
-        (tltest-decl-name-at (box-get rest) (- index 1)))]))
+        (tltest-decl-name-at rest (- index 1)))]))
 
 (define (tltest-decl-list-has-name? [decls : AstDeclList] [name : String]) : bool
   (match (ast-decl-list-step decls)
@@ -2184,7 +2165,7 @@
     [(AstDeclListStep.Cons decl rest)
       (if (string.eq (tltest-decl-name decl) name)
         true
-        (tltest-decl-list-has-name? (box-get rest) name))]))
+        (tltest-decl-list-has-name? rest name))]))
 
 (define (tltest-import-alias-call-retained-self-test?) : bool
   (let
@@ -3663,7 +3644,7 @@
     [(AstDeclListStep.Cons decl rest)
       (if (tltest-main-decl? decl)
         true
-        (tltest-decls-have-main? (box-get rest)))]))
+        (tltest-decls-have-main? rest))]))
 
 (define (tltest-package-source-line [source : String] [count : i64]) : String
   (string.append

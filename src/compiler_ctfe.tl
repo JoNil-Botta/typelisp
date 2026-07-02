@@ -800,7 +800,7 @@
     [(AstDeclListStep.Nil) infos]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
@@ -952,7 +952,7 @@
     [(AstDeclListStep.Nil) 1]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
         (match decl
           [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]

@@ -1739,7 +1739,7 @@
         source
         visible-root
         reportable
-        (box-get rest))]))
+        rest)]))
 
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]

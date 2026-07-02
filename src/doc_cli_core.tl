@@ -93,7 +93,7 @@
     [(AstDeclPathListStep.Nil) DocModuleList.Nil]
     [(AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList (box-get rest)]
+        [rest : AstDeclPathList rest]
         (if (sym_i64_env.sym-i64-contains seen path)
           (doc-modules-from-paths rest seen)
           (doc-cli-module-cons

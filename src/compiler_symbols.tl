@@ -171,7 +171,7 @@
                       (compiler-decl-list-index-count (box-get body-box))))]
                 [(AstDecl.Test _ _ _) unit]
                 [_ (set! count (+ count 1))])
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       count)))
 
 (define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
@@ -1691,7 +1691,7 @@
     [(AstDeclListStep.Nil) modules]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module next-module)
             (compiler-symbols-macro-module-set-list rest next-module modules)]
@@ -1739,7 +1739,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match decl
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
@@ -1795,7 +1795,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match decl
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
@@ -1859,7 +1859,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               [next-symbols : CompilerSymbols
                 (match decl
                   [(AstDecl.Import
@@ -1936,7 +1936,7 @@
     [(AstDeclListStep.Nil) ""]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
           (match (ast-decl-path-list-step paths)
             [(AstDeclPathListStep.Cons path _) path]
@@ -1945,7 +1945,7 @@
           (match (ast-decl-path-list-step paths)
             [(AstDeclPathListStep.Cons _ path-rest)
               (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
+                [path-rest : AstDeclPathList path-rest]
                 path-rest)]
             [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
@@ -2158,7 +2158,7 @@
     [(AstDeclListStep.Nil) (ResultCompilerSymbols.Ok symbols)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import _)
             (build-compiler-symbol-list-in-module
@@ -2260,7 +2260,7 @@
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -2269,7 +2269,7 @@
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons _ path-rest)
                     (let
-                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      [path-rest : AstDeclPathList path-rest]
                       path-rest)]
                   [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (match decl
@@ -2740,7 +2740,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match decl
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
@@ -2796,7 +2796,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               [next-registries : CompilerRegistries
                 (match decl
                   [(AstDecl.Import
@@ -2933,7 +2933,7 @@
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match decl
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
@@ -3162,7 +3162,7 @@
       (ResultAstDecl.Err "symbols: declaration index not found")]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import _) (compiler-decl-list-at-index rest target index)]
           [(AstDecl.IncludeStr _ _)

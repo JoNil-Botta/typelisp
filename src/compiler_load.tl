@@ -2057,17 +2057,12 @@
   [left : AstDeclList]
   [right : AstDeclList]) : AstDeclList
   (let
-    [index : i64 (- (ast-decl-list-len (& left)) 1)]
-    [out : AstDeclList right]
+    [out : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
     (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            out
-            (ast-decl-list-prepend-builder
-              (ast-decl-list-get (& left) index (ast-decl-fallback))
-              out))
-          (set! index (- index 1))))
+      (ast-decl-list-append-from (&mut out) (& left) 0)
+      (ast-decl-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (compiler-load-decl-path-list-append
@@ -2086,17 +2081,12 @@
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
   (let
-    [index : i64 (- (ast-decl-path-list-len (& left)) 1)]
-    [out : AstDeclPathList right]
+    [out : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
     (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            out
-            (ast-decl-path-list-prepend-builder
-              (ast-decl-path-list-get (& left) index "")
-              out))
-          (set! index (- index 1))))
+      (ast-decl-path-list-append-from (&mut out) (& left) 0)
+      (ast-decl-path-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (compiler-load-decl-module-list-append
@@ -2117,17 +2107,14 @@
   [left : AstDeclModuleList]
   [right : AstDeclModuleList]) : AstDeclModuleList
   (let
-    [index : i64 (- (ast-decl-module-list-len (& left)) 1)]
-    [out : AstDeclModuleList right]
+    [out : AstDeclModuleList
+      (ast-decl-module-list-with-capacity
+        (+
+          (ast-decl-module-list-len (& left))
+          (ast-decl-module-list-len (& right))))]
     (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            out
-            (ast-decl-module-list-prepend-builder
-              (ast-decl-module-list-get (& left) index "")
-              out))
-          (set! index (- index 1))))
+      (ast-decl-module-list-append-from (&mut out) (& left) 0)
+      (ast-decl-module-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define compiler-load-core-macro-prelude-path : String
@@ -2206,7 +2193,7 @@
         [(CompilerLoadSomeModuleId name) (ResultCompilerLoadModuleId.Ok name)])]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module name)
             (match found
@@ -2359,7 +2346,7 @@
     [(AstDeclListStep.Nil) ""]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module name) (intern-str name)]
           [_ (compiler-load-decls-source-module rest)]))]))
@@ -2371,7 +2358,7 @@
     [(AstDeclListStep.Nil) fallback]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module name) (intern-str name)]
           [_ (compiler-load-decls-source-module-or rest fallback)]))]))
@@ -2381,7 +2368,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
@@ -2393,7 +2380,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module name)
             (if (string.eq (intern-str name) want)
@@ -2416,7 +2403,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Extern _ _ metadata _)
             (if (string.eq (ast-extern-metadata-symbol metadata) want)
@@ -2505,7 +2492,7 @@
     [(AstDeclListStep.Nil) (CompilerLoadNoString)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Module name)
             (compiler-load-duplicate-dotted-import-alias-loop
@@ -3329,7 +3316,7 @@
     [(AstDeclListStep.Nil) build]
     [(AstDeclListStep.Cons decl rest-box)
       (let
-        [rest : AstDeclList (box-get rest-box)]
+        [rest : AstDeclList rest-box]
         (match decl
           [(AstDecl.Module next-module)
             (compiler-load-surface-build-decls-into
@@ -3589,7 +3576,7 @@
         seen)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.ModuleBody target-module-id body-box)
             (let
@@ -5410,6 +5397,30 @@
         path
         (compiler-load-owned-path-from-root package-owner package-root path)))))
 
+(defenum CompilerLoadOwnedPathCacheResult
+  (CompilerLoadOwnedPathCacheResult hashmap.StringStringMap String))
+
+(define (compiler-load-package-owned-path-cached
+  [cache : hashmap.StringStringMap]
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : vector.StringVec]
+  [path : String]) : CompilerLoadOwnedPathCacheResult
+  (match (hashmap.string-string-map-get cache path)
+    [(hashmap.StringStringMapFound owned)
+      (CompilerLoadOwnedPathCacheResult cache owned)]
+    [(hashmap.StringStringMapMissing)
+      (let
+        [owned : String
+          (compiler-load-package-owned-path
+            package-owner
+            package-root
+            stdlib-roots
+            path)]
+        (CompilerLoadOwnedPathCacheResult
+          (hashmap.string-string-map-put cache path owned)
+          owned))]))
+
 (define (compiler-load-package-decl-logical-name
   [entry-path : String]
   [decl-path : String]
@@ -5541,48 +5552,29 @@
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Cons _ rest)
       (let
-        [rest : AstDeclPathList (box-get rest)]
+        [rest : AstDeclPathList rest]
         rest)]
     [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]))
 
-(define (compiler-load-package-owned-decl-path
-  [package-owner : String]
-  [package-root : String]
-  [stdlib-roots : vector.StringVec]
+(define (compiler-load-package-owned-decl-entry-main?
   [entry-path : String]
   [module : String]
   [decl-path : String]
-  [decl : AstDecl]) : String
+  [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.DefFn name _ _ _ _)
-      (if (compiler-load-package-entry-main?
+      (compiler-load-package-entry-main?
         entry-path
         decl-path
         module
-        (intern-str name))
-        ""
-        (compiler-load-package-owned-path
-          package-owner
-          package-root
-          stdlib-roots
-          decl-path))]
+        (intern-str name))]
     [(AstDecl.Unsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (compiler-load-package-owned-decl-path
-          package-owner
-          package-root
-          stdlib-roots
-          entry-path
-          module
-          decl-path
-          inner))]
-    [_
-      (compiler-load-package-owned-path
-        package-owner
-        package-root
-        stdlib-roots
-        decl-path)]))
+      (compiler-load-package-owned-decl-entry-main?
+        entry-path
+        module
+        decl-path
+        (box-get inner-box))]
+    [_ false]))
 
 (define (compiler-load-package-owned-paths-for-decls-in-module
   [package-owner : String]
@@ -5598,6 +5590,8 @@
     [path-cursor : AstDeclPathList paths]
     [current-module : String module]
     [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [owned-cache : hashmap.StringStringMap
+      (hashmap.string-string-map-with-capacity (+ (* count 2) 16))]
     [done : bool false]
     (begin
       (while (not done)
@@ -5607,22 +5601,30 @@
             (let
               [decl-path : String
                 (compiler-load-path-list-head-or path-cursor entry-path)]
-              (begin
-                (ast-decl-path-list-push
-                  (&mut out)
-                  (compiler-load-package-owned-decl-path
+              [owned-path : String
+                (if (compiler-load-package-owned-decl-entry-main?
+                  entry-path
+                  current-module
+                  decl-path
+                  decl)
+                  ""
+                  (match (compiler-load-package-owned-path-cached
+                    owned-cache
                     package-owner
                     package-root
                     stdlib-roots
-                    entry-path
-                    current-module
-                    decl-path
-                    decl))
+                    decl-path)
+                    [(CompilerLoadOwnedPathCacheResult next-cache cached-path)
+                      (begin
+                        (set! owned-cache next-cache)
+                        cached-path)]))]
+              (begin
+                (ast-decl-path-list-push (&mut out) owned-path)
                 (match decl
                   [(AstDecl.Module name)
                     (set! current-module (intern-str name))]
                   [_ unit])
-                (set! decl-cursor (box-get rest))
+                (set! decl-cursor rest)
                 (set! path-cursor (compiler-load-path-list-tail path-cursor))))]))
       out)))
 
@@ -5659,7 +5661,7 @@
         seen)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [decl-path : String
           (compiler-load-path-list-head-or paths package-root)]
         [owned-decl-path : String
@@ -5844,7 +5846,7 @@
         seen)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import
               (AstImportSpec.Spec kind import-path expected-module alias span))
@@ -6516,7 +6518,7 @@
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons _ rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (+ 1 (compiler-load-decl-list-count rest)))]))
 
 (define (compiler-load-first-string-def?
@@ -6588,7 +6590,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import
               (AstImportSpec.Spec
@@ -6615,15 +6617,15 @@
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.Module imported-module) rest1)
       (let
-        [rest1 : AstDeclList (box-get rest1)]
+        [rest1 : AstDeclList rest1]
         (match (ast-decl-list-step rest1)
           [(AstDeclListStep.Cons (AstDecl.Def imported-name _ _) rest2)
             (let
-              [rest2 : AstDeclList (box-get rest2)]
+              [rest2 : AstDeclList rest2]
               (match (ast-decl-list-step rest2)
                 [(AstDeclListStep.Cons (AstDecl.Module restored-module) rest3)
                   (let
-                    [rest3 : AstDeclList (box-get rest3)]
+                    [rest3 : AstDeclList rest3]
                     (match (ast-decl-list-step rest3)
                       [(AstDeclListStep.Cons
                           (AstDecl.Import
@@ -6635,13 +6637,13 @@
                               _))
                           rest4)
                         (let
-                          [rest4 : AstDeclList (box-get rest4)]
+                          [rest4 : AstDeclList rest4]
                           (match (ast-decl-list-step rest4)
                             [(AstDeclListStep.Cons
                                 (AstDecl.DefFn main-name _ _ _ _)
                                 done-box)
                               (let
-                                [done : AstDeclList (box-get done-box)]
+                                [done : AstDeclList done-box]
                                 (and
                                   (ast-decl-list-empty? (& done))
                                   (string.eq
@@ -7050,23 +7052,23 @@
       (match (ast-decl-list-step decls)
         [(AstDeclListStep.Cons (AstDecl.Module nested-module) rest1)
           (let
-            [rest1 : AstDeclList (box-get rest1)]
+            [rest1 : AstDeclList rest1]
             (match (ast-decl-list-step rest1)
               [(AstDeclListStep.Cons (AstDecl.Def value-name _ _) rest2)
                 (let
-                  [rest2 : AstDeclList (box-get rest2)]
+                  [rest2 : AstDeclList rest2]
                   (match (ast-decl-list-step rest2)
                     [(AstDeclListStep.Cons
                         (AstDecl.Module restored-module)
                         rest3)
                       (let
-                        [rest3 : AstDeclList (box-get rest3)]
+                        [rest3 : AstDeclList rest3]
                         (match (ast-decl-list-step rest3)
                           [(AstDeclListStep.Cons
                               (AstDecl.Def root-name _ _)
                               done-box)
                             (let
-                              [done : AstDeclList (box-get done-box)]
+                              [done : AstDeclList done-box]
                               (and
                                 (ast-decl-list-empty? (& done))
                                 (string.eq
@@ -10214,7 +10216,7 @@
       (if (= index 0)
         path
         (let
-          [rest : AstDeclPathList (box-get rest)]
+          [rest : AstDeclPathList rest]
           (compiler-load-test-path-at rest (- index 1))))]))
 
 (define (compiler-load-package-owner-paths-ok?) : bool

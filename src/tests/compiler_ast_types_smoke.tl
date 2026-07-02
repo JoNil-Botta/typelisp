@@ -241,7 +241,7 @@
         [(AstDeclListStep.Cons first rest-box)
           (match first
             [(AstDecl.Def _ maybe-ty first-body)
-              (match (ast-decl-list-step (box-get rest-box))
+              (match (ast-decl-list-step rest-box)
                 [(AstDeclListStep.Cons second tail-box)
                   (match second
                     [(AstDecl.Test _ second-body _)
@@ -273,7 +273,7 @@
                                     [_ false]))]
                               [_ false])]
                           [_ false])
-                        (match (ast-decl-list-step (box-get tail-box))
+                        (match (ast-decl-list-step tail-box)
                           [(AstDeclListStep.Nil) true]
                           [_ false]))]
                     [_ false])]

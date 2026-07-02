@@ -406,7 +406,7 @@
     [(AstDeclListStep.Nil) (SpecTemplateList.Nil)]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -1024,9 +1024,7 @@
     [(AstDeclListStep.Cons a-head a-rest)
       (match (ast-decl-list-step b)
         [(AstDeclListStep.Cons b-head b-rest)
-          (and
-            (gen-decl-eq? a-head b-head)
-            (gen-decl-list-eq? (box-get a-rest) (box-get b-rest)))]
+          (and (gen-decl-eq? a-head b-head) (gen-decl-list-eq? a-rest b-rest))]
         [_ false])]))
 
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
@@ -1394,7 +1392,7 @@
                   (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
                   (set! cur-registry decl-registry)
                   (set! cur-module decl-module)
-                  (set! cursor (box-get rest)))]
+                  (set! cursor rest))]
               [(ResultGenDecl.Err diag)
                 (begin
                   (set! result (ResultGenDecls.Err diag))
@@ -1410,7 +1408,7 @@
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Cons _ rest-box)
       (let
-        [rest : AstDeclPathList (box-get rest-box)]
+        [rest : AstDeclPathList rest-box]
         rest)]
     [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]))
 
@@ -1497,7 +1495,7 @@
                       0)
                     (set! cur-registry decl-registry)
                     (set! cur-module decl-module)
-                    (set! decl-cursor (box-get rest))
+                    (set! decl-cursor rest)
                     (set! path-cursor (gen-path-list-tail path-cursor)))]
                 [(ResultGenDecl.Err diag)
                   (begin
@@ -1613,7 +1611,7 @@
     [(AstDeclListStep.Cons decl rest)
       (if (gen-decl-needs-normalize? decl)
         true
-        (gen-decls-needed? (box-get rest)))]))
+        (gen-decls-needed? rest))]))
 
 (define (spec-value-runtime-type-matches?
   [value : CompilerCtfeValue]
@@ -5018,7 +5016,7 @@
                     [(SpecMaybeDecl.None) unit]
                     [(SpecMaybeDecl.Some rewritten-decl)
                       (ast-decl-list-push (&mut out) rewritten-decl)])
-                  (set! cursor (box-get rest)))]
+                  (set! cursor rest))]
               [(ResultSpecDecl.Err diag)
                 (begin
                   (set! result (ResultSpecDecls.Err diag))
@@ -5070,7 +5068,7 @@
                         (begin
                           (ast-decl-list-push (&mut out) rewritten-decl)
                           (ast-decl-path-list-push (&mut out-paths) decl-path))])
-                    (set! decl-cursor (box-get rest))
+                    (set! decl-cursor rest)
                     (set! path-cursor (gen-path-list-tail path-cursor)))]
                 [(ResultSpecDecl.Err diag)
                   (begin
@@ -5229,7 +5227,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -5421,7 +5419,7 @@
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Unsafe inner-box)
             (let
@@ -5465,7 +5463,7 @@
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         [tail-count : i64
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)

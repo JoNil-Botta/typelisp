@@ -2183,40 +2183,60 @@
   [items : AstVariantPayloadCleanupList]
   [alias : String]
   [module-name : String]) : bool
-  (match items
-    [(AstVariantPayloadCleanupList.Nil) false]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (let
-        [rest : AstVariantPayloadCleanupList (box-get rest)]
-        (if (lint-variant-payload-cleanup-uses-import?
-          cleanup
-          alias
-          module-name)
-          true
-          (lint-variant-payload-cleanup-list-uses-import?
-            rest
-            alias
-            module-name)))]))
+  (lint-variant-payload-cleanup-list-uses-import-at?
+    (& items)
+    alias
+    module-name
+    0))
+
+(define (lint-variant-payload-cleanup-list-uses-import-at?
+  [items : (& items AstVariantPayloadCleanupList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-payload-cleanup-list-len items))
+    false
+    (if (lint-variant-payload-cleanup-uses-import?
+      (ast-variant-payload-cleanup-list-get
+        items
+        index
+        (ast-variant-payload-cleanup-fallback))
+      alias
+      module-name)
+      true
+      (lint-variant-payload-cleanup-list-uses-import-at?
+        items
+        alias
+        module-name
+        (+ index 1)))))
 
 (define (lint-variant-def-list-uses-import?
   [variants : AstVariantDefList]
   [alias : String]
   [module-name : String]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) false]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ payloads cleanups)
-            (if (lint-type-list-uses-import? payloads alias module-name)
-              true
-              (if (lint-variant-payload-cleanup-list-uses-import?
-                cleanups
-                alias
-                module-name)
-                true
-                (lint-variant-def-list-uses-import? rest alias module-name)))]))]))
+  (lint-variant-def-list-uses-import-at? (& variants) alias module-name 0))
+
+(define (lint-variant-def-list-uses-import-at?
+  [variants : (& variants AstVariantDefList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ payloads cleanups)
+        (if (lint-type-list-uses-import? payloads alias module-name)
+          true
+          (if (lint-variant-payload-cleanup-list-uses-import?
+            cleanups
+            alias
+            module-name)
+            true
+            (lint-variant-def-list-uses-import-at?
+              variants
+              alias
+              module-name
+              (+ index 1))))])))
 
 (define (lint-dispatch-variant-list-uses-import-from?
   [variants : (& variants AstDispatchVariantList)]

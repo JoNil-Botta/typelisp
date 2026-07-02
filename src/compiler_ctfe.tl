@@ -742,30 +742,27 @@
       (ctfe-reflect-field-def-count fields))))
 
 (define (ctfe-reflect-variant-def-count [variants : AstVariantDefList]) : i64
-  (match variants
-    [(AstVariantDefList.Nil) 0]
-    [(AstVariantDefList.Cons _ rest)
-      (+ 1 (ctfe-reflect-variant-def-count (box-get rest)))]))
+  (ast-variant-def-list-len (& variants)))
 
 (define (ctfe-reflect-variant-list-from-variants-into
-  [variants : AstVariantDefList]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]
   [out : CtfeReflectVariantList]) : CtfeReflectVariantList
-  (match variants
-    [(AstVariantDefList.Nil) out]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name payloads _)
-            (ctfe-reflect-variant-list-from-variants-into
-              rest
-              (ctfe-reflect-variant-list-push
-                out
-                (CtfeReflectVariant.Variant (intern-str name) payloads)))]))]))
+  (if (>= index (ast-variant-def-list-len variants))
+    out
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name payloads _)
+        (ctfe-reflect-variant-list-from-variants-into
+          variants
+          (+ index 1)
+          (ctfe-reflect-variant-list-push
+            out
+            (CtfeReflectVariant.Variant (intern-str name) payloads)))])))
 
 (define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
   (ctfe-reflect-variant-list-from-variants-into
-    variants
+    (& variants)
+    0
     (ctfe-reflect-variant-list-with-capacity
       (ctfe-reflect-variant-def-count variants))))
 
@@ -10945,18 +10942,17 @@
             (AstFieldCleanup.No))
           (ast-field-def-list-new)))]
     [variants : AstVariantDefList
-      (AstVariantDefList.Cons
+      (ast-variant-def-cons
         (AstVariantDef.Def
           (intern "Ready")
           AstTypeList.Nil
-          AstVariantPayloadCleanupList.Nil)
-        (box
-          (AstVariantDefList.Cons
-            (AstVariantDef.Def
-              (intern "Failed")
-              (ast-type-cons (AstType.String) AstTypeList.Nil)
-              AstVariantPayloadCleanupList.Nil)
-            (box AstVariantDefList.Nil))))]
+          (ast-variant-payload-cleanup-list-new))
+        (ast-variant-def-cons
+          (AstVariantDef.Def
+            (intern "Failed")
+            (ast-type-cons (AstType.String) AstTypeList.Nil)
+            (ast-variant-payload-cleanup-list-new))
+          (ast-variant-def-list-new)))]
     (AstProgram.Program
       (box
         (AstDeclList.Cons

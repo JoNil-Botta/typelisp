@@ -1381,28 +1381,45 @@
 (define (selfhost-lint-dead-variant-cleanup-list-refs
   [items : AstVariantPayloadCleanupList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match items
-    [(AstVariantPayloadCleanupList.Nil) refs]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (selfhost-lint-dead-variant-cleanup-list-refs
-        (box-get rest)
-        (selfhost-lint-dead-variant-cleanup-refs cleanup refs))]))
+  (selfhost-lint-dead-variant-cleanup-list-refs-at (& items) refs 0))
+
+(define (selfhost-lint-dead-variant-cleanup-list-refs-at
+  [items : (& items AstVariantPayloadCleanupList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-variant-payload-cleanup-list-len items))
+    refs
+    (selfhost-lint-dead-variant-cleanup-list-refs-at
+      items
+      (selfhost-lint-dead-variant-cleanup-refs
+        (ast-variant-payload-cleanup-list-get
+          items
+          index
+          (ast-variant-payload-cleanup-fallback))
+        refs)
+      (+ index 1))))
 
 (define (selfhost-lint-dead-variant-def-list-refs
   [variants : AstVariantDefList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match variants
-    [(AstVariantDefList.Nil) refs]
-    [(AstVariantDefList.Cons variant rest)
-      (match variant
-        [(AstVariantDef.Def name payloads cleanups)
-          (selfhost-lint-dead-variant-def-list-refs
-            (box-get rest)
-            (selfhost-lint-dead-variant-cleanup-list-refs
-              cleanups
-              (selfhost-lint-dead-type-list-refs
-                payloads
-                (selfhost-lint-dead-ref-add-id refs name))))])]))
+  (selfhost-lint-dead-variant-def-list-refs-at (& variants) refs 0))
+
+(define (selfhost-lint-dead-variant-def-list-refs-at
+  [variants : (& variants AstVariantDefList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-variant-def-list-len variants))
+    refs
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name payloads cleanups)
+        (selfhost-lint-dead-variant-def-list-refs-at
+          variants
+          (selfhost-lint-dead-variant-cleanup-list-refs
+            cleanups
+            (selfhost-lint-dead-type-list-refs
+              payloads
+              (selfhost-lint-dead-ref-add-id refs name)))
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs-from
   [variants : (& variants AstDispatchVariantList)]

@@ -457,24 +457,28 @@
       "string_"
       (string.append (string.int->string n) (spec-string-key-from text 0 n)))))
 
+(define (spec-type-list-key-at [types : (& types AstTypeList)] [index : i64]) : String
+  (if (>= index (ast-type-list-len types))
+    "nil"
+    (string.append
+      (spec-type-key
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
+      (string.append "_" (spec-type-list-key-at types (+ index 1))))))
+
 (define (spec-type-list-key [types : AstTypeList]) : String
-  (match types
-    [(AstTypeList.Nil) "nil"]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ty-node-get head)]
-        [rest : AstTypeList (box-get rest)]
-        (string.append
-          (spec-type-key head)
-          (string.append "_" (spec-type-list-key rest))))]))
+  (spec-type-list-key-at (& types) 0))
+
+(define (spec-lifetime-list-key-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [index : i64]) : String
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    "nil"
+    (string.append
+      (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+      (string.append "_" (spec-lifetime-list-key-at lifetimes (+ index 1))))))
 
 (define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
-  (match lifetimes
-    [(AstLifetimeList.Nil) "nil"]
-    [(AstLifetimeList.Cons head rest)
-      (let
-        [rest : AstLifetimeList (box-get rest)]
-        (string.append head (string.append "_" (spec-lifetime-list-key rest))))]))
+  (spec-lifetime-list-key-at (& lifetimes) 0))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
@@ -1801,16 +1805,29 @@
         [(SpecMaybeString.None) ty])]
     [_ ty]))
 
+(define (spec-substitute-type-list-into
+  [types : (& types AstTypeList)]
+  [subs : SpecTypeSubst]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len types))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-node-pool-reader-type-push
+          (spec-substitute-type
+            (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+            subs)))
+      (spec-substitute-type-list-into types subs out (+ index 1)))))
+
 (define (spec-substitute-type-list [types : AstTypeList] [subs : SpecTypeSubst]) : AstTypeList
-  (match types
-    [(AstTypeList.Nil) AstTypeList.Nil]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ty-node-get head)]
-        [rest : AstTypeList (box-get rest)]
-        (ast-type-cons
-          (spec-substitute-type head subs)
-          (spec-substitute-type-list rest subs)))]))
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-type-list-len (& types)))]
+    (begin
+      (spec-substitute-type-list-into (& types) subs (&mut out) 0)
+      out)))
 
 (define (spec-substitute-maybe-type [ty : AstMaybeType] [subs : SpecTypeSubst]) : AstMaybeType
   (match ty
@@ -5286,7 +5303,7 @@
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
-              (ast-type-cons (AstType.Var (intern "T")) AstTypeList.Nil)
+              (ast-type-cons (AstType.Var (intern "T")) (ast-type-list-new))
               (AstType.Var (intern "T")))
             subs))
         "fn_i64_nil_to_i64")

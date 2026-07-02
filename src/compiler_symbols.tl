@@ -3360,18 +3360,14 @@
   [want-tag : i64]) : i64
   (match found
     [(ResultAstTypeList.Ok types)
-      (match types
-        [(AstTypeList.Cons ty rest)
-          (let
-            [ty : AstType (ty-node-get ty)]
-            [rest : AstTypeList (box-get rest)]
-            (match rest
-              [(AstTypeList.Nil)
-                (if (= (ast-type-tag ty) want-tag)
-                  1
-                  0)]
-              [_ 0]))]
-        [_ 0])]
+      (if (= (ast-type-list-len (& types)) 1)
+        (if (=
+          (ast-type-tag
+            (ty-node-get (ast-type-list-get (& types) 0 (ast-type-id-fallback))))
+          want-tag)
+          1
+          0)
+        0)]
     [(ResultAstTypeList.Err _) 0]))
 
 (define (compiler-symbols-smoke-source) : String

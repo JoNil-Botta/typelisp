@@ -256,15 +256,25 @@
   [types : AstTypeList]
   [names : CloneNameSet]
   [module : String]) : bool
-  (match types
-    [(AstTypeList.Nil) true]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (clone-type-get pools head)]
-        [rest : AstTypeList (box-get rest)]
-        (if (clone-field-type-able? pools head names module)
-          (clone-field-type-list-able? pools rest names module)
-          false))]))
+  (clone-field-type-list-able-at pools (& types) names module 0))
+
+(define (clone-field-type-list-able-at
+  [pools : AstNodePoolContext]
+  [types : (& types AstTypeList)]
+  [names : CloneNameSet]
+  [module : String]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    true
+    (if (clone-field-type-able?
+      pools
+      (clone-type-get
+        pools
+        (ast-type-list-get types index (ast-type-id-fallback)))
+      names
+      module)
+      (clone-field-type-list-able-at pools types names module (+ index 1))
+      false)))
 
 (define (clone-variant-list-able?
   [pools : AstNodePoolContext]
@@ -483,12 +493,7 @@
       (clone-variant-ctor-args pools count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) 0]
-    [(AstTypeList.Cons _ rest)
-      (let
-        [rest : AstTypeList (box-get rest)]
-        (+ 1 (clone-type-list-len rest)))]))
+  (ast-type-list-len (& types)))
 
 ;; One match arm: [(V f...) (V (clone f)...)], or [(V) (V)] for nullary variants.
 (define (clone-variant-arm
@@ -613,21 +618,14 @@
   [self-name : String]) : bool
   (match v
     [(AstVariantDef.Def _ field-types _)
-      (match field-types
-        [(AstTypeList.Cons _ tail)
-          (let
-            [tail : AstTypeList (box-get tail)]
-            (match tail
-              [(AstTypeList.Cons tail-ty rest)
-                (let
-                  [tail-ty : AstType (clone-type-get pools tail-ty)]
-                  [rest : AstTypeList (box-get rest)]
-                  (match rest
-                    [(AstTypeList.Nil)
-                      (clone-tail-is-self? pools tail-ty self-name)]
-                    [_ false]))]
-              [_ false]))]
-        [_ false])]))
+      (and
+        (= (ast-type-list-len (& field-types)) 2)
+        (clone-tail-is-self?
+          pools
+          (clone-type-get
+            pools
+            (ast-type-list-get (& field-types) 1 (ast-type-id-fallback)))
+          self-name))]))
 
 (define (clone-variant-cons-tail-boxed?
   [pools : AstNodePoolContext]
@@ -635,21 +633,14 @@
   [self-name : String]) : bool
   (match v
     [(AstVariantDef.Def _ field-types _)
-      (match field-types
-        [(AstTypeList.Cons _ tail)
-          (let
-            [tail : AstTypeList (box-get tail)]
-            (match tail
-              [(AstTypeList.Cons tail-ty rest)
-                (let
-                  [tail-ty : AstType (clone-type-get pools tail-ty)]
-                  [rest : AstTypeList (box-get rest)]
-                  (match rest
-                    [(AstTypeList.Nil)
-                      (clone-tail-is-boxed-self? pools tail-ty self-name)]
-                    [_ false]))]
-              [_ false]))]
-        [_ false])]))
+      (and
+        (= (ast-type-list-len (& field-types)) 2)
+        (clone-tail-is-boxed-self?
+          pools
+          (clone-type-get
+            pools
+            (ast-type-list-get (& field-types) 1 (ast-type-id-fallback)))
+          self-name))]))
 
 ;; If (nil-v, cons-v) form a Nil/Cons pair, return the list shape; else NotList.
 (define (clone-list-shape-try
@@ -1021,11 +1012,11 @@
         (ast-type-cons-with-pools
           pools
           (AstType.I64)
-          (ast-type-cons-with-pools pools tail-ty AstTypeList.Nil))]
+          (ast-type-cons-with-pools pools tail-ty (ast-type-list-new)))]
       (ast-variant-def-cons
         (AstVariantDef.Def
           (intern "Nil")
-          AstTypeList.Nil
+          (ast-type-list-new)
           (ast-variant-payload-cleanup-list-new))
         (ast-variant-def-cons
           (AstVariantDef.Def
@@ -1181,19 +1172,34 @@
   [roots : CloneNameList]
   [types : AstTypeList]
   [module : String]) : CloneNameList
-  (match types
-    [(AstTypeList.Nil) roots]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (clone-type-get pools head)]
-        [rest : AstTypeList (box-get rest)]
-        (clone-root-add-type-list
+  (clone-root-add-type-list-at pools decls able roots (& types) module 0))
+
+(define (clone-root-add-type-list-at
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [types : (& types AstTypeList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-type-list-len types))
+    roots
+    (clone-root-add-type-list-at
+      pools
+      decls
+      able
+      (clone-root-add-type
+        pools
+        decls
+        able
+        roots
+        (clone-type-get
           pools
-          decls
-          able
-          (clone-root-add-type pools decls able roots head module)
-          rest
-          module))]))
+          (ast-type-list-get types index (ast-type-id-fallback)))
+        module)
+      types
+      module
+      (+ index 1))))
 
 (define (clone-root-add-fields
   [pools : AstNodePoolContext]

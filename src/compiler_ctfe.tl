@@ -1953,16 +1953,43 @@
   [pools : AstNodePoolContext]
   [infos : CtfeReflectInfoList]
   [types : AstTypeList]) : AstTypeList
-  (match types
-    [(AstTypeList.Nil) AstTypeList.Nil]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ast-node-pool-context-type-get pools head)]
-        [rest : AstTypeList (box-get rest)]
-        (ast-type-cons-with-pools
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-type-list-len (& types)))]
+    (begin
+      (ctfe-reflect-resolve-type-list-with-pools-into
+        pools
+        infos
+        (& types)
+        (&mut out)
+        0)
+      out)))
+
+(define (ctfe-reflect-resolve-type-list-with-pools-into
+  [pools : AstNodePoolContext]
+  [infos : CtfeReflectInfoList]
+  [types : (& types AstTypeList)]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len types))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-node-pool-context-type-push
           pools
-          (ctfe-reflect-resolve-type-with-pools pools infos head)
-          (ctfe-reflect-resolve-type-list-with-pools pools infos rest)))]))
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast-node-pool-context-type-get
+              pools
+              (ast-type-list-get types index (ast-type-id-fallback))))))
+      (ctfe-reflect-resolve-type-list-with-pools-into
+        pools
+        infos
+        types
+        out
+        (+ index 1)))))
 
 (define (ctfe-reflect-resolve-type-list
   [infos : CtfeReflectInfoList]
@@ -2080,15 +2107,25 @@
   [pools : AstNodePoolContext]
   [infos : CtfeReflectInfoList]
   [types : AstTypeList]) : String
-  (match types
-    [(AstTypeList.Nil) "nil"]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ast-node-pool-context-type-get pools head)]
-        [rest : AstTypeList (box-get rest)]
-        (string.append
-          (ctfe-type-key-with-reflections-and-pools pools infos head)
-          (string.append "_" (ctfe-type-list-key-with-pools pools infos rest))))]))
+  (ctfe-type-list-key-with-pools-at pools infos (& types) 0))
+
+(define (ctfe-type-list-key-with-pools-at
+  [pools : AstNodePoolContext]
+  [infos : CtfeReflectInfoList]
+  [types : (& types AstTypeList)]
+  [index : i64]) : String
+  (if (>= index (ast-type-list-len types))
+    "nil"
+    (string.append
+      (ctfe-type-key-with-reflections-and-pools
+        pools
+        infos
+        (ast-node-pool-context-type-get
+          pools
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (string.append
+        "_"
+        (ctfe-type-list-key-with-pools-at pools infos types (+ index 1))))))
 
 (define (ctfe-type-list-key [infos : CtfeReflectInfoList] [types : AstTypeList]) : String
   (ctfe-type-list-key-with-pools
@@ -2096,31 +2133,34 @@
     infos
     types))
 
+(define (ctfe-lifetime-list-key-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [index : i64]) : String
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    "nil"
+    (string.append
+      (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+      (string.append "_" (ctfe-lifetime-list-key-at lifetimes (+ index 1))))))
+
 (define (ctfe-lifetime-list-key [lifetimes : AstLifetimeList]) : String
-  (match lifetimes
-    [(AstLifetimeList.Nil) "nil"]
-    [(AstLifetimeList.Cons head rest)
-      (let
-        [rest : AstLifetimeList (box-get rest)]
-        (string.append head (string.append "_" (ctfe-lifetime-list-key rest))))]))
+  (ctfe-lifetime-list-key-at (& lifetimes) 0))
+
+(define (ctfe-lifetime-list-eq-at
+  [a : (& a AstLifetimeList)]
+  [b : (& b AstLifetimeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-lifetime-list-len a))
+    true
+    (and
+      (string.eq
+        (ast-lifetime-list-get a index (ast-lifetime-fallback))
+        (ast-lifetime-list-get b index (ast-lifetime-fallback)))
+      (ctfe-lifetime-list-eq-at a b (+ index 1)))))
 
 (define (ctfe-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
-  (match a
-    [(AstLifetimeList.Nil)
-      (match b
-        [(AstLifetimeList.Nil) true]
-        [_ false])]
-    [(AstLifetimeList.Cons a-head a-rest)
-      (let
-        [a-rest : AstLifetimeList (box-get a-rest)]
-        (match b
-          [(AstLifetimeList.Cons b-head b-rest)
-            (let
-              [b-rest : AstLifetimeList (box-get b-rest)]
-              (and
-                (string.eq a-head b-head)
-                (ctfe-lifetime-list-eq a-rest b-rest)))]
-          [_ false]))]))
+  (and
+    (= (ast-lifetime-list-len (& a)) (ast-lifetime-list-len (& b)))
+    (ctfe-lifetime-list-eq-at (& a) (& b) 0)))
 
 (define (ctfe-type-key-with-reflections-and-pools
   [pools : AstNodePoolContext]
@@ -2425,12 +2465,7 @@
         (ResultCtfeTypeListLookup.Ok payloads)])))
 
 (define (ctfe-type-list-count [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeList.Nil) 0]
-    [(AstTypeList.Cons _ rest)
-      (let
-        [rest : AstTypeList (box-get rest)]
-        (+ 1 (ctfe-type-list-count rest)))]))
+  (ast-type-list-len (& types)))
 
 (define (ctfe-type-list-ref-with-pools
   [types : AstTypeList]
@@ -2439,16 +2474,15 @@
   [index : i64]) : ResultCtfeTypeLookup
   (if (< index 0)
     (ResultCtfeTypeLookup.Err "index out of range")
-    (match types
-      [(AstTypeList.Nil) (ResultCtfeTypeLookup.Err "index out of range")]
-      [(AstTypeList.Cons head rest)
-        (let
-          [head : AstType (ast-node-pool-context-type-get pools head)]
-          [rest : AstTypeList (box-get rest)]
-          (if (= index 0)
-            (ResultCtfeTypeLookup.Ok
-              (ctfe-reflect-resolve-type-with-pools pools infos head))
-            (ctfe-type-list-ref-with-pools rest pools infos (- index 1))))])))
+    (if (>= index (ast-type-list-len (& types)))
+      (ResultCtfeTypeLookup.Err "index out of range")
+      (ResultCtfeTypeLookup.Ok
+        (ctfe-reflect-resolve-type-with-pools
+          pools
+          infos
+          (ast-node-pool-context-type-get
+            pools
+            (ast-type-list-get (& types) index (ast-type-id-fallback))))))))
 
 (define (ctfe-type-list-ref
   [types : AstTypeList]
@@ -7126,35 +7160,56 @@
       (ctfe-lifetime-list-to-expr-list lifetimes env))
     env))
 
+(define (ctfe-type-list-to-expr-list-at
+  [types : (& types AstTypeList)]
+  [env : CtfeEnv]
+  [index : i64]) : AstExprList
+  (if (>= index (ast-type-list-len types))
+    AstExprList.Nil
+    (ast-expr-cons
+      (ctfe-type-to-expr
+        (ctfe-ty-get env (ast-type-list-get types index (ast-type-id-fallback)))
+        env)
+      (ctfe-type-list-to-expr-list-at types env (+ index 1)))))
+
 (define (ctfe-type-list-to-expr-list [types : AstTypeList] [env : CtfeEnv]) : AstExprList
-  (match types
-    [(AstTypeList.Nil) AstExprList.Nil]
-    [(AstTypeList.Cons head rest)
-      (ast-expr-cons
-        (ctfe-type-to-expr (ctfe-ty-get env head) env)
-        (ctfe-type-list-to-expr-list (box-get rest) env))]))
+  (ctfe-type-list-to-expr-list-at (& types) env 0))
 
 (define (ctfe-lifetime-list-to-expr-list
   [lifetimes : AstLifetimeList]
   [env : CtfeEnv]) : AstExprList
-  (match lifetimes
-    [(AstLifetimeList.Nil) AstExprList.Nil]
-    [(AstLifetimeList.Cons name rest)
-      (ast-expr-cons
-        (ctfe-type-syntax-name name env)
-        (ctfe-lifetime-list-to-expr-list (box-get rest) env))]))
+  (ctfe-lifetime-list-to-expr-list-at (& lifetimes) env 0))
+
+(define (ctfe-lifetime-list-to-expr-list-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [env : CtfeEnv]
+  [index : i64]) : AstExprList
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    AstExprList.Nil
+    (ast-expr-cons
+      (ctfe-type-syntax-name
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+        env)
+      (ctfe-lifetime-list-to-expr-list-at lifetimes env (+ index 1)))))
 
 (define (ctfe-func-type-to-expr-list
   [args : AstTypeList]
   [ret : AstType]
   [env : CtfeEnv]) : AstExprList
-  (match args
-    [(AstTypeList.Nil)
-      (ast-expr-cons (ctfe-type-to-expr ret env) AstExprList.Nil)]
-    [(AstTypeList.Cons head rest)
-      (ast-expr-cons
-        (ctfe-type-to-expr (ctfe-ty-get env head) env)
-        (ctfe-func-type-to-expr-list (box-get rest) ret env))]))
+  (ctfe-func-type-to-expr-list-at (& args) ret env 0))
+
+(define (ctfe-func-type-to-expr-list-at
+  [args : (& args AstTypeList)]
+  [ret : AstType]
+  [env : CtfeEnv]
+  [index : i64]) : AstExprList
+  (if (>= index (ast-type-list-len args))
+    (ast-expr-cons (ctfe-type-to-expr ret env) AstExprList.Nil)
+    (ast-expr-cons
+      (ctfe-type-to-expr
+        (ctfe-ty-get env (ast-type-list-get args index (ast-type-id-fallback)))
+        env)
+      (ctfe-func-type-to-expr-list-at args ret env (+ index 1)))))
 
 (define (ctfe-type-to-expr [ty : AstType] [env : CtfeEnv]) : i64
   (match ty
@@ -7255,7 +7310,7 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-enum-type-marker)
         (intern-str name)
-        AstLifetimeList.Nil
+        (ast-lifetime-list-new)
         env)]
     [(AstType.EnumArgs name lifetimes)
       (ctfe-resolved-nominal-type-to-expr
@@ -7267,7 +7322,7 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-struct-type-marker)
         (intern-str name)
-        AstLifetimeList.Nil
+        (ast-lifetime-list-new)
         env)]
     [(AstType.StructArgs name lifetimes)
       (ctfe-resolved-nominal-type-to-expr
@@ -7293,7 +7348,7 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteTypeList
   (match exprs
-    [(AstExprList.Nil) (ResultCtfeQuoteTypeList.Ok AstTypeList.Nil fuel)]
+    [(AstExprList.Nil) (ResultCtfeQuoteTypeList.Ok (ast-type-list-new) fuel)]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ctfe-ast-get env head)]
@@ -7394,7 +7449,7 @@
                 (ResultCtfeQuoteType.Ok
                   (ast-ty-func-with-pools
                     (ctfe-env-pools env)
-                    AstTypeList.Nil
+                    (ast-type-list-new)
                     ret-ty)
                   next-fuel)]
               [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
@@ -7499,7 +7554,7 @@
   [env : CtfeEnv]
   [origin : AstExpr]) : ResultCtfeQuoteLifetimeList
   (match exprs
-    [(AstExprList.Nil) (ResultCtfeQuoteLifetimeList.Ok AstLifetimeList.Nil)]
+    [(AstExprList.Nil) (ResultCtfeQuoteLifetimeList.Ok (ast-lifetime-list-new))]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ctfe-ast-get env head)]
@@ -7536,12 +7591,12 @@
               [(ResultCtfeQuoteLifetimeList.Ok lifetimes)
                 (ResultCtfeQuoteType.Ok
                   (if is-struct
-                    (match lifetimes
-                      [(AstLifetimeList.Nil) (AstType.Struct (intern name))]
-                      [_ (ast-ty-struct-args (intern name) lifetimes)])
-                    (match lifetimes
-                      [(AstLifetimeList.Nil) (AstType.Enum (intern name))]
-                      [_ (ast-ty-enum-args (intern name) lifetimes)]))
+                    (if (ast-lifetime-list-empty? (& lifetimes))
+                      (AstType.Struct (intern name))
+                      (ast-ty-struct-args (intern name) lifetimes))
+                    (if (ast-lifetime-list-empty? (& lifetimes))
+                      (AstType.Enum (intern name))
+                      (ast-ty-enum-args (intern name) lifetimes)))
                   fuel)]
               [(ResultCtfeQuoteLifetimeList.Err diag)
                 (ResultCtfeQuoteType.Err diag)])]
@@ -7599,37 +7654,37 @@
   [env : CtfeEnv]
   [origin : AstExpr]
   [fuel : i64]) : ResultCtfeQuoteType
-  (match lifetimes
-    [(AstLifetimeList.Cons name rest)
-      (match (box-get rest)
-        [(AstLifetimeList.Nil)
-          (match (ctfe-env-lookup env name)
-            [(CtfeMaybeValue.Some value)
-              (match value
-                [(CompilerCtfeValue.Type ty) (ResultCtfeQuoteType.Ok ty fuel)]
-                [(CompilerCtfeValue.Expr node _)
-                  (let
-                    [node-expr : AstExpr (ctfe-ast-get env node)]
-                    (ctfe-expr-to-type node-expr origin env fuel))]
-                [_
-                  (ResultCtfeQuoteType.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        origin
-                        "type unquote expects a type value")))])]
-            [(CtfeMaybeValue.None)
+  (if (= (ast-lifetime-list-len (& lifetimes)) 1)
+    (let
+      [name : String
+        (ast-lifetime-list-get (& lifetimes) 0 (ast-lifetime-fallback))]
+      (match (ctfe-env-lookup env name)
+        [(CtfeMaybeValue.Some value)
+          (match value
+            [(CompilerCtfeValue.Type ty) (ResultCtfeQuoteType.Ok ty fuel)]
+            [(CompilerCtfeValue.Expr node _)
+              (let
+                [node-expr : AstExpr (ctfe-ast-get env node)]
+                (ctfe-expr-to-type node-expr origin env fuel))]
+            [_
               (ResultCtfeQuoteType.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     origin
-                    "type unquote references an unbound type parameter")))])]
-        [_
+                    "type unquote expects a type value")))])]
+        [(CtfeMaybeValue.None)
           (ResultCtfeQuoteType.Err
             (box
               (ctfe-diagnostic-at-expr
                 origin
-                "type unquote expects exactly one type parameter")))])]
-    [_ (ctfe-type-expr-error origin)]))
+                "type unquote references an unbound type parameter")))]))
+    (if (= (ast-lifetime-list-len (& lifetimes)) 0)
+      (ctfe-type-expr-error origin)
+      (ResultCtfeQuoteType.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            origin
+            "type unquote expects exactly one type parameter"))))))
 
 (define (ctfe-quote-type-var [name : i64] [env : CtfeEnv] [fuel : i64]) : ResultCtfeQuoteType
   (match (ctfe-env-lookup env (intern-str name))
@@ -7644,25 +7699,37 @@
   [env : CtfeEnv]
   [origin : AstExpr]
   [fuel : i64]) : ResultCtfeQuoteTypeList
-  (match types
-    [(AstTypeList.Nil) (ResultCtfeQuoteTypeList.Ok AstTypeList.Nil fuel)]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ctfe-ty-get env head)]
-        [rest : AstTypeList (box-get rest)]
-        (match (ctfe-quote-type head env origin fuel)
-          [(ResultCtfeQuoteType.Ok quoted-head head-fuel)
-            (match (ctfe-quote-type-list rest env origin head-fuel)
-              [(ResultCtfeQuoteTypeList.Ok quoted-rest rest-fuel)
-                (ResultCtfeQuoteTypeList.Ok
-                  (ast-type-cons-with-pools
-                    (ctfe-env-pools env)
-                    quoted-head
-                    quoted-rest)
-                  rest-fuel)]
-              [(ResultCtfeQuoteTypeList.Err diag)
-                (ResultCtfeQuoteTypeList.Err diag)])]
-          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteTypeList.Err diag)]))]))
+  (ctfe-quote-type-list-at (& types) env origin fuel 0))
+
+(define (ctfe-quote-type-list-at
+  [types : (& types AstTypeList)]
+  [env : CtfeEnv]
+  [origin : AstExpr]
+  [fuel : i64]
+  [index : i64]) : ResultCtfeQuoteTypeList
+  (if (>= index (ast-type-list-len types))
+    (ResultCtfeQuoteTypeList.Ok (ast-type-list-new) fuel)
+    (let
+      [head : AstType
+        (ctfe-ty-get env (ast-type-list-get types index (ast-type-id-fallback)))]
+      (match (ctfe-quote-type head env origin fuel)
+        [(ResultCtfeQuoteType.Ok quoted-head head-fuel)
+          (match (ctfe-quote-type-list-at
+            types
+            env
+            origin
+            head-fuel
+            (+ index 1))
+            [(ResultCtfeQuoteTypeList.Ok quoted-rest rest-fuel)
+              (ResultCtfeQuoteTypeList.Ok
+                (ast-type-cons-with-pools
+                  (ctfe-env-pools env)
+                  quoted-head
+                  quoted-rest)
+                rest-fuel)]
+            [(ResultCtfeQuoteTypeList.Err diag)
+              (ResultCtfeQuoteTypeList.Err diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteTypeList.Err diag)]))))
 
 (define (ctfe-quote-type
   [ty : AstType]
@@ -10805,24 +10872,23 @@
   [env : CtfeEnv]
   [a : AstTypeList]
   [b : AstTypeList]) : bool
-  (match a
-    [(AstTypeList.Nil)
-      (match b
-        [(AstTypeList.Nil) true]
-        [_ false])]
-    [(AstTypeList.Cons ah at)
-      (let
-        [ah : AstType (ctfe-ty-get env ah)]
-        [at : AstTypeList (box-get at)]
-        (match b
-          [(AstTypeList.Cons bh bt)
-            (let
-              [bh : AstType (ctfe-ty-get env bh)]
-              [bt : AstTypeList (box-get bt)]
-              (and
-                (ctfe-type-eq-in-env env ah bh)
-                (ctfe-type-list-eq-in-env env at bt)))]
-          [_ false]))]))
+  (and
+    (= (ast-type-list-len (& a)) (ast-type-list-len (& b)))
+    (ctfe-type-list-eq-in-env-at env (& a) (& b) 0)))
+
+(define (ctfe-type-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len a))
+    true
+    (and
+      (ctfe-type-eq-in-env
+        env
+        (ctfe-ty-get env (ast-type-list-get a index (ast-type-id-fallback)))
+        (ctfe-ty-get env (ast-type-list-get b index (ast-type-id-fallback))))
+      (ctfe-type-list-eq-in-env-at env a b (+ index 1)))))
 
 (define (ctfe-type-eq-in-env [env : CtfeEnv] [a : AstType] [b : AstType]) : bool
   (match a
@@ -11473,10 +11539,10 @@
       (ctfe-reflect-variant-list-push
         (ctfe-reflect-variant-list-push
           (ctfe-reflect-variant-list-with-capacity 2)
-          (CtfeReflectVariant.Variant "None" AstTypeList.Nil))
+          (CtfeReflectVariant.Variant "None" (ast-type-list-new)))
         (CtfeReflectVariant.Variant
           "Some"
-          (ast-type-cons (AstType.String) AstTypeList.Nil)))]
+          (ast-type-cons (AstType.String) (ast-type-list-new))))]
     [infos : CtfeReflectInfoList
       (ctfe-reflect-info-list-push
         (ctfe-reflect-info-list-push
@@ -11502,7 +11568,7 @@
           (ast-ty-tuple
             (ast-type-cons
               (AstType.I64)
-              (ast-type-cons (AstType.Bool) AstTypeList.Nil)))))]
+              (ast-type-cons (AstType.Bool) (ast-type-list-new))))))]
     [str-ref-ty : i64
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-ref "r" (AstType.Str))))]
     [fn-ty : i64
@@ -11511,7 +11577,7 @@
           (ast-ty-func
             (ast-type-cons
               (AstType.I64)
-              (ast-type-cons (AstType.Bool) AstTypeList.Nil))
+              (ast-type-cons (AstType.Bool) (ast-type-list-new)))
             (AstType.String))))]
     [ok : bool true]
     (begin
@@ -11670,12 +11736,12 @@
       (ast-variant-def-cons
         (AstVariantDef.Def
           (intern "Ready")
-          AstTypeList.Nil
+          (ast-type-list-new)
           (ast-variant-payload-cleanup-list-new))
         (ast-variant-def-cons
           (AstVariantDef.Def
             (intern "Failed")
-            (ast-type-cons (AstType.String) AstTypeList.Nil)
+            (ast-type-cons (AstType.String) (ast-type-list-new))
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new)))]
     (AstProgram.Program
@@ -11895,7 +11961,7 @@
           (ast-ty-tuple
             (ast-type-cons
               (AstType.I64)
-              (ast-type-cons (AstType.Bool) AstTypeList.Nil)))))]
+              (ast-type-cons (AstType.Bool) (ast-type-list-new))))))]
     [fn-ty : i64
       (ctfe-ast-push
         env
@@ -11903,7 +11969,7 @@
           (ast-ty-func
             (ast-type-cons
               (AstType.I64)
-              (ast-type-cons (AstType.Bool) AstTypeList.Nil))
+              (ast-type-cons (AstType.Bool) (ast-type-list-new)))
             (AstType.String))))]
     [record-ty : i64
       (ctfe-ast-push env (AstExpr.TypeLiteral (AstType.Var (intern "Record"))))]

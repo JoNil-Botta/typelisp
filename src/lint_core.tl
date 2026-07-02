@@ -1574,15 +1574,21 @@
   [types : AstTypeList]
   [alias : String]
   [module-name : String]) : bool
-  (match types
-    [(AstTypeList.Nil) false]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head-ty : AstType (ty-node-get head)]
-        [rest : AstTypeList (box-get rest)]
-        (if (lint-type-uses-import? head-ty alias module-name)
-          true
-          (lint-type-list-uses-import? rest alias module-name)))]))
+  (lint-type-list-uses-import-at? (& types) alias module-name 0))
+
+(define (lint-type-list-uses-import-at?
+  [types : (& types AstTypeList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (if (lint-type-uses-import?
+      (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+      alias
+      module-name)
+      true
+      (lint-type-list-uses-import-at? types alias module-name (+ index 1)))))
 
 (define (lint-type-id-uses-import?
   [ty : i64]
@@ -5366,22 +5372,38 @@
 (define (lint-unused-variable-type-list
   [items : AstTypeList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match items
-    [(AstTypeList.Nil) state]
-    [(AstTypeList.Cons id rest)
-      (lint-unused-variable-type-list
-        (box-get rest)
-        (lint-unused-variable-type (ty-node-get id) state))]))
+  (lint-unused-variable-type-list-at (& items) state 0))
+
+(define (lint-unused-variable-type-list-at
+  [items : (& items AstTypeList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-type-list-len items))
+    state
+    (lint-unused-variable-type-list-at
+      items
+      (lint-unused-variable-type
+        (ty-node-get (ast-type-list-get items index (ast-type-id-fallback)))
+        state)
+      (+ index 1))))
 
 (define (lint-unused-variable-lifetime-list
   [items : AstLifetimeList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match items
-    [(AstLifetimeList.Nil) state]
-    [(AstLifetimeList.Cons name rest)
-      (lint-unused-variable-lifetime-list
-        (box-get rest)
-        (lint-unused-variable-read-name state name))]))
+  (lint-unused-variable-lifetime-list-at (& items) state 0))
+
+(define (lint-unused-variable-lifetime-list-at
+  [items : (& items AstLifetimeList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-lifetime-list-len items))
+    state
+    (lint-unused-variable-lifetime-list-at
+      items
+      (lint-unused-variable-read-name
+        state
+        (ast-lifetime-list-get items index (ast-lifetime-fallback)))
+      (+ index 1))))
 
 (define (lint-unused-variable-type-lifetime
   [name : String]

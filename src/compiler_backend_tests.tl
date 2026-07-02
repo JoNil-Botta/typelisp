@@ -3688,7 +3688,7 @@
       (CompilerBackendTarget.Linux)
       CompilerRegAssignmentList.Nil
       (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
-      (ast-type-cons ty AstTypeList.Nil)
+      (ast-type-cons ty (ast-type-list-new))
       false
       0
       0
@@ -11858,21 +11858,17 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-i64-type-list8) : AstTypeList
-  (ast-type-cons
-    (AstType.I64)
-    (ast-type-cons
-      (AstType.I64)
-      (ast-type-cons
-        (AstType.I64)
-        (ast-type-cons
-          (AstType.I64)
-          (ast-type-cons
-            (AstType.I64)
-            (ast-type-cons
-              (AstType.I64)
-              (ast-type-cons
-                (AstType.I64)
-                (ast-type-cons (AstType.I64) AstTypeList.Nil)))))))))
+  (let
+    [out : AstTypeList (ast-type-list-with-capacity 8)]
+    [i : i64 0]
+    (begin
+      (while (< i 8)
+        (begin
+          (ast-type-list-push
+            (&mut out)
+            (ast-node-pool-reader-type-push (AstType.I64)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-i64-immediate-call-args8) : CompilerIrCallArgs
   (compiler-ir-call-args-from-list
@@ -12234,7 +12230,7 @@
     target
     "tail_target"
     "tl_tail_target"
-    (ast-type-cons (AstType.I64) AstTypeList.Nil)
+    (ast-type-cons (AstType.I64) (ast-type-list-new))
     (AstType.I64)
     (AstExternAbi.C)
     (CompilerIrCallArgs.One (CompilerIrValue.I64 42))))
@@ -12245,7 +12241,7 @@
     target
     "tail_unit_target"
     "tl_tail_unit_target"
-    (ast-type-cons (AstType.I64) AstTypeList.Nil)
+    (ast-type-cons (AstType.I64) (ast-type-list-new))
     (AstType.Unit)
     (AstExternAbi.C)
     (CompilerIrCallArgs.One (CompilerIrValue.I64 42))))
@@ -12266,7 +12262,7 @@
     (ast-ty-mut-ptr (AstType.U8))
     (ast-type-cons
       (AstType.I64)
-      (ast-type-cons (ast-ty-ptr (AstType.U8)) AstTypeList.Nil))))
+      (ast-type-cons (ast-ty-ptr (AstType.U8)) (ast-type-list-new)))))
 
 (define (compiler-backend-non-direct-tail-call-varargs-args) : CompilerIrCallArgs
   (compiler-ir-call-args-from-list
@@ -12932,15 +12928,12 @@
     [(CompilerBackendMaybeSignature.Some args ret-ty)
       (match ret-ty
         [(AstType.I64)
-          (match args
-            [(AstTypeList.Cons arg rest)
-              (match (ast-node-pool-reader-type-get arg)
-                [(AstType.I64)
-                  (match (box-get rest)
-                    [(AstTypeList.Nil) true]
-                    [_ false])]
-                [_ false])]
-            [_ false])]
+          (and
+            (= (ast-type-list-len (& args)) 1)
+            (match (ast-node-pool-reader-type-get
+              (ast-type-list-get (& args) 0 (ast-type-id-fallback)))
+              [(AstType.I64) true]
+              [_ false]))]
         [_ false])]
     [(CompilerBackendMaybeSignature.No) false]))
 
@@ -12948,12 +12941,11 @@
   [sig : CompilerBackendMaybeSignature]) : bool
   (match sig
     [(CompilerBackendMaybeSignature.Some args ret-ty)
-      (match args
-        [(AstTypeList.Nil)
-          (match ret-ty
-            [(AstType.I64) true]
-            [_ false])]
-        [_ false])]
+      (and
+        (ast-type-list-empty? (& args))
+        (match ret-ty
+          [(AstType.I64) true]
+          [_ false]))]
     [(CompilerBackendMaybeSignature.No) false]))
 
 (define (compiler-backend-program-index-test-functions) : CompilerIrFunctionList
@@ -12979,7 +12971,7 @@
   (compiler-ir-extern-cons
     (CompilerIrExtern.Extern
       "provided_decl"
-      (ast-ty-func AstTypeList.Nil (AstType.I64))
+      (ast-ty-func (ast-type-list-new) (AstType.I64))
       (AstExternAbi.C)
       "provided_link"
       (ast-extern-link-input-list-new)
@@ -12988,7 +12980,7 @@
       (CompilerIrExtern.Extern
         "referenced_decl"
         (ast-ty-func
-          (ast-type-cons (AstType.I64) AstTypeList.Nil)
+          (ast-type-cons (AstType.I64) (ast-type-list-new))
           (AstType.I64))
         (AstExternAbi.C)
         "referenced_link"
@@ -13117,7 +13109,7 @@
           (compiler-ir-extern-cons
             (CompilerIrExtern.Extern
               extern-name
-              (ast-ty-func AstTypeList.Nil (AstType.I64))
+              (ast-ty-func (ast-type-list-new) (AstType.I64))
               (AstExternAbi.C)
               extern-link
               (ast-extern-link-input-list-new)

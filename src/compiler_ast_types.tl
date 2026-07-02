@@ -248,13 +248,17 @@
   (Ptr i64)
   (MutPtr i64))
 
-(defenum AstTypeList
-  (Nil)
-  (Cons i64 (Box AstTypeList)))
+(comptime-decl
+  (:generated vector-family AstTypeList "i64")
+  (defstruct AstTypeList
+    (slots (Array i64))
+    (len i64)))
 
-(defenum AstLifetimeList
-  (Nil)
-  (Cons String (Box AstLifetimeList)))
+(comptime-decl
+  (:generated vector-family AstLifetimeList "String")
+  (defstruct AstLifetimeList
+    (slots (Array String))
+    (len i64)))
 
 (defenum AstMaybeType
   (No)
@@ -856,19 +860,46 @@
 (define (ty-node-persist-string [s : String]) : String
   (string.substring s 0 (string.string-length s)))
 
+(define (ty-node-persist-lifetimes-into
+  [items : (& items AstLifetimeList)]
+  [out : (&mut out AstLifetimeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-lifetime-list-len items))
+    unit
+    (begin
+      (ast-lifetime-list-push
+        out
+        (ty-node-persist-string
+          (ast-lifetime-list-get items index (ast-lifetime-fallback))))
+      (ty-node-persist-lifetimes-into items out (+ index 1)))))
+
 (define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
-  (match items
-    [(AstLifetimeList.Nil) AstLifetimeList.Nil]
-    [(AstLifetimeList.Cons name rest)
-      (AstLifetimeList.Cons
-        (ty-node-persist-string name)
-        (box (ty-node-persist-lifetimes (box-get rest))))]))
+  (let
+    [out : AstLifetimeList
+      (ast-lifetime-list-with-capacity (ast-lifetime-list-len (& items)))]
+    (begin
+      (ty-node-persist-lifetimes-into (& items) (&mut out) 0)
+      out)))
+
+(define (ty-node-persist-type-list-into
+  [items : (& items AstTypeList)]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len items))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-type-list-get items index (ast-type-id-fallback)))
+      (ty-node-persist-type-list-into items out (+ index 1)))))
 
 (define (ty-node-persist-type-list [items : AstTypeList]) : AstTypeList
-  (match items
-    [(AstTypeList.Nil) AstTypeList.Nil]
-    [(AstTypeList.Cons id rest)
-      (AstTypeList.Cons id (box (ty-node-persist-type-list (box-get rest))))]))
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-type-list-len (& items)))]
+    (begin
+      (ty-node-persist-type-list-into (& items) (&mut out) 0)
+      out)))
 
 (define (ty-node-persist [node : AstType]) : AstType
   (match node
@@ -1213,19 +1244,39 @@
           (set! i (+ i 1))))
       (set! ty-node-dedup-count 0))))
 
+(define (ty-lifetime-list-hash-at
+  [items : (& items AstLifetimeList)]
+  [len : i64]
+  [seed : i64]
+  [index : i64]) : i64
+  (if (>= index len)
+    (hash.combine seed 11)
+    (let
+      [name : String (array-ref (struct-get items slots) index)]
+      (ty-lifetime-list-hash-at
+        items
+        len
+        (hash.combine seed (hash.string-key (& name)))
+        (+ index 1)))))
+
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
-  (match items
-    [(AstLifetimeList.Nil) (hash.combine seed 11)]
-    [(AstLifetimeList.Cons name rest)
-      (ty-lifetime-list-hash
-        (box-get rest)
-        (hash.combine seed (hash.string-key (& name))))]))
+  (ty-lifetime-list-hash-at (& items) (ast-lifetime-list-len (& items)) seed 0))
+
+(define (ty-type-list-hash-at
+  [items : (& items AstTypeList)]
+  [len : i64]
+  [seed : i64]
+  [index : i64]) : i64
+  (if (>= index len)
+    (hash.combine seed 13)
+    (ty-type-list-hash-at
+      items
+      len
+      (hash.combine seed (array-ref (struct-get items slots) index))
+      (+ index 1))))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
-  (match items
-    [(AstTypeList.Nil) (hash.combine seed 13)]
-    [(AstTypeList.Cons id rest)
-      (ty-type-list-hash (box-get rest) (hash.combine seed id))]))
+  (ty-type-list-hash-at (& items) (ast-type-list-len (& items)) seed 0))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
@@ -1272,33 +1323,45 @@
     [(AstType.Ptr inner) (hash.combine 33 inner)]
     [(AstType.MutPtr inner) (hash.combine 34 inner)]))
 
+(define (ty-lifetime-list-eq-at?
+  [a : (& a AstLifetimeList)]
+  [b : (& b AstLifetimeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (string.eq
+        (array-ref (struct-get a slots) index)
+        (array-ref (struct-get b slots) index))
+      (ty-lifetime-list-eq-at? a b len (+ index 1)))))
+
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
-  (match a
-    [(AstLifetimeList.Nil)
-      (match b
-        [(AstLifetimeList.Nil) true]
-        [_ false])]
-    [(AstLifetimeList.Cons a-name a-rest)
-      (match b
-        [(AstLifetimeList.Cons b-name b-rest)
-          (and
-            (string.eq a-name b-name)
-            (ty-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (let
+    [len : i64 (ast-lifetime-list-len (& a))]
+    (and
+      (= len (ast-lifetime-list-len (& b)))
+      (ty-lifetime-list-eq-at? (& a) (& b) len 0))))
+
+(define (ty-type-list-eq-at?
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (=
+        (array-ref (struct-get a slots) index)
+        (array-ref (struct-get b slots) index))
+      (ty-type-list-eq-at? a b len (+ index 1)))))
 
 (define (ty-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
-  (match a
-    [(AstTypeList.Nil)
-      (match b
-        [(AstTypeList.Nil) true]
-        [_ false])]
-    [(AstTypeList.Cons a-id a-rest)
-      (match b
-        [(AstTypeList.Cons b-id b-rest)
-          (and
-            (= a-id b-id)
-            (ty-type-list-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (let
+    [len : i64 (ast-type-list-len (& a))]
+    (and
+      (= len (ast-type-list-len (& b)))
+      (ty-type-list-eq-at? (& a) (& b) len 0))))
 
 ;; Shallow structural equality between a stored node and a candidate node. Child
 ;; ids compare as plain integers because children are themselves deduplicated.
@@ -1827,8 +1890,135 @@
 (defenum AstProgram
   (Program (Box AstDeclList)))
 
+(define (ast-type-id-fallback) : i64
+  0)
+
+(comptime-decl
+  (:generated vector-family ast-type-list-with-capacity "i64")
+  (define (ast-type-list-with-capacity [capacity : i64]) : AstTypeList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstTypeList (array.make-array i64 cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-new "i64")
+  (define (ast-type-list-new) : AstTypeList
+    (ast-type-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-len "i64")
+  (define (ast-type-list-len [v : (& v AstTypeList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-empty? "i64")
+  (define (ast-type-list-empty? [v : (& v AstTypeList)]) : bool
+    (= (ast-type-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-get "i64")
+  (define (ast-type-list-get
+    [v : (& v AstTypeList)]
+    [index : i64]
+    [fallback : i64]) : i64
+    (if (and (>= index 0) (< index (ast-type-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-copy-range "i64")
+  (define (ast-type-list-copy-range
+    [dst : (&mut dst (Array i64))]
+    [src : (& src (Array i64))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-type-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-grow "i64")
+  (define (ast-type-list-grow [v : (&mut v AstTypeList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array i64) (array.make-array i64 new-cap)]
+      (begin
+        (ast-type-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-type-list-push "i64")
+  (define (ast-type-list-push [v : (&mut v AstTypeList)] [value : i64]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-type-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-type-list-append-from
+  [out : (&mut out AstTypeList)]
+  [items : (& items AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len items))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-type-list-get items index (ast-type-id-fallback)))
+      (ast-type-list-append-from out items (+ index 1)))))
+
+(define (ast-type-list-slice-into
+  [out : (&mut out AstTypeList)]
+  [items : (& items AstTypeList)]
+  [start : i64]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len items))
+    unit
+    (begin
+      (if (>= index start)
+        (ast-type-list-push
+          out
+          (ast-type-list-get items index (ast-type-id-fallback)))
+        unit)
+      (ast-type-list-slice-into out items start (+ index 1)))))
+
+(define (ast-type-list-slice [items : AstTypeList] [start : i64]) : AstTypeList
+  (let
+    [len : i64 (ast-type-list-len (& items))]
+    [out : AstTypeList
+      (ast-type-list-with-capacity
+        (if (< start len)
+          (- len start)
+          0))]
+    (begin
+      (ast-type-list-slice-into (&mut out) (& items) start 0)
+      out)))
+
+(define (ast-type-list-cons-id [head : i64] [rest : AstTypeList]) : AstTypeList
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (+ 1 (ast-type-list-len (& rest))))]
+    (begin
+      (ast-type-list-push (&mut out) head)
+      (ast-type-list-append-from (&mut out) (& rest) 0)
+      out)))
+
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
-  (AstTypeList.Cons (ast-node-pool-reader-type-push head) (box rest)))
+  (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
   (AstType.Func (box args) (ast-node-pool-reader-type-push ret)))
@@ -1873,7 +2063,7 @@
   [pools : AstNodePoolContext]
   [head : AstType]
   [rest : AstTypeList]) : AstTypeList
-  (AstTypeList.Cons (ast-node-pool-context-type-push pools head) (box rest)))
+  (ast-type-list-cons-id (ast-node-pool-context-type-push pools head) rest))
 
 (define (ast-ty-func-with-pools
   [pools : AstNodePoolContext]
@@ -1921,8 +2111,111 @@
   [elem : AstType]) : AstType
   (AstType.MutPtr (ast-node-pool-context-type-push pools elem)))
 
+(define (ast-lifetime-fallback) : String
+  "")
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-with-capacity "String")
+  (define (ast-lifetime-list-with-capacity [capacity : i64]) : AstLifetimeList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstLifetimeList (array.make-array String cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-new "String")
+  (define (ast-lifetime-list-new) : AstLifetimeList
+    (ast-lifetime-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-len "String")
+  (define (ast-lifetime-list-len [v : (& v AstLifetimeList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-empty? "String")
+  (define (ast-lifetime-list-empty? [v : (& v AstLifetimeList)]) : bool
+    (= (ast-lifetime-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-get "String")
+  (define (ast-lifetime-list-get
+    [v : (& v AstLifetimeList)]
+    [index : i64]
+    [fallback : String]) : String
+    (if (and (>= index 0) (< index (ast-lifetime-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-copy-range "String")
+  (define (ast-lifetime-list-copy-range
+    [dst : (&mut dst (Array String))]
+    [src : (& src (Array String))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-lifetime-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-grow "String")
+  (define (ast-lifetime-list-grow [v : (&mut v AstLifetimeList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array String) (array.make-array String new-cap)]
+      (begin
+        (ast-lifetime-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-lifetime-list-push "String")
+  (define (ast-lifetime-list-push
+    [v : (&mut v AstLifetimeList)]
+    [value : String]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-lifetime-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-lifetime-list-append-from
+  [out : (&mut out AstLifetimeList)]
+  [items : (& items AstLifetimeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-lifetime-list-len items))
+    unit
+    (begin
+      (ast-lifetime-list-push
+        out
+        (ast-lifetime-list-get items index (ast-lifetime-fallback)))
+      (ast-lifetime-list-append-from out items (+ index 1)))))
+
 (define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
-  (AstLifetimeList.Cons head (box rest)))
+  (let
+    [out : AstLifetimeList
+      (ast-lifetime-list-with-capacity (+ 1 (ast-lifetime-list-len (& rest))))]
+    (begin
+      (ast-lifetime-list-push (&mut out) head)
+      (ast-lifetime-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param (ci.intern name) ty is-comptime))
@@ -2301,7 +2594,10 @@
   (AstVariantDef.Def name fields cleanups))
 
 (define (ast-variant-def-fallback) : AstVariantDef
-  (AstVariantDef.Def 0 AstTypeList.Nil (ast-variant-payload-cleanup-list-new)))
+  (AstVariantDef.Def
+    0
+    (ast-type-list-new)
+    (ast-variant-payload-cleanup-list-new)))
 
 (comptime-decl
   (:generated vector-family ast-variant-def-list-with-capacity "AstVariantDef")
@@ -3789,23 +4085,50 @@
 (define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
   (struct-get remap dest-pools))
 
+(define (ast-compaction-remap-lifetime-list-into
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [out : (&mut out AstLifetimeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    unit
+    (begin
+      (ast-lifetime-list-push
+        out
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
+      (ast-compaction-remap-lifetime-list-into lifetimes out (+ index 1)))))
+
 (define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
-  (match lifetimes
-    [(AstLifetimeList.Nil) AstLifetimeList.Nil]
-    [(AstLifetimeList.Cons name rest)
-      (AstLifetimeList.Cons
-        name
-        (box (ast-compaction-remap-lifetime-list (box-get rest))))]))
+  (let
+    [out : AstLifetimeList
+      (ast-lifetime-list-with-capacity (ast-lifetime-list-len (& lifetimes)))]
+    (begin
+      (ast-compaction-remap-lifetime-list-into (& lifetimes) (&mut out) 0)
+      out)))
 
 (define (ast-compaction-remap-type-list
   [remap : AstProgramCompactionRemap]
   [types : AstTypeList]) : AstTypeList
-  (match types
-    [(AstTypeList.Nil) AstTypeList.Nil]
-    [(AstTypeList.Cons head rest)
-      (AstTypeList.Cons
-        (ast-compaction-remap-type-id remap head)
-        (box (ast-compaction-remap-type-list remap (box-get rest))))]))
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-type-list-len (& types)))]
+    (begin
+      (ast-compaction-remap-type-list-into remap (& types) (&mut out) 0)
+      out)))
+
+(define (ast-compaction-remap-type-list-into
+  [remap : AstProgramCompactionRemap]
+  [types : (& types AstTypeList)]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len types))
+    unit
+    (begin
+      (ast-type-list-push
+        out
+        (ast-compaction-remap-type-id
+          remap
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (ast-compaction-remap-type-list-into remap types out (+ index 1)))))
 
 (define (ast-compaction-remap-type
   [remap : AstProgramCompactionRemap]
@@ -4899,35 +5222,45 @@
     [(AstExternAbi.CVarargsTyped ty) ty]
     [_ (AstType.Unit)]))
 
+(define (ast-lifetime-list-eq-at?
+  [a : (& a AstLifetimeList)]
+  [b : (& b AstLifetimeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (string.eq
+        (array-ref (struct-get a slots) index)
+        (array-ref (struct-get b slots) index))
+      (ast-lifetime-list-eq-at? a b len (+ index 1)))))
+
 (define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
-  (match a
-    [(AstLifetimeList.Nil)
-      (match b
-        [(AstLifetimeList.Nil) true]
-        [_ false])]
-    [(AstLifetimeList.Cons a-head a-rest)
-      (match b
-        [(AstLifetimeList.Cons b-head b-rest)
-          (and
-            (string.eq a-head b-head)
-            (ast-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (let
+    [len : i64 (ast-lifetime-list-len (& a))]
+    (and
+      (= len (ast-lifetime-list-len (& b)))
+      (ast-lifetime-list-eq-at? (& a) (& b) len 0))))
+
+(define (ast-type-list-eq-at?
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (ast-type-eq?
+        (ast-node-pool-reader-type-get (array-ref (struct-get a slots) index))
+        (ast-node-pool-reader-type-get (array-ref (struct-get b slots) index)))
+      (ast-type-list-eq-at? a b len (+ index 1)))))
 
 (define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
-  (match a
-    [(AstTypeList.Nil)
-      (match b
-        [(AstTypeList.Nil) true]
-        [_ false])]
-    [(AstTypeList.Cons a-head a-rest)
-      (match b
-        [(AstTypeList.Cons b-head b-rest)
-          (and
-            (ast-type-eq?
-              (ast-node-pool-reader-type-get a-head)
-              (ast-node-pool-reader-type-get b-head))
-            (ast-type-list-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (let
+    [len : i64 (ast-type-list-len (& a))]
+    (and
+      (= len (ast-type-list-len (& b)))
+      (ast-type-list-eq-at? (& a) (& b) len 0))))
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
   (match a
@@ -5482,7 +5815,7 @@
     [i64-ty : AstType (AstType.I64)]
     [string-ty : AstType (AstType.String)]
     [arg-tys : AstTypeList
-      (ast-type-cons i64-ty (ast-type-cons string-ty AstTypeList.Nil))]
+      (ast-type-cons i64-ty (ast-type-cons string-ty (ast-type-list-new)))]
     [ret-ty : AstType (ast-ty-ref "r" (ast-ty-ptr (ast-ty-array i64-ty 4)))]
     [fn-ty : AstType (ast-ty-func arg-tys ret-ty)]
     [nested-ty-ok? : bool

@@ -5391,7 +5391,7 @@
       (AstExternMetadata.Metadata
         (AstExternAbi.C)
         (compiler-load-package-user-symbol logical)
-        AstExternLinkInputList.Nil
+        (ast-extern-link-input-list-new)
         false)
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 

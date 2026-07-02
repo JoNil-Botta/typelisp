@@ -6509,7 +6509,7 @@
         rest
         abi
         name
-        AstExternLinkInputList.Nil
+        (ast-extern-link-input-list-new)
         false
         false
         param-types)
@@ -6533,7 +6533,7 @@
             (sp-node-get after-name)
             (AstExternAbi.C)
             name
-            AstExternLinkInputList.Nil
+            (ast-extern-link-input-list-new)
             false
             false)
             [(ResultAstExternParts.Ok metadata parsed-ty)
@@ -8571,30 +8571,27 @@
 
 (define (compiler-parse-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
-  (match inputs
-    [(AstExternLinkInputList.Cons (AstExternLinkInput.Lib lib) rest0)
-      (let
-        [rest0 : AstExternLinkInputList (box-get rest0)]
-        (match rest0
-          [(AstExternLinkInputList.Cons (AstExternLinkInput.Search dir) rest1)
-            (let
-              [rest1 : AstExternLinkInputList (box-get rest1)]
-              (match rest1
-                [(AstExternLinkInputList.Cons
-                    (AstExternLinkInput.Arg arg-value)
-                    rest2)
-                  (let
-                    [rest2 : AstExternLinkInputList (box-get rest2)]
-                    (match rest2
-                      [(AstExternLinkInputList.Nil)
-                        (and
-                          (string.eq lib "m")
-                          (string.eq dir "native/lib")
-                          (string.eq arg-value "-Wl,--as-needed"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (and
+    (= (ast-extern-link-input-list-len (& inputs)) 3)
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      0
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Lib lib) (string.eq lib "m")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      1
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Search dir) (string.eq dir "native/lib")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      2
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Arg arg-value)
+        (string.eq arg-value "-Wl,--as-needed")]
+      [_ false])))
 
 (define (compiler-parse-extern-metadata-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-metadata-source))

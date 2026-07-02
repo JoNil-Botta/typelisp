@@ -382,14 +382,23 @@
 (define (source-tool-link-inputs-add-ast-list
   [inputs : SourceToolLinkInputs]
   [items : AstExternLinkInputList]) : SourceToolLinkInputs
-  (match items
-    [(AstExternLinkInputList.Nil) inputs]
-    [(AstExternLinkInputList.Cons head rest)
-      (let
-        [rest : AstExternLinkInputList (box-get rest)]
-        (source-tool-link-inputs-add-ast-list
-          (source-tool-link-inputs-add-ast inputs head)
-          rest))]))
+  (source-tool-link-inputs-add-ast-list-from inputs (& items) 0))
+
+(define (source-tool-link-inputs-add-ast-list-from
+  [inputs : SourceToolLinkInputs]
+  [items : (& items AstExternLinkInputList)]
+  [index : i64]) : SourceToolLinkInputs
+  (if (>= index (ast-extern-link-input-list-len items))
+    inputs
+    (source-tool-link-inputs-add-ast-list-from
+      (source-tool-link-inputs-add-ast
+        inputs
+        (ast-extern-link-input-list-get
+          items
+          index
+          (ast-extern-link-input-fallback)))
+      items
+      (+ index 1))))
 
 (define (source-tool-link-inputs-eq?
   [left : SourceToolLinkInputs]
@@ -416,7 +425,7 @@
             (AstExternLinkInput.Search "native")
             (ast-extern-link-input-cons
               (AstExternLinkInput.Arg "-Wl,a")
-              AstExternLinkInputList.Nil))))]
+              (ast-extern-link-input-list-new)))))]
     [metadata-inputs : SourceToolLinkInputs
       (source-tool-link-inputs-add-ast-list
         (source-tool-link-inputs-empty)

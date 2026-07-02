@@ -6215,6 +6215,23 @@
   (match instr
     [(IrInstrBoundsCheck _ _ _) false]
     [(IrInstrPack _ _ _) false]
+    ;; GAP3a: a shift by an in-range CONSTANT count is emitted as `shlq $imm, reg`
+    ;; (compiler-backend-binop-immediate-shift-asm) and never reads or writes
+    ;; %rcx/%cl, so it is NOT a clobber point. Only variable-count shifts (or
+    ;; out-of-range constants, which fall back to the %cl register path) remain
+    ;; clobber points -- the same rhs/type-aware classification the greedy's
+    ;; kind-2 point set already uses (compiler-reg-clobber-binop-shift?). Before
+    ;; this arm the coarse op-only test (compiler-reg-backend-clobber-binop? via
+    ;; caller-clobber-instr?) counted EVERY shift, so the param ABI-pin gate
+    ;; (compiler-reg-param-assign-plan) stack-homed or CSR-copied all params of
+    ;; zero-call functions whose only "clobbers" were constant shifts
+    ;; (crc_update shape). Divisions keep their rax:rdx clobber classification.
+    ;; compiler-reg-backend-caller-clobber-instr? intentionally stays
+    ;; conservative (remat-use-site-ok? / splitkit range proofs).
+    [(IrInstrBinOp _ op _ rhs ty)
+      (or
+        (compiler-reg-clobber-binop-div? op)
+        (compiler-reg-clobber-binop-shift? op rhs ty))]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
 ;; Param-pin gate predicate: like a caller-clobber scan EXCEPT bounds checks do not
@@ -20453,6 +20470,120 @@
               (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
           IrBlockNil)))))
 
+(cfg
+  test
+  ;; GAP3a: zero-call function whose only would-be clobber is a shift by an
+  ;; in-range CONSTANT (emitted as `shrq $3` -- no %rcx/%cl use). Params keep
+  ;; their ABI pins.
+  (define (compiler-reg-param-const-shift-function) : CompilerIrFunction
+    (IrFunction
+      "param_const_shift"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (IrParam "n" (compiler-reg-i64-ty) 1)
+          IrParamNil))
+      (AstTyI64)
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              2
+              (IrBinShr)
+              (IrValueVar 0)
+              (IrValueI64 3)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                2
+                (IrBinAdd)
+                (IrValueVar 2)
+                (IrValueVar 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil))))
+        IrBlockNil))))
+
+(cfg
+  test
+  ;; GAP3a counterpart: a VARIABLE-count shift stays a clobber point (the
+  ;; backend moves the count into %rcx and shifts by %cl). `a` (var 0) is live
+  ;; across the shift: t = a >> n; return t + a.
+  (define (compiler-reg-param-var-shift-function) : CompilerIrFunction
+    (IrFunction
+      "param_var_shift"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (IrParam "n" (compiler-reg-i64-ty) 1)
+          IrParamNil))
+      (AstTyI64)
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              2
+              (IrBinShr)
+              (IrValueVar 0)
+              (IrValueVar 1)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                2
+                (IrBinAdd)
+                (IrValueVar 2)
+                (IrValueVar 0)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil))))
+        IrBlockNil))))
+
+(cfg
+  test
+  ;; GAP3a: constant in-range shifts are not clobber points, so the pin gate
+  ;; sees a clobber-free function and both params keep their incoming ABI
+  ;; registers (%rdi/%rsi) -- the crc_update shape.
+  (define (compiler-reg-scalar-param-const-shift-pin-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-const-shift-function))
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rdi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%rsi"))])))
+
+(cfg
+  test
+  ;; GAP3a: a variable-count shift IS a clobber point, so the function-global
+  ;; pin gate refuses pins and both params become greedy candidates with
+  ;; callee-saved homes (the M-A contract for clobber-point functions).
+  (define (compiler-reg-scalar-param-var-shift-no-pin-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-var-shift-function))
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%r12")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%r13"))])))
+
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (IrFunction
     "move_chain"
@@ -24495,6 +24626,8 @@
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
+    (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-var-shift-no-pin-ok?) true)
     (cfg test (compiler-reg-scalar-aggregate-param-not-pinned-ok?) true)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)

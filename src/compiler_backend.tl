@@ -32066,6 +32066,22 @@
                       (compiler-backend-peephole-range-eq? data m te "pop"))]
                   [leave? : bool
                     (compiler-backend-peephole-range-eq? data m te "leave")]
+                  ;; #33: a raw `syscall` can REPLACE %rsp in a way this textual
+                  ;; audit cannot track -- `clone` (syscall 56, the raw-thread
+                  ;; spawn) hands the CHILD a fresh stack, and rt_sigreturn loads
+                  ;; a saved rsp. After such a syscall rsp is no longer provably
+                  ;; rbp-frame, so every post-syscall frame ref rebased to
+                  ;; N(%rsp) would read the wrong stack in the child (observed
+                  ;; SEGV: thread-linux-spawn marshalled entry/arg/result-addr to
+                  ;; child-main via N(%rsp) after clone). Most syscalls (write /
+                  ;; read / futex / exit) leave rsp untouched, but the number is
+                  ;; not reliably knowable at this text seam, so ANY syscall makes
+                  ;; the WHOLE function keep rbp (frame refs via %rbp survive
+                  ;; clone in both parent and child -- CLONE_VM shares the address
+                  ;; space and rbp is never in clone's register set; byte-
+                  ;; identical to pre-FPO for that function -- the sound choice).
+                  [syscall? : bool
+                    (compiler-backend-peephole-range-eq? data m te "syscall")]
                   [rsp-dst? : bool
                     (and
                       (>= (- end i) 6)
@@ -32093,6 +32109,15 @@
                   (begin
                     (set! last-noff -1)
                     (set! ref-count 0)
+                    ;; #33: unprovable rsp shape -> keep rbp for the whole
+                    ;; function (audit fail). ok=false terminates the pass loop;
+                    ;; the caller falls back to rbp addressing (or demotes an
+                    ;; rbp-planned function). Placed before the per-line frame /
+                    ;; rsp logic: a syscall line carries no frame ref, so the
+                    ;; remaining arms are inert on it.
+                    (if syscall?
+                      (set! ok false)
+                      unit)
                     (if (= csr-kind 1)
                       ;; CSR save/restore movq: drop the line.
                       unit

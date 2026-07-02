@@ -4840,10 +4840,10 @@
         (begin
           (compiler-load-session-program-cache-disable!)
           (compiler-check-reset-pools!)
-          (compiler-load-session-reset-interns!)
+          (compiler-check-reset-interns!)
           (lsp-handle-tl-check id params docs stdlib-roots)
           (compiler-check-reset-pools!)
-          (compiler-load-session-reset-interns!)
+          (compiler-check-reset-interns!)
           (compiler-load-session-program-cache-set-enabled! old-program-cache)
           unit))]
     [(string.eq method "tl/getType")
@@ -4853,10 +4853,10 @@
         (begin
           (compiler-load-session-program-cache-disable!)
           (compiler-check-reset-pools!)
-          (compiler-load-session-reset-interns!)
+          (compiler-check-reset-interns!)
           (lsp-handle-tl-get-type-at id params docs stdlib-roots)
           (compiler-check-reset-pools!)
-          (compiler-load-session-reset-interns!)
+          (compiler-check-reset-interns!)
           (compiler-load-session-program-cache-set-enabled! old-program-cache)
           unit))]
     [(string.eq method "tl/findReferences")

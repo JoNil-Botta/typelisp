@@ -324,7 +324,7 @@
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
@@ -389,7 +389,7 @@
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
@@ -998,7 +998,7 @@
             [(AstDecl.DefFn _ _ _ body _)
               (clone-test-expr-name-count pools body want)]
             [_ 0])
-          (clone-test-decl-list-name-count pools (box-get rest) want))])))
+          (clone-test-decl-list-name-count pools rest want))])))
 
 (cfg
   test
@@ -1076,7 +1076,7 @@
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin
@@ -1241,7 +1241,7 @@
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
             (let
-              [rest : AstDeclList (box-get rest)]
+              [rest : AstDeclList rest]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.Module next-module)
                   (begin

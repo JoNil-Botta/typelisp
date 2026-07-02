@@ -402,9 +402,9 @@
     [(AstProgram.Program decls-box)
       (match (ast-decl-list-step (box-get decls-box))
         [(AstDeclListStep.Cons _ rest)
-          (match (ast-decl-list-step (box-get rest))
+          (match (ast-decl-list-step rest)
             [(AstDeclListStep.Cons decl tail)
-              (match (ast-decl-list-step (box-get tail))
+              (match (ast-decl-list-step tail)
                 [(AstDeclListStep.Nil)
                   (match decl
                     [(AstDecl.DefFn fn-name _ _ body _)
@@ -502,13 +502,8 @@
         [(AstDecl.DefFn name _ _ body _)
           (if (string.eq (intern-str name) "__tl_specialized_scale_i64_7_none")
             (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
-            (compiler-driver-state-smoke-specialized-scale-decls-ok?
-              pools
-              (box-get rest)))]
-        [_
-          (compiler-driver-state-smoke-specialized-scale-decls-ok?
-            pools
-            (box-get rest))])]))
+            (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest))]
+        [_ (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest)])]))
 
 (define (compiler-driver-state-smoke-specialized-scale-program-ok?
   [pools : AstNodePoolContext]

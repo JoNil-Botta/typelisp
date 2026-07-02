@@ -2666,7 +2666,7 @@
     [(AstDeclPathListStep.Nil) 0]
     [(AstDeclPathListStep.Cons path rest)
       (let
-        [tail : AstDeclPathList (box-get rest)]
+        [tail : AstDeclPathList rest]
         (+
           (if (> (string.string-length path) 0)
             1
@@ -3239,8 +3239,7 @@
     [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
     [(AstDeclPathListStep.Cons path rest)
       (let
-        [tail : AstDeclPathList
-          (build-package-doctest-paths owner (box-get rest))]
+        [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
         (if (build-package-tlci-stdlib-path? owner path)
           tail
           (ast-decl-path-list-prepend-builder path tail)))]))

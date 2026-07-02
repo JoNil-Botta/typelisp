@@ -2316,7 +2316,7 @@
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (if (lint-decl-uses-import? decl alias module-name)
           true
           (lint-decl-list-uses-import? rest alias module-name)))]))
@@ -2486,7 +2486,7 @@
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (lint-unused-imports-in-decl-list
           source
           all-decls
@@ -3220,7 +3220,7 @@
     [(AstDeclListStep.Nil) shapes]
     [(AstDeclListStep.Cons decl rest)
       (lint-copy-on-update-collect-structs
-        (box-get rest)
+        rest
         (lint-copy-on-update-collect-structs-in-decl decl shapes))]))
 
 (define (lint-copy-on-update-structs-in-decl
@@ -3282,7 +3282,7 @@
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (lint-copy-on-update-structs-in-decl-list
-        (box-get rest)
+        rest
         shapes
         (lint-copy-on-update-structs-in-decl decl shapes acc))]))
 
@@ -4026,7 +4026,7 @@
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (lint-single-element-array-cells-in-decl-list
-        (box-get rest)
+        rest
         (lint-single-element-array-cells-in-decl decl acc))]))
 
 (define (lint-pending-assignment-find
@@ -4576,7 +4576,7 @@
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (lint-unused-assignments-in-decl-list
-        (box-get rest)
+        rest
         (lint-unused-assignments-in-decl decl acc))]))
 
 (defstruct LintSourceNameSpan
@@ -5057,7 +5057,7 @@
     [(AstDeclListStep.Nil) state]
     [(AstDeclListStep.Cons decl rest)
       (lint-redundant-function-names-in-decl-list-state
-        (box-get rest)
+        rest
         (lint-redundant-function-name-decl decl state))]))
 
 (define (lint-redundant-function-names-in-decl-list
@@ -6380,7 +6380,7 @@
     [(AstDeclListStep.Cons decl rest)
       (lint-unused-variables-in-decl-list
         source
-        (box-get rest)
+        rest
         (lint-unused-variables-in-decl source decl acc))]))
 
 ;: Walk every expression in `exprs`, accumulating findings.
@@ -7536,7 +7536,7 @@
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))
 
 (define (lint-program-with-source

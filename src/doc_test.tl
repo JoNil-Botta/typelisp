@@ -1991,7 +1991,7 @@
       (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
     [(AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList (box-get rest)]
+        [rest : AstDeclPathList rest]
         [normalized : String (compiler-load-normalize-path path)]
         [rooted : String
           (if (or

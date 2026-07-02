@@ -1831,7 +1831,7 @@
         (compiler-load-string-contains?
           (compiler-load-normalize-path path)
           needle)
-        (compiler-typecheck-smoke-paths-contain? (box-get rest) needle))]))
+        (compiler-typecheck-smoke-paths-contain? rest needle))]))
 
 (define (compiler-typecheck-smoke-prefix-cache-check-cfg
   [src : String]

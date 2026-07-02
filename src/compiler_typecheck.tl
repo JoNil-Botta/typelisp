@@ -338,7 +338,7 @@
     [(AstDeclListStep.Cons decl rest)
       (or
         (typecheck-compiler-source-decl-has-stdlib-import? decl)
-        (typecheck-compiler-source-decls-have-stdlib-import? (box-get rest)))]))
+        (typecheck-compiler-source-decls-have-stdlib-import? rest))]))
 
 (define (typecheck-compiler-source-program-has-stdlib-import?
   [program : AstProgram]) : bool

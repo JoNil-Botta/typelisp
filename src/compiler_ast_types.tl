@@ -1806,20 +1806,17 @@
   (Unsafe (Box AstDecl))
   (ComptimeDecl AstGeneratedDeclMeta (Box AstDecl)))
 
-(defstruct AstDeclListSlot
-  (value (Box AstDecl)))
-
 (comptime-decl
   (:generated vector-family AstDeclList "AstDecl")
   (defstruct AstDeclList
-    (slots (Array AstDeclListSlot))
+    (slots (Array AstDecl))
     (offset i64)
     (len i64)
     (prependable bool)))
 
 (defenum AstDeclListStep
   (Nil)
-  (Cons AstDecl (Box AstDeclList)))
+  (Cons AstDecl AstDeclList))
 
 (comptime-decl
   (:generated vector-family AstDeclPathList "String")
@@ -1831,7 +1828,7 @@
 
 (defenum AstDeclPathListStep
   (Nil)
-  (Cons String (Box AstDeclPathList)))
+  (Cons String AstDeclPathList))
 
 (comptime-decl
   (:generated vector-family AstDeclModuleList "String")
@@ -3317,7 +3314,7 @@
         (if (< capacity 1)
           1
           capacity)]
-      (AstDeclList (array.make-array AstDeclListSlot cap) 0 0 true))))
+      (AstDeclList (array.make-array AstDecl cap) 0 0 true))))
 
 (comptime-decl
   (:generated vector-family ast-decl-list-new "AstDecl")
@@ -3346,17 +3343,14 @@
     [index : i64]
     [fallback : AstDecl]) : AstDecl
     (if (and (>= index 0) (< index (ast-decl-list-len v)))
-      (box-get
-        (struct-get
-          (array-ref (struct-get v slots) (+ (struct-get v offset) index))
-          value))
+      (array-ref (struct-get v slots) (+ (struct-get v offset) index))
       fallback)))
 
 (comptime-decl
   (:generated vector-family ast-decl-list-copy-range "AstDecl")
   (define (ast-decl-list-copy-range
-    [dst : (&mut dst (Array AstDeclListSlot))]
-    [src : (& src (Array AstDeclListSlot))]
+    [dst : (&mut dst (Array AstDecl))]
+    [src : (& src (Array AstDecl))]
     [src-offset : i64]
     [index : i64]
     [count : i64]) : unit
@@ -3369,8 +3363,8 @@
 (comptime-decl
   (:generated vector-family ast-decl-list-copy-to "AstDecl")
   (define (ast-decl-list-copy-to
-    [dst : (&mut dst (Array AstDeclListSlot))]
-    [src : (& src (Array AstDeclListSlot))]
+    [dst : (&mut dst (Array AstDecl))]
+    [src : (& src (Array AstDecl))]
     [src-offset : i64]
     [dst-offset : i64]
     [index : i64]
@@ -3395,8 +3389,7 @@
         (if (< old-cap 1)
           1
           (* old-cap 2))]
-      [bigger : (Array AstDeclListSlot)
-        (array.make-array AstDeclListSlot new-cap)]
+      [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
       (begin
         (ast-decl-list-copy-range
           (&mut bigger)
@@ -3420,7 +3413,7 @@
       (let
         [index : i64 (+ (struct-get v offset) (struct-get v len))]
         (begin
-          (array-set! (struct-get v slots) index (AstDeclListSlot (box value)))
+          (array-set! (struct-get v slots) index value)
           (set! (struct-get v len) (+ (struct-get v len) 1)))))))
 
 (define (ast-decl-list-tail [items : AstDeclList]) : AstDeclList
@@ -3437,7 +3430,7 @@
     (AstDeclListStep.Nil)
     (AstDeclListStep.Cons
       (ast-decl-list-get (& items) 0 (ast-decl-fallback))
-      (box (ast-decl-list-tail items)))))
+      (ast-decl-list-tail items))))
 
 (define (ast-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -3456,10 +3449,7 @@
     (let
       [new-offset : i64 (- (struct-get rest offset) 1)]
       (begin
-        (array-set!
-          (struct-get rest slots)
-          new-offset
-          (AstDeclListSlot (box head)))
+        (array-set! (struct-get rest slots) new-offset head)
         (AstDeclList
           (struct-get rest slots)
           new-offset
@@ -3473,10 +3463,9 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (Array AstDeclListSlot)
-        (array.make-array AstDeclListSlot new-cap)]
+      [slots : (Array AstDecl) (array.make-array AstDecl new-cap)]
       (begin
-        (array-set! slots new-offset (AstDeclListSlot (box head)))
+        (array-set! slots new-offset head)
         (ast-decl-list-copy-to
           (&mut slots)
           (& (struct-get rest slots))
@@ -3796,7 +3785,7 @@
     (AstDeclPathListStep.Nil)
     (AstDeclPathListStep.Cons
       (ast-decl-path-list-get (& items) 0 "")
-      (box (ast-decl-path-list-tail items)))))
+      (ast-decl-path-list-tail items))))
 
 (define (ast-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]
@@ -4871,7 +4860,7 @@
               (ast-decl-list-push
                 (&mut out)
                 (ast-compaction-remap-decl remap decl))
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       out)))
 
 (define (ast-compaction-remap-program
@@ -5630,13 +5619,13 @@
           (match (ast-decl-list-step decls)
             [(AstDeclListStep.Cons first rest-box)
               (let
-                [rest : AstDeclList (box-get rest-box)]
+                [rest : AstDeclList rest-box]
                 (and
                   (compiler-ast-nested-decl-box-ok? first)
                   (match (ast-decl-list-step rest)
                     [(AstDeclListStep.Cons second done-box)
                       (let
-                        [done : AstDeclList (box-get done-box)]
+                        [done : AstDeclList done-box]
                         (and
                           (compiler-ast-decl-def-lit-ok? second "runtime" 9)
                           (match (ast-decl-list-step done)

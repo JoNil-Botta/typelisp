@@ -455,7 +455,7 @@
     [(AstDeclListStep.Nil) inputs]
     [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match (ast-decl-unwrapped decl)
           [(AstDecl.Extern _ _ metadata _)
             (source-tool-link-inputs-from-decls

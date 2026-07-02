@@ -328,56 +328,50 @@
   [acc : CloneNameSet]
   [module : String]) : CloneNameSet
   (let
-    [cur : AstDeclList decls]
     [out : CloneNameSet acc]
     [current-module : String module]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) unit]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-unwrapped decl)
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module (intern-str next-module))
-                    (set! cur rest))]
-                [(AstDecl.DefEnum name _ variants)
-                  (begin
-                    (if (clone-variant-list-able?
-                      pools
-                      variants
-                      names
-                      current-module)
-                      (set!
-                        out
-                        (clone-name-set-insert
-                          out
-                          (clone-type-name-canonical
-                            current-module
-                            (intern-str name))))
-                      unit)
-                    (set! cur rest))]
-                [(AstDecl.DefStruct name _ _ fields)
-                  (begin
-                    (if (clone-struct-fields-able?
-                      pools
-                      fields
-                      names
-                      current-module)
-                      (set!
-                        out
-                        (clone-name-set-insert
-                          out
-                          (clone-type-name-canonical
-                            current-module
-                            (intern-str name))))
-                      unit)
-                    (set! cur rest))]
-                [_ (set! cur rest)]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match (ast-decl-unwrapped decl)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefEnum name _ variants)
+                (if (clone-variant-list-able?
+                  pools
+                  variants
+                  names
+                  current-module)
+                  (set!
+                    out
+                    (clone-name-set-insert
+                      out
+                      (clone-type-name-canonical
+                        current-module
+                        (intern-str name))))
+                  unit)]
+              [(AstDecl.DefStruct name _ _ fields)
+                (if (clone-struct-fields-able?
+                  pools
+                  fields
+                  names
+                  current-module)
+                  (set!
+                    out
+                    (clone-name-set-insert
+                      out
+                      (clone-type-name-canonical
+                        current-module
+                        (intern-str name))))
+                  unit)]
+              [_ unit])
+            (set! index (+ index 1)))))
       out)))
 
 (define (clone-fixpoint-step
@@ -393,44 +387,34 @@
   [acc : CloneNameSet]
   [module : String]) : CloneNameSet
   (let
-    [cur : AstDeclList decls]
     [out : CloneNameSet acc]
     [current-module : String module]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) unit]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-unwrapped decl)
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module (intern-str next-module))
-                    (set! cur rest))]
-                [(AstDecl.DefEnum name _ _)
-                  (begin
-                    (set!
-                      out
-                      (clone-name-set-insert
-                        out
-                        (clone-type-name-canonical
-                          current-module
-                          (intern-str name))))
-                    (set! cur rest))]
-                [(AstDecl.DefStruct name _ _ _)
-                  (begin
-                    (set!
-                      out
-                      (clone-name-set-insert
-                        out
-                        (clone-type-name-canonical
-                          current-module
-                          (intern-str name))))
-                    (set! cur rest))]
-                [_ (set! cur rest)]))]))
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match (ast-decl-unwrapped decl)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefEnum name _ _)
+                (set!
+                  out
+                  (clone-name-set-insert
+                    out
+                    (clone-type-name-canonical current-module (intern-str name))))]
+              [(AstDecl.DefStruct name _ _ _)
+                (set!
+                  out
+                  (clone-name-set-insert
+                    out
+                    (clone-type-name-canonical current-module (intern-str name))))]
+              [_ unit])
+            (set! index (+ index 1)))))
       out)))
 
 (define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameSet]) : CloneNameSet

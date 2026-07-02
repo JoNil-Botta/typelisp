@@ -7867,12 +7867,7 @@
       result)))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 0]
-    [(AstDeclListStep.Cons _ rest)
-      (let
-        [rest : AstDeclList rest]
-        (+ 1 (ast-decl-list-count rest)))]))
+  (ast-decl-list-len (& decls)))
 
 (define (ast-decl-list-tag-sum [decls : AstDeclList]) : i64
   (match (ast-decl-list-step decls)

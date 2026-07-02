@@ -486,9 +486,7 @@
     (begin
       (while (>= index 0)
         (begin
-          (ast-decl-list-push
-            (&mut result)
-            (ast-decl-list-get (& items) index (ast-decl-fallback)))
+          (ast-decl-list-push (&mut result) (ast-decl-list-ref items index))
           (set! index (- index 1))))
       (ast-decl-list-append-from (&mut result) (& out) 0)
       result)))

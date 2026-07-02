@@ -41408,6 +41408,94 @@
       (macro-decl-path-list-append-from (&mut out) (& right))
       out)))
 
+(define (macro-decl-list-current-suffix [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+  (let
+    [offset : i64 (struct-get rest offset)]
+    (if (> offset 0)
+      (let
+        [head-offset : i64 (- offset 1)]
+        (begin
+          (array-set! (struct-get rest slots) head-offset head)
+          (AstDeclList
+            (struct-get rest slots)
+            head-offset
+            (+ (struct-get rest len) 1)
+            false)))
+      (ast-decl-cons head rest))))
+
+(define (macro-decl-path-list-current-suffix
+  [head : String]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (let
+    [offset : i64 (struct-get rest offset)]
+    (if (> offset 0)
+      (let
+        [head-offset : i64 (- offset 1)]
+        (begin
+          (array-set! (struct-get rest slots) head-offset head)
+          (AstDeclPathList
+            (struct-get rest slots)
+            head-offset
+            (+ (struct-get rest len) 1)
+            false)))
+      (ast-decl-path-cons head rest))))
+
+(define (macro-decl-list-prefix-rev-current-suffix
+  [prefix-rev : AstDeclList]
+  [suffix : AstDeclList]) : AstDeclList
+  (let
+    [prefix-count : i64 (ast-decl-list-len (& prefix-rev))]
+    [suffix-offset : i64 (struct-get suffix offset)]
+    (if (<= prefix-count suffix-offset)
+      (let
+        [cursor : AstDeclList prefix-rev]
+        [write-index : i64 (- suffix-offset 1)]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (match (ast-decl-list-step cursor)
+              [(AstDeclListStep.Nil) (set! done true)]
+              [(AstDeclListStep.Cons decl rest)
+                (begin
+                  (array-set! (struct-get suffix slots) write-index decl)
+                  (set! write-index (- write-index 1))
+                  (set! cursor rest))]))
+          (AstDeclList
+            (struct-get suffix slots)
+            (- suffix-offset prefix-count)
+            (+ prefix-count (struct-get suffix len))
+            false)))
+      (macro-decl-list-append (macro-decl-list-reverse prefix-rev) suffix))))
+
+(define (macro-decl-path-list-prefix-rev-current-suffix
+  [prefix-rev : AstDeclPathList]
+  [suffix : AstDeclPathList]) : AstDeclPathList
+  (let
+    [prefix-count : i64 (ast-decl-path-list-len (& prefix-rev))]
+    [suffix-offset : i64 (struct-get suffix offset)]
+    (if (<= prefix-count suffix-offset)
+      (let
+        [cursor : AstDeclPathList prefix-rev]
+        [write-index : i64 (- suffix-offset 1)]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (match (ast-decl-path-list-step cursor)
+              [(AstDeclPathListStep.Nil) (set! done true)]
+              [(AstDeclPathListStep.Cons path rest)
+                (begin
+                  (array-set! (struct-get suffix slots) write-index path)
+                  (set! write-index (- write-index 1))
+                  (set! cursor rest))]))
+          (AstDeclPathList
+            (struct-get suffix slots)
+            (- suffix-offset prefix-count)
+            (+ prefix-count (struct-get suffix len))
+            false)))
+      (macro-decl-path-list-append
+        (macro-decl-path-list-reverse prefix-rev)
+        suffix))))
+
 (define (macro-followup-work-list-empty? [items : MacroFollowupWorkList]) : bool
   (match items
     [(MacroFollowupWorkList.Nil) true]
@@ -45992,45 +46080,40 @@
   [current-module-id : i64]
   [alias : String]
   [module-id : i64]) : TcMaybeString
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (TcMaybeString.No)]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match (ast-decl-unwrapped decl)
-          [(AstDecl.Module next-module)
-            (macro-import-alias-target-ids
-              rest
-              current-module-id
-              alias
-              next-module)]
-          [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
-            (match maybe-alias
-              [(AstMaybeImportAlias.Some import-alias)
-                (if (and
-                  (= module-id current-module-id)
-                  (string.eq import-alias alias))
-                  (match expected
-                    [(AstMaybeModuleName.Some target)
-                      (TcMaybeString.Some target)]
-                    [(AstMaybeModuleName.No) (TcMaybeString.Some alias)])
-                  (macro-import-alias-target-ids
-                    rest
-                    current-module-id
-                    alias
-                    module-id))]
-              [(AstMaybeImportAlias.No)
-                (macro-import-alias-target-ids
-                  rest
-                  current-module-id
-                  alias
-                  module-id)])]
-          [_
-            (macro-import-alias-target-ids
-              rest
-              current-module-id
-              alias
-              module-id)]))]))
+  (let
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [cur-module-id : i64 module-id]
+    [result : TcMaybeString (TcMaybeString.No)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match (ast-decl-unwrapped decl)
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+                (match maybe-alias
+                  [(AstMaybeImportAlias.Some import-alias)
+                    (if (and
+                      (= cur-module-id current-module-id)
+                      (string.eq import-alias alias))
+                      (begin
+                        (set!
+                          result
+                          (match expected
+                            [(AstMaybeModuleName.Some target)
+                              (TcMaybeString.Some target)]
+                            [(AstMaybeModuleName.No) (TcMaybeString.Some alias)]))
+                        (set! done true))
+                      unit)]
+                  [(AstMaybeImportAlias.No) unit])]
+              [_ unit])
+            (set! index (+ index 1)))))
+      result)))
 
 ;; --- import-aware macro resolution caches -------------------------------------
 ;;
@@ -46370,58 +46453,43 @@
   [current-module-id : i64]
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (macro-flat-import-target-list-reverse targets)]
-    [(AstDeclListStep.Cons decl rest-box)
-      (let
-        [rest : AstDeclList rest-box]
-        (match (ast-decl-unwrapped decl)
-          [(AstDecl.Module next-module)
-            (macro-flat-import-targets-from-list
-              rest
-              current-module-id
-              next-module
-              targets)]
-          [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
-            (match maybe-alias
-              [(AstMaybeImportAlias.Some alias)
-                (if (and (= module-id current-module-id) (string.eq alias ""))
-                  (match expected
-                    [(AstMaybeModuleName.Some target-module)
-                      (let
-                        [target-id : i64 (intern target-module)]
-                        (macro-flat-import-targets-from-list
-                          rest
-                          current-module-id
-                          module-id
-                          (if (= target-id current-module-id)
-                            targets
-                            (macro-flat-import-target-list-add
-                              targets
-                              target-id))))]
-                    [(AstMaybeModuleName.No)
-                      (macro-flat-import-targets-from-list
-                        rest
-                        current-module-id
-                        module-id
-                        targets)])
-                  (macro-flat-import-targets-from-list
-                    rest
-                    current-module-id
-                    module-id
-                    targets))]
-              [(AstMaybeImportAlias.No)
-                (macro-flat-import-targets-from-list
-                  rest
-                  current-module-id
-                  module-id
-                  targets)])]
-          [_
-            (macro-flat-import-targets-from-list
-              rest
-              current-module-id
-              module-id
-              targets)]))]))
+  (let
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [cur-module-id : i64 module-id]
+    [cur-targets : MacroFlatImportTargetList targets]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match (ast-decl-unwrapped decl)
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+                (match maybe-alias
+                  [(AstMaybeImportAlias.Some alias)
+                    (if (and
+                      (= cur-module-id current-module-id)
+                      (string.eq alias ""))
+                      (match expected
+                        [(AstMaybeModuleName.Some target-module)
+                          (let
+                            [target-id : i64 (intern target-module)]
+                            (if (= target-id current-module-id)
+                              unit
+                              (set!
+                                cur-targets
+                                (macro-flat-import-target-list-add
+                                  cur-targets
+                                  target-id))))]
+                        [(AstMaybeModuleName.No) unit])
+                      unit)]
+                  [(AstMaybeImportAlias.No) unit])]
+              [_ unit])
+            (set! index (+ index 1)))))
+      (macro-flat-import-target-list-reverse cur-targets))))
 
 (define (macro-flat-import-targets
   [decls : AstDeclList]
@@ -54574,12 +54642,12 @@
                         (set!
                           result
                           (ResultMacroDeclsWithPaths.Ok
-                            (macro-decl-list-append
-                              (macro-decl-list-reverse out-rev)
-                              (ast-decl-list-prepend-builder decl rest))
-                            (macro-decl-path-list-append
-                              (macro-decl-path-list-reverse out-paths-rev)
-                              (ast-decl-path-list-prepend-builder
+                            (macro-decl-list-prefix-rev-current-suffix
+                              out-rev
+                              (macro-decl-list-current-suffix decl rest))
+                            (macro-decl-path-list-prefix-rev-current-suffix
+                              out-paths-rev
+                              (macro-decl-path-list-current-suffix
                                 decl-path
                                 rest-paths))
                             (macro-followup-work-at
@@ -54749,12 +54817,12 @@
                         (set!
                           result
                           (ResultMacroDeclsWithPaths.Ok
-                            (macro-decl-list-append
-                              (macro-decl-list-reverse out-rev)
-                              (ast-decl-list-prepend-builder decl rest))
-                            (macro-decl-path-list-append
-                              (macro-decl-path-list-reverse out-paths-rev)
-                              (ast-decl-path-list-prepend-builder
+                            (macro-decl-list-prefix-rev-current-suffix
+                              out-rev
+                              (macro-decl-list-current-suffix decl rest))
+                            (macro-decl-path-list-prefix-rev-current-suffix
+                              out-paths-rev
+                              (macro-decl-path-list-current-suffix
                                 decl-path
                                 rest-paths))
                             (macro-followup-work-at
@@ -55957,7 +56025,10 @@
                 (and
                   has-pass-followup
                   (macro-local-followup-work-supported? pass-followup-work))]
-              [can-process-local-module-placeholder : bool false]
+              [can-process-local-module-placeholder : bool
+                (and
+                  has-module-placeholder-followup
+                  (macro-local-followup-work-supported? module-placeholder-work))]
               (cond
                 [can-process-local-pass-followup
                   (match (macro-expand-local-followup-with-setup
@@ -55999,15 +56070,13 @@
                         local-normalized-paths
                         remaining-work)
                       (if (macro-followup-work-list-empty? remaining-work)
-                        (macro-expand-finish-materialized
+                        (macro-expand-program-with-paths-loop-and-pools
                           local-normalized
                           local-normalized-paths
-                          MacroFollowupWorkList.Nil
-                          MacroFollowupWorkList.Nil
                           pools
                           stdlib-roots
                           cfgs
-                          fuel)
+                          (- fuel 1))
                         (macro-expand-finish-materialized
                           local-normalized
                           local-normalized-paths
@@ -57275,63 +57344,57 @@
   (if (<= count 0)
     (ast-decl-list-new)
     (let
-      [cursor : AstDeclList decls]
-      [remaining : i64 count]
-      [out : AstDeclList (ast-decl-list-with-capacity count)]
-      [done : bool false]
-      (begin
-        (while (not done)
-          (if (<= remaining 0)
-            (set! done true)
-            (match (ast-decl-list-step cursor)
-              [(AstDeclListStep.Nil) (set! done true)]
-              [(AstDeclListStep.Cons decl rest)
-                (begin
-                  (ast-decl-list-push (&mut out) decl)
-                  (set! cursor rest)
-                  (set! remaining (- remaining 1)))])))
-        out))))
+      [len : i64 (ast-decl-list-len (& decls))]
+      [take-count : i64
+        (if (< count len)
+          count
+          len)]
+      (AstDeclList
+        (struct-get decls slots)
+        (struct-get decls offset)
+        take-count
+        false))))
 
 (define (tc-decl-path-list-take [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
   (if (<= count 0)
     (ast-decl-path-list-new)
     (let
-      [cursor : AstDeclPathList paths]
-      [remaining : i64 count]
-      [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
-      [done : bool false]
-      (begin
-        (while (not done)
-          (if (<= remaining 0)
-            (set! done true)
-            (match (ast-decl-path-list-step cursor)
-              [(AstDeclPathListStep.Nil) (set! done true)]
-              [(AstDeclPathListStep.Cons path rest)
-                (begin
-                  (ast-decl-path-list-push (&mut out) path)
-                  (set! cursor rest)
-                  (set! remaining (- remaining 1)))])))
-        out))))
+      [len : i64 (ast-decl-path-list-len (& paths))]
+      [take-count : i64
+        (if (< count len)
+          count
+          len)]
+      (AstDeclPathList
+        (struct-get paths slots)
+        (struct-get paths offset)
+        take-count
+        false))))
 
 (define (tc-decl-list-drop [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
     decls
-    (match (ast-decl-list-step decls)
-      [(AstDeclListStep.Nil) (ast-decl-list-new)]
-      [(AstDeclListStep.Cons _ rest)
-        (let
-          [rest : AstDeclList rest]
-          (tc-decl-list-drop rest (- count 1)))])))
+    (let
+      [len : i64 (ast-decl-list-len (& decls))]
+      (if (>= count len)
+        (ast-decl-list-new)
+        (AstDeclList
+          (struct-get decls slots)
+          (+ (struct-get decls offset) count)
+          (- len count)
+          false)))))
 
 (define (tc-decl-path-list-drop [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
   (if (<= count 0)
     paths
-    (match (ast-decl-path-list-step paths)
-      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
-      [(AstDeclPathListStep.Cons _ rest)
-        (let
-          [rest : AstDeclPathList rest]
-          (tc-decl-path-list-drop rest (- count 1)))])))
+    (let
+      [len : i64 (ast-decl-path-list-len (& paths))]
+      (if (>= count len)
+        (ast-decl-path-list-new)
+        (AstDeclPathList
+          (struct-get paths slots)
+          (+ (struct-get paths offset) count)
+          (- len count)
+          false)))))
 
 (define (tc-check-decls-with-paths-cold
   [ctx : TcContext]

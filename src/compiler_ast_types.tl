@@ -4730,6 +4730,11 @@
       fallback)))
 
 (comptime-decl
+  (:generated vector-family ast-decl-list-ref "AstDecl")
+  (define (ast-decl-list-ref [v : AstDeclList] [index : i64]) : AstDecl
+    (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
+
+(comptime-decl
   (:generated vector-family ast-decl-list-copy-range "AstDecl")
   (define (ast-decl-list-copy-range
     [dst : (&mut dst (Array AstDecl))]
@@ -4809,11 +4814,14 @@
       false)))
 
 (define (ast-decl-list-step [items : AstDeclList]) : AstDeclListStep
-  (if (ast-decl-list-empty? (& items))
-    (AstDeclListStep.Nil)
-    (AstDeclListStep.Cons
-      (ast-decl-list-get (& items) 0 (ast-decl-fallback))
-      (ast-decl-list-tail items))))
+  (let
+    [len : i64 (struct-get items len)]
+    [offset : i64 (struct-get items offset)]
+    (if (<= len 0)
+      (AstDeclListStep.Nil)
+      (AstDeclListStep.Cons
+        (array-ref (struct-get items slots) offset)
+        (AstDeclList (struct-get items slots) (+ offset 1) (- len 1) false)))))
 
 (define (ast-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -5077,6 +5085,11 @@
       fallback)))
 
 (comptime-decl
+  (:generated vector-family ast-decl-path-list-ref "String")
+  (define (ast-decl-path-list-ref [v : AstDeclPathList] [index : i64]) : String
+    (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
+
+(comptime-decl
   (:generated vector-family ast-decl-path-list-copy-range "String")
   (define (ast-decl-path-list-copy-range
     [dst : (&mut dst (Array String))]
@@ -5164,11 +5177,14 @@
       false)))
 
 (define (ast-decl-path-list-step [items : AstDeclPathList]) : AstDeclPathListStep
-  (if (ast-decl-path-list-empty? (& items))
-    (AstDeclPathListStep.Nil)
-    (AstDeclPathListStep.Cons
-      (ast-decl-path-list-get (& items) 0 "")
-      (ast-decl-path-list-tail items))))
+  (let
+    [len : i64 (struct-get items len)]
+    [offset : i64 (struct-get items offset)]
+    (if (<= len 0)
+      (AstDeclPathListStep.Nil)
+      (AstDeclPathListStep.Cons
+        (array-ref (struct-get items slots) offset)
+        (AstDeclPathList (struct-get items slots) (+ offset 1) (- len 1) false)))))
 
 (define (ast-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]

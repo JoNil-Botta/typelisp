@@ -11573,101 +11573,6 @@
         (>= uses 2)
         (>= (compiler-reg-call-region-stat-net stat ends) 2))]))
 
-;; M-G2b diagnostic probe (--cfg mg2b-debug, inert otherwise): dump every
-;; spilled candidate's gate bits, region rows and register decision on
-;; stderr -- the per-call-region analogue of the regalloc-census lines.
-(cfg
-  mg2b-debug
-  (define (compiler-reg-call-region-debug-rows!
-    [root : i64]
-    [rows : CompilerRegCallRegionStatList]
-    [ends : (Array i64)]) : unit
-    (match rows
-      [(CompilerRegCallRegionStatNil) unit]
-      [(CompilerRegCallRegionStatCons stat rest)
-        (begin
-          (match stat
-            [(CompilerRegCallRegionStat _ lo hi uses defs firstdef depth)
-              (io.print-error
-                (str_cat.str-cat
-                  "mg2brow|root="
-                  (string.int->string root)
-                  "|lo="
-                  (string.int->string lo)
-                  "|hi="
-                  (string.int->string hi)
-                  "|uses="
-                  (string.int->string uses)
-                  "|defs="
-                  (string.int->string defs)
-                  "|firstdef="
-                  (string.int->string firstdef)
-                  "|depth="
-                  (string.int->string depth)
-                  "|net="
-                  (string.int->string
-                    (compiler-reg-call-region-stat-net stat ends))
-                  "\n"))])
-          (compiler-reg-call-region-debug-rows! root (box-get rest) ends))])))
-
-(cfg
-  mg2b-debug
-  (define (compiler-reg-call-region-debug-conflicts!
-    [occ-var : (Array i64)]
-    [occ-reg : (Array i64)]
-    [occ-n : i64]
-    [interval-index : CompilerRegIntervalIndex]
-    [root : i64]
-    [pool-count : i64]
-    [picked-lo : (Array i64)]
-    [picked-hi : (Array i64)]
-    [k : i64]
-    [chosen : i64]) : unit
-    (let
-      [pix : i64 0]
-      [msg : String
-        (str_cat.str-cat
-          "mg2bpick|root="
-          (string.int->string root)
-          "|k="
-          (string.int->string k)
-          "|chosen="
-          (string.int->string chosen))]
-      (begin
-        (while (< pix pool-count)
-          (let
-            [j : i64 0]
-            [confl : i64 (- 0 1)]
-            (begin
-              (while (< j k)
-                (let
-                  [q : i64 0]
-                  (begin
-                    (while (< q occ-n)
-                      (begin
-                        (if (and
-                              (< confl 0)
-                              (= (array.array-ref occ-reg q) pix)
-                              (compiler-reg-call-region-var-overlaps?
-                                interval-index
-                                (array.array-ref occ-var q)
-                                (array.array-ref picked-lo j)
-                                (array.array-ref picked-hi j)))
-                          (set! confl (array.array-ref occ-var q))
-                          unit)
-                        (set! q (+ q 1))))
-                    (set! j (+ j 1)))))
-              (set!
-                msg
-                (str_cat.str-cat
-                  msg
-                  "|p"
-                  (string.int->string pix)
-                  "="
-                  (string.int->string confl)))
-              (set! pix (+ pix 1)))))
-        (io.print-error (str_cat.str-cat msg "\n"))))))
-
 (define (compiler-reg-call-region-picked?
   [picked-lo : (Array i64)]
   [k : i64]
@@ -11836,38 +11741,6 @@
       (match interval
         [(CompilerRegInterval var start end)
           (begin
-          (cfg
-            mg2b-debug
-            (if (match (compiler-reg-assignment-table-lookup assignments var)
-              [(CompilerRegSomeLocation location)
-                (match location
-                  [(CompilerRegSpill _) true]
-                  [_ false])]
-              [(CompilerRegNoLocation) false])
-              (io.print-error
-                (str_cat.str-cat
-                  "mg2bcand|var="
-                  (string.int->string var)
-                  "|start="
-                  (string.int->string start)
-                  "|end="
-                  (string.int->string end)
-                  "|remat="
-                  (string.int->string (array.array-ref root-has-remat var))
-                  "|kind0="
-                  (if (compiler-reg-call-set-in-range? kind0 start end)
-                    "1"
-                    "0")
-                  "|tyok="
-                  (match (compiler-reg-loop-split-type-ok?
-                    type-info
-                    group-vars
-                    var)
-                    [(CompilerRegSomeType _) "1"]
-                    [(CompilerRegNoType) "0"])
-                  "\n"))
-              unit)
-            unit)
           (if (and
                 (>= var 0)
                 (< var n)
@@ -12115,10 +11988,6 @@
                       [more : bool true]
                       (begin
                         (compiler-reg-fill-i64-array picked-lo (- 0 1))
-                        (cfg
-                          mg2b-debug
-                          (compiler-reg-call-region-debug-rows! root rows vend)
-                          unit)
                         ;; pick up to `cap` best rows by net*depth score
                         (while (and more (< k cap))
                           (match (compiler-reg-call-region-best-from
@@ -12173,12 +12042,6 @@
                                         (set! j (+ j 1))))
                                     (if free (set! chosen pix) unit)
                                     (set! pix (+ pix 1)))))
-                              (cfg
-                                mg2b-debug
-                                (compiler-reg-call-region-debug-conflicts!
-                                  occ-var occ-reg occ-n interval-index root
-                                  pool-count picked-lo picked-hi k chosen)
-                                unit)
                               (if (>= chosen 0)
                                 (let
                                   [j : i64 0]

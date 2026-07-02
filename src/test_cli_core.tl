@@ -783,7 +783,7 @@
           "ok"
           (AstMaybeType.Some (AstType.I32))
           (tltest-windows-write-file-call))
-        AstLetBindingList.Nil))
+        (ast-let-binding-list-new)))
     (ast-expr-if
       (ast-expr-binary
         (AstBinOp.Eq)
@@ -1076,37 +1076,46 @@
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match bindings
-    [(AstLetBindingList.Nil) names]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (tltest-reach-mark-let-bindings
-                rest
-                (tltest-reach-mark-expr value names)))]))]))
+  (tltest-reach-mark-let-bindings-at (& bindings) names 0))
+
+(define (tltest-reach-mark-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-let-binding-list-len bindings))
+    names
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (tltest-reach-mark-let-bindings-at
+            bindings
+            (tltest-reach-mark-expr value names)
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match bindings
-    [(AstResourceBindingList.Nil) names]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (tltest-reach-mark-resource-bindings
-                rest
-                (tltest-reach-mark-expr
-                  cleanup
-                  (tltest-reach-mark-expr init names))))]))]))
+  (tltest-reach-mark-resource-bindings-at (& bindings) names 0))
+
+(define (tltest-reach-mark-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-resource-binding-list-len bindings))
+    names
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (tltest-reach-mark-resource-bindings-at
+            bindings
+            (tltest-reach-mark-expr cleanup (tltest-reach-mark-expr init names))
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]

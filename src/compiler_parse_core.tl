@@ -180,12 +180,20 @@
   (Ok AstLetBindingList)
   (Err String))
 
+(defenum ResultAstLetBindingListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstResourceBinding
   (Ok AstResourceBinding)
   (Err String))
 
 (defenum ResultAstResourceBindingList
   (Ok AstResourceBindingList)
+  (Err String))
+
+(defenum ResultAstResourceBindingListBuild
+  (Ok)
   (Err String))
 
 (defenum ResultAstLetParts
@@ -3421,59 +3429,70 @@
         [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
     [_ (ResultAstLetBinding.Err "parse: malformed let binding")]))
 
+(define (parse-ast-let-binding-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]
+  [out : (&mut out AstLetBindingList)]) : ResultAstLetBindingListBuild
+  (match s
+    [(SpannedSexpr.Nil _) (ResultAstLetBindingListBuild.Ok)]
+    [(SpannedSexpr.Cons head tail _)
+      (match (parse-ast-let-binding dispatch pools (sp-node-get head))
+        [(ResultAstLetBinding.Ok parsed-head)
+          (begin
+            (ast-let-binding-list-push out parsed-head)
+            (parse-ast-let-binding-list-into
+              dispatch
+              pools
+              (sp-node-get tail)
+              out))]
+        [(ResultAstLetBinding.Err message)
+          (ResultAstLetBindingListBuild.Err message)])]
+    [_ (ResultAstLetBindingListBuild.Err "parse: malformed let binding list")]))
+
 (define (parse-ast-let-binding-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstLetBindingList
-  (match s
-    [(SpannedSexpr.Nil _) (ResultAstLetBindingList.Ok AstLetBindingList.Nil)]
-    [(SpannedSexpr.Cons head tail _)
-      (match (parse-ast-let-binding dispatch pools (sp-node-get head))
-        [(ResultAstLetBinding.Ok parsed-head)
-          (match (parse-ast-let-binding-list dispatch pools (sp-node-get tail))
-            [(ResultAstLetBindingList.Ok parsed-tail)
-              (ResultAstLetBindingList.Ok
-                (ast-let-binding-cons parsed-head parsed-tail))]
-            [(ResultAstLetBindingList.Err message)
-              (ResultAstLetBindingList.Err message)])]
-        [(ResultAstLetBinding.Err message)
-          (ResultAstLetBindingList.Err message)])]
-    [_ (ResultAstLetBindingList.Err "parse: malformed let binding list")]))
+  (let
+    [out : AstLetBindingList (ast-let-binding-list-new)]
+    (match (parse-ast-let-binding-list-into dispatch pools s (&mut out))
+      [(ResultAstLetBindingListBuild.Ok) (ResultAstLetBindingList.Ok out)]
+      [(ResultAstLetBindingListBuild.Err message)
+        (ResultAstLetBindingList.Err message)])))
 
-(define (ast-let-binding-list-empty? [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) true]
-    [_ false]))
-
-(define (parse-ast-let-flat-tail
+(define (parse-ast-let-flat-tail-into
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [rest : SpannedSexpr]) : ResultAstLetParts
+  [rest : SpannedSexpr]
+  [out : (&mut out AstLetBindingList)]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons head tail _)
       (match (sp-node-get head)
         [(SpannedSexpr.BracketList _ _)
           (match (parse-ast-let-binding dispatch pools (sp-node-get head))
             [(ResultAstLetBinding.Ok parsed-head)
-              (match (parse-ast-let-flat-tail dispatch pools (sp-node-get tail))
-                [(ResultAstLetParts.Ok parsed-tail parsed-body)
-                  (ResultAstLetParts.Ok
-                    (ast-let-binding-cons parsed-head parsed-tail)
-                    parsed-body)]
-                [(ResultAstLetParts.Err message)
-                  (ResultAstLetParts.Err message)])]
-            [(ResultAstLetBinding.Err message) (ResultAstLetParts.Err message)])]
-        [_
-          (match (parse-ast-body-tail
-            dispatch
-            pools
-            rest
-            "parse: let missing body")
-            [(ResultAstExpr.Ok parsed-body)
-              (ResultAstLetParts.Ok AstLetBindingList.Nil parsed-body)]
-            [(ResultAstExpr.Err message) (ResultAstLetParts.Err message)])])]
-    [(SpannedSexpr.Nil _) (ResultAstLetParts.Err "parse: let missing body")]
-    [_ (ResultAstLetParts.Err "parse: malformed let")]))
+              (begin
+                (ast-let-binding-list-push out parsed-head)
+                (parse-ast-let-flat-tail-into
+                  dispatch
+                  pools
+                  (sp-node-get tail)
+                  out))]
+            [(ResultAstLetBinding.Err message) (ResultAstExpr.Err message)])]
+        [_ (parse-ast-body-tail dispatch pools rest "parse: let missing body")])]
+    [(SpannedSexpr.Nil _) (ResultAstExpr.Err "parse: let missing body")]
+    [_ (ResultAstExpr.Err "parse: malformed let")]))
+
+(define (parse-ast-let-flat-tail
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstLetParts
+  (let
+    [out : AstLetBindingList (ast-let-binding-list-new)]
+    (match (parse-ast-let-flat-tail-into dispatch pools rest (&mut out))
+      [(ResultAstExpr.Ok parsed-body) (ResultAstLetParts.Ok out parsed-body)]
+      [(ResultAstExpr.Err message) (ResultAstLetParts.Err message)])))
 
 (define (parse-ast-let-flat
   [dispatch : sym_i64_env.SymI64Env]
@@ -3529,7 +3548,7 @@
                 (sp-node-get tail)
                 "parse: let missing body")
                 [(ResultAstExpr.Ok parsed-body)
-                  (if (ast-let-binding-list-empty? parsed-bindings)
+                  (if (ast-let-binding-list-empty? (& parsed-bindings))
                     (ResultAstExpr.Ok parsed-body)
                     (ResultAstExpr.Ok
                       (ast-expr-let-with-pools
@@ -4957,28 +4976,44 @@
       (ResultAstResourceBinding.Err
         "parse: with binding must use bracket syntax")]))
 
+(define (parse-ast-resource-binding-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [bindings : SpannedSexpr]
+  [out : (&mut out AstResourceBindingList)]) : ResultAstResourceBindingListBuild
+  (match bindings
+    [(SpannedSexpr.Nil _) (ResultAstResourceBindingListBuild.Ok)]
+    [(SpannedSexpr.Cons head rest _)
+      (match (parse-ast-resource-binding dispatch pools (sp-node-get head))
+        [(ResultAstResourceBinding.Ok parsed-head)
+          (begin
+            (ast-resource-binding-list-push out parsed-head)
+            (parse-ast-resource-binding-list-into
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstResourceBinding.Err message)
+          (ResultAstResourceBindingListBuild.Err message)])]
+    [_
+      (ResultAstResourceBindingListBuild.Err
+        "parse: malformed with binding list")]))
+
 (define (parse-ast-resource-binding-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [bindings : SpannedSexpr]) : ResultAstResourceBindingList
-  (match bindings
-    [(SpannedSexpr.Nil _)
-      (ResultAstResourceBindingList.Ok AstResourceBindingList.Nil)]
-    [(SpannedSexpr.Cons head rest _)
-      (match (parse-ast-resource-binding dispatch pools (sp-node-get head))
-        [(ResultAstResourceBinding.Ok parsed-head)
-          (match (parse-ast-resource-binding-list
-            dispatch
-            pools
-            (sp-node-get rest))
-            [(ResultAstResourceBindingList.Ok parsed-rest)
-              (ResultAstResourceBindingList.Ok
-                (ast-resource-binding-cons parsed-head parsed-rest))]
-            [(ResultAstResourceBindingList.Err message)
-              (ResultAstResourceBindingList.Err message)])]
-        [(ResultAstResourceBinding.Err message)
-          (ResultAstResourceBindingList.Err message)])]
-    [_ (ResultAstResourceBindingList.Err "parse: malformed with binding list")]))
+  (let
+    [out : AstResourceBindingList (ast-resource-binding-list-new)]
+    (match (parse-ast-resource-binding-list-into
+      dispatch
+      pools
+      bindings
+      (&mut out))
+      [(ResultAstResourceBindingListBuild.Ok)
+        (ResultAstResourceBindingList.Ok out)]
+      [(ResultAstResourceBindingListBuild.Err message)
+        (ResultAstResourceBindingList.Err message)])))
 
 (define (parse-ast-with-resource
   [dispatch : sym_i64_env.SymI64Env]
@@ -7851,12 +7886,7 @@
 
 (define (compiler-parse-resource-binding-count
   [bindings : AstResourceBindingList]) : i64
-  (match bindings
-    [(AstResourceBindingList.Nil) 0]
-    [(AstResourceBindingList.Cons _ rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (+ 1 (compiler-parse-resource-binding-count rest)))]))
+  (ast-resource-binding-list-len (& bindings)))
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls

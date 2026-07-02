@@ -281,6 +281,10 @@
   (Ok LowerSpmdInlineLetBindings)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultLowerSpmdInlineLetBindingsBuild
+  (Ok LowerSpmdInlineSubst LowerStringSet)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultLowerSpmdInlineSubst
   (Ok LowerSpmdInlineSubst)
   (Err (Box CompilerDiagnostic)))
@@ -3275,70 +3279,75 @@
   [bindings : AstLetBindingList]
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerStringSet]) : ResultLowerSpmdInlineLetBindings
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultLowerSpmdInlineLetBindings.Ok
-        (LowerSpmdInlineLetBindings.Bindings
-          AstLetBindingList.Nil
-          subst
-          shadowed))]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (lower-context-expr-get ctx init-box)]
-              [name-text : String (intern-str name)]
-              [renamed : bool
-                (match subst
-                  [(LowerSpmdInlineSubst.Nil) false]
-                  [_ true])]
-              [bind-name : String
-                (if renamed
-                  (lower-spmd-inline-fresh-local name-text)
-                  name-text)]
-              [bind-id : i64 (intern bind-name)]
-              (match (lower-spmd-inline-expr
-                ctx
-                env
-                type-env
-                init
-                subst
-                shadowed)
-                [(ResultLowerAstExpr.Ok rewritten-init)
-                  (match (lower-spmd-inline-let-bindings
-                    ctx
-                    env
-                    type-env
-                    rest
-                    (if renamed
-                      (lower-spmd-inline-subst-cons
-                        name-text
-                        (AstExpr.Var bind-id)
-                        (lower-spmd-inline-subst-remove subst name-text))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (lower-spmd-inline-let-bindings-into
+      ctx
+      env
+      type-env
+      (& bindings)
+      subst
+      shadowed
+      0
+      (&mut out))
+      [(ResultLowerSpmdInlineLetBindingsBuild.Ok body-subst body-shadowed)
+        (ResultLowerSpmdInlineLetBindings.Ok
+          (LowerSpmdInlineLetBindings.Bindings out body-subst body-shadowed))]
+      [(ResultLowerSpmdInlineLetBindingsBuild.Err diag)
+        (ResultLowerSpmdInlineLetBindings.Err diag)])))
+
+(define (lower-spmd-inline-let-bindings-into
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]
+  [index : i64]
+  [out : (&mut out AstLetBindingList)]) : ResultLowerSpmdInlineLetBindingsBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultLowerSpmdInlineLetBindingsBuild.Ok subst shadowed)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (lower-context-expr-get ctx init-box)]
+          [name-text : String (intern-str name)]
+          [renamed : bool
+            (match subst
+              [(LowerSpmdInlineSubst.Nil) false]
+              [_ true])]
+          [bind-name : String
+            (if renamed
+              (lower-spmd-inline-fresh-local name-text)
+              name-text)]
+          [bind-id : i64 (intern bind-name)]
+          (match (lower-spmd-inline-expr ctx env type-env init subst shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-init)
+              (begin
+                (ast-let-binding-list-push
+                  out
+                  (ast-let-binding-id
+                    bind-id
+                    maybe-ty
+                    (lower-context-expr-push ctx rewritten-init)))
+                (lower-spmd-inline-let-bindings-into
+                  ctx
+                  env
+                  type-env
+                  bindings
+                  (if renamed
+                    (lower-spmd-inline-subst-cons
+                      name-text
+                      (AstExpr.Var bind-id)
                       (lower-spmd-inline-subst-remove subst name-text))
-                    (lower-string-set-insert shadowed name-text))
-                    [(ResultLowerSpmdInlineLetBindings.Ok rewritten)
-                      (match rewritten
-                        [(LowerSpmdInlineLetBindings.Bindings
-                            rewritten-rest
-                            body-subst
-                            body-shadowed)
-                          (ResultLowerSpmdInlineLetBindings.Ok
-                            (LowerSpmdInlineLetBindings.Bindings
-                              (ast-let-binding-cons
-                                (ast-let-binding-id
-                                  bind-id
-                                  maybe-ty
-                                  (lower-context-expr-push ctx rewritten-init))
-                                rewritten-rest)
-                              body-subst
-                              body-shadowed))])]
-                    [(ResultLowerSpmdInlineLetBindings.Err diag)
-                      (ResultLowerSpmdInlineLetBindings.Err diag)])]
-                [(ResultLowerAstExpr.Err diag)
-                  (ResultLowerSpmdInlineLetBindings.Err diag)]))]))]))
+                    (lower-spmd-inline-subst-remove subst name-text))
+                  (lower-string-set-insert shadowed name-text)
+                  (+ index 1)
+                  out))]
+            [(ResultLowerAstExpr.Err diag)
+              (ResultLowerSpmdInlineLetBindingsBuild.Err diag)]))])))
 
 (define (lower-spmd-inline-helper-body
   [ctx : TcContext]
@@ -4371,20 +4380,26 @@
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstLetBindingList]) : LowerReachState
-  (match bindings
-    [(AstLetBindingList.Nil) state]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (lower-reach-let-bindings
-                all-functions
-                names
-                (lower-reach-expr all-functions names state value)
-                rest))]))]))
+  (lower-reach-let-bindings-at all-functions names state (& bindings) 0))
+
+(define (lower-reach-let-bindings-at
+  [all-functions : hashmap.StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : LowerReachState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (lower-reach-let-bindings-at
+            all-functions
+            names
+            (lower-reach-expr all-functions names state value)
+            bindings
+            (+ index 1)))])))
 
 (define (lower-reach-match-arms
   [all-functions : hashmap.StringI64Map]
@@ -4419,25 +4434,34 @@
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstResourceBindingList]) : LowerReachState
-  (match bindings
-    [(AstResourceBindingList.Nil) state]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-            (let
-              [acquire : AstExpr (ast-node-get acquire-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (lower-reach-resource-bindings
-                all-functions
-                names
-                (lower-reach-expr
-                  all-functions
-                  names
-                  (lower-reach-expr all-functions names state acquire)
-                  cleanup)
-                rest))]))]))
+  (lower-reach-resource-bindings-at all-functions names state (& bindings) 0))
+
+(define (lower-reach-resource-bindings-at
+  [all-functions : hashmap.StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : LowerReachState
+  (if (>= index (ast-resource-binding-list-len bindings))
+    state
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        (let
+          [acquire : AstExpr (ast-node-get acquire-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (lower-reach-resource-bindings-at
+            all-functions
+            names
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-expr all-functions names state acquire)
+              cleanup)
+            bindings
+            (+ index 1)))])))
 
 (define (lower-clone-roots-expr-list
   [ctx : TcContext]
@@ -4480,26 +4504,34 @@
   [able : CloneNameSet]
   [roots : CloneNameList]
   [bindings : AstLetBindingList]) : LowerCloneRootEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (LowerCloneRootEnv.Env roots env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (tc-context-expr-get ctx init-box)]
-              [next-roots : CloneNameList
-                (lower-clone-roots-expr ctx env decls able roots init)]
-              [next-env : TcTypeEnv
-                (lower-clone-roots-bind-let ctx env name maybe-ty init)]
-              (lower-clone-roots-let-bindings
-                ctx
-                next-env
-                decls
-                able
-                next-roots
-                rest))]))]))
+  (lower-clone-roots-let-bindings-at ctx env decls able roots (& bindings) 0))
+
+(define (lower-clone-roots-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : LowerCloneRootEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    (LowerCloneRootEnv.Env roots env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (tc-context-expr-get ctx init-box)]
+          [next-roots : CloneNameList
+            (lower-clone-roots-expr ctx env decls able roots init)]
+          [next-env : TcTypeEnv
+            (lower-clone-roots-bind-let ctx env name maybe-ty init)]
+          (lower-clone-roots-let-bindings-at
+            ctx
+            next-env
+            decls
+            able
+            next-roots
+            bindings
+            (+ index 1)))])))
 
 (define (lower-clone-roots-match-arms
   [ctx : TcContext]
@@ -4547,29 +4579,47 @@
   [able : CloneNameSet]
   [roots : CloneNameList]
   [bindings : AstResourceBindingList]) : CloneNameList
-  (match bindings
-    [(AstResourceBindingList.Nil) roots]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-            (let
-              [acquire : AstExpr (tc-context-expr-get ctx acquire-box)]
-              [cleanup : AstExpr (tc-context-expr-get ctx cleanup-box)]
-              (lower-clone-roots-resource-bindings
-                ctx
-                env
-                decls
-                able
-                (lower-clone-roots-expr
-                  ctx
-                  env
-                  decls
-                  able
-                  (lower-clone-roots-expr ctx env decls able roots acquire)
-                  cleanup)
-                rest))]))]))
+  (lower-clone-roots-resource-bindings-at
+    ctx
+    env
+    decls
+    able
+    roots
+    (& bindings)
+    0))
+
+(define (lower-clone-roots-resource-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-resource-binding-list-len bindings))
+    roots
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        (let
+          [acquire : AstExpr (tc-context-expr-get ctx acquire-box)]
+          [cleanup : AstExpr (tc-context-expr-get ctx cleanup-box)]
+          (lower-clone-roots-resource-bindings-at
+            ctx
+            env
+            decls
+            able
+            (lower-clone-roots-expr
+              ctx
+              env
+              decls
+              able
+              (lower-clone-roots-expr ctx env decls able roots acquire)
+              cleanup)
+            bindings
+            (+ index 1)))])))
 
 (define (lower-clone-roots-call
   [ctx : TcContext]
@@ -6940,20 +6990,28 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [bindings : AstLetBindingList]) : hashmap.I64I64Map
-  (match bindings
-    [(AstLetBindingList.Nil) used]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ maybe-ty value-box)
-          (lower-used-types-add-let-bindings
+  (lower-used-types-add-let-bindings-at pools used module (& bindings) 0))
+
+(define (lower-used-types-add-let-bindings-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-let-binding-list-len bindings))
+    used
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty value-box)
+        (lower-used-types-add-let-bindings-at
+          pools
+          (lower-used-types-add-expr-id
             pools
-            (lower-used-types-add-expr-id
-              pools
-              (lower-used-types-add-maybe-type pools used module maybe-ty)
-              module
-              value-box)
+            (lower-used-types-add-maybe-type pools used module maybe-ty)
             module
-            (box-get rest))])]))
+            value-box)
+          module
+          bindings
+          (+ index 1))])))
 
 (define (lower-used-types-add-match-arms
   [pools : AstNodePoolContext]
@@ -6988,20 +7046,31 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [bindings : AstResourceBindingList]) : hashmap.I64I64Map
-  (match bindings
-    [(AstResourceBindingList.Nil) used]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-          (lower-used-types-add-resource-bindings
+  (lower-used-types-add-resource-bindings-at pools used module (& bindings) 0))
+
+(define (lower-used-types-add-resource-bindings-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-resource-binding-list-len bindings))
+    used
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        (lower-used-types-add-resource-bindings-at
+          pools
+          (lower-used-types-add-expr-id
             pools
-            (lower-used-types-add-expr-id
-              pools
-              (lower-used-types-add-expr-id pools used module acquire-box)
-              module
-              cleanup-box)
+            (lower-used-types-add-expr-id pools used module acquire-box)
             module
-            (box-get rest))])]))
+            cleanup-box)
+          module
+          bindings
+          (+ index 1))])))
 
 (define (lower-used-types-add-expr
   [pools : AstNodePoolContext]
@@ -18224,50 +18293,67 @@
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [bindings : AstLetBindingList]) : ResultTcEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultTcEnv.Ok type-env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [name-id : i64 name]
-              [init : AstExpr (ast-node-get init-box)]
-              (match (lower-let-binding-result-type-fast
+  (lower-let-bindings-type-env-fast-at
+    ctx
+    env
+    type-env
+    type-cache
+    (& bindings)
+    0))
+
+(define (lower-let-bindings-type-env-fast-at
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcEnv.Ok type-env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [name-id : i64 name]
+          [init : AstExpr (ast-node-get init-box)]
+          (match (lower-let-binding-result-type-fast
+            ctx
+            env
+            type-env
+            type-cache
+            maybe-ty
+            init)
+            [(ResultTcType.Ok binding-ty)
+              (lower-let-bindings-type-env-fast-at
                 ctx
-                env
-                type-env
+                (sym_i64_env.sym-i64-bind-id env name-id 0)
+                (tc-bind-c-abi-fnptr-if-needed-id
+                  ctx
+                  type-env
+                  name-id
+                  binding-ty
+                  init)
                 type-cache
-                maybe-ty
-                init)
-                [(ResultTcType.Ok binding-ty)
-                  (lower-let-bindings-type-env-fast
-                    ctx
-                    (sym_i64_env.sym-i64-bind-id env name-id 0)
-                    (tc-bind-c-abi-fnptr-if-needed-id
-                      ctx
-                      type-env
-                      name-id
-                      binding-ty
-                      init)
-                    type-cache
-                    rest)]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]))]))
+                bindings
+                (+ index 1))]
+            [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (lower-let-bindings-local-env
   [env : sym_i64_env.SymI64Env]
   [bindings : AstLetBindingList]) : sym_i64_env.SymI64Env
-  (match bindings
-    [(AstLetBindingList.Nil) env]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (lower-let-bindings-local-env
-              (sym_i64_env.sym-i64-bind-id env name 0)
-              rest)]))]))
+  (lower-let-bindings-local-env-at env (& bindings) 0))
+
+(define (lower-let-bindings-local-env-at
+  [env : sym_i64_env.SymI64Env]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-let-binding-list-len bindings))
+    env
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (lower-let-bindings-local-env-at
+          (sym_i64_env.sym-i64-bind-id env name 0)
+          bindings
+          (+ index 1))])))
 
 (define (lower-projected-result-type-fast
   [ctx : TcContext]
@@ -28218,47 +28304,54 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]) : ResultLowerEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultLowerEnv.Ok state env type-env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [name-id : i64 name]
-              [init : AstExpr (ast-node-get init-box)]
-              (match (lower-let-init ctx state env type-env maybe-ty init)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr init-state init-value init-ty)
-                      (let
-                        [binding-ty : AstType
-                          (lower-let-binding-type ctx maybe-ty init-ty)]
-                        [binding-ir-ty : AstType
-                          (lower-one-word-register-storage-type ctx binding-ty)]
-                        (match (lower-state-alloc-var init-state)
-                          [(LowerAlloc.Alloc allocated var-id)
-                            (let
-                              [next-type-env : TcTypeEnv
-                                (tc-bind-c-abi-fnptr-if-needed-id
-                                  ctx
-                                  type-env
-                                  name-id
-                                  binding-ty
-                                  init)]
-                              (lower-let-bindings
-                                ctx
-                                (lower-state-emit
-                                  allocated
-                                  (CompilerIrInstr.Mov
-                                    var-id
-                                    init-value
-                                    binding-ir-ty))
-                                (sym_i64_env.sym-i64-bind-id env name-id var-id)
-                                next-type-env
-                                rest))]))])]
-                [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))]))]))
+  (lower-let-bindings-at ctx state env type-env (& bindings) 0))
+
+(define (lower-let-bindings-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultLowerEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultLowerEnv.Ok state env type-env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [name-id : i64 name]
+          [init : AstExpr (ast-node-get init-box)]
+          (match (lower-let-init ctx state env type-env maybe-ty init)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr init-state init-value init-ty)
+                  (let
+                    [binding-ty : AstType
+                      (lower-let-binding-type ctx maybe-ty init-ty)]
+                    [binding-ir-ty : AstType
+                      (lower-one-word-register-storage-type ctx binding-ty)]
+                    (match (lower-state-alloc-var init-state)
+                      [(LowerAlloc.Alloc allocated var-id)
+                        (let
+                          [next-type-env : TcTypeEnv
+                            (tc-bind-c-abi-fnptr-if-needed-id
+                              ctx
+                              type-env
+                              name-id
+                              binding-ty
+                              init)]
+                          (lower-let-bindings-at
+                            ctx
+                            (lower-state-emit
+                              allocated
+                              (CompilerIrInstr.Mov
+                                var-id
+                                init-value
+                                binding-ir-ty))
+                            (sym_i64_env.sym-i64-bind-id env name-id var-id)
+                            next-type-env
+                            bindings
+                            (+ index 1)))]))])]
+            [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))])))
 
 (define (lower-resource-bindings
   [ctx : TcContext]
@@ -28267,83 +28360,93 @@
   [type-env : TcTypeEnv]
   [bindings : AstResourceBindingList]
   [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
-  (match bindings
-    [(AstResourceBindingList.Nil)
-      (ResultLowerResourceBindings.Ok
-        (LowerResourceBindings.Bindings state env type-env cleanups))]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (tc-resource-cleanup-resource-type ctx type-env cleanup)
-                [(ResultTcType.Ok expected-init-ty)
-                  (match (lower-expr-expected
-                    ctx
-                    state
-                    env
-                    type-env
-                    init
-                    (tc-type-without-regions expected-init-ty)
-                    init)
-                    [(ResultLowerExpr.Ok lowered)
-                      (match lowered
-                        [(LowerExpr.Expr init-state init-value init-ty)
-                          (match (lower-cleanup-name-from-expr cleanup)
-                            [(ResultTcString.Ok cleanup-name)
-                              (let
-                                [binding-ty : AstType
-                                  (tc-type-without-regions init-ty)]
-                                [binding-ir-ty : AstType
-                                  (lower-one-word-register-storage-type
+  (lower-resource-bindings-at ctx state env type-env (& bindings) cleanups 0))
+
+(define (lower-resource-bindings-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : (& bindings AstResourceBindingList)]
+  [cleanups : LowerCleanupStack]
+  [index : i64]) : ResultLowerResourceBindings
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (ResultLowerResourceBindings.Ok
+      (LowerResourceBindings.Bindings state env type-env cleanups))
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (tc-resource-cleanup-resource-type ctx type-env cleanup)
+            [(ResultTcType.Ok expected-init-ty)
+              (match (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                init
+                (tc-type-without-regions expected-init-ty)
+                init)
+                [(ResultLowerExpr.Ok lowered)
+                  (match lowered
+                    [(LowerExpr.Expr init-state init-value init-ty)
+                      (match (lower-cleanup-name-from-expr cleanup)
+                        [(ResultTcString.Ok cleanup-name)
+                          (let
+                            [binding-ty : AstType
+                              (tc-type-without-regions init-ty)]
+                            [binding-ir-ty : AstType
+                              (lower-one-word-register-storage-type
+                                ctx
+                                binding-ty)]
+                            (match (lower-state-alloc-var init-state)
+                              [(LowerAlloc.Alloc allocated var-id)
+                                (let
+                                  [hidden-name : String
+                                    (lower-cleanup-hidden-name var-id)]
+                                  [bound-state : LowerState
+                                    (lower-state-emit
+                                      allocated
+                                      (CompilerIrInstr.Mov
+                                        var-id
+                                        init-value
+                                        binding-ir-ty))]
+                                  [bound-env : sym_i64_env.SymI64Env
+                                    (sym_i64_env.sym-i64-bind
+                                      (sym_i64_env.sym-i64-bind-id
+                                        env
+                                        name
+                                        var-id)
+                                      hidden-name
+                                      var-id)]
+                                  [bound-type-env : TcTypeEnv
+                                    (lower-type-env-push-cleanup
+                                      (tc-bind-id type-env name binding-ty)
+                                      hidden-name
+                                      cleanup-name)]
+                                  (lower-resource-bindings-at
                                     ctx
-                                    binding-ty)]
-                                (match (lower-state-alloc-var init-state)
-                                  [(LowerAlloc.Alloc allocated var-id)
-                                    (let
-                                      [hidden-name : String
-                                        (lower-cleanup-hidden-name var-id)]
-                                      [bound-state : LowerState
-                                        (lower-state-emit
-                                          allocated
-                                          (CompilerIrInstr.Mov
-                                            var-id
-                                            init-value
-                                            binding-ir-ty))]
-                                      [bound-env : sym_i64_env.SymI64Env
-                                        (sym_i64_env.sym-i64-bind
-                                          (sym_i64_env.sym-i64-bind-id
-                                            env
-                                            name
-                                            var-id)
-                                          hidden-name
-                                          var-id)]
-                                      [bound-type-env : TcTypeEnv
-                                        (lower-type-env-push-cleanup
-                                          (tc-bind-id type-env name binding-ty)
-                                          hidden-name
-                                          cleanup-name)]
-                                      (lower-resource-bindings
-                                        ctx
-                                        bound-state
-                                        bound-env
-                                        bound-type-env
-                                        rest
-                                        (lower-cleanup-stack-push
-                                          cleanups
-                                          hidden-name
-                                          cleanup-name)))]))]
-                            [(ResultTcString.Err message)
-                              (ResultLowerResourceBindings.Err
-                                (box (lower-diagnostic-at-expr cleanup message)))])])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerResourceBindings.Err message)])]
-                [(ResultTcType.Err message)
-                  (ResultLowerResourceBindings.Err
-                    (box (lower-diagnostic-at-expr cleanup message)))]))]))]))
+                                    bound-state
+                                    bound-env
+                                    bound-type-env
+                                    bindings
+                                    (lower-cleanup-stack-push
+                                      cleanups
+                                      hidden-name
+                                      cleanup-name)
+                                    (+ index 1)))]))]
+                        [(ResultTcString.Err message)
+                          (ResultLowerResourceBindings.Err
+                            (box (lower-diagnostic-at-expr cleanup message)))])])]
+                [(ResultLowerExpr.Err message)
+                  (ResultLowerResourceBindings.Err message)])]
+            [(ResultTcType.Err message)
+              (ResultLowerResourceBindings.Err
+                (box (lower-diagnostic-at-expr cleanup message)))]))])))
 
 (define (lower-with-resource
   [ctx : TcContext]
@@ -29219,7 +29322,7 @@
   (ast-expr-let
     (ast-let-binding-cons
       (ast-let-binding (lower-spmd-reduce-val-name) (AstMaybeType.No) value)
-      (AstLetBindingList.Nil))
+      (ast-let-binding-list-new))
     (ast-expr-set
       (lower-spmd-reduce-acc-name)
       (ast-expr-if
@@ -29282,7 +29385,7 @@
                 index
                 (AstMaybeType.Some index-ty)
                 (ast-node-push start))
-              (AstLetBindingList.Nil))))
+              (ast-let-binding-list-new))))
         (ast-node-push
           (AstExpr.Begin
             (ast-expr-cons
@@ -29409,7 +29512,7 @@
   (ast-expr-let
     (ast-let-binding-cons
       (ast-let-binding (lower-spmd-scan-val-name) (AstMaybeType.No) value)
-      (AstLetBindingList.Nil))
+      (ast-let-binding-list-new))
     (ast-expr-if
       (ast-expr-binary
         cmp
@@ -29462,7 +29565,7 @@
                 index
                 (AstMaybeType.Some index-ty)
                 (ast-node-push start))
-              (AstLetBindingList.Nil))))
+              (ast-let-binding-list-new))))
         (ast-node-push
           (AstExpr.Begin
             (ast-expr-cons
@@ -29477,7 +29580,7 @@
                       prefix
                       (AstMaybeType.Some prefix-ty)
                       prefix-value)
-                    (AstLetBindingList.Nil))
+                    (ast-let-binding-list-new))
                   (ast-node-push
                     (AstExpr.Begin
                       (ast-expr-cons
@@ -30105,39 +30208,59 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [bindings : AstLetBindingList]) : hashmap.StringI64Map
-  (match bindings
-    [(AstLetBindingList.Nil) lane-locals]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [init-lanes : i64
-                (lower-masked-vector-expr-lanes-with-locals
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  lane-locals
-                  init)]
-              [next-locals : hashmap.StringI64Map
-                (if (> init-lanes 0)
-                  (hashmap.string-i64-map-put
-                    lane-locals
-                    (intern-str name)
-                    init-lanes)
-                  lane-locals)]
-              (lower-masked-vector-let-bindings-locals
-                ctx
-                mode
-                env
-                type-env
-                index
-                next-locals
-                rest))]))]))
+  (lower-masked-vector-let-bindings-locals-at
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-locals-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : hashmap.StringI64Map
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    lane-locals
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [init-lanes : i64
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)]
+          [next-locals : hashmap.StringI64Map
+            (if (> init-lanes 0)
+              (hashmap.string-i64-map-put
+                lane-locals
+                (intern-str name)
+                init-lanes)
+              lane-locals)]
+          (lower-masked-vector-let-bindings-locals-at
+            ctx
+            mode
+            env
+            type-env
+            index
+            next-locals
+            bindings
+            (+ binding-index 1)))])))
 
 (define (lower-masked-vector-let-bindings-lanes-with-locals
   [ctx : TcContext]
@@ -30147,41 +30270,61 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [bindings : AstLetBindingList]) : i64
-  (match bindings
-    [(AstLetBindingList.Nil) 0]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [init-lanes : i64
-                (lower-masked-vector-expr-lanes-with-locals
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  lane-locals
-                  init)]
-              [next-locals : hashmap.StringI64Map
-                (if (> init-lanes 0)
-                  (hashmap.string-i64-map-put
-                    lane-locals
-                    (intern-str name)
-                    init-lanes)
-                  lane-locals)]
-              (lower-masked-vector-lanes-merge
-                init-lanes
-                (lower-masked-vector-let-bindings-lanes-with-locals
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  next-locals
-                  rest)))]))]))
+  (lower-masked-vector-let-bindings-lanes-with-locals-at
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-lanes-with-locals-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : i64
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    0
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [init-lanes : i64
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)]
+          [next-locals : hashmap.StringI64Map
+            (if (> init-lanes 0)
+              (hashmap.string-i64-map-put
+                lane-locals
+                (intern-str name)
+                init-lanes)
+              lane-locals)]
+          (lower-masked-vector-lanes-merge
+            init-lanes
+            (lower-masked-vector-let-bindings-lanes-with-locals-at
+              ctx
+              mode
+              env
+              type-env
+              index
+              next-locals
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-pattern-locals
   [pattern : AstPattern]
@@ -30875,48 +31018,68 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [init-lanes : i64
-                (lower-masked-vector-expr-lanes-with-locals
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  lane-locals
-                  init)]
-              [next-locals : hashmap.StringI64Map
-                (if (> init-lanes 0)
-                  (hashmap.string-i64-map-put
-                    lane-locals
-                    (intern-str name)
-                    init-lanes)
-                  lane-locals)]
-              (or
-                (lower-masked-vector-body-has-varying-if-with-locals?
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  lane-locals
-                  init)
-                (lower-masked-vector-let-bindings-have-varying-if-with-locals?
-                  ctx
-                  mode
-                  env
-                  type-env
-                  index
-                  next-locals
-                  rest)))]))]))
+  (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [init-lanes : i64
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)]
+          [next-locals : hashmap.StringI64Map
+            (if (> init-lanes 0)
+              (hashmap.string-i64-map-put
+                lane-locals
+                (intern-str name)
+                init-lanes)
+              lane-locals)]
+          (or
+            (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)
+            (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
+              ctx
+              mode
+              env
+              type-env
+              index
+              next-locals
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-body-has-varying-if?
   [ctx : TcContext]
@@ -31227,46 +31390,68 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name _ init-box)
-          (let
-            [init : AstExpr (ast-node-get init-box)]
-            [init-lanes : i64
-              (lower-masked-vector-expr-lanes-with-locals
-                ctx
-                mode
-                env
-                type-env
-                index
+  (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [init-lanes : i64
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)]
+          [next-locals : hashmap.StringI64Map
+            (if (> init-lanes 0)
+              (hashmap.string-i64-map-put
                 lane-locals
-                init)]
-            [next-locals : hashmap.StringI64Map
-              (if (> init-lanes 0)
-                (hashmap.string-i64-map-put
-                  lane-locals
-                  (intern-str name)
-                  init-lanes)
-                lane-locals)]
-            (or
-              (lower-masked-vector-body-has-varying-while-with-locals?
-                ctx
-                mode
-                env
-                type-env
-                index
-                lane-locals
-                init)
-              (lower-masked-vector-let-bindings-have-varying-while-with-locals?
-                ctx
-                mode
-                env
-                type-env
-                index
-                next-locals
-                (box-get rest))))])]))
+                (intern-str name)
+                init-lanes)
+              lane-locals)]
+          (or
+            (lower-masked-vector-body-has-varying-while-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)
+            (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
+              ctx
+              mode
+              env
+              type-env
+              index
+              next-locals
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-body-has-varying-while?
   [ctx : TcContext]
@@ -31535,46 +31720,68 @@
   [index : String]
   [lane-locals : hashmap.StringI64Map]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name _ init-box)
-          (let
-            [init : AstExpr (ast-node-get init-box)]
-            [init-lanes : i64
-              (lower-masked-vector-expr-lanes-with-locals
-                ctx
-                mode
-                env
-                type-env
-                index
+  (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
+    ctx
+    mode
+    env
+    type-env
+    index
+    lane-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [init-lanes : i64
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)]
+          [next-locals : hashmap.StringI64Map
+            (if (> init-lanes 0)
+              (hashmap.string-i64-map-put
                 lane-locals
-                init)]
-            [next-locals : hashmap.StringI64Map
-              (if (> init-lanes 0)
-                (hashmap.string-i64-map-put
-                  lane-locals
-                  (intern-str name)
-                  init-lanes)
-                lane-locals)]
-            (or
-              (lower-masked-vector-body-has-varying-match-with-locals?
-                ctx
-                mode
-                env
-                type-env
-                index
-                lane-locals
-                init)
-              (lower-masked-vector-let-bindings-have-varying-match-with-locals?
-                ctx
-                mode
-                env
-                type-env
-                index
-                next-locals
-                (box-get rest))))])]))
+                (intern-str name)
+                init-lanes)
+              lane-locals)]
+          (or
+            (lower-masked-vector-body-has-varying-match-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              init)
+            (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
+              ctx
+              mode
+              env
+              type-env
+              index
+              next-locals
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-match-arms-have-varying-match-with-locals?
   [ctx : TcContext]
@@ -31716,32 +31923,50 @@
   [index : String]
   [enum-locals : LowerStringSet]
   [bindings : AstLetBindingList]) : LowerStringSet
-  (match bindings
-    [(AstLetBindingList.Nil) enum-locals]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [next-locals : LowerStringSet
-                (if (lower-masked-vector-expr-varying-enum-with-locals?
-                  ctx
-                  env
-                  type-env
-                  index
-                  enum-locals
-                  init)
-                  (lower-string-set-insert enum-locals (intern-str name))
-                  enum-locals)]
-              (lower-masked-vector-enum-let-locals
-                ctx
-                env
-                type-env
-                index
-                next-locals
-                rest))]))]))
+  (lower-masked-vector-enum-let-locals-at
+    ctx
+    env
+    type-env
+    index
+    enum-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-enum-let-locals-at
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : LowerStringSet
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    enum-locals
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [next-locals : LowerStringSet
+            (if (lower-masked-vector-expr-varying-enum-with-locals?
+              ctx
+              env
+              type-env
+              index
+              enum-locals
+              init)
+              (lower-string-set-insert enum-locals (intern-str name))
+              enum-locals)]
+          (lower-masked-vector-enum-let-locals-at
+            ctx
+            env
+            type-env
+            index
+            next-locals
+            bindings
+            (+ binding-index 1)))])))
 
 (define (lower-masked-vector-body-has-varying-enum-match-with-locals?
   [ctx : TcContext]
@@ -31971,38 +32196,58 @@
   [index : String]
   [enum-locals : LowerStringSet]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding name _ init-box)
-          (let
-            [init : AstExpr (ast-node-get init-box)]
-            [next-locals : LowerStringSet
-              (if (lower-masked-vector-expr-varying-enum-with-locals?
-                ctx
-                env
-                type-env
-                index
-                enum-locals
-                init)
-                (lower-string-set-insert enum-locals (intern-str name))
-                enum-locals)]
-            (or
-              (lower-masked-vector-body-has-varying-enum-match-with-locals?
-                ctx
-                env
-                type-env
-                index
-                enum-locals
-                init)
-              (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
-                ctx
-                env
-                type-env
-                index
-                next-locals
-                (box-get rest))))])]))
+  (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals-at?
+    ctx
+    env
+    type-env
+    index
+    enum-locals
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals-at?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [next-locals : LowerStringSet
+            (if (lower-masked-vector-expr-varying-enum-with-locals?
+              ctx
+              env
+              type-env
+              index
+              enum-locals
+              init)
+              (lower-string-set-insert enum-locals (intern-str name))
+              enum-locals)]
+          (or
+            (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              ctx
+              env
+              type-env
+              index
+              enum-locals
+              init)
+            (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals-at?
+              ctx
+              env
+              type-env
+              index
+              next-locals
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
   [ctx : TcContext]
@@ -32268,28 +32513,44 @@
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (lower-masked-vector-body-has-bool-array-lane?
-                  ctx
-                  env
-                  type-env
-                  index
-                  init)
-                (lower-masked-vector-let-bindings-have-bool-array-lane?
-                  ctx
-                  env
-                  type-env
-                  index
-                  rest)))]))]))
+  (lower-masked-vector-let-bindings-have-bool-array-lane-at?
+    ctx
+    env
+    type-env
+    index
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-bindings-have-bool-array-lane-at?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (lower-masked-vector-body-has-bool-array-lane?
+              ctx
+              env
+              type-env
+              index
+              init)
+            (lower-masked-vector-let-bindings-have-bool-array-lane-at?
+              ctx
+              env
+              type-env
+              index
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-map
   [ctx : TcContext]
@@ -32523,37 +32784,60 @@
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : LowerArrayVarSet
-  (match bindings
-    [(AstLetBindingList.Nil) (lower-array-var-set-empty)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (lower-array-var-set-merge
-                (lower-masked-vector-array-vars ctx env type-env index init)
-                (lower-masked-vector-let-binding-array-vars
-                  ctx
-                  env
-                  type-env
-                  index
-                  rest)))]))]))
+  (lower-masked-vector-let-binding-array-vars-at
+    ctx
+    env
+    type-env
+    index
+    (& bindings)
+    0))
+
+(define (lower-masked-vector-let-binding-array-vars-at
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : LowerArrayVarSet
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    (lower-array-var-set-empty)
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (lower-array-var-set-merge
+            (lower-masked-vector-array-vars ctx env type-env index init)
+            (lower-masked-vector-let-binding-array-vars-at
+              ctx
+              env
+              type-env
+              index
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-masked-vector-let-binding-names
   [bindings : AstLetBindingList]
   [lane-locals : LowerStringSet]) : LowerStringSet
-  (match bindings
-    [(AstLetBindingList.Nil) lane-locals]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (lower-masked-vector-let-binding-names
-              rest
-              (lower-string-set-insert lane-locals (intern-str name)))]))]))
+  (lower-masked-vector-let-binding-names-at (& bindings) lane-locals 0))
+
+(define (lower-masked-vector-let-binding-names-at
+  [bindings : (& bindings AstLetBindingList)]
+  [lane-locals : LowerStringSet]
+  [binding-index : i64]) : LowerStringSet
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    lane-locals
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (lower-masked-vector-let-binding-names-at
+          bindings
+          (lower-string-set-insert lane-locals (intern-str name))
+          (+ binding-index 1))])))
 
 (define (lower-vector-body-has-array-read? [expr : AstExpr]) : bool
   (match expr
@@ -32656,18 +32940,25 @@
 
 (define (lower-vector-let-bindings-have-array-read?
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [next : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (lower-vector-body-has-array-read? init)
-                (lower-vector-let-bindings-have-array-read? next)))]))]))
+  (lower-vector-let-bindings-have-array-read-at? (& bindings) 0))
+
+(define (lower-vector-let-bindings-have-array-read-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (lower-vector-body-has-array-read? init)
+            (lower-vector-let-bindings-have-array-read-at?
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-vector-body-has-spmd-shuffle? [expr : AstExpr]) : bool
   (match expr
@@ -32764,18 +33055,25 @@
 
 (define (lower-vector-let-bindings-have-spmd-shuffle?
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [next : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (lower-vector-body-has-spmd-shuffle? init)
-                (lower-vector-let-bindings-have-spmd-shuffle? next)))]))]))
+  (lower-vector-let-bindings-have-spmd-shuffle-at? (& bindings) 0))
+
+(define (lower-vector-let-bindings-have-spmd-shuffle-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (lower-vector-body-has-spmd-shuffle? init)
+            (lower-vector-let-bindings-have-spmd-shuffle-at?
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-vector-body-has-atomic-call?
   [ctx : TcContext]
@@ -32881,18 +33179,29 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [next : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (lower-vector-body-has-atomic-call? ctx type-env init)
-                (lower-vector-let-bindings-have-atomic-call? ctx type-env next)))]))]))
+  (lower-vector-let-bindings-have-atomic-call-at? ctx type-env (& bindings) 0))
+
+(define (lower-vector-let-bindings-have-atomic-call-at?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (lower-vector-body-has-atomic-call? ctx type-env init)
+            (lower-vector-let-bindings-have-atomic-call-at?
+              ctx
+              type-env
+              bindings
+              (+ binding-index 1))))])))
 
 (define (lower-simple-vector-map-binop-supported?
   [mode : CompilerLowerMode]
@@ -32964,14 +33273,21 @@
         (lower-spmd-expr-list-has-mul? (box-get rest)))]))
 
 (define (lower-spmd-let-bindings-have-mul? [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
+  (lower-spmd-let-bindings-have-mul-at? (& bindings) 0))
+
+(define (lower-spmd-let-bindings-have-mul-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast-let-binding-fallback))
         [(AstLetBinding.Binding _ _ init-box)
-          (or
-            (lower-spmd-expr-has-mul? (ast-node-get init-box))
-            (lower-spmd-let-bindings-have-mul? (box-get rest)))])]))
+          (lower-spmd-expr-has-mul? (ast-node-get init-box))])
+      (lower-spmd-let-bindings-have-mul-at? bindings (+ binding-index 1)))))
 
 (define (lower-simple-vector-map-has-unsupported-byte-mul?
   [ctx : TcContext]
@@ -35527,54 +35843,80 @@
   [active-mask : CompilerIrValue]
   [lanes : i64]
   [bindings : AstLetBindingList]) : ResultLowerEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultLowerEnv.Ok state env type-env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (lower-avx512-masked-expr
-                ctx
-                state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                init)
-                [(ResultLowerExpr.Ok lowered)
-                  (match lowered
-                    [(LowerExpr.Expr init-state init-value init-ty)
-                      (let
-                        [binding-ty : AstType
-                          (lower-let-binding-type ctx maybe-ty init-ty)]
-                        (match init-value
-                          [(CompilerIrValue.Var init-var)
-                            (lower-avx512-masked-let-bindings
-                              ctx
-                              init-state
-                              (sym_i64_env.sym-i64-bind-id env name init-var)
-                              (tc-bind-id type-env name binding-ty)
-                              (lower-string-set-insert
-                                lane-locals
-                                (intern-str name))
-                              index
-                              index-var
-                              active-mask
-                              lanes
-                              rest)]
-                          [_
-                            (ResultLowerEnv.Err
-                              (box
-                                (lower-diagnostic-at-expr
-                                  init
-                                  "lower: masked let init did not produce an IR variable")))]))])]
-                [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))]))]))
+  (lower-avx512-masked-let-bindings-at
+    ctx
+    state
+    env
+    type-env
+    lane-locals
+    index
+    index-var
+    active-mask
+    lanes
+    (& bindings)
+    0))
+
+(define (lower-avx512-masked-let-bindings-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : ResultLowerEnv
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    (ResultLowerEnv.Ok state env type-env)
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            init)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr init-state init-value init-ty)
+                  (let
+                    [binding-ty : AstType
+                      (lower-let-binding-type ctx maybe-ty init-ty)]
+                    (match init-value
+                      [(CompilerIrValue.Var init-var)
+                        (lower-avx512-masked-let-bindings-at
+                          ctx
+                          init-state
+                          (sym_i64_env.sym-i64-bind-id env name init-var)
+                          (tc-bind-id type-env name binding-ty)
+                          (lower-string-set-insert
+                            lane-locals
+                            (intern-str name))
+                          index
+                          index-var
+                          active-mask
+                          lanes
+                          bindings
+                          (+ binding-index 1))]
+                      [_
+                        (ResultLowerEnv.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              init
+                              "lower: masked let init did not produce an IR variable")))]))])]
+            [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))])))
 
 (define (lower-avx512-masked-begin
   [ctx : TcContext]
@@ -39446,16 +39788,23 @@
 (define (lower-tail-let-bindings-candidate-env
   [env : sym_i64_env.SymI64Env]
   [bindings : AstLetBindingList]) : sym_i64_env.SymI64Env
-  (match bindings
-    [(AstLetBindingList.Nil) env]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (lower-tail-let-bindings-candidate-env
-              (sym_i64_env.sym-i64-bind-id env name 0)
-              rest)]))]))
+  (lower-tail-let-bindings-candidate-env-at env (& bindings) 0))
+
+(define (lower-tail-let-bindings-candidate-env-at
+  [env : sym_i64_env.SymI64Env]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : sym_i64_env.SymI64Env
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    env
+    (match (ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (lower-tail-let-bindings-candidate-env-at
+          (sym_i64_env.sym-i64-bind-id env name 0)
+          bindings
+          (+ binding-index 1))])))
 
 (define (lower-tail-begin-candidate?
   [state : LowerState]
@@ -39615,14 +39964,23 @@
 
 (define (lower-rvo-let-bindings-have-early-return?
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (lower-rvo-node-has-early-return? init-box)])
-        (lower-rvo-let-bindings-have-early-return? (box-get rest)))]))
+  (lower-rvo-let-bindings-have-early-return-at? (& bindings) 0))
+
+(define (lower-rvo-let-bindings-have-early-return-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (lower-rvo-node-has-early-return? init-box)])
+      (lower-rvo-let-bindings-have-early-return-at?
+        bindings
+        (+ binding-index 1)))))
 
 (define (lower-rvo-match-arms-have-early-return? [arms : AstMatchArmList]) : bool
   (lower-rvo-match-arms-have-early-return-at? (& arms) 0))
@@ -39640,16 +39998,25 @@
 
 (define (lower-rvo-resource-bindings-have-early-return?
   [bindings : AstResourceBindingList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-            (or
-              (lower-rvo-node-has-early-return? acquire-box)
-              (lower-rvo-node-has-early-return? cleanup-box))])
-        (lower-rvo-resource-bindings-have-early-return? (box-get rest)))]))
+  (lower-rvo-resource-bindings-have-early-return-at? (& bindings) 0))
+
+(define (lower-rvo-resource-bindings-have-early-return-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-resource-binding-list-len bindings))
+    false
+    (or
+      (match (ast-resource-binding-list-get
+        bindings
+        binding-index
+        (ast-resource-binding-fallback))
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+          (or
+            (lower-rvo-node-has-early-return? acquire-box)
+            (lower-rvo-node-has-early-return? cleanup-box))])
+      (lower-rvo-resource-bindings-have-early-return-at?
+        bindings
+        (+ binding-index 1)))))
 
 (define (lower-rvo-expr-has-early-return? [expr : AstExpr]) : bool
   (match expr
@@ -43979,14 +44346,23 @@
 
 (define (lower-source-let-bindings-have-import-call?
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (lower-source-node-has-import-call? init-box)])
-        (lower-source-let-bindings-have-import-call? (box-get rest)))]))
+  (lower-source-let-bindings-have-import-call-at? (& bindings) 0))
+
+(define (lower-source-let-bindings-have-import-call-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (lower-source-node-has-import-call? init-box)])
+      (lower-source-let-bindings-have-import-call-at?
+        bindings
+        (+ binding-index 1)))))
 
 (define (lower-source-match-arms-have-import-call? [arms : AstMatchArmList]) : bool
   (lower-source-match-arms-have-import-call-at? (& arms) 0))
@@ -44004,16 +44380,25 @@
 
 (define (lower-source-resource-bindings-have-import-call?
   [bindings : AstResourceBindingList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-            (or
-              (lower-source-node-has-import-call? acquire-box)
-              (lower-source-node-has-import-call? cleanup-box))])
-        (lower-source-resource-bindings-have-import-call? (box-get rest)))]))
+  (lower-source-resource-bindings-have-import-call-at? (& bindings) 0))
+
+(define (lower-source-resource-bindings-have-import-call-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-resource-binding-list-len bindings))
+    false
+    (or
+      (match (ast-resource-binding-list-get
+        bindings
+        binding-index
+        (ast-resource-binding-fallback))
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+          (or
+            (lower-source-node-has-import-call? acquire-box)
+            (lower-source-node-has-import-call? cleanup-box))])
+      (lower-source-resource-bindings-have-import-call-at?
+        bindings
+        (+ binding-index 1)))))
 
 (define (lower-source-call-head-import? [func-box : i64]) : bool
   (match (ast-expr-unspan (ast-node-get func-box))
@@ -54669,7 +55054,7 @@
             "mark"
             (AstMaybeType.Some (AstType.Struct (intern "ImportedMark")))
             unit-expr)
-          AstLetBindingList.Nil)
+          (ast-let-binding-list-new))
         unit-expr)]
     (ast-program
       (ast-decl-cons

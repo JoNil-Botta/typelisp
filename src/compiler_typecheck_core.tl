@@ -10501,43 +10501,58 @@
 (define (tc-source-let-binding-list-policy-ok
   [ctx : TcContext]
   [bindings : AstLetBindingList]) : ResultTcUnit
-  (match bindings
-    [(AstLetBindingList.Nil) ResultTcUnit.Ok]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+  (tc-source-let-binding-list-policy-ok-at ctx (& bindings) 0))
+
+(define (tc-source-let-binding-list-policy-ok-at
+  [ctx : TcContext]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-let-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+            [(ResultTcUnit.Ok)
+              (match (tc-source-expr-policy-ok ctx init)
                 [(ResultTcUnit.Ok)
-                  (match (tc-source-expr-policy-ok ctx init)
-                    [(ResultTcUnit.Ok)
-                      (tc-source-let-binding-list-policy-ok ctx rest)]
-                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+                  (tc-source-let-binding-list-policy-ok-at
+                    ctx
+                    bindings
+                    (+ index 1))]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-resource-binding-list-policy-ok
   [ctx : TcContext]
   [bindings : AstResourceBindingList]) : ResultTcUnit
-  (match bindings
-    [(AstResourceBindingList.Nil) ResultTcUnit.Ok]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (tc-source-expr-policy-ok ctx init)
+  (tc-source-resource-binding-list-policy-ok-at ctx (& bindings) 0))
+
+(define (tc-source-resource-binding-list-policy-ok-at
+  [ctx : TcContext]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-resource-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (tc-source-expr-policy-ok ctx init)
+            [(ResultTcUnit.Ok)
+              (match (tc-source-expr-policy-ok ctx cleanup)
                 [(ResultTcUnit.Ok)
-                  (match (tc-source-expr-policy-ok ctx cleanup)
-                    [(ResultTcUnit.Ok)
-                      (tc-source-resource-binding-list-policy-ok ctx rest)]
-                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+                  (tc-source-resource-binding-list-policy-ok-at
+                    ctx
+                    bindings
+                    (+ index 1))]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
   (match exprs
@@ -10612,44 +10627,58 @@
 (define (tc-source-let-binding-list-spmd-broadcast-scope-ok
   [bindings : AstLetBindingList]
   [allow : bool]) : ResultTcUnit
-  (match bindings
-    [(AstLetBindingList.Nil) ResultTcUnit.Ok]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-source-expr-spmd-broadcast-scope-ok init allow)
-                [(ResultTcUnit.Ok)
-                  (tc-source-let-binding-list-spmd-broadcast-scope-ok
-                    rest
-                    allow)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-source-let-binding-list-spmd-broadcast-scope-ok-at (& bindings) allow 0))
+
+(define (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
+  [bindings : (& bindings AstLetBindingList)]
+  [allow : bool]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-let-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-source-expr-spmd-broadcast-scope-ok init allow)
+            [(ResultTcUnit.Ok)
+              (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
+                bindings
+                allow
+                (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-resource-binding-list-spmd-broadcast-scope-ok
   [bindings : AstResourceBindingList]
   [allow : bool]) : ResultTcUnit
-  (match bindings
-    [(AstResourceBindingList.Nil) ResultTcUnit.Ok]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (tc-source-expr-pair-spmd-broadcast-scope-ok
-                init
-                cleanup
-                allow)
-                [(ResultTcUnit.Ok)
-                  (tc-source-resource-binding-list-spmd-broadcast-scope-ok
-                    rest
-                    allow)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+    (& bindings)
+    allow
+    0))
+
+(define (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [allow : bool]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-resource-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+            init
+            cleanup
+            allow)
+            [(ResultTcUnit.Ok)
+              (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+                bindings
+                allow
+                (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok
   [arms : AstMatchArmList]
@@ -19881,87 +19910,83 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]) : ResultTcEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultTcEnv.Ok env)]
-    [(AstLetBindingList.Cons binding rest)
+  (tc-let-bindings-at ctx env (& bindings) 0))
+
+(define (tc-let-binding-plain-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : ResultTcType
+  (match maybe-ty
+    [(AstMaybeType.Some want)
+      (tc-expr-with-expected-or-actual ctx env init (tc-resolve-type ctx want))]
+    [(AstMaybeType.No) (tc-expr ctx env init)]))
+
+(define (tc-let-binding-plain-expected-ok
+  [ctx : TcContext]
+  [maybe-ty : AstMaybeType]
+  [init-ty : AstType]) : ResultTcUnit
+  (match maybe-ty
+    [(AstMaybeType.Some want)
+      (tc-expect
+        init-ty
+        (tc-resolve-type ctx want)
+        "typecheck: let binding type mismatch")]
+    [(AstMaybeType.No) ResultTcUnit.Ok]))
+
+(define (tc-let-binding-plain-bind-type
+  [ctx : TcContext]
+  [maybe-ty : AstMaybeType]
+  [init-ty : AstType]) : AstType
+  (match maybe-ty
+    [(AstMaybeType.Some want)
       (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match maybe-ty
-                [(AstMaybeType.Some want)
-                  (let
-                    [resolved-want : AstType (tc-resolve-type ctx want)]
-                    (match (tc-expr-with-expected-or-actual
-                      ctx
-                      env
-                      init
-                      resolved-want)
-                      [(ResultTcType.Ok init-ty)
-                        (match (tc-expect
-                          init-ty
-                          resolved-want
-                          "typecheck: let binding type mismatch")
-                          [(ResultTcUnit.Ok)
-                            (match (tc-ensure-cleanup-resource-not-let-bound
+        [resolved-want : AstType (tc-resolve-type ctx want)]
+        (if (tc-type-contains-any-region init-ty)
+          init-ty
+          resolved-want))]
+    [(AstMaybeType.No) init-ty]))
+
+(define (tc-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcEnv.Ok env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-let-binding-plain-type ctx env maybe-ty init)
+            [(ResultTcType.Ok init-ty)
+              (match (tc-let-binding-plain-expected-ok ctx maybe-ty init-ty)
+                [(ResultTcUnit.Ok)
+                  (match (tc-ensure-cleanup-resource-not-let-bound
+                    ctx
+                    env
+                    init
+                    init-ty)
+                    [(ResultTcUnit.Ok)
+                      (match (tc-ensure-reference-value-can-bind env init-ty)
+                        [(ResultTcUnit.Ok)
+                          (tc-let-bindings-at
+                            ctx
+                            (tc-bind-c-abi-fnptr-if-needed-id
                               ctx
                               env
-                              init
-                              init-ty)
-                              [(ResultTcUnit.Ok)
-                                (match (tc-ensure-reference-value-can-bind
-                                  env
-                                  init-ty)
-                                  [(ResultTcUnit.Ok)
-                                    (tc-let-bindings
-                                      ctx
-                                      (let
-                                        [binding-ty : AstType
-                                          (if (tc-type-contains-any-region
-                                            init-ty)
-                                            init-ty
-                                            resolved-want)]
-                                        (tc-bind-c-abi-fnptr-if-needed-id
-                                          ctx
-                                          env
-                                          name
-                                          binding-ty
-                                          init))
-                                      rest)]
-                                  [(ResultTcUnit.Err message)
-                                    (ResultTcEnv.Err message)])]
-                              [(ResultTcUnit.Err message)
-                                (ResultTcEnv.Err message)])]
-                          [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                      [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-                [(AstMaybeType.No)
-                  (match (tc-expr ctx env init)
-                    [(ResultTcType.Ok init-ty)
-                      (match (tc-ensure-cleanup-resource-not-let-bound
-                        ctx
-                        env
-                        init
-                        init-ty)
-                        [(ResultTcUnit.Ok)
-                          (match (tc-ensure-reference-value-can-bind
-                            env
-                            init-ty)
-                            [(ResultTcUnit.Ok)
-                              (tc-let-bindings
+                              name
+                              (tc-let-binding-plain-bind-type
                                 ctx
-                                (tc-bind-c-abi-fnptr-if-needed-id
-                                  ctx
-                                  env
-                                  name
-                                  init-ty
-                                  init)
-                                rest)]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcEnv.Err message)])]
+                                maybe-ty
+                                init-ty)
+                              init)
+                            bindings
+                            (+ index 1))]
                         [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                    [(ResultTcType.Err message) (ResultTcEnv.Err message)])]))]))]))
+                    [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
+                [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
+            [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-lambda-captures-reference-scan-root
   [env : TcTypeEnv]
@@ -20031,65 +20056,93 @@
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) true]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding bind-name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (and
-                (tc-ref-closure-local-uses-ok? init name bound)
-                (tc-ref-closure-let-binding-list-local-uses-ok?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-ref-closure-let-binding-list-local-uses-ok-at? (& bindings) name bound 0))
+
+(define (tc-ref-closure-let-binding-list-local-uses-ok-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    true
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (and
+            (tc-ref-closure-local-uses-ok? init name bound)
+            (tc-ref-closure-let-binding-list-local-uses-ok-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-ref-closure-let-rest-and-body-local-uses-ok?
   [bindings : AstLetBindingList]
   [body : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) (tc-ref-closure-local-uses-ok? body name bound)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding bind-name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (and
-                (tc-ref-closure-local-uses-ok? init name bound)
-                (tc-ref-closure-let-rest-and-body-local-uses-ok?
-                  rest
-                  body
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+    (& bindings)
+    body
+    name
+    bound
+    0))
+
+(define (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [body : AstExpr]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    (tc-ref-closure-local-uses-ok? body name bound)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (and
+            (tc-ref-closure-local-uses-ok? init name bound)
+            (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+              bindings
+              body
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-ref-closure-resource-binding-list-local-uses-ok?
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) true]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding bind-name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (and
-                (tc-ref-closure-local-uses-ok? init name bound)
-                (tc-ref-closure-local-uses-ok? cleanup name bound)
-                (tc-ref-closure-resource-binding-list-local-uses-ok?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+    (& bindings)
+    name
+    bound
+    0))
+
+(define (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    true
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (and
+            (tc-ref-closure-local-uses-ok? init name bound)
+            (tc-ref-closure-local-uses-ok? cleanup name bound)
+            (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-ref-closure-match-arms-local-uses-ok?
   [arms : AstMatchArmList]
@@ -20542,6 +20595,20 @@
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-reference-closure-escape-message))))
 
+(define (tc-let-binding-ref-closure-scope-ok-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [body : AstExpr]
+  [name : String]) : ResultTcUnit
+  (if (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+    bindings
+    body
+    name
+    TcStringList.Nil
+    index)
+    ResultTcUnit.Ok
+    (ResultTcUnit.Err (tc-reference-closure-escape-message))))
+
 ;; --------------------------------------------------------------------------
 ;; Inferred-type hint collection (used by the LSP for inlay hints).
 ;;
@@ -20624,6 +20691,17 @@
   [init-id : i64]
   [rest : AstLetBindingList]
   [body : AstExpr]) : ResultTcType
+  (tc-let-binding-init-type-at ctx env name maybe-ty init-id (& rest) 0 body))
+
+(define (tc-let-binding-init-type-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [maybe-ty : AstMaybeType]
+  [init-id : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [body : AstExpr]) : ResultTcType
   (let
     [init : AstExpr (ast-node-get init-id)]
     [ref-capturing-lambda : bool (tc-ref-capturing-lambda-init? env init)]
@@ -20632,7 +20710,11 @@
         (let
           [resolved-want : AstType (tc-resolve-type ctx want)]
           (if ref-capturing-lambda
-            (match (tc-let-binding-ref-closure-scope-ok rest body name)
+            (match (tc-let-binding-ref-closure-scope-ok-at
+              bindings
+              index
+              body
+              name)
               [(ResultTcUnit.Ok)
                 (match (ast-expr-unspan init)
                   [(AstExpr.Lambda lambda-box)
@@ -20656,7 +20738,11 @@
             (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
       [(AstMaybeType.No)
         (if ref-capturing-lambda
-          (match (tc-let-binding-ref-closure-scope-ok rest body name)
+          (match (tc-let-binding-ref-closure-scope-ok-at
+            bindings
+            index
+            body
+            name)
             [(ResultTcUnit.Ok)
               (match (ast-expr-unspan init)
                 [(AstExpr.Lambda lambda-box)
@@ -20679,94 +20765,98 @@
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [body : AstExpr]) : ResultTcEnv
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultTcEnv.Ok env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-let-binding-init-type
-                ctx
-                env
-                (intern-str name)
-                maybe-ty
-                init-box
-                rest
-                body)
-                [(ResultTcType.Ok init-ty)
-                  (begin
-                    (if tc-inlay-hint-enabled
-                      (tc-inlay-hint-maybe-record maybe-ty init init-ty)
-                      unit)
-                    (match maybe-ty
-                      [(AstMaybeType.Some want)
-                        (let
-                          [resolved-want : AstType (tc-resolve-type ctx want)]
-                          (match (tc-expect
-                            init-ty
-                            resolved-want
-                            "typecheck: let binding type mismatch")
+  (tc-let-bindings-for-body-at ctx env (& bindings) body 0))
+
+(define (tc-let-bindings-for-body-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [body : AstExpr]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcEnv.Ok env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-let-binding-init-type-at
+            ctx
+            env
+            (intern-str name)
+            maybe-ty
+            init-box
+            bindings
+            (+ index 1)
+            body)
+            [(ResultTcType.Ok init-ty)
+              (begin
+                (if tc-inlay-hint-enabled
+                  (tc-inlay-hint-maybe-record maybe-ty init init-ty)
+                  unit)
+                (match maybe-ty
+                  [(AstMaybeType.Some want)
+                    (let
+                      [resolved-want : AstType (tc-resolve-type ctx want)]
+                      (match (tc-expect
+                        init-ty
+                        resolved-want
+                        "typecheck: let binding type mismatch")
+                        [(ResultTcUnit.Ok)
+                          (match (tc-ensure-cleanup-resource-not-let-bound
+                            ctx
+                            env
+                            init
+                            init-ty)
                             [(ResultTcUnit.Ok)
-                              (match (tc-ensure-cleanup-resource-not-let-bound
-                                ctx
+                              (match (tc-ensure-reference-value-can-bind
                                 env
-                                init
                                 init-ty)
                                 [(ResultTcUnit.Ok)
-                                  (match (tc-ensure-reference-value-can-bind
-                                    env
-                                    init-ty)
-                                    [(ResultTcUnit.Ok)
-                                      (tc-let-bindings-for-body
+                                  (tc-let-bindings-for-body-at
+                                    ctx
+                                    (let
+                                      [binding-ty : AstType
+                                        (if (tc-type-contains-any-region
+                                          init-ty)
+                                          init-ty
+                                          resolved-want)]
+                                      (tc-bind-c-abi-fnptr-if-needed-id
                                         ctx
-                                        (let
-                                          [binding-ty : AstType
-                                            (if (tc-type-contains-any-region
-                                              init-ty)
-                                              init-ty
-                                              resolved-want)]
-                                          (tc-bind-c-abi-fnptr-if-needed-id
-                                            ctx
-                                            env
-                                            name
-                                            binding-ty
-                                            init))
-                                        rest
-                                        body)]
-                                    [(ResultTcUnit.Err message)
-                                      (ResultTcEnv.Err message)])]
+                                        env
+                                        name
+                                        binding-ty
+                                        init))
+                                    bindings
+                                    body
+                                    (+ index 1))]
                                 [(ResultTcUnit.Err message)
                                   (ResultTcEnv.Err message)])]
                             [(ResultTcUnit.Err message)
-                              (ResultTcEnv.Err message)]))]
-                      [(AstMaybeType.No)
-                        (match (tc-ensure-cleanup-resource-not-let-bound
-                          ctx
-                          env
-                          init
-                          init-ty)
+                              (ResultTcEnv.Err message)])]
+                        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))]
+                  [(AstMaybeType.No)
+                    (match (tc-ensure-cleanup-resource-not-let-bound
+                      ctx
+                      env
+                      init
+                      init-ty)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-ensure-reference-value-can-bind env init-ty)
                           [(ResultTcUnit.Ok)
-                            (match (tc-ensure-reference-value-can-bind
-                              env
-                              init-ty)
-                              [(ResultTcUnit.Ok)
-                                (tc-let-bindings-for-body
-                                  ctx
-                                  (tc-bind-c-abi-fnptr-if-needed-id
-                                    ctx
-                                    env
-                                    name
-                                    init-ty
-                                    init)
-                                  rest
-                                  body)]
-                              [(ResultTcUnit.Err message)
-                                (ResultTcEnv.Err message)])]
-                          [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]))]))
+                            (tc-let-bindings-for-body-at
+                              ctx
+                              (tc-bind-c-abi-fnptr-if-needed-id
+                                ctx
+                                env
+                                name
+                                init-ty
+                                init)
+                              bindings
+                              body
+                              (+ index 1))]
+                          [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]))]
+            [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit
   (match (ast-expr-unspan cleanup)
@@ -20822,46 +20912,47 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : AstResourceBindingList]) : ResultTcEnv
-  (match bindings
-    [(AstResourceBindingList.Nil) (ResultTcEnv.Ok env)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (tc-resource-cleanup-resource-type ctx env cleanup)
-                [(ResultTcType.Ok expected-init-ty)
-                  (match (tc-expr-with-expected-or-actual-id
-                    ctx
-                    env
-                    init-box
-                    expected-init-ty)
-                    [(ResultTcType.Ok init-ty)
-                      (match (tc-ensure-cleanup-resource-not-transferred
-                        env
-                        init)
+  (tc-resource-bindings-at ctx env (& bindings) 0))
+
+(define (tc-resource-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (ResultTcEnv.Ok env)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (tc-resource-cleanup-resource-type ctx env cleanup)
+            [(ResultTcType.Ok expected-init-ty)
+              (match (tc-expr-with-expected-or-actual-id
+                ctx
+                env
+                init-box
+                expected-init-ty)
+                [(ResultTcType.Ok init-ty)
+                  (match (tc-ensure-cleanup-resource-not-transferred env init)
+                    [(ResultTcUnit.Ok)
+                      (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
                         [(ResultTcUnit.Ok)
-                          (match (tc-resource-cleanup-ok
+                          (tc-resource-bindings-at
                             ctx
-                            env
-                            cleanup
-                            init-ty)
-                            [(ResultTcUnit.Ok)
-                              (tc-resource-bindings
-                                ctx
-                                (tc-bind-id
-                                  (tc-bind-cleanup-owner env (intern-str name))
-                                  name
-                                  (tc-type-without-regions init-ty))
-                                rest)]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcEnv.Err message)])]
+                            (tc-bind-id
+                              (tc-bind-cleanup-owner env (intern-str name))
+                              name
+                              (tc-type-without-regions init-ty))
+                            bindings
+                            (+ index 1))]
                         [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                    [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]))]))
+                    [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
+                [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-begin-list
   [ctx : TcContext]
@@ -21646,44 +21737,50 @@
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-spmd-masked-if-expr ctx env spmd-env init)
-                [(ResultTcUnit.Ok)
-                  (match (tc-spmd-expr ctx env spmd-env init)
-                    [(ResultTcSpmdExprInfo.Ok info)
-                      (match info
-                        [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                          (let
-                            [bound-ty : AstType
-                              (match maybe-ty
-                                [(AstMaybeType.Some want)
-                                  (if (tc-type-contains-any-region init-ty)
-                                    init-ty
-                                    (tc-resolve-type ctx want))]
-                                [(AstMaybeType.No) init-ty])]
-                            (tc-spmd-masked-if-let-bindings
-                              ctx
-                              (tc-bind-id env name bound-ty)
-                              (tc-spmd-env-bind
-                                next-spmd-env
-                                (intern-str name)
-                                bound-ty
-                                init-class
-                                TcSpmdScope.Local)
-                              rest
-                              mark))])]
-                    [(ResultTcSpmdExprInfo.Err message)
-                      (ResultTcSpmdLetState.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcSpmdLetState.Err message)]))]))]))
+  (tc-spmd-masked-if-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+
+(define (tc-spmd-masked-if-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [mark : TcSpmdEnvMark]
+  [index : i64]) : ResultTcSpmdLetState
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-spmd-masked-if-expr ctx env spmd-env init)
+            [(ResultTcUnit.Ok)
+              (match (tc-spmd-expr ctx env spmd-env init)
+                [(ResultTcSpmdExprInfo.Ok info)
+                  (match info
+                    [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                      (let
+                        [bound-ty : AstType
+                          (match maybe-ty
+                            [(AstMaybeType.Some want)
+                              (if (tc-type-contains-any-region init-ty)
+                                init-ty
+                                (tc-resolve-type ctx want))]
+                            [(AstMaybeType.No) init-ty])]
+                        (tc-spmd-masked-if-let-bindings-at
+                          ctx
+                          (tc-bind-id env name bound-ty)
+                          (tc-spmd-env-bind
+                            next-spmd-env
+                            (intern-str name)
+                            bound-ty
+                            init-class
+                            TcSpmdScope.Local)
+                          bindings
+                          mark
+                          (+ index 1)))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdLetState.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcSpmdLetState.Err message)]))])))
 
 (define (tc-spmd-masked-if-expr
   [ctx : TcContext]
@@ -21899,41 +21996,47 @@
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-spmd-expr ctx env spmd-env init)
-                [(ResultTcSpmdExprInfo.Ok info)
-                  (match info
-                    [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                      (let
-                        [bound-ty : AstType
-                          (match maybe-ty
-                            [(AstMaybeType.Some want)
-                              (if (tc-type-contains-any-region init-ty)
-                                init-ty
-                                (tc-resolve-type ctx want))]
-                            [(AstMaybeType.No) init-ty])]
-                        (tc-spmd-let-bindings
-                          ctx
-                          (tc-bind-id env name bound-ty)
-                          (tc-spmd-env-bind
-                            next-spmd-env
-                            (intern-str name)
-                            bound-ty
-                            init-class
-                            TcSpmdScope.Local)
-                          rest
-                          mark))])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdLetState.Err message)]))]))]))
+  (tc-spmd-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+
+(define (tc-spmd-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [mark : TcSpmdEnvMark]
+  [index : i64]) : ResultTcSpmdLetState
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-spmd-expr ctx env spmd-env init)
+            [(ResultTcSpmdExprInfo.Ok info)
+              (match info
+                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                  (let
+                    [bound-ty : AstType
+                      (match maybe-ty
+                        [(AstMaybeType.Some want)
+                          (if (tc-type-contains-any-region init-ty)
+                            init-ty
+                            (tc-resolve-type ctx want))]
+                        [(AstMaybeType.No) init-ty])]
+                    (tc-spmd-let-bindings-at
+                      ctx
+                      (tc-bind-id env name bound-ty)
+                      (tc-spmd-env-bind
+                        next-spmd-env
+                        (intern-str name)
+                        bound-ty
+                        init-class
+                        TcSpmdScope.Local)
+                      bindings
+                      mark
+                      (+ index 1)))])]
+            [(ResultTcSpmdExprInfo.Err message)
+              (ResultTcSpmdLetState.Err message)]))])))
 
 (define (tc-spmd-expr-list
   [ctx : TcContext]
@@ -22243,36 +22346,45 @@
 
 (define (tc-spmd-scan-body-no-nested-let-bindings
   [bindings : AstLetBindingList]) : ResultTcUnit
-  (match bindings
-    [(AstLetBindingList.Nil) ResultTcUnit.Ok]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [tail : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-spmd-scan-body-no-nested-spmd init)
-                [(ResultTcUnit.Ok)
-                  (tc-spmd-scan-body-no-nested-let-bindings tail)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-spmd-scan-body-no-nested-let-bindings-at (& bindings) 0))
+
+(define (tc-spmd-scan-body-no-nested-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-let-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-spmd-scan-body-no-nested-spmd init)
+            [(ResultTcUnit.Ok)
+              (tc-spmd-scan-body-no-nested-let-bindings-at bindings (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-scan-body-no-nested-resource-bindings
   [bindings : AstResourceBindingList]) : ResultTcUnit
-  (match bindings
-    [(AstResourceBindingList.Nil) ResultTcUnit.Ok]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [tail : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (tc-spmd-scan-body-no-nested-pair init cleanup)
-                [(ResultTcUnit.Ok)
-                  (tc-spmd-scan-body-no-nested-resource-bindings tail)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-spmd-scan-body-no-nested-resource-bindings-at (& bindings) 0))
+
+(define (tc-spmd-scan-body-no-nested-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-resource-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (tc-spmd-scan-body-no-nested-pair init cleanup)
+            [(ResultTcUnit.Ok)
+              (tc-spmd-scan-body-no-nested-resource-bindings-at
+                bindings
+                (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-scan-body-no-nested-arms [arms : AstMatchArmList]) : ResultTcUnit
   (tc-spmd-scan-body-no-nested-arms-at (& arms) 0))
@@ -22558,41 +22670,47 @@
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-spmd-reduce-class ctx env spmd-env init)
-                [(ResultTcSpmdExprInfo.Ok info)
-                  (match info
-                    [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                      (let
-                        [bound-ty : AstType
-                          (match maybe-ty
-                            [(AstMaybeType.Some want)
-                              (if (tc-type-contains-any-region init-ty)
-                                init-ty
-                                (tc-resolve-type ctx want))]
-                            [(AstMaybeType.No) init-ty])]
-                        (tc-spmd-reduce-let-bindings
-                          ctx
-                          (tc-bind-id env name bound-ty)
-                          (tc-spmd-env-bind
-                            next-spmd-env
-                            (intern-str name)
-                            bound-ty
-                            init-class
-                            TcSpmdScope.Local)
-                          rest
-                          mark))])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdLetState.Err message)]))]))]))
+  (tc-spmd-reduce-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+
+(define (tc-spmd-reduce-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [mark : TcSpmdEnvMark]
+  [index : i64]) : ResultTcSpmdLetState
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcSpmdLetState.Ok (TcSpmdLetState env spmd-env mark))
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-spmd-reduce-class ctx env spmd-env init)
+            [(ResultTcSpmdExprInfo.Ok info)
+              (match info
+                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                  (let
+                    [bound-ty : AstType
+                      (match maybe-ty
+                        [(AstMaybeType.Some want)
+                          (if (tc-type-contains-any-region init-ty)
+                            init-ty
+                            (tc-resolve-type ctx want))]
+                        [(AstMaybeType.No) init-ty])]
+                    (tc-spmd-reduce-let-bindings-at
+                      ctx
+                      (tc-bind-id env name bound-ty)
+                      (tc-spmd-env-bind
+                        next-spmd-env
+                        (intern-str name)
+                        bound-ty
+                        init-class
+                        TcSpmdScope.Local)
+                      bindings
+                      mark
+                      (+ index 1)))])]
+            [(ResultTcSpmdExprInfo.Err message)
+              (ResultTcSpmdLetState.Err message)]))])))
 
 (define (tc-spmd-reduce-class
   [ctx : TcContext]
@@ -23840,30 +23958,41 @@
 (define (tc-let-binding-list-add-bound-names
   [bindings : AstLetBindingList]
   [bound : TcStringList]) : TcStringList
-  (match bindings
-    [(AstLetBindingList.Nil) bound]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ _)
-            (tc-let-binding-list-add-bound-names
-              rest
-              (tc-string-list-add bound (intern-str name)))]))]))
+  (tc-let-binding-list-add-bound-names-at (& bindings) bound 0))
+
+(define (tc-let-binding-list-add-bound-names-at
+  [bindings : (& bindings AstLetBindingList)]
+  [bound : TcStringList]
+  [index : i64]) : TcStringList
+  (if (>= index (ast-let-binding-list-len bindings))
+    bound
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (tc-let-binding-list-add-bound-names-at
+          bindings
+          (tc-string-list-add bound (intern-str name))
+          (+ index 1))])))
 
 (define (tc-resource-binding-list-add-bound-names
   [bindings : AstResourceBindingList]
   [bound : TcStringList]) : TcStringList
-  (match bindings
-    [(AstResourceBindingList.Nil) bound]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name _ _)
-            (tc-resource-binding-list-add-bound-names
-              rest
-              (tc-string-list-add bound (intern-str name)))]))]))
+  (tc-resource-binding-list-add-bound-names-at (& bindings) bound 0))
+
+(define (tc-resource-binding-list-add-bound-names-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [bound : TcStringList]
+  [index : i64]) : TcStringList
+  (if (>= index (ast-resource-binding-list-len bindings))
+    bound
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name _ _)
+        (tc-resource-binding-list-add-bound-names-at
+          bindings
+          (tc-string-list-add bound (intern-str name))
+          (+ index 1))])))
 
 (define (tc-expr-list-uses-free-name?
   [exprs : AstExprList]
@@ -23883,43 +24012,56 @@
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding bind-name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (tc-expr-uses-free-name? init name bound)
-                (tc-let-binding-list-uses-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-let-binding-list-uses-free-name-at? (& bindings) name bound 0))
+
+(define (tc-let-binding-list-uses-free-name-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (tc-let-binding-list-uses-free-name-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-resource-binding-list-uses-free-name?
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding bind-name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (or
-                (tc-expr-uses-free-name? init name bound)
-                (tc-expr-uses-free-name? cleanup name bound)
-                (tc-resource-binding-list-uses-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-resource-binding-list-uses-free-name-at? (& bindings) name bound 0))
+
+(define (tc-resource-binding-list-uses-free-name-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (tc-expr-uses-free-name? cleanup name bound)
+            (tc-resource-binding-list-uses-free-name-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-match-arms-use-free-name?
   [arms : AstMatchArmList]
@@ -24360,43 +24502,56 @@
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding bind-name _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (tc-expr-sets-free-name? init name bound)
-                (tc-let-binding-list-sets-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-let-binding-list-sets-free-name-at? (& bindings) name bound 0))
+
+(define (tc-let-binding-list-sets-free-name-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (tc-expr-sets-free-name? init name bound)
+            (tc-let-binding-list-sets-free-name-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-resource-binding-list-sets-free-name?
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding bind-name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (or
-                (tc-expr-sets-free-name? init name bound)
-                (tc-expr-sets-free-name? cleanup name bound)
-                (tc-resource-binding-list-sets-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
+  (tc-resource-binding-list-sets-free-name-at? (& bindings) name bound 0))
+
+(define (tc-resource-binding-list-sets-free-name-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [name : String]
+  [bound : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (or
+            (tc-expr-sets-free-name? init name bound)
+            (tc-expr-sets-free-name? cleanup name bound)
+            (tc-resource-binding-list-sets-free-name-at?
+              bindings
+              name
+              (tc-string-list-add bound (intern-str bind-name))
+              (+ index 1))))])))
 
 (define (tc-match-arms-set-free-name?
   [arms : AstMatchArmList]
@@ -30087,19 +30242,25 @@
 (define (tc-spmd-value-let-bindings-pure-at
   [bindings : AstLetBindingList]
   [in-index : bool]) : ResultTcUnit
-  (match bindings
-    [(AstLetBindingList.Nil) ResultTcUnit.Ok]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-spmd-value-pure-at init in-index)
-                [(ResultTcUnit.Ok)
-                  (tc-spmd-value-let-bindings-pure-at rest in-index)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]))]))
+  (tc-spmd-value-let-bindings-pure-at-index (& bindings) in-index 0))
+
+(define (tc-spmd-value-let-bindings-pure-at-index
+  [bindings : (& bindings AstLetBindingList)]
+  [in-index : bool]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast-let-binding-list-len bindings))
+    ResultTcUnit.Ok
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-spmd-value-pure-at init in-index)
+            [(ResultTcUnit.Ok)
+              (tc-spmd-value-let-bindings-pure-at-index
+                bindings
+                in-index
+                (+ index 1))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-reduce-type-from-value
   [ctx : TcContext]
@@ -32761,31 +32922,48 @@
   [seen : TcStringList]
   [template? : bool]
   [bindings : AstLetBindingList]) : ResultTcStringList
-  (match bindings
-    [(AstLetBindingList.Nil) (ResultTcStringList.Ok bound)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name _ init-box)
-            (match (tc-comptime-purity-node-mode
+  (tc-comptime-purity-let-bindings-mode-at
+    ctx
+    env
+    bound
+    chain
+    seen
+    template?
+    (& bindings)
+    0))
+
+(define (tc-comptime-purity-let-bindings-mode-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : ResultTcStringList
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultTcStringList.Ok bound)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init-box)
+        (match (tc-comptime-purity-node-mode
+          ctx
+          env
+          bound
+          chain
+          seen
+          template?
+          init-box)
+          [(ResultTcUnit.Ok)
+            (tc-comptime-purity-let-bindings-mode-at
               ctx
               env
-              bound
+              (tc-comptime-purity-template-bound template? bound name)
               chain
               seen
               template?
-              init-box)
-              [(ResultTcUnit.Ok)
-                (tc-comptime-purity-let-bindings-mode
-                  ctx
-                  env
-                  (tc-comptime-purity-template-bound template? bound name)
-                  chain
-                  seen
-                  template?
-                  rest)]
-              [(ResultTcUnit.Err message) (ResultTcStringList.Err message)])]))]))
+              bindings
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcStringList.Err message)])])))
 
 (define (tc-comptime-purity-resource-bindings-mode
   [ctx : TcContext]
@@ -32795,32 +32973,52 @@
   [seen : TcStringList]
   [template? : bool]
   [bindings : AstResourceBindingList]) : ResultTcStringList
-  (match bindings
-    [(AstResourceBindingList.Nil) (ResultTcStringList.Ok bound)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box cleanup-box)
-            (match (tc-comptime-purity-node2-mode
+  (tc-comptime-purity-resource-bindings-mode-at
+    ctx
+    env
+    bound
+    chain
+    seen
+    template?
+    (& bindings)
+    0))
+
+(define (tc-comptime-purity-resource-bindings-mode-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : ResultTcStringList
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (ResultTcStringList.Ok bound)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (match (tc-comptime-purity-node2-mode
+          ctx
+          env
+          bound
+          chain
+          seen
+          template?
+          init-box
+          cleanup-box)
+          [(ResultTcUnit.Ok)
+            (tc-comptime-purity-resource-bindings-mode-at
               ctx
               env
-              bound
+              (tc-comptime-purity-template-bound template? bound name)
               chain
               seen
               template?
-              init-box
-              cleanup-box)
-              [(ResultTcUnit.Ok)
-                (tc-comptime-purity-resource-bindings-mode
-                  ctx
-                  env
-                  (tc-comptime-purity-template-bound template? bound name)
-                  chain
-                  seen
-                  template?
-                  rest)]
-              [(ResultTcUnit.Err message) (ResultTcStringList.Err message)])]))]))
+              bindings
+              (+ index 1))]
+          [(ResultTcUnit.Err message) (ResultTcStringList.Err message)])])))
 
 (define (tc-comptime-purity-match-arms-mode
   [ctx : TcContext]
@@ -36031,56 +36229,71 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : AstLetBindingList]) : TcMoveBindings
-  (match bindings
-    [(AstLetBindingList.Nil) (TcMoveBindings.Ok env moved locals loop-carried)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-move-check-expr-id
-                ctx
-                env
-                locals
-                loop-carried
-                moved
-                init-box)
-                [(TcMoveResult.Ok moved1)
-                  (let
-                    [binding-ty : AstType
-                      (tc-move-binding-type-id
-                        "move.let_init"
+  (tc-move-check-let-bindings-at
+    ctx
+    env
+    locals
+    loop-carried
+    moved
+    (& bindings)
+    0))
+
+(define (tc-move-check-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : TcMoveBindings
+  (if (>= index (ast-let-binding-list-len bindings))
+    (TcMoveBindings.Ok env moved locals loop-carried)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-move-check-expr-id
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            init-box)
+            [(TcMoveResult.Ok moved1)
+              (let
+                [binding-ty : AstType
+                  (tc-move-binding-type-id
+                    "move.let_init"
+                    ctx
+                    env
+                    maybe-ty
+                    init-box)]
+                (match (tc-move-after-bind-known-type-id
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  init-box
+                  binding-ty)
+                  [(TcMoveResult.Ok moved2)
+                    (tc-move-check-let-bindings-at
+                      ctx
+                      (tc-bind-c-abi-fnptr-if-needed-id
                         ctx
                         env
-                        maybe-ty
-                        init-box)]
-                    (match (tc-move-after-bind-known-type-id
-                      ctx
-                      env
-                      locals
-                      loop-carried
-                      moved1
-                      init-box
-                      binding-ty)
-                      [(TcMoveResult.Ok moved2)
-                        (tc-move-check-let-bindings
-                          ctx
-                          (tc-bind-c-abi-fnptr-if-needed-id
-                            ctx
-                            env
-                            name
-                            binding-ty
-                            init)
-                          (tc-moved-add locals (intern-str name))
-                          (tc-moved-remove-root-state
-                            loop-carried
-                            (intern-str name))
-                          (tc-moved-remove-root-state moved2 (intern-str name))
-                          rest)]
-                      [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]
-                [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]))]))
+                        name
+                        binding-ty
+                        init)
+                      (tc-moved-add locals (intern-str name))
+                      (tc-moved-remove-root-state
+                        loop-carried
+                        (intern-str name))
+                      (tc-moved-remove-root-state moved2 (intern-str name))
+                      bindings
+                      (+ index 1))]
+                  [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]
+            [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))])))
 
 (define (tc-move-check-resource-bindings
   [ctx : TcContext]
@@ -36089,80 +36302,94 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : AstResourceBindingList]) : TcMoveResourceBindings
-  (match bindings
-    [(AstResourceBindingList.Nil)
-      (TcMoveResourceBindings.Ok
-        env
-        moved
-        locals
-        loop-carried
-        TcMoveCleanupOwners.Nil)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box _)
-            (let
-              [_init : AstExpr (ast-node-get init-box)]
-              (match (tc-move-check-expr-id
+  (tc-move-check-resource-bindings-at
+    ctx
+    env
+    locals
+    loop-carried
+    moved
+    (& bindings)
+    0))
+
+(define (tc-move-check-resource-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : TcMoveResourceBindings
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (TcMoveResourceBindings.Ok
+      env
+      moved
+      locals
+      loop-carried
+      TcMoveCleanupOwners.Nil)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box _)
+        (let
+          [_init : AstExpr (ast-node-get init-box)]
+          (match (tc-move-check-expr-id
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            init-box)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-after-bind-id
                 ctx
                 env
                 locals
                 loop-carried
-                moved
+                moved1
                 init-box)
-                [(TcMoveResult.Ok moved1)
-                  (match (tc-move-after-bind-id
+                [(TcMoveResult.Ok moved2)
+                  (match (tc-body-type-fact-expr-id
+                    "move.resource_init"
                     ctx
                     env
-                    locals
-                    loop-carried
-                    moved1
                     init-box)
-                    [(TcMoveResult.Ok moved2)
-                      (match (tc-body-type-fact-expr-id
-                        "move.resource_init"
+                    [(ResultTcType.Ok init-ty)
+                      (match (tc-move-check-resource-bindings-at
                         ctx
-                        env
-                        init-box)
-                        [(ResultTcType.Ok init-ty)
-                          (match (tc-move-check-resource-bindings
-                            ctx
-                            (tc-bind-id
-                              (tc-bind-cleanup-owner env (intern-str name))
-                              name
-                              (tc-type-without-regions init-ty))
-                            (tc-moved-add locals (intern-str name))
-                            (tc-moved-remove-root-state
-                              loop-carried
-                              (intern-str name))
-                            (tc-moved-remove-root-state
-                              moved2
-                              (intern-str name))
-                            rest)
-                            [(TcMoveResourceBindings.Ok
-                                env2
-                                moved3
-                                locals2
-                                loop-carried2
-                                roots)
-                              (TcMoveResourceBindings.Ok
-                                env2
-                                moved3
-                                locals2
-                                loop-carried2
-                                (TcMoveCleanupOwners.Cons
-                                  (intern-str name)
-                                  init-box
-                                  (box roots)))]
-                            [(TcMoveResourceBindings.Err message)
-                              (TcMoveResourceBindings.Err message)])]
-                        [(ResultTcType.Err message)
+                        (tc-bind-id
+                          (tc-bind-cleanup-owner env (intern-str name))
+                          name
+                          (tc-type-without-regions init-ty))
+                        (tc-moved-add locals (intern-str name))
+                        (tc-moved-remove-root-state
+                          loop-carried
+                          (intern-str name))
+                        (tc-moved-remove-root-state moved2 (intern-str name))
+                        bindings
+                        (+ index 1))
+                        [(TcMoveResourceBindings.Ok
+                            env2
+                            moved3
+                            locals2
+                            loop-carried2
+                            roots)
+                          (TcMoveResourceBindings.Ok
+                            env2
+                            moved3
+                            locals2
+                            loop-carried2
+                            (TcMoveCleanupOwners.Cons
+                              (intern-str name)
+                              init-box
+                              (box roots)))]
+                        [(TcMoveResourceBindings.Err message)
                           (TcMoveResourceBindings.Err message)])]
-                    [(TcMoveResult.Err message)
+                    [(ResultTcType.Err message)
                       (TcMoveResourceBindings.Err message)])]
                 [(TcMoveResult.Err message)
-                  (TcMoveResourceBindings.Err message)]))]))]))
+                  (TcMoveResourceBindings.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResourceBindings.Err message)]))])))
 
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
@@ -38947,22 +39174,35 @@
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [lifetime : String]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ _ init-box)
-          (if (tc-borrow-check-expr-stores-lifetime?
+  (tc-borrow-check-let-bindings-store-lifetime-at?
+    ctx
+    env
+    (& bindings)
+    lifetime
+    0))
+
+(define (tc-borrow-check-let-bindings-store-lifetime-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [lifetime : String]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (if (tc-borrow-check-expr-stores-lifetime?
+          ctx
+          env
+          (ast-node-get init-box)
+          lifetime)
+          true
+          (tc-borrow-check-let-bindings-store-lifetime-at?
             ctx
             env
-            (ast-node-get init-box)
-            lifetime)
-            true
-            (tc-borrow-check-let-bindings-store-lifetime?
-              ctx
-              env
-              (box-get rest)
-              lifetime))])]))
+            bindings
+            lifetime
+            (+ index 1)))])))
 
 (define (tc-borrow-check-match-arms-store-lifetime?
   [ctx : TcContext]
@@ -39719,50 +39959,57 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [bindings : AstLetBindingList]) : TcBorrowCheckBindings
-  (match bindings
-    [(AstLetBindingList.Nil) (TcBorrowCheckBindings.Ok env locals borrowed)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
-                [(TcBorrowCheckResult.Ok borrowed1)
-                  (let
-                    [binding-ty : AstType
-                      (tc-move-binding-type-id
-                        "borrow.let_init"
+  (tc-borrow-check-let-bindings-at ctx env locals borrowed (& bindings) 0))
+
+(define (tc-borrow-check-let-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : TcBorrowCheckBindings
+  (if (>= index (ast-let-binding-list-len bindings))
+    (TcBorrowCheckBindings.Ok env locals borrowed)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (let
+                [binding-ty : AstType
+                  (tc-move-binding-type-id
+                    "borrow.let_init"
+                    ctx
+                    env
+                    maybe-ty
+                    init-box)]
+                (match (tc-borrow-check-after-bind-known-type-id
+                  ctx
+                  env
+                  locals
+                  borrowed1
+                  init-box
+                  binding-ty)
+                  [(TcBorrowCheckResult.Ok borrowed2)
+                    (tc-borrow-check-let-bindings-at
+                      ctx
+                      (tc-bind-c-abi-fnptr-if-needed-id
                         ctx
                         env
-                        maybe-ty
-                        init-box)]
-                    (match (tc-borrow-check-after-bind-known-type-id
-                      ctx
-                      env
-                      locals
-                      borrowed1
-                      init-box
-                      binding-ty)
-                      [(TcBorrowCheckResult.Ok borrowed2)
-                        (tc-borrow-check-let-bindings
-                          ctx
-                          (tc-bind-c-abi-fnptr-if-needed-id
-                            ctx
-                            env
-                            name
-                            binding-ty
-                            init)
-                          (tc-moved-add locals (intern-str name))
-                          (tc-borrow-check-remove-root-state
-                            borrowed2
-                            (intern-str name))
-                          rest)]
-                      [(TcBorrowCheckResult.Err message)
-                        (TcBorrowCheckBindings.Err message)]))]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckBindings.Err message)]))]))]))
+                        name
+                        binding-ty
+                        init)
+                      (tc-moved-add locals (intern-str name))
+                      (tc-borrow-check-remove-root-state
+                        borrowed2
+                        (intern-str name))
+                      bindings
+                      (+ index 1))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckBindings.Err message)]))]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckBindings.Err message)]))])))
 
 (define (tc-borrow-check-resource-bindings
   [ctx : TcContext]
@@ -39770,48 +40017,57 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [bindings : AstResourceBindingList]) : TcBorrowCheckResourceBindings
-  (match bindings
-    [(AstResourceBindingList.Nil)
-      (TcBorrowCheckResourceBindings.Ok env locals borrowed)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box _)
-            (let
-              [_init : AstExpr (ast-node-get init-box)]
-              (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
-                [(TcBorrowCheckResult.Ok borrowed1)
-                  (match (tc-borrow-check-after-bind-id
+  (tc-borrow-check-resource-bindings-at ctx env locals borrowed (& bindings) 0))
+
+(define (tc-borrow-check-resource-bindings-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : TcBorrowCheckResourceBindings
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (TcBorrowCheckResourceBindings.Ok env locals borrowed)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box _)
+        (let
+          [_init : AstExpr (ast-node-get init-box)]
+          (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-borrow-check-after-bind-id
+                ctx
+                env
+                locals
+                borrowed1
+                init-box)
+                [(TcBorrowCheckResult.Ok borrowed2)
+                  (match (tc-body-type-fact-expr-id
+                    "borrow.resource_init"
                     ctx
                     env
-                    locals
-                    borrowed1
                     init-box)
-                    [(TcBorrowCheckResult.Ok borrowed2)
-                      (match (tc-body-type-fact-expr-id
-                        "borrow.resource_init"
+                    [(ResultTcType.Ok init-ty)
+                      (tc-borrow-check-resource-bindings-at
                         ctx
-                        env
-                        init-box)
-                        [(ResultTcType.Ok init-ty)
-                          (tc-borrow-check-resource-bindings
-                            ctx
-                            (tc-bind-id
-                              (tc-bind-cleanup-owner env (intern-str name))
-                              name
-                              (tc-type-without-regions init-ty))
-                            (tc-moved-add locals (intern-str name))
-                            (tc-borrow-check-remove-root-state
-                              borrowed2
-                              (intern-str name))
-                            rest)]
-                        [(ResultTcType.Err message)
-                          (TcBorrowCheckResourceBindings.Err message)])]
-                    [(TcBorrowCheckResult.Err message)
+                        (tc-bind-id
+                          (tc-bind-cleanup-owner env (intern-str name))
+                          name
+                          (tc-type-without-regions init-ty))
+                        (tc-moved-add locals (intern-str name))
+                        (tc-borrow-check-remove-root-state
+                          borrowed2
+                          (intern-str name))
+                        bindings
+                        (+ index 1))]
+                    [(ResultTcType.Err message)
                       (TcBorrowCheckResourceBindings.Err message)])]
                 [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResourceBindings.Err message)]))]))]))
+                  (TcBorrowCheckResourceBindings.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResourceBindings.Err message)]))])))
 
 (define (tc-borrow-check-arms-join
   [ctx : TcContext]
@@ -40838,6 +41094,10 @@
 
 (defenum ResultMacroLetBindings
   (Ok AstLetBindingList TcTypeEnv)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultMacroLetBindingsBuild
+  (Ok TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroEnv
@@ -42448,29 +42708,25 @@
 (define (macro-generated-fingerprint-let-bindings-budget
   [bindings : AstLetBindingList]
   [fuel : i64]) : i64
-  (let
-    [cur : AstLetBindingList bindings]
-    [remaining : i64 fuel]
-    [done : bool false]
-    [ok : bool true]
-    (begin
-      (while (if done
-        false
-        ok)
-        (match cur
-          [(AstLetBindingList.Nil) (set! done true)]
-          [(AstLetBindingList.Cons head rest)
-            (let
-              [next-remaining : i64
-                (macro-generated-fingerprint-let-binding-budget head remaining)]
-              (if (< next-remaining 0)
-                (set! ok false)
-                (begin
-                  (set! remaining next-remaining)
-                  (set! cur (box-get rest)))))]))
-      (if ok
-        remaining
-        -1))))
+  (macro-generated-fingerprint-let-bindings-budget-at (& bindings) 0 fuel))
+
+(define (macro-generated-fingerprint-let-bindings-budget-at
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [fuel : i64]) : i64
+  (if (>= index (ast-let-binding-list-len bindings))
+    fuel
+    (let
+      [next-remaining : i64
+        (macro-generated-fingerprint-let-binding-budget
+          (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+          fuel)]
+      (if (< next-remaining 0)
+        -1
+        (macro-generated-fingerprint-let-bindings-budget-at
+          bindings
+          (+ index 1)
+          next-remaining)))))
 
 (define (macro-generated-fingerprint-expr-budget [expr : AstExpr] [fuel : i64]) : i64
   (let
@@ -43671,18 +43927,26 @@
   [body : SpannedSexpr]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultMacroSexpr.Ok
-        (spanned-sexpr-cons body (SpannedSexpr.Nil span) span))]
-    [(AstLetBindingList.Cons head rest)
-      (match (macro-let-binding-bracket head span origin)
-        [(ResultMacroSexpr.Ok sbracket)
-          (match (macro-let-tail (box-get rest) body span origin)
-            [(ResultMacroSexpr.Ok stail)
-              (ResultMacroSexpr.Ok (spanned-sexpr-cons sbracket stail span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+  (macro-let-tail-at (& bindings) body span origin 0))
+
+(define (macro-let-tail-at
+  [bindings : (& bindings AstLetBindingList)]
+  [body : SpannedSexpr]
+  [span : token.SourceSpan]
+  [origin : AstExpr]
+  [index : i64]) : ResultMacroSexpr
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultMacroSexpr.Ok (spanned-sexpr-cons body (SpannedSexpr.Nil span) span))
+    (match (macro-let-binding-bracket
+      (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      span
+      origin)
+      [(ResultMacroSexpr.Ok sbracket)
+        (match (macro-let-tail-at bindings body span origin (+ index 1))
+          [(ResultMacroSexpr.Ok stail)
+            (ResultMacroSexpr.Ok (spanned-sexpr-cons sbracket stail span))]
+          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
 
 (define (macro-expr-list-to-spanned-sexpr
   [exprs : AstExprList]
@@ -44823,74 +45087,107 @@
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : MacroHygieneLetBindings
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (MacroHygieneLetBindings.LetBindings AstLetBindingList.Nil env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
-              (match (macro-hygiene-bind-name
-                env
-                macro-name
-                depth
-                (intern-str name))
-                [(MacroHygieneName.Name renamed next-env)
-                  (match (macro-hygiene-let-bindings
-                    rest
-                    next-env
-                    macro-name
-                    depth)
-                    [(MacroHygieneLetBindings.LetBindings nrest final-env)
-                      (MacroHygieneLetBindings.LetBindings
-                        (ast-let-binding-cons
-                          (ast-let-binding renamed maybe-ty ninit)
-                          nrest)
-                        final-env)])]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    [final-env : MacroHygieneEnv
+      (macro-hygiene-let-bindings-into
+        (& bindings)
+        env
+        macro-name
+        depth
+        0
+        (&mut out))]
+    (MacroHygieneLetBindings.LetBindings out final-env)))
+
+(define (macro-hygiene-let-bindings-into
+  [bindings : (& bindings AstLetBindingList)]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [index : i64]
+  [out : (&mut out AstLetBindingList)]) : MacroHygieneEnv
+  (if (>= index (ast-let-binding-list-len bindings))
+    env
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
+          (match (macro-hygiene-bind-name
+            env
+            macro-name
+            depth
+            (intern-str name))
+            [(MacroHygieneName.Name renamed next-env)
+              (begin
+                (ast-let-binding-list-push
+                  out
+                  (ast-let-binding renamed maybe-ty ninit))
+                (macro-hygiene-let-bindings-into
+                  bindings
+                  next-env
+                  macro-name
+                  depth
+                  (+ index 1)
+                  out))]))])))
 
 (define (macro-hygiene-resource-bindings
   [bindings : AstResourceBindingList]
   [env : MacroHygieneEnv]
   [macro-name : String]
   [depth : i64]) : MacroHygieneResourceBindings
-  (match bindings
-    [(AstResourceBindingList.Nil)
-      (MacroHygieneResourceBindings.ResourceBindings
-        AstResourceBindingList.Nil
-        env)]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding name init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
-              [ncleanup : i64 (macro-hygiene-expr cleanup env macro-name depth)]
-              (match (macro-hygiene-bind-name
-                env
-                macro-name
-                depth
-                (intern-str name))
-                [(MacroHygieneName.Name renamed next-env)
-                  (match (macro-hygiene-resource-bindings
-                    rest
-                    next-env
-                    macro-name
-                    depth)
-                    [(MacroHygieneResourceBindings.ResourceBindings
-                        nrest
-                        final-env)
-                      (MacroHygieneResourceBindings.ResourceBindings
-                        (ast-resource-binding-cons
-                          (ast-resource-binding renamed ninit ncleanup)
-                          nrest)
-                        final-env)])]))]))]))
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (ast-resource-binding-list-len (& bindings)))]
+    [final-env : MacroHygieneEnv
+      (macro-hygiene-resource-bindings-into
+        (& bindings)
+        env
+        macro-name
+        depth
+        0
+        (&mut out))]
+    (MacroHygieneResourceBindings.ResourceBindings out final-env)))
+
+(define (macro-hygiene-resource-bindings-into
+  [bindings : (& bindings AstResourceBindingList)]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [index : i64]
+  [out : (&mut out AstResourceBindingList)]) : MacroHygieneEnv
+  (if (>= index (ast-resource-binding-list-len bindings))
+    env
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
+          [ncleanup : i64 (macro-hygiene-expr cleanup env macro-name depth)]
+          (match (macro-hygiene-bind-name
+            env
+            macro-name
+            depth
+            (intern-str name))
+            [(MacroHygieneName.Name renamed next-env)
+              (begin
+                (ast-resource-binding-list-push
+                  out
+                  (ast-resource-binding renamed ninit ncleanup))
+                (macro-hygiene-resource-bindings-into
+                  bindings
+                  next-env
+                  macro-name
+                  depth
+                  (+ index 1)
+                  out))]))])))
 
 (define (macro-hygiene-arm-list
   [arms : AstMatchArmList]
@@ -47889,7 +48186,7 @@
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding "cap" (AstMaybeType.Some (AstType.I64)) cap-init)
-          AstLetBindingList.Nil)
+          (ast-let-binding-list-new))
         body))))
 
 (define (macro-vf-new-decl
@@ -48040,7 +48337,7 @@
                   "bigger"
                   (AstMaybeType.Some (macro-vf-array-ty elem-ty))
                   bigger-init)
-                AstLetBindingList.Nil))))
+                (ast-let-binding-list-new)))))
         body))))
 
 (define (macro-vf-push-decl
@@ -48064,7 +48361,7 @@
             "index"
             (AstMaybeType.Some (AstType.I64))
             (macro-vf-struct-get "v" "len"))
-          AstLetBindingList.Nil)
+          (ast-let-binding-list-new))
         (macro-vf-begin2
           (ast-expr-array-set
             (macro-vf-struct-get "v" "slots")
@@ -49074,43 +49371,61 @@
   [decls : AstDeclList]
   [depth : i64]
   [bindings : AstLetBindingList]) : ResultMacroLetBindings
-  (match bindings
-    [(AstLetBindingList.Nil)
-      (ResultMacroLetBindings.Ok (AstLetBindingList.Nil) env)]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding name maybe-ty init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (match (macro-expand-expr ctx env decls depth init)
-                [(ResultMacroExpr.Ok ninit)
-                  (match (tc-let-bindings
-                    ctx
-                    env
-                    (ast-let-binding-cons
-                      (ast-let-binding-id name maybe-ty ninit)
-                      AstLetBindingList.Nil))
-                    [(ResultTcEnv.Ok next-env)
-                      (match (macro-expand-bindings
-                        ctx
-                        next-env
-                        decls
-                        depth
-                        rest)
-                        [(ResultMacroLetBindings.Ok nrest final-env)
-                          (ResultMacroLetBindings.Ok
-                            (ast-let-binding-cons
-                              (ast-let-binding-id name maybe-ty ninit)
-                              nrest)
-                            final-env)]
-                        [(ResultMacroLetBindings.Err diag)
-                          (ResultMacroLetBindings.Err diag)])]
-                    [(ResultTcEnv.Err message)
-                      (ResultMacroLetBindings.Err
-                        (box (tc-expr-diag (ast-node-get ninit) message)))])]
-                [(ResultMacroExpr.Err diag) (ResultMacroLetBindings.Err diag)]))]))]))
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity
+        (ast-let-binding-list-len (& bindings)))]
+    (match (macro-expand-bindings-into
+      ctx
+      env
+      decls
+      depth
+      (& bindings)
+      0
+      (&mut out))
+      [(ResultMacroLetBindingsBuild.Ok final-env)
+        (ResultMacroLetBindings.Ok out final-env)]
+      [(ResultMacroLetBindingsBuild.Err diag) (ResultMacroLetBindings.Err diag)])))
+
+(define (macro-expand-bindings-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]
+  [out : (&mut out AstLetBindingList)]) : ResultMacroLetBindingsBuild
+  (if (>= index (ast-let-binding-list-len bindings))
+    (ResultMacroLetBindingsBuild.Ok env)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (match (macro-expand-expr ctx env decls depth init)
+            [(ResultMacroExpr.Ok ninit)
+              (match (tc-let-bindings
+                ctx
+                env
+                (ast-let-binding-cons
+                  (ast-let-binding-id name maybe-ty ninit)
+                  (ast-let-binding-list-new)))
+                [(ResultTcEnv.Ok next-env)
+                  (begin
+                    (ast-let-binding-list-push
+                      out
+                      (ast-let-binding-id name maybe-ty ninit))
+                    (macro-expand-bindings-into
+                      ctx
+                      next-env
+                      decls
+                      depth
+                      bindings
+                      (+ index 1)
+                      out))]
+                [(ResultTcEnv.Err message)
+                  (ResultMacroLetBindingsBuild.Err
+                    (box (tc-expr-diag (ast-node-get ninit) message)))])]
+            [(ResultMacroExpr.Err diag) (ResultMacroLetBindingsBuild.Err diag)]))])))
 
 (define (macro-compat-unit-expr) : i64
   (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
@@ -50402,24 +50717,37 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match bindings
-    [(AstLetBindingList.Nil) refs]
-    [(AstLetBindingList.Cons binding rest)
-      (match binding
-        [(AstLetBinding.Binding _ maybe-ty init)
-          (macro-generated-surface-let-binding-refs
-            (box-get rest)
+  (macro-generated-surface-let-binding-refs-at
+    (& bindings)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-let-binding-refs-at
+  [bindings : (& bindings AstLetBindingList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-let-binding-list-len bindings))
+    refs
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init)
+        (macro-generated-surface-let-binding-refs-at
+          bindings
+          aliases
+          (macro-generated-surface-expr-refs
+            (ast-node-get init)
             aliases
-            (macro-generated-surface-expr-refs
-              (ast-node-get init)
+            (macro-generated-surface-maybe-type-refs
+              maybe-ty
               aliases
-              (macro-generated-surface-maybe-type-refs
-                maybe-ty
-                aliases
-                refs
-                alias-qualified?)
+              refs
               alias-qualified?)
-            alias-qualified?)])]))
+            alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-match-arm-refs
   [arms : AstMatchArmList]
@@ -50463,24 +50791,40 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match bindings
-    [(AstResourceBindingList.Nil) refs]
-    [(AstResourceBindingList.Cons binding rest)
-      (match binding
-        [(AstResourceBinding.Binding _ init cleanup)
-          (macro-generated-surface-resource-binding-refs
-            (box-get rest)
+  (macro-generated-surface-resource-binding-refs-at
+    (& bindings)
+    aliases
+    refs
+    alias-qualified?
+    0))
+
+(define (macro-generated-surface-resource-binding-refs-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [aliases : MacroGeneratedSurfaceNameSet]
+  [refs : MacroGeneratedSurfaceNameSet]
+  [alias-qualified? : bool]
+  [index : i64]) : MacroGeneratedSurfaceNameSet
+  (if (>= index (ast-resource-binding-list-len bindings))
+    refs
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (macro-generated-surface-resource-binding-refs-at
+          bindings
+          aliases
+          (macro-generated-surface-expr-refs
+            (ast-node-get cleanup)
             aliases
             (macro-generated-surface-expr-refs
-              (ast-node-get cleanup)
+              (ast-node-get init)
               aliases
-              (macro-generated-surface-expr-refs
-                (ast-node-get init)
-                aliases
-                refs
-                alias-qualified?)
+              refs
               alias-qualified?)
-            alias-qualified?)])]))
+            alias-qualified?)
+          alias-qualified?
+          (+ index 1))])))
 
 (define (macro-generated-surface-expr-refs
   [expr : AstExpr]
@@ -52585,14 +52929,23 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (macro-node-uses-macro? ctx decls init-box)])
-        (macro-bindings-use-macro? ctx decls (box-get rest)))]))
+  (macro-bindings-use-macro-at? ctx decls (& bindings) 0))
+
+(define (macro-bindings-use-macro-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (macro-node-uses-macro? ctx decls init-box)])
+      (macro-bindings-use-macro-at? ctx decls bindings (+ index 1)))))
 
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
@@ -52807,18 +53160,20 @@
         (or (macro-expr-might-fire? expr) (macro-expr-list-might-fire? rest)))]))
 
 (define (macro-let-binding-list-might-fire? [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              (or
-                (macro-expr-might-fire? init)
-                (macro-let-binding-list-might-fire? rest)))]))]))
+  (macro-let-binding-list-might-fire-at? (& bindings) 0))
+
+(define (macro-let-binding-list-might-fire-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          (or
+            (macro-expr-might-fire? init)
+            (macro-let-binding-list-might-fire-at? bindings (+ index 1))))])))
 
 (define (macro-match-arms-might-fire? [arms : AstMatchArmList]) : bool
   (macro-match-arms-might-fire-at? (& arms) 0))
@@ -52838,20 +53193,25 @@
 
 (define (macro-resource-binding-list-might-fire?
   [bindings : AstResourceBindingList]) : bool
-  (match bindings
-    [(AstResourceBindingList.Nil) false]
-    [(AstResourceBindingList.Cons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding.Binding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (or
-                (macro-expr-might-fire? init)
-                (macro-expr-might-fire? cleanup)
-                (macro-resource-binding-list-might-fire? rest)))]))]))
+  (macro-resource-binding-list-might-fire-at? (& bindings) 0))
+
+(define (macro-resource-binding-list-might-fire-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (or
+            (macro-expr-might-fire? init)
+            (macro-expr-might-fire? cleanup)
+            (macro-resource-binding-list-might-fire-at? bindings (+ index 1))))])))
 
 (define (macro-expr-might-fire? [expr : AstExpr]) : bool
   (match expr
@@ -53227,17 +53587,30 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) true]
-    [(AstLetBindingList.Cons binding rest)
-      (and
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (macro-expr-safe-after-inert-splice?
-              ctx
-              decls
-              (ast-node-get init-box))])
-        (macro-let-bindings-safe-after-inert-splice? ctx decls (box-get rest)))]))
+  (macro-let-bindings-safe-after-inert-splice-at? ctx decls (& bindings) 0))
+
+(define (macro-let-bindings-safe-after-inert-splice-at?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    true
+    (and
+      (match (ast-let-binding-list-get
+        bindings
+        index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get init-box))])
+      (macro-let-bindings-safe-after-inert-splice-at?
+        ctx
+        decls
+        bindings
+        (+ index 1)))))
 
 (define (macro-match-arms-safe-after-inert-splice?
   [ctx : TcContext]
@@ -53647,14 +54020,21 @@
       (ctfe-arms-have-type-literal-at? arms (+ index 1)))))
 
 (define (ctfe-bindings-have-type-literal? [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingList.Nil) false]
-    [(AstLetBindingList.Cons binding rest)
-      (or
-        (match binding
-          [(AstLetBinding.Binding _ _ init-box)
-            (ctfe-node-has-type-literal? init-box)])
-        (ctfe-bindings-have-type-literal? (box-get rest)))]))
+  (ctfe-bindings-have-type-literal-at? (& bindings) 0))
+
+(define (ctfe-bindings-have-type-literal-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (ctfe-node-has-type-literal? init-box)])
+      (ctfe-bindings-have-type-literal-at? bindings (+ index 1)))))
 
 (define (ctfe-expr-has-type-literal? [expr : AstExpr]) : bool
   (match expr

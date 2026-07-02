@@ -4233,6 +4233,44 @@
     (string.int->string (+ frame 8))
     ", %rsp\n"))
 
+;; GAP1: push-style FPO prologue -- the plan-saved CSRs are pushed (slot-idx
+;; order r12..rbp; the pop-run epilogue pops the reverse) and the subq shrinks
+;; to S = frame + pad, keeping the total displacement (8n + S) % 16 == 8 like
+;; the no-push `subq $(frame+8)`. The rebase pass ran in push mode with the
+;; SAME regs/count, so the body's frame refs, deleted mov saves/restores, and
+;; rewritten epilogues all agree with this layout.
+(define (compiler-backend-emit-function-entry-fpo-push
+  [symbol : String]
+  [frame : i64]
+  [push-regs : (Array String)]
+  [push-count : i64]) : String
+  (let
+    [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
+    [idx : i64 0]
+    [acc : String (str_cat.str-cat symbol ":\n" "")]
+    (begin
+      (while (< idx 6)
+        (begin
+          (if (string.string-eq (array-ref push-regs idx) "")
+            unit
+            (set!
+              acc
+              (str_cat.str-cat
+                acc
+                "    pushq "
+                (array-ref push-regs idx)
+                "\n"
+                "")))
+          (set! idx (+ idx 1))))
+      (if (= sub-s 0)
+        acc
+        (str_cat.str-cat
+          acc
+          "    subq $"
+          (string.int->string sub-s)
+          ", %rsp\n"
+          "")))))
+
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
@@ -31061,6 +31099,11 @@
 (define compiler-backend-fpo-demote-count : i64
   0)
 
+;; GAP1 census: FPO functions emitted with the push-style CSR prologue
+;; (push-count > 0).
+(define compiler-backend-fpo-push-count : i64
+  0)
+
 ;; Index of the first "(%rbp" occurrence in [start,end), or -1.
 (define (compiler-backend-rsp-rebase-find-rbp
   [data : (Ptr u8)]
@@ -31125,6 +31168,251 @@
           (set! j (+ j 1))))
       (if neg (- 0 v) v))))
 
+;; ============================================================================
+;; GAP1: push-style CSR prologue saves (FPO functions, Linux text path).
+;;
+;; The mov-form CSR save/restore (`movq %rXX, -K(%rbp)` / `movq -K(%rbp), %rXX`
+;; / the pop-run `leaq -K(%rbp), %rsp; popq ...`) is converted AT THE REBASE
+;; SEAM into clang's push form: the caller's prologue becomes
+;;     pushq %r12 [.. pushq %rbp]      (plan-saved CSRs, slot-idx order)
+;;     subq $S, %rsp                   (S = frame + pad; pad keeps alignment)
+;; and the pass (push mode = fpo AND push-count > 0):
+;;   * DELETES the save/restore movq lines (their slots -- the callee-save
+;;     reservation inside `frame` -- become dead pad; the frame constant is
+;;     NOT shrunk because the reservation sits mid-frame between the var area
+;;     and the group/outgoing/emergency regions, so the offset span is fixed),
+;;   * rewrites the pop-run entry `leaq CSRSLOT(%rbp), %rsp` to
+;;     `addq $(S+delta), %rsp` (rsp -> the pushed area; the existing popq run
+;;     then restores the same registers in the same order: the pop-run pops
+;;     lowest-address-slot first = highest slot idx = exactly reverse push
+;;     order) and the trailing `leave` folds to NOTHING (rsp is already at
+;;     the return address; the fold amount D+delta must be exactly 0),
+;;   * rewrites a bare `leave` (mov-restore epilogues, whose restore movs were
+;;     deleted) to `addq $(S+delta), %rsp` + the full popq run.
+;; Frame model: total displacement D = 8*n + S with S = frame + (n odd ? 0 : 8)
+;; so D % 16 == 8 exactly like the old subq $(frame+8) -- call alignment holds.
+;; The pushes occupy [entry_rsp-8n, entry_rsp-8), so local slots shift down 8n:
+;;   negative K:  -K(%rbp) -> (S + delta - K)(%rsp)      (bias_neg = S)
+;;   positive X:  +X(%rbp) -> (S + 8n - 8 + delta + X)(%rsp)  (bias_pos; the
+;;     incoming-arg area is caller memory at fixed absolute addresses)
+;; (n = 0 keeps the stage-2 single-bias formulas byte-identical.)
+;; Soundness of the line classification: the ONLY emitters that reference the
+;; callee-save slots (offset -(8*(slot-vars+idx+1)), idx in the plan-saved set)
+;; are emit-save-callee-reg / emit-restore-callee-reg / the pop-run leaq --
+;; group word1 slots start at frame-slots+1 (above every reserved CSR slot) and
+;; emergency slots sit below frame-slots-emergency-max, so a saved-CSR-slot
+;; offset is unambiguous. Any OTHER line shape referencing one fails the audit
+;; (keep-rbp fallback on the ORIGINAL text stays correct: mov saves intact).
+;; Win64 keeps the rbp prologue + mov saves entirely (fpo never attempted:
+;; SEH unwind needs `.seh_setframe %rbp`); --pic/opt0/vector never plan CSRs.
+
+;; Saved-CSR names indexed by callee-save slot idx (0..5 = r12,r13,r14,r15,
+;; rbx,rbp); "" = not saved. All six names are 4 bytes ("%rNN").
+(define (compiler-backend-rsp-rebase-make-push-regs) : (Array String)
+  (let
+    [regs : (Array String) (make-array String 6)]
+    [idx : i64 0]
+    (begin
+      (while (< idx 6)
+        (begin
+          (array-set! regs idx "")
+          (set! idx (+ idx 1))))
+      regs)))
+
+;; Shared no-push array for the stage-1 / adapter / fallback call sites.
+(define compiler-backend-rsp-rebase-no-push : (Array String)
+  (compiler-backend-rsp-rebase-make-push-regs))
+
+;; Fill `regs` with the plan-saved CSR names (slot-idx order); returns the
+;; count. The set is a pure function of the allocator plan (the scavenger only
+;; hands out plan-saved callee regs; emergency picks are wrapped locally), so
+;; it is fixed before body emission and matches every inline restore site.
+(define (compiler-backend-fill-push-csr-regs!
+  [assignments : CompilerRegAssignmentList]
+  [regs : (Array String)]) : i64
+  (let
+    [names : (Array String) (make-array String 6)]
+    [idx : i64 0]
+    [count : i64 0]
+    (begin
+      (array-set! names 0 "%r12")
+      (array-set! names 1 "%r13")
+      (array-set! names 2 "%r14")
+      (array-set! names 3 "%r15")
+      (array-set! names 4 "%rbx")
+      (array-set! names 5 "%rbp")
+      (while (< idx 6)
+        (begin
+          (if (compiler-backend-callee-needs-save?
+            assignments
+            (array-ref names idx))
+            (begin
+              (array-set! regs idx (array-ref names idx))
+              (set! count (+ count 1)))
+            (array-set! regs idx ""))
+          (set! idx (+ idx 1))))
+      count)))
+
+;; The prologue subq constant S under n pushes: frame + pad where pad keeps
+;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
+;; the same call alignment as the no-push `subq $(frame+8)`.
+(define (compiler-backend-rsp-rebase-push-sub
+  [frame : i64]
+  [push-count : i64]) : i64
+  (+ frame (if (= (bit-and push-count 1) 1) 0 8)))
+
+;; The popq run restoring the pushed CSRs: highest slot idx first (lowest
+;; address = last pushed), matching the existing pop-run epilogue order.
+;; Lines joined by newlines with NO trailing newline (append-line adds it).
+(define (compiler-backend-rsp-rebase-pop-run
+  [push-regs : (Array String)]) : String
+  (let
+    [idx : i64 5]
+    [acc : String ""]
+    (begin
+      (while (>= idx 0)
+        (begin
+          (if (string.string-eq (array-ref push-regs idx) "")
+            unit
+            (set!
+              acc
+              (str_cat.str-cat
+                acc
+                (if (string.string-eq acc "") "" "\n")
+                "    popq "
+                (array-ref push-regs idx)
+                "")))
+          (set! idx (- idx 1))))
+      acc)))
+
+;; Classify a line whose first frame ref hits a SAVED callee-save slot
+;; (push mode only). Returns:
+;;   0 = not a saved-CSR-slot line (normal handling)
+;;   1 = CSR save/restore movq (delete)
+;;   2 = pop-run entry `leaq CSRSLOT(%rbp), %rsp`
+;;   3 = malformed saved-CSR-slot reference (fail the audit)
+(define (compiler-backend-rsp-rebase-csr-classify
+  [data : (Ptr u8)]
+  [line-start : i64]
+  [m : i64]
+  [end : i64]
+  [push-regs : (Array String)]
+  [slot-vars : i64]) : i64
+  (let
+    [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
+    (if (or
+      (< p 0)
+      (or
+        (>= (+ p 5) end)
+        (not (= (compiler-backend-peephole-byte-at data (+ p 5)) 41))))
+      0
+      (let
+        [ks : i64 (compiler-backend-rsp-rebase-int-start data line-start p)]
+        (if (< ks 0)
+          0
+          (let
+            [k : i64 (compiler-backend-rsp-rebase-parse-int data ks p)]
+            (if (>= k 0)
+              0
+              (let
+                [unit-idx : i64 (/ (- 0 k) 8)]
+                (if (not (= (* unit-idx 8) (- 0 k)))
+                  0
+                  (let
+                    [idx : i64 (- unit-idx (+ slot-vars 1))]
+                    (if (or (< idx 0) (> idx 5))
+                      0
+                      (let
+                        [reg : String (array-ref push-regs idx)]
+                        (if (string.string-eq reg "")
+                          0
+                          (let
+                            [tok : i64
+                              (compiler-backend-peephole-token-len data m end)]
+                            [te : i64 (+ m tok)]
+                            (if (compiler-backend-peephole-range-eq?
+                              data
+                              m
+                              te
+                              "movq")
+                              ;; restore: movq -K(%rbp), %rXX
+                              (if (and
+                                (= ks (+ te 1))
+                                (and
+                                  (= (+ p 12) end)
+                                  (and
+                                    (=
+                                      (compiler-backend-peephole-byte-at
+                                        data
+                                        (+ p 6))
+                                      44)
+                                    (and
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ p 7))
+                                        32)
+                                      (compiler-backend-peephole-range-eq?
+                                        data
+                                        (+ p 8)
+                                        (+ p 12)
+                                        reg)))))
+                                1
+                                ;; save: movq %rXX, -K(%rbp)
+                                (if (and
+                                  (= (+ p 6) end)
+                                  (and
+                                    (compiler-backend-peephole-range-eq?
+                                      data
+                                      (+ te 1)
+                                      (+ te 5)
+                                      reg)
+                                    (and
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ te 5))
+                                        44)
+                                      (and
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ te 6))
+                                          32)
+                                        (= ks (+ te 7))))))
+                                  1
+                                  3))
+                              (if (compiler-backend-peephole-range-eq?
+                                data
+                                m
+                                te
+                                "leaq")
+                                ;; pop-run entry: leaq -K(%rbp), %rsp
+                                (if (and
+                                  (= ks (+ te 1))
+                                  (and
+                                    (= (+ p 12) end)
+                                    (and
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ p 6))
+                                        44)
+                                      (and
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ p 7))
+                                          32)
+                                        (compiler-backend-peephole-range-eq?
+                                          data
+                                          (+ p 8)
+                                          (+ p 12)
+                                          "%rsp")))))
+                                  2
+                                  3)
+                                3))))))))))))))))
+
 ;; Rewrite one function's POST-PROLOGUE text to rsp-relative frame addressing
 ;; (`X(%rbp)` -> `(frame+delta+X)(%rsp)`); returns the ORIGINAL text when the
 ;; rsp-constancy audit fails (the function keeps rbp addressing).
@@ -31156,10 +31444,27 @@
 ;; reference -- %rbp pool VALUES never appear as memory-operand bases (the
 ;; emitters stage them through a scratch; see address-base-filter) and bare
 ;; `%rbp` register operands contain no "(%rbp".
+;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
+;; byte-identical to the pre-GAP1 pass (no push mode).
 (define (compiler-backend-rsp-rebase
   [text : String]
   [frame : i64]
   [fpo : bool]) : String
+  (compiler-backend-rsp-rebase-full
+    text
+    frame
+    fpo
+    compiler-backend-rsp-rebase-no-push
+    0
+    0))
+
+(define (compiler-backend-rsp-rebase-full
+  [text : String]
+  [frame : i64]
+  [fpo : bool]
+  [push-regs : (Array String)]
+  [push-count : i64]
+  [slot-vars : i64]) : String
   (let
     [n : i64 (string.string-length text)]
     [data : (Ptr u8)
@@ -31173,6 +31478,14 @@
     [tail : bool false]
     [last-noff : i64 -1]
     [ref-count : i64 0]
+    ;; GAP1 push mode: prologue = pushes + subq $sub-s; disp = the total
+    ;; prologue rsp displacement (plays frame+8's role in the leave fold).
+    [pm : bool (and fpo (> push-count 0))]
+    [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
+    [disp : i64 (+ (* push-count 8) sub-s)]
+    [bias-neg : i64 (if pm sub-s frame)]
+    [bias-pos : i64
+      (if pm (- (+ sub-s (* push-count 8)) 8) frame)]
     (begin
       (while (and ok (< i n))
         (let
@@ -31229,9 +31542,52 @@
                         (- end 6)
                         end
                         ", %rsp"))]
+                  ;; GAP1 push mode: classify saved-CSR-slot lines FIRST --
+                  ;; the save/restore movs are deleted (the prologue pushes /
+                  ;; epilogue pops replace them) and the pop-run leaq is
+                  ;; redirected at the pushed area. Only when rsp is tracked
+                  ;; (an untracked CSR ref falls through and fails like any
+                  ;; other frame ref).
+                  [csr-kind : i64
+                    (if (and pm valid)
+                      (compiler-backend-rsp-rebase-csr-classify
+                        data
+                        i
+                        m
+                        end
+                        push-regs
+                        slot-vars)
+                      0)]
                   (begin
                     (set! last-noff -1)
                     (set! ref-count 0)
+                    (if (= csr-kind 1)
+                      ;; CSR save/restore movq: drop the line.
+                      unit
+                      (if (= csr-kind 2)
+                        ;; pop-run entry: point rsp at the pushed area
+                        ;; (entry_rsp - 8n = rsp_f + sub-s); the following
+                        ;; pops restore the pushed CSRs in reverse push
+                        ;; order and the final leave folds to 0.
+                        (if tail
+                          (set! ok false)
+                          (begin
+                            (set!
+                              buf
+                              (compiler-backend-peephole-append-line
+                                buf
+                                (str_cat.str-cat
+                                  "    addq $"
+                                  (string.int->string (+ sub-s delta))
+                                  ", %rsp")
+                                nl))
+                            (set! tail true)
+                            (set! delta (- 0 sub-s))))
+                        (if (= csr-kind 3)
+                          ;; unrecognized saved-CSR-slot reference: the slot
+                          ;; is unwritten under push saves -- keep rbp.
+                          (set! ok false)
+                          (begin
                     ;; popq MEM computes its address AFTER the rsp increment.
                     (if (and valid pop?)
                       (begin
@@ -31244,26 +31600,58 @@
                       unit)
                     (if (and fpo leave?)
                       ;; FPO: no rbp frame to `leave` from -- unwind rsp
-                      ;; directly (prologue reserved frame+8; a negative delta
-                      ;; folds the pop-restore epilogue tail when present).
+                      ;; directly (prologue reserved frame+8, push mode
+                      ;; 8n+sub-s; a negative delta folds the pop-restore
+                      ;; epilogue tail when present).
                       (begin
                         (if (not valid)
                           (set! ok false)
-                          (let
-                            [amount : i64 (+ (+ frame 8) delta)]
-                            (if (< amount 0)
-                              (set! ok false)
-                              (if (= amount 0)
-                                unit
-                                (set!
-                                  buf
-                                  (compiler-backend-peephole-append-line
+                          (if (and pm tail)
+                            ;; GAP1 push mode after a pop run: every pushed
+                            ;; CSR was popped, rsp already sits at the return
+                            ;; address -- the fold must be EXACTLY 0 and the
+                            ;; leave vanishes.
+                            (if (= (+ disp delta) 0)
+                              unit
+                              (set! ok false))
+                            (if pm
+                              ;; GAP1 push mode, mov-restore epilogue (the
+                              ;; restore movs were deleted): deallocate the
+                              ;; subq area and pop the pushed CSRs.
+                              (let
+                                [amount : i64 (+ sub-s delta)]
+                                (if (< amount 0)
+                                  (set! ok false)
+                                  (set!
                                     buf
-                                    (str_cat.str-cat
-                                      "    addq $"
-                                      (string.int->string amount)
-                                      ", %rsp")
-                                    nl))))))
+                                    (compiler-backend-peephole-append-line
+                                      buf
+                                      (str_cat.str-cat
+                                        (if (= amount 0)
+                                          ""
+                                          (str_cat.str-cat
+                                            "    addq $"
+                                            (string.int->string amount)
+                                            ", %rsp\n"))
+                                        (compiler-backend-rsp-rebase-pop-run
+                                          push-regs)
+                                        "")
+                                      nl))))
+                              (let
+                                [amount : i64 (+ (+ frame 8) delta)]
+                                (if (< amount 0)
+                                  (set! ok false)
+                                  (if (= amount 0)
+                                    unit
+                                    (set!
+                                      buf
+                                      (compiler-backend-peephole-append-line
+                                        buf
+                                        (str_cat.str-cat
+                                          "    addq $"
+                                          (string.int->string amount)
+                                          ", %rsp")
+                                        nl))))))))
                         (set! valid false)
                         (set! tail false))
                       (begin
@@ -31318,7 +31706,22 @@
                                             ;; (virtual rbp = rsp+frame).
                                             unit
                                             (let
-                                              [noff : i64 (+ (+ frame delta) k)]
+                                              ;; GAP1 push mode: negative
+                                              ;; (local) offsets shift down by
+                                              ;; the pushed bytes (bias sub-s);
+                                              ;; positive (incoming-arg)
+                                              ;; offsets keep their absolute
+                                              ;; caller-side addresses (bias
+                                              ;; sub-s+8n-8). Both equal
+                                              ;; `frame` when push-count = 0.
+                                              [noff : i64
+                                                (+
+                                                  (+
+                                                    (if (>= k 0)
+                                                      bias-pos
+                                                      bias-neg)
+                                                    delta)
+                                                  k)]
                                               (if (< noff 0)
                                                 (set! ok false)
                                                 (begin
@@ -31438,7 +31841,7 @@
                       unit)
                     (if leave?
                       (set! valid false)
-                      unit)))))))
+                      unit)))))))))))
             (set!
               i
               (if (< end n)
@@ -31955,11 +32358,30 @@
                         ;; Stage-1 mode (fpo=false) elsewhere, byte-identical.
                         [fpo-attempt : bool
                           (compiler-backend-target-linux? target)]
+                        ;; GAP1: push-style CSR saves ride the FPO audit --
+                        ;; the plan-saved CSR set is fixed pre-body (the
+                        ;; scavenger only hands out plan-saved callee regs;
+                        ;; emergency picks are wrapped locally), so the push
+                        ;; prologue below and the pass's save-deletion /
+                        ;; epilogue rewrites see the same registers. On audit
+                        ;; failure the ORIGINAL text (mov saves intact) feeds
+                        ;; the stage-1 keep-rbp fallback unchanged.
+                        [push-regs : (Array String)
+                          (compiler-backend-rsp-rebase-make-push-regs)]
+                        [push-count : i64
+                          (if fpo-attempt
+                            (compiler-backend-fill-push-csr-regs!
+                              assignments
+                              push-regs)
+                            0)]
                         [rebased : String
-                          (compiler-backend-rsp-rebase
+                          (compiler-backend-rsp-rebase-full
                             post-prologue
                             frame
-                            fpo-attempt)]
+                            fpo-attempt
+                            push-regs
+                            push-count
+                            slot-vars)]
                         [fpo-ok : bool
                           (and
                             fpo-attempt
@@ -32006,6 +32428,11 @@
                                   (set!
                                     compiler-backend-fpo-count
                                     (+ compiler-backend-fpo-count 1))
+                                  (if (> push-count 0)
+                                    (set!
+                                      compiler-backend-fpo-push-count
+                                      (+ compiler-backend-fpo-push-count 1))
+                                    unit)
                                   (if (compiler-backend-plan-uses-reg?
                                     assignments
                                     "%rbp")
@@ -32023,9 +32450,15 @@
                                 symbol
                                 "\n"
                                 (if fpo-ok
-                                  (compiler-backend-emit-function-entry-fpo
-                                    symbol
-                                    frame)
+                                  (if (> push-count 0)
+                                    (compiler-backend-emit-function-entry-fpo-push
+                                      symbol
+                                      frame
+                                      push-regs
+                                      push-count)
+                                    (compiler-backend-emit-function-entry-fpo
+                                      symbol
+                                      frame))
                                   (compiler-backend-emit-function-entry
                                     target
                                     symbol
@@ -37536,6 +37969,9 @@ tl_memchr:
                                     "|demote="
                                     (string.int->string
                                       compiler-backend-fpo-demote-count)
+                                    "|push="
+                                    (string.int->string
+                                      compiler-backend-fpo-push-count)
                                     "\n"
                                     "")))))
                           (OkCompilerBackendBuffer buf))))]
@@ -37567,6 +38003,7 @@ tl_memchr:
     (set! compiler-backend-fpo-count 0)
     (set! compiler-backend-fpo-rbp-plan-count 0)
     (set! compiler-backend-fpo-demote-count 0)
+    (set! compiler-backend-fpo-push-count 0)
     (set! compiler-backend-emit-function-allow-rbp true)
     (cfg
       regalloc-census

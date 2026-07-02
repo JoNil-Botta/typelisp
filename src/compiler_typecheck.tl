@@ -3377,8 +3377,8 @@
             (ast-type-cons (AstType.I64) AstTypeList.Nil)
             (ast-variant-payload-cleanup-cons
               (ast-variant-payload-cleanup-fn "close-fd")
-              AstVariantPayloadCleanupList.Nil))
-          AstVariantDefList.Nil))
+              (ast-variant-payload-cleanup-list-new)))
+          (ast-variant-def-list-new)))
       (ast-decl-list-new))))
 
 (define (compiler-typecheck-cleanup-enum-tests-ok?) : bool

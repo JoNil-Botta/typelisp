@@ -799,30 +799,30 @@
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
-  (match variants
-    [(AstVariantDefList.Nil) (ResultCompilerSymbols.Ok symbols)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (match (compiler-symbols-add-variant-value-in-module
-              symbols
+  (if (>= variant-index (ast-variant-def-list-len (& variants)))
+    (ResultCompilerSymbols.Ok symbols)
+    (match (ast-variant-def-list-get
+      (& variants)
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (match (compiler-symbols-add-variant-value-in-module
+          symbols
+          module
+          enum-name
+          (intern-str name)
+          enum-index
+          variant-index)
+          [(ResultCompilerSymbols.Ok next)
+            (compiler-symbols-add-variant-values-in-module
+              next
               module
               enum-name
-              (intern-str name)
+              variants
               enum-index
-              variant-index)
-              [(ResultCompilerSymbols.Ok next)
-                (compiler-symbols-add-variant-values-in-module
-                  next
-                  module
-                  enum-name
-                  rest
-                  enum-index
-                  (+ variant-index 1))]
-              [(ResultCompilerSymbols.Err message)
-                (ResultCompilerSymbols.Err message)])]))]))
+              (+ variant-index 1))]
+          [(ResultCompilerSymbols.Err message)
+            (ResultCompilerSymbols.Err message)])])))
 
 (define (compiler-symbols-add-macro-in-module
   [symbols : CompilerSymbols]
@@ -1305,28 +1305,28 @@
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
-  (match variants
-    [(AstVariantDefList.Nil) (ResultCompilerSymbols.Ok symbols)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (match (compiler-symbols-add-local-variant-value-in-module
-              symbols
+  (if (>= variant-index (ast-variant-def-list-len (& variants)))
+    (ResultCompilerSymbols.Ok symbols)
+    (match (ast-variant-def-list-get
+      (& variants)
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (match (compiler-symbols-add-local-variant-value-in-module
+          symbols
+          module
+          (intern-str name)
+          enum-index
+          variant-index)
+          [(ResultCompilerSymbols.Ok next)
+            (compiler-symbols-add-local-variant-values-in-module
+              next
               module
-              (intern-str name)
+              variants
               enum-index
-              variant-index)
-              [(ResultCompilerSymbols.Ok next)
-                (compiler-symbols-add-local-variant-values-in-module
-                  next
-                  module
-                  rest
-                  enum-index
-                  (+ variant-index 1))]
-              [(ResultCompilerSymbols.Err message)
-                (ResultCompilerSymbols.Err message)])]))]))
+              (+ variant-index 1))]
+          [(ResultCompilerSymbols.Err message)
+            (ResultCompilerSymbols.Err message)])])))
 
 (define (compiler-symbols-add-local-decl-in-module
   [symbols : CompilerSymbols]
@@ -1486,35 +1486,35 @@
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerSymbols
-  (match variants
-    [(AstVariantDefList.Nil) symbols]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (let
-              [variant-name : String (intern-str name)]
-              [qualified-name : String
-                (compiler-enum-qualified-variant-name enum-name variant-name)]
-              [handle : i64
-                (compiler-registry-make-handle
-                  (compiler-symbol-kind-enum-variant)
-                  enum-index
-                  variant-index)]
-              (compiler-symbols-add-variant-value-aliases
-                (compiler-symbols-add-value-alias
-                  (compiler-symbols-add-value-alias
-                    symbols
-                    (compiler-symbol-module-key alias variant-name)
-                    handle)
-                  (compiler-symbol-module-key alias qualified-name)
-                  handle)
-                alias
-                enum-name
-                rest
-                enum-index
-                (+ variant-index 1)))]))]))
+  (if (>= variant-index (ast-variant-def-list-len (& variants)))
+    symbols
+    (match (ast-variant-def-list-get
+      (& variants)
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (let
+          [variant-name : String (intern-str name)]
+          [qualified-name : String
+            (compiler-enum-qualified-variant-name enum-name variant-name)]
+          [handle : i64
+            (compiler-registry-make-handle
+              (compiler-symbol-kind-enum-variant)
+              enum-index
+              variant-index)]
+          (compiler-symbols-add-variant-value-aliases
+            (compiler-symbols-add-value-alias
+              (compiler-symbols-add-value-alias
+                symbols
+                (compiler-symbol-module-key alias variant-name)
+                handle)
+              (compiler-symbol-module-key alias qualified-name)
+              handle)
+            alias
+            enum-name
+            variants
+            enum-index
+            (+ variant-index 1)))])))
 
 (define (compiler-symbols-add-struct-cleanup-alias
   [symbols : CompilerSymbols]
@@ -2618,35 +2618,35 @@
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerRegistries
-  (match variants
-    [(AstVariantDefList.Nil) registries]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (let
-              [variant-name : String (intern-str name)]
-              [qualified-name : String
-                (compiler-enum-qualified-variant-name enum-name variant-name)]
-              [handle : i64
-                (compiler-registry-make-handle
-                  (compiler-symbol-kind-enum-variant)
-                  enum-index
-                  variant-index)]
-              (compiler-registries-add-variant-aliases-list
-                (compiler-registries-add-variant-alias
-                  (compiler-registries-add-variant-alias
-                    registries
-                    (compiler-symbol-module-key alias variant-name)
-                    handle)
-                  (compiler-symbol-module-key alias qualified-name)
-                  handle)
-                alias
-                enum-name
-                rest
-                enum-index
-                (+ variant-index 1)))]))]))
+  (if (>= variant-index (ast-variant-def-list-len (& variants)))
+    registries
+    (match (ast-variant-def-list-get
+      (& variants)
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (let
+          [variant-name : String (intern-str name)]
+          [qualified-name : String
+            (compiler-enum-qualified-variant-name enum-name variant-name)]
+          [handle : i64
+            (compiler-registry-make-handle
+              (compiler-symbol-kind-enum-variant)
+              enum-index
+              variant-index)]
+          (compiler-registries-add-variant-aliases-list
+            (compiler-registries-add-variant-alias
+              (compiler-registries-add-variant-alias
+                registries
+                (compiler-symbol-module-key alias variant-name)
+                handle)
+              (compiler-symbol-module-key alias qualified-name)
+              handle)
+            alias
+            enum-name
+            variants
+            enum-index
+            (+ variant-index 1)))])))
 
 (define (compiler-registries-add-field-aliases-list
   [registries : CompilerRegistries]
@@ -2844,30 +2844,30 @@
   [enum-name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
-  (match variants
-    [(AstVariantDefList.Nil) (ResultCompilerRegistries.Ok registries)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def name _ _)
-            (match (compiler-registries-add-variant-in-module
-              registries
+  (if (>= variant-index (ast-variant-def-list-len (& variants)))
+    (ResultCompilerRegistries.Ok registries)
+    (match (ast-variant-def-list-get
+      (& variants)
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (match (compiler-registries-add-variant-in-module
+          registries
+          module
+          enum-name
+          (intern-str name)
+          enum-index
+          variant-index)
+          [(ResultCompilerRegistries.Ok next-registries)
+            (build-compiler-variant-registry-list-in-module
+              variants
+              next-registries
               module
               enum-name
-              (intern-str name)
               enum-index
-              variant-index)
-              [(ResultCompilerRegistries.Ok next-registries)
-                (build-compiler-variant-registry-list-in-module
-                  rest
-                  next-registries
-                  module
-                  enum-name
-                  enum-index
-                  (+ variant-index 1))]
-              [(ResultCompilerRegistries.Err message)
-                (ResultCompilerRegistries.Err message)])]))]))
+              (+ variant-index 1))]
+          [(ResultCompilerRegistries.Err message)
+            (ResultCompilerRegistries.Err message)])])))
 
 (define (build-compiler-field-registry-list
   [fields : AstFieldDefList]
@@ -3205,17 +3205,16 @@
   [variants : AstVariantDefList]
   [target : i64]
   [index : i64]) : ResultAstTypeList
-  (match variants
-    [(AstVariantDefList.Nil)
-      (ResultAstTypeList.Err "symbols: variant index not found")]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (if (= target index)
-              (ResultAstTypeList.Ok fields)
-              (compiler-variant-types-at-index rest target (+ index 1)))]))]))
+  (if (>= index (ast-variant-def-list-len (& variants)))
+    (ResultAstTypeList.Err "symbols: variant index not found")
+    (match (ast-variant-def-list-get
+      (& variants)
+      index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (if (= target index)
+          (ResultAstTypeList.Ok fields)
+          (compiler-variant-types-at-index variants target (+ index 1)))])))
 
 (define (compiler-field-type-at-index
   [fields : AstFieldDefList]

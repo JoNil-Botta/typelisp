@@ -862,22 +862,29 @@
 (define (gen-variant-payload-cleanup-list-eq?
   [a : AstVariantPayloadCleanupList]
   [b : AstVariantPayloadCleanupList]) : bool
-  (match a
-    [(AstVariantPayloadCleanupList.Nil)
-      (match b
-        [(AstVariantPayloadCleanupList.Nil) true]
-        [_ false])]
-    [(AstVariantPayloadCleanupList.Cons a-head a-rest)
-      (let
-        [a-rest : AstVariantPayloadCleanupList (box-get a-rest)]
-        (match b
-          [(AstVariantPayloadCleanupList.Cons b-head b-rest)
-            (let
-              [b-rest : AstVariantPayloadCleanupList (box-get b-rest)]
-              (and
-                (gen-variant-payload-cleanup-eq? a-head b-head)
-                (gen-variant-payload-cleanup-list-eq? a-rest b-rest)))]
-          [_ false]))]))
+  (if (=
+    (ast-variant-payload-cleanup-list-len (& a))
+    (ast-variant-payload-cleanup-list-len (& b)))
+    (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
+    false))
+
+(define (gen-variant-payload-cleanup-list-eq-at?
+  [a : (& a AstVariantPayloadCleanupList)]
+  [b : (& b AstVariantPayloadCleanupList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-payload-cleanup-list-len a))
+    true
+    (and
+      (gen-variant-payload-cleanup-eq?
+        (ast-variant-payload-cleanup-list-get
+          a
+          index
+          (ast-variant-payload-cleanup-fallback))
+        (ast-variant-payload-cleanup-list-get
+          b
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (gen-variant-payload-cleanup-list-eq-at? a b (+ index 1)))))
 
 (define (gen-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
   (match a
@@ -890,22 +897,21 @@
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
-  (match a
-    [(AstVariantDefList.Nil)
-      (match b
-        [(AstVariantDefList.Nil) true]
-        [_ false])]
-    [(AstVariantDefList.Cons a-head a-rest)
-      (let
-        [a-rest : AstVariantDefList (box-get a-rest)]
-        (match b
-          [(AstVariantDefList.Cons b-head b-rest)
-            (let
-              [b-rest : AstVariantDefList (box-get b-rest)]
-              (and
-                (gen-variant-def-eq? a-head b-head)
-                (gen-variant-list-eq? a-rest b-rest)))]
-          [_ false]))]))
+  (if (= (ast-variant-def-list-len (& a)) (ast-variant-def-list-len (& b)))
+    (gen-variant-list-eq-at? (& a) (& b) 0)
+    false))
+
+(define (gen-variant-list-eq-at?
+  [a : (& a AstVariantDefList)]
+  [b : (& b AstVariantDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len a))
+    true
+    (and
+      (gen-variant-def-eq?
+        (ast-variant-def-list-get a index (ast-variant-def-fallback))
+        (ast-variant-def-list-get b index (ast-variant-def-fallback)))
+      (gen-variant-list-eq-at? a b (+ index 1)))))
 
 (define (gen-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
   (match a

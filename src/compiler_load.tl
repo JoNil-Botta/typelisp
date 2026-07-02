@@ -2708,12 +2708,25 @@
   [variants : AstVariantDefList]
   [source : String]
   [start : i64]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) false]
-    [(AstVariantDefList.Cons variant rest)
-      (or
-        (compiler-load-lazy-variant-name-used? variant source start)
-        (compiler-load-lazy-variant-list-name-used? (box-get rest) source start))]))
+  (compiler-load-lazy-variant-list-name-used-at? (& variants) source start 0))
+
+(define (compiler-load-lazy-variant-list-name-used-at?
+  [variants : (& variants AstVariantDefList)]
+  [source : String]
+  [start : i64]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (or
+      (compiler-load-lazy-variant-name-used?
+        (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+        source
+        start)
+      (compiler-load-lazy-variant-list-name-used-at?
+        variants
+        source
+        start
+        (+ index 1)))))
 
 (define (compiler-load-lazy-surface-signature-name-used?
   [signature : CompilerLoadSurfaceSignature]
@@ -2933,25 +2946,35 @@
 
 (define (compiler-load-surface-variant-payload-cleanup?
   [cleanups : AstVariantPayloadCleanupList]) : bool
-  (match cleanups
-    [(AstVariantPayloadCleanupList.Nil) false]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (or
-        (ast-variant-payload-cleanup? cleanup)
-        (compiler-load-surface-variant-payload-cleanup? (box-get rest)))]))
+  (compiler-load-surface-variant-payload-cleanup-at? (& cleanups) 0))
+
+(define (compiler-load-surface-variant-payload-cleanup-at?
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    false
+    (or
+      (ast-variant-payload-cleanup?
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (compiler-load-surface-variant-payload-cleanup-at? cleanups (+ index 1)))))
 
 (define (compiler-load-surface-variant-list-cleanup?
   [variants : AstVariantDefList]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) false]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ _ cleanups)
-            (or
-              (compiler-load-surface-variant-payload-cleanup? cleanups)
-              (compiler-load-surface-variant-list-cleanup? rest))]))]))
+  (compiler-load-surface-variant-list-cleanup-at? (& variants) 0))
+
+(define (compiler-load-surface-variant-list-cleanup-at?
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (or
+          (compiler-load-surface-variant-payload-cleanup? cleanups)
+          (compiler-load-surface-variant-list-cleanup-at? variants (+ index 1)))])))
 
 (define (compiler-load-surface-build-empty) : CompilerLoadSurfaceBuild
   (CompilerLoadSurfaceBuild

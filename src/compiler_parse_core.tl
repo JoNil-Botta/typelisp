@@ -132,6 +132,10 @@
   (Ok AstVariantDefList)
   (Err String))
 
+(defenum ResultAstVariantDefListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstDispatchIsa
   (Ok AstDispatchIsa)
   (Err String))
@@ -2444,7 +2448,7 @@
     [(Sexpr.Nil)
       (ResultAstVariantPayloadParts.Ok
         AstTypeList.Nil
-        AstVariantPayloadCleanupList.Nil)]
+        (ast-variant-payload-cleanup-list-new))]
     [(Sexpr.Cons ty-node rest)
       (let
         [ty-form : Sexpr (box-get ty-node)]
@@ -2460,7 +2464,7 @@
                     (ast-type-cons-with-pools pools parsed-ty AstTypeList.Nil)
                     (ast-variant-payload-cleanup-cons
                       (AstVariantPayloadCleanup.No)
-                      AstVariantPayloadCleanupList.Nil))]
+                      (ast-variant-payload-cleanup-list-new)))]
                 [(Sexpr.Cons cleanup-node after-cleanup)
                   (let
                     [cleanup-form : Sexpr (box-get cleanup-node)]
@@ -2543,29 +2547,45 @@
         [_ (ResultAstVariantDef.Err "parse: malformed variant definition")])]
     [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
 
+(define (parse-ast-variant-def-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [allow-cleanup : bool]
+  [out : (&mut out AstVariantDefList)]) : ResultAstVariantDefListBuild
+  (match s
+    [(Sexpr.Nil) (ResultAstVariantDefListBuild.Ok)]
+    [(Sexpr.Cons head tail)
+      (match (parse-ast-variant-def dispatch pools (box-get head) allow-cleanup)
+        [(ResultAstVariantDef.Ok parsed-head)
+          (begin
+            (ast-variant-def-list-push out parsed-head)
+            (parse-ast-variant-def-list-into
+              dispatch
+              pools
+              (box-get tail)
+              allow-cleanup
+              out))]
+        [(ResultAstVariantDef.Err message)
+          (ResultAstVariantDefListBuild.Err message)])]
+    [_ (ResultAstVariantDefListBuild.Err "parse: malformed variant list")]))
+
 (define (parse-ast-variant-def-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantDefList
-  (match s
-    [(Sexpr.Nil) (ResultAstVariantDefList.Ok AstVariantDefList.Nil)]
-    [(Sexpr.Cons head tail)
-      (match (parse-ast-variant-def dispatch pools (box-get head) allow-cleanup)
-        [(ResultAstVariantDef.Ok parsed-head)
-          (match (parse-ast-variant-def-list
-            dispatch
-            pools
-            (box-get tail)
-            allow-cleanup)
-            [(ResultAstVariantDefList.Ok parsed-tail)
-              (ResultAstVariantDefList.Ok
-                (ast-variant-def-cons parsed-head parsed-tail))]
-            [(ResultAstVariantDefList.Err message)
-              (ResultAstVariantDefList.Err message)])]
-        [(ResultAstVariantDef.Err message)
-          (ResultAstVariantDefList.Err message)])]
-    [_ (ResultAstVariantDefList.Err "parse: malformed variant list")]))
+  (let
+    [out : AstVariantDefList (ast-variant-def-list-new)]
+    (match (parse-ast-variant-def-list-into
+      dispatch
+      pools
+      s
+      allow-cleanup
+      (&mut out))
+      [(ResultAstVariantDefListBuild.Ok) (ResultAstVariantDefList.Ok out)]
+      [(ResultAstVariantDefListBuild.Err message)
+        (ResultAstVariantDefList.Err message)])))
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
   (cond
@@ -2678,7 +2698,7 @@
   [seen-variant : bool]) : ResultAstEnumDefParts
   (match items
     [(SpannedSexpr.Nil _)
-      (ResultAstEnumDefParts.Ok lifetimes cleanup AstVariantDefList.Nil)]
+      (ResultAstEnumDefParts.Ok lifetimes cleanup (ast-variant-def-list-new))]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
@@ -6546,22 +6566,19 @@
             false
             false)
             [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
-              (match parsed-variants
-                [(AstVariantDefList.Nil)
-                  (ResultAstDecl.Err
-                    "parse: defenum needs at least one variant")]
-                [_
-                  (match lifetimes
-                    [(AstLifetimeList.Nil)
-                      (ResultAstDecl.Ok
-                        (ast-decl-def-enum name cleanup parsed-variants))]
-                    [_
-                      (ResultAstDecl.Ok
-                        (ast-decl-def-enum-lifetimes
-                          name
-                          lifetimes
-                          cleanup
-                          parsed-variants))])])]
+              (if (ast-variant-def-list-empty? (& parsed-variants))
+                (ResultAstDecl.Err "parse: defenum needs at least one variant")
+                (match lifetimes
+                  [(AstLifetimeList.Nil)
+                    (ResultAstDecl.Ok
+                      (ast-decl-def-enum name cleanup parsed-variants))]
+                  [_
+                    (ResultAstDecl.Ok
+                      (ast-decl-def-enum-lifetimes
+                        name
+                        lifetimes
+                        cleanup
+                        parsed-variants))]))]
             [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defenum")])]
     [_ (ResultAstDecl.Err "parse: malformed defenum")]))
@@ -9469,27 +9486,37 @@
 
 (define (compiler-parse-variant-payload-cleanup-list-score
   [cleanups : AstVariantPayloadCleanupList]) : i64
-  (match cleanups
-    [(AstVariantPayloadCleanupList.Nil) 0]
-    [(AstVariantPayloadCleanupList.Cons cleanup rest)
-      (let
-        [rest : AstVariantPayloadCleanupList (box-get rest)]
-        (+
-          (compiler-parse-variant-payload-cleanup-score cleanup)
-          (compiler-parse-variant-payload-cleanup-list-score rest)))]))
+  (compiler-parse-variant-payload-cleanup-list-score-at (& cleanups) 0))
+
+(define (compiler-parse-variant-payload-cleanup-list-score-at
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]) : i64
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    0
+    (+
+      (compiler-parse-variant-payload-cleanup-score
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (compiler-parse-variant-payload-cleanup-list-score-at
+        cleanups
+        (+ index 1)))))
 
 (define (compiler-parse-variant-list-cleanup-score
   [variants : AstVariantDefList]) : i64
-  (match variants
-    [(AstVariantDefList.Nil) 0]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ _ cleanups)
-            (+
-              (compiler-parse-variant-payload-cleanup-list-score cleanups)
-              (compiler-parse-variant-list-cleanup-score rest))]))]))
+  (compiler-parse-variant-list-cleanup-score-at (& variants) 0))
+
+(define (compiler-parse-variant-list-cleanup-score-at
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : i64
+  (if (>= index (ast-variant-def-list-len variants))
+    0
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (+
+          (compiler-parse-variant-payload-cleanup-list-score cleanups)
+          (compiler-parse-variant-list-cleanup-score-at variants (+ index 1)))])))
 
 (define (compiler-parse-struct-cleanup-source) : String
   "(defstruct Resource

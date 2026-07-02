@@ -271,16 +271,21 @@
   [variants : AstVariantDefList]
   [names : CloneNameSet]
   [module : String]) : bool
-  (match variants
-    [(AstVariantDefList.Nil) true]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ field-types _)
-            (if (clone-field-type-list-able? pools field-types names module)
-              (clone-variant-list-able? pools rest names module)
-              false)]))]))
+  (clone-variant-list-able-at pools (& variants) names module 0))
+
+(define (clone-variant-list-able-at
+  [pools : AstNodePoolContext]
+  [variants : (& variants AstVariantDefList)]
+  [names : CloneNameSet]
+  [module : String]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    true
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ field-types _)
+        (if (clone-field-type-list-able? pools field-types names module)
+          (clone-variant-list-able-at pools variants names module (+ index 1))
+          false)])))
 
 (define (clone-struct-fields-able?
   [pools : AstNodePoolContext]
@@ -495,14 +500,19 @@
 (define (clone-variant-arms
   [pools : AstNodePoolContext]
   [variants : AstVariantDefList]) : AstMatchArmList
-  (match variants
-    [(AstVariantDefList.Nil) (ast-match-arm-list-new)]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (ast-match-arm-cons
-          (clone-variant-arm pools variant)
-          (clone-variant-arms pools rest)))]))
+  (clone-variant-arms-at pools (& variants) 0))
+
+(define (clone-variant-arms-at
+  [pools : AstNodePoolContext]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : AstMatchArmList
+  (if (>= index (ast-variant-def-list-len variants))
+    (ast-match-arm-list-new)
+    (ast-match-arm-cons
+      (clone-variant-arm
+        pools
+        (ast-variant-def-list-get variants index (ast-variant-def-fallback)))
+      (clone-variant-arms-at pools variants (+ index 1)))))
 
 ;; Struct constructor args: (clone (struct-get x f0)) (clone (struct-get x f1)) ...
 (define (clone-struct-ctor-args
@@ -654,24 +664,16 @@
   [pools : AstNodePoolContext]
   [variants : AstVariantDefList]
   [self-name : String]) : CloneListShape
-  (match variants
-    [(AstVariantDefList.Cons v1 tail)
-      (let
-        [tail : AstVariantDefList (box-get tail)]
-        (match tail
-          [(AstVariantDefList.Cons v2 rest)
-            (let
-              [rest : AstVariantDefList (box-get rest)]
-              (match rest
-                [(AstVariantDefList.Nil)
-                  (match (clone-list-shape-try pools v1 v2 self-name)
-                    [(CloneListShape.IsList n c boxed)
-                      (CloneListShape.IsList n c boxed)]
-                    [(CloneListShape.NotList)
-                      (clone-list-shape-try pools v2 v1 self-name)])]
-                [_ (CloneListShape.NotList)]))]
-          [_ (CloneListShape.NotList)]))]
-    [_ (CloneListShape.NotList)]))
+  (if (= (ast-variant-def-list-len (& variants)) 2)
+    (let
+      [v1 : AstVariantDef
+        (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))]
+      [v2 : AstVariantDef
+        (ast-variant-def-list-get (& variants) 1 (ast-variant-def-fallback))]
+      (match (clone-list-shape-try pools v1 v2 self-name)
+        [(CloneListShape.IsList n c boxed) (CloneListShape.IsList n c boxed)]
+        [(CloneListShape.NotList) (clone-list-shape-try pools v2 v1 self-name)]))
+    (CloneListShape.NotList)))
 
 (define (clone-list-acc-name [type-name : String]) : String
   (string.append (clone-local-helper-name type-name) "$acc"))
@@ -1012,18 +1014,17 @@
           pools
           (AstType.I64)
           (ast-type-cons-with-pools pools tail-ty AstTypeList.Nil))]
-      (AstVariantDefList.Cons
+      (ast-variant-def-cons
         (AstVariantDef.Def
           (intern "Nil")
           AstTypeList.Nil
-          AstVariantPayloadCleanupList.Nil)
-        (box
-          (AstVariantDefList.Cons
-            (AstVariantDef.Def
-              (intern "Cons")
-              cons-fields
-              AstVariantPayloadCleanupList.Nil)
-            (box AstVariantDefList.Nil)))))))
+          (ast-variant-payload-cleanup-list-new))
+        (ast-variant-def-cons
+          (AstVariantDef.Def
+            (intern "Cons")
+            cons-fields
+            (ast-variant-payload-cleanup-list-new))
+          (ast-variant-def-list-new))))))
 
 (cfg
   test
@@ -1203,20 +1204,28 @@
   [roots : CloneNameList]
   [variants : AstVariantDefList]
   [module : String]) : CloneNameList
-  (match variants
-    [(AstVariantDefList.Nil) roots]
-    [(AstVariantDefList.Cons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef.Def _ fields _)
-            (clone-root-add-variants
-              pools
-              decls
-              able
-              (clone-root-add-type-list pools decls able roots fields module)
-              rest
-              module)]))]))
+  (clone-root-add-variants-at pools decls able roots (& variants) module 0))
+
+(define (clone-root-add-variants-at
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [variants : (& variants AstVariantDefList)]
+  [module : String]
+  [index : i64]) : CloneNameList
+  (if (>= index (ast-variant-def-list-len variants))
+    roots
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ fields _)
+        (clone-root-add-variants-at
+          pools
+          decls
+          able
+          (clone-root-add-type-list pools decls able roots fields module)
+          variants
+          module
+          (+ index 1))])))
 
 (define (clone-root-add-name-deps-in-module
   [pools : AstNodePoolContext]

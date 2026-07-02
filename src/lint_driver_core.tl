@@ -6,7 +6,7 @@
 ;; path to exit non-zero when findings remain. The deprecated string.concat rule
 ;; and staged migration rules are opt-in until their in-tree migrations land.
 (import stdlib.io)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
@@ -17,8 +17,8 @@
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
-  (File vector.StringVec vector.StringVec bool bool bool)
-  (Package String bool vector.StringVec bool bool bool))
+  (File svec.StringVector svec.StringVector bool bool bool)
+  (Package String bool svec.StringVector bool bool bool))
 
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
@@ -28,14 +28,14 @@
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (selfhost-lint-config-finish
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : ResultSelfhostLintConfig
-  (if (vector.string-vec-is-empty? input-paths)
+  (if (svec.is-empty? (& input-paths))
     (ResultSelfhostLintConfig.Ok
       (SelfhostLintConfig.Package
         manifest-path
@@ -58,10 +58,10 @@
 (define (selfhost-lint-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : ResultSelfhostLintConfig
@@ -120,7 +120,11 @@
               input-paths
               manifest-path
               has-manifest
-              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
+              (let
+                [next-roots : svec.StringVector stdlib-roots]
+                (begin
+                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  next-roots))
               enforcing
               deprecated-string-concat
               redundant-function-name))]
@@ -148,7 +152,11 @@
           (selfhost-lint-parse-options
             (+ idx 1)
             count
-            (vector.string-vec-push input-paths current)
+            (let
+              [next-paths : svec.StringVector input-paths]
+              (begin
+                (svec.push (&mut next-paths) current)
+                next-paths))
             manifest-path
             has-manifest
             stdlib-roots
@@ -161,10 +169,10 @@
   (selfhost-lint-parse-options
     start
     count
-    (vector.string-vec-new)
+    (svec.new)
     ""
     false
-    (vector.string-vec-new)
+    (svec.new)
     false
     false
     false))
@@ -605,7 +613,7 @@
   [path : String]
   [source : String]
   [program : AstProgram]
-  [stdlib-roots : vector.StringVec]) : LintFindings
+  [stdlib-roots : svec.StringVector]) : LintFindings
   (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
       (tc-unused-unsafe-tracking-reset! path)
@@ -632,7 +640,7 @@
   [path : String]
   [source : String]
   [program : AstProgram]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : LintFindings
   (selfhost-lint-findings-append
@@ -646,7 +654,7 @@
 (define (selfhost-lint-source-with-roots-and-staged-options
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
@@ -663,7 +671,7 @@
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [deprecated-string-concat : bool]) : LintFindings
   (selfhost-lint-source-with-roots-and-staged-options
     path
@@ -678,7 +686,7 @@
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]) : LintFindings
+  [stdlib-roots : svec.StringVector]) : LintFindings
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 ;; Package-level dead-code linting records top-level declarations as graph nodes.
@@ -688,7 +696,7 @@
   (path String)
   (name String)
   (span AstSourceSpan)
-  (refs vector.StringVec)
+  (refs svec.StringVector)
   (root bool)
   (reportable bool))
 
@@ -698,7 +706,7 @@
 
 (defstruct SelfhostLintDeadScan
   (decls SelfhostLintDeadDecls)
-  (roots vector.StringVec))
+  (roots svec.StringVector))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
     SelfhostLintDeadDecl)
@@ -775,10 +783,16 @@
     (array-set! (selfhost-lint-dead-decls-slots items) index decl)
     items))
 
-(define (selfhost-lint-dead-root-add [roots : vector.StringVec] [name : String]) : vector.StringVec
-  (if (vector.string-vec-contains? roots name)
+(define (selfhost-lint-dead-root-add
+  [roots : svec.StringVector]
+  [name : String]) : svec.StringVector
+  (if (svec.contains? (& roots) name)
     roots
-    (vector.string-vec-push roots name)))
+    (let
+      [next-roots : svec.StringVector roots]
+      (begin
+        (svec.push (&mut next-roots) name)
+        next-roots))))
 
 (define (selfhost-lint-dead-scan-add-decl
   [scan : SelfhostLintDeadScan]
@@ -794,30 +808,34 @@
     (struct-get scan decls)
     (selfhost-lint-dead-root-add (struct-get scan roots) name)))
 
-(define (selfhost-lint-dead-ref-add [refs : vector.StringVec] [name : String]) : vector.StringVec
-  (if (vector.string-vec-contains? refs name)
+(define (selfhost-lint-dead-ref-add [refs : svec.StringVector] [name : String]) : svec.StringVector
+  (if (svec.contains? (& refs) name)
     refs
-    (vector.string-vec-push refs name)))
+    (let
+      [next-refs : svec.StringVector refs]
+      (begin
+        (svec.push (&mut next-refs) name)
+        next-refs))))
 
-(define (selfhost-lint-dead-ref-add-id [refs : vector.StringVec] [name : i64]) : vector.StringVec
+(define (selfhost-lint-dead-ref-add-id [refs : svec.StringVector] [name : i64]) : svec.StringVector
   (selfhost-lint-dead-ref-add refs (intern-str name)))
 
 (define (selfhost-lint-dead-maybe-type-refs
   [maybe-ty : AstMaybeType]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match maybe-ty
     [(AstMaybeType.No) refs]
     [(AstMaybeType.Some ty) (selfhost-lint-dead-type-refs ty refs)]))
 
 (define (selfhost-lint-dead-type-list-refs
   [types : AstTypeList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-type-list-refs-at (& types) refs 0))
 
 (define (selfhost-lint-dead-type-list-refs-at
   [types : (& types AstTypeList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (ast-type-list-len types))
     refs
     (selfhost-lint-dead-type-list-refs-at
@@ -827,10 +845,10 @@
         refs)
       (+ index 1))))
 
-(define (selfhost-lint-dead-type-id-refs [ty : i64] [refs : vector.StringVec]) : vector.StringVec
+(define (selfhost-lint-dead-type-id-refs [ty : i64] [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-type-refs (ty-node-get ty) refs))
 
-(define (selfhost-lint-dead-type-refs [ty : AstType] [refs : vector.StringVec]) : vector.StringVec
+(define (selfhost-lint-dead-type-refs [ty : AstType] [refs : svec.StringVector]) : svec.StringVector
   (match ty
     [(AstType.I64) refs]
     [(AstType.I32) refs]
@@ -874,13 +892,13 @@
 
 (define (selfhost-lint-dead-param-list-refs
   [params : AstParamList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-param-list-refs-at (& params) refs 0))
 
 (define (selfhost-lint-dead-param-list-refs-at
   [params : (& params AstParamList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (ast-param-list-len params))
     refs
     (match (ast-param-list-get params index (ast-param-fallback))
@@ -892,13 +910,13 @@
 
 (define (selfhost-lint-dead-macro-param-list-refs
   [params : AstMacroParamList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-macro-param-list-refs-at (& params) refs 0))
 
 (define (selfhost-lint-dead-macro-param-list-refs-at
   [params : (& params AstMacroParamList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (ast-macro-param-list-len params))
     refs
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
@@ -910,13 +928,13 @@
 
 (define (selfhost-lint-dead-pattern-list-refs
   [patterns : AstPatternList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-pattern-list-refs-at (& patterns) refs 0))
 
 (define (selfhost-lint-dead-pattern-list-refs-at
   [patterns : (& patterns AstPatternList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get patterns len))
     refs
     (selfhost-lint-dead-pattern-list-refs-at
@@ -928,7 +946,7 @@
 
 (define (selfhost-lint-dead-pattern-refs
   [pattern : AstPattern]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match pattern
     [(AstPattern.Var _ maybe-ty)
       (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
@@ -944,13 +962,13 @@
 
 (define (selfhost-lint-dead-expr-list-refs
   [exprs : AstExprList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-expr-list-refs-from exprs refs 0))
 
 (define (selfhost-lint-dead-expr-list-refs-from
   [exprs : AstExprList]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get (& exprs) len))
     refs
     (selfhost-lint-dead-expr-list-refs-from
@@ -962,13 +980,13 @@
 
 (define (selfhost-lint-dead-let-binding-refs
   [bindings : AstLetBindingList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-let-binding-refs-at (& bindings) refs 0))
 
 (define (selfhost-lint-dead-let-binding-refs-at
   [bindings : (& bindings AstLetBindingList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (ast-let-binding-list-len bindings))
     refs
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -982,13 +1000,13 @@
 
 (define (selfhost-lint-dead-match-arm-refs
   [arms : AstMatchArmList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-match-arm-refs-at (& arms) refs 0))
 
 (define (selfhost-lint-dead-match-arm-refs-at
   [arms : (& arms AstMatchArmList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get arms len))
     refs
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -1002,13 +1020,13 @@
 
 (define (selfhost-lint-dead-resource-binding-refs
   [bindings : AstResourceBindingList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-resource-binding-refs-at (& bindings) refs 0))
 
 (define (selfhost-lint-dead-resource-binding-refs-at
   [bindings : (& bindings AstResourceBindingList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (ast-resource-binding-list-len bindings))
     refs
     (match (ast-resource-binding-list-get
@@ -1025,7 +1043,7 @@
 
 (define (selfhost-lint-dead-expr-refs
   [expr : AstExpr]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match expr
     [(AstExpr.Spanned inner-box _)
       (selfhost-lint-dead-expr-refs (ast-node-get inner-box) refs)]
@@ -1346,25 +1364,23 @@
 
 (define (selfhost-lint-dead-refs-to-roots-from
   [scan : SelfhostLintDeadScan]
-  [refs : vector.StringVec]
+  [refs : svec.StringVector]
   [index : i64]) : SelfhostLintDeadScan
-  (if (>= index (vector.string-vec-len refs))
+  (if (>= index (svec.len (& refs)))
     scan
     (selfhost-lint-dead-refs-to-roots-from
-      (selfhost-lint-dead-scan-add-root
-        scan
-        (vector.string-vec-get refs index ""))
+      (selfhost-lint-dead-scan-add-root scan (svec.get (& refs) index ""))
       refs
       (+ index 1))))
 
 (define (selfhost-lint-dead-refs-to-roots
   [scan : SelfhostLintDeadScan]
-  [refs : vector.StringVec]) : SelfhostLintDeadScan
+  [refs : svec.StringVector]) : SelfhostLintDeadScan
   (selfhost-lint-dead-refs-to-roots-from scan refs 0))
 
 (define (selfhost-lint-dead-field-cleanup-refs
   [cleanup : AstFieldCleanup]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match cleanup
     [(AstFieldCleanup.No) refs]
     [(AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
@@ -1372,13 +1388,13 @@
 
 (define (selfhost-lint-dead-field-def-list-refs
   [fields : AstFieldDefList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-field-def-list-refs-at (& fields) refs 0))
 
 (define (selfhost-lint-dead-field-def-list-refs-at
   [fields : (& fields AstFieldDefList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get fields len))
     refs
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
@@ -1392,21 +1408,21 @@
 
 (define (selfhost-lint-dead-struct-cleanup-refs
   [cleanup : AstStructCleanup]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match cleanup
     [(AstStructCleanup.No) refs]
     [(AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-enum-cleanup-refs
   [cleanup : AstEnumCleanup]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match cleanup
     [(AstEnumCleanup.No) refs]
     [(AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-variant-cleanup-refs
   [cleanup : AstVariantPayloadCleanup]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match cleanup
     [(AstVariantPayloadCleanup.No) refs]
     [(AstVariantPayloadCleanup.Fn name)
@@ -1415,13 +1431,13 @@
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs
   [items : AstVariantPayloadCleanupList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-variant-cleanup-list-refs-at (& items) refs 0))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs-at
   [items : (& items AstVariantPayloadCleanupList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get items len))
     refs
     (selfhost-lint-dead-variant-cleanup-list-refs-at
@@ -1436,13 +1452,13 @@
 
 (define (selfhost-lint-dead-variant-def-list-refs
   [variants : AstVariantDefList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-variant-def-list-refs-at (& variants) refs 0))
 
 (define (selfhost-lint-dead-variant-def-list-refs-at
   [variants : (& variants AstVariantDefList)]
-  [refs : vector.StringVec]
-  [index : i64]) : vector.StringVec
+  [refs : svec.StringVector]
+  [index : i64]) : svec.StringVector
   (if (>= index (struct-get variants len))
     refs
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
@@ -1459,7 +1475,7 @@
 (define (selfhost-lint-dead-dispatch-variant-list-refs-from
   [variants : (& variants AstDispatchVariantList)]
   [index : i64]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (if (>= index (struct-get variants len))
     refs
     (match (ast-dispatch-variant-list-get
@@ -1474,12 +1490,12 @@
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs
   [variants : AstDispatchVariantList]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (selfhost-lint-dead-dispatch-variant-list-refs-from (& variants) 0 refs))
 
 (define (selfhost-lint-dead-extern-abi-refs
   [abi : AstExternAbi]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match abi
     [(AstExternAbi.C) refs]
     [(AstExternAbi.CVarargsOpen) refs]
@@ -1488,14 +1504,14 @@
 
 (define (selfhost-lint-dead-extern-metadata-refs
   [meta : AstExternMetadata]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match meta
     [(AstExternMetadata.Metadata abi _ _ _)
       (selfhost-lint-dead-extern-abi-refs abi refs)]))
 
 (define (selfhost-lint-dead-generated-meta-refs
   [meta : AstGeneratedDeclMeta]
-  [refs : vector.StringVec]) : vector.StringVec
+  [refs : svec.StringVector]) : svec.StringVector
   (match meta
     [(AstGeneratedDeclMeta.No) refs]
     [(AstGeneratedDeclMeta.Some _ _ args _)
@@ -1506,7 +1522,7 @@
   [path : String]
   [name : String]
   [span : AstSourceSpan]
-  [refs : vector.StringVec]
+  [refs : svec.StringVector]
   [reportable : bool]) : SelfhostLintDeadScan
   (selfhost-lint-dead-scan-add-decl
     scan
@@ -1517,7 +1533,7 @@
   [path : String]
   [name : String]
   [span : AstSourceSpan]
-  [refs : vector.StringVec]
+  [refs : svec.StringVector]
   [root : bool]
   [reportable : bool]) : SelfhostLintDeadScan
   (let
@@ -1547,12 +1563,10 @@
     [(AstDecl.Def name maybe-ty body)
       (let
         [text : String (intern-str name)]
-        [refs : vector.StringVec
+        [refs : svec.StringVector
           (selfhost-lint-dead-expr-refs
             (ast-node-get body)
-            (selfhost-lint-dead-maybe-type-refs
-              maybe-ty
-              (vector.string-vec-new)))]
+            (selfhost-lint-dead-maybe-type-refs maybe-ty (svec.new)))]
         [span : AstSourceSpan
           (selfhost-lint-dead-decl-span
             source
@@ -1569,14 +1583,12 @@
     [(AstDecl.DefFn name params ret body _)
       (let
         [text : String (intern-str name)]
-        [refs : vector.StringVec
+        [refs : svec.StringVector
           (selfhost-lint-dead-expr-refs
             (ast-node-get body)
             (selfhost-lint-dead-type-refs
               ret
-              (selfhost-lint-dead-param-list-refs
-                params
-                (vector.string-vec-new))))]
+              (selfhost-lint-dead-param-list-refs params (svec.new))))]
         [span : AstSourceSpan
           (selfhost-lint-dead-decl-span
             source
@@ -1600,9 +1612,7 @@
           (ast-node-get body)
           (selfhost-lint-dead-type-refs
             ret
-            (selfhost-lint-dead-macro-param-list-refs
-              params
-              (vector.string-vec-new))))
+            (selfhost-lint-dead-macro-param-list-refs params (svec.new))))
         visible-root
         allow-report)]
     [(AstDecl.Extern name _ meta ty)
@@ -1613,7 +1623,7 @@
         (lint-no-span)
         (selfhost-lint-dead-type-refs
           ty
-          (selfhost-lint-dead-extern-metadata-refs meta (vector.string-vec-new)))
+          (selfhost-lint-dead-extern-metadata-refs meta (svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.DefEnum name cleanup variants)
@@ -1624,7 +1634,7 @@
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (vector.string-vec-new)))
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.DefEnumLifetimes name _ cleanup variants)
@@ -1635,7 +1645,7 @@
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (vector.string-vec-new)))
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.DefStruct name _ cleanup fields)
@@ -1646,9 +1656,7 @@
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs
-            cleanup
-            (vector.string-vec-new)))
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.DefStructLifetimes name _ _ cleanup fields)
@@ -1659,25 +1667,19 @@
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs
-            cleanup
-            (vector.string-vec-new)))
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.Import
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get call-expr)
-          (vector.string-vec-new)))]
+        (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (svec.new)))]
     [(AstDecl.Import
         (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get call-expr)
-          (vector.string-vec-new)))]
+        (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (svec.new)))]
     [(AstDecl.Import _) scan]
     [(AstDecl.IncludeStr _ _) scan]
     [(AstDecl.IncludeBin _ _) scan]
@@ -1687,17 +1689,13 @@
         path
         (intern-str name)
         (lint-no-span)
-        (selfhost-lint-dead-dispatch-variant-list-refs
-          variants
-          (vector.string-vec-new))
+        (selfhost-lint-dead-dispatch-variant-list-refs variants (svec.new))
         visible-root
         allow-report)]
     [(AstDecl.Test _ body _)
       (selfhost-lint-dead-refs-to-roots
         scan
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get body)
-          (vector.string-vec-new)))]
+        (selfhost-lint-dead-expr-refs (ast-node-get body) (svec.new)))]
     [(AstDecl.Unsafe inner)
       (selfhost-lint-dead-scan-decl
         scan
@@ -1715,7 +1713,7 @@
           (box-get inner)
           visible-root
           false)
-        (selfhost-lint-dead-generated-meta-refs meta (vector.string-vec-new)))]))
+        (selfhost-lint-dead-generated-meta-refs meta (svec.new)))]))
 
 (define (selfhost-lint-dead-scan-decls
   [scan : SelfhostLintDeadScan]
@@ -1801,14 +1799,14 @@
 
 (define (selfhost-lint-dead-mark-refs-from
   [items : SelfhostLintDeadDecls]
-  [refs : vector.StringVec]
+  [refs : svec.StringVector]
   [index : i64]) : SelfhostLintDeadDecls
-  (if (>= index (vector.string-vec-len refs))
+  (if (>= index (svec.len (& refs)))
     items
     (selfhost-lint-dead-mark-refs-from
       (selfhost-lint-dead-mark-reachable-name
         items
-        (vector.string-vec-get refs index ""))
+        (svec.get (& refs) index ""))
       refs
       (+ index 1))))
 
@@ -1843,14 +1841,14 @@
 
 (define (selfhost-lint-dead-mark-roots-from
   [items : SelfhostLintDeadDecls]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [index : i64]) : SelfhostLintDeadDecls
-  (if (>= index (vector.string-vec-len roots))
+  (if (>= index (svec.len (& roots)))
     items
     (selfhost-lint-dead-mark-roots-from
       (selfhost-lint-dead-mark-reachable-name
         items
-        (vector.string-vec-get roots index ""))
+        (svec.get (& roots) index ""))
       roots
       (+ index 1))))
 
@@ -1884,9 +1882,7 @@
           0
           visible-root
           reportable
-          (SelfhostLintDeadScan
-            (selfhost-lint-dead-decls-empty)
-            (vector.string-vec-new)))
+          (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (svec.new)))
         kind)]
     (selfhost-lint-dead-mark-roots-from
       (struct-get scan decls)
@@ -1984,7 +1980,7 @@
 
 (define (selfhost-lint-file
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : i64
@@ -2019,7 +2015,7 @@
 
 (define (selfhost-lint-file-with-package-dead
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -2057,18 +2053,18 @@
           1)])))
 
 (define (selfhost-lint-files-from
-  [input-paths : vector.StringVec]
+  [input-paths : svec.StringVector]
   [index : i64]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len input-paths))
+  (if (>= index (svec.len (& input-paths)))
     status
     (let
-      [input-path : String (vector.string-vec-get input-paths index "")]
+      [input-path : String (svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
           (if print-headers
@@ -2094,8 +2090,8 @@
           status)))))
 
 (define (selfhost-lint-files
-  [input-paths : vector.StringVec]
-  [stdlib-roots : vector.StringVec]
+  [input-paths : svec.StringVector]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -2114,7 +2110,7 @@
 (define (selfhost-lint-package-files-from
   [input-paths : PackageSourceList]
   [index : i64]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -2153,7 +2149,7 @@
 
 (define (selfhost-lint-package-files
   [input-paths : PackageSourceList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
@@ -2174,7 +2170,7 @@
 (define (selfhost-lint-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : i64
@@ -2216,7 +2212,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            (> (vector.string-vec-len input-paths) 1)
+            (> (svec.len (& input-paths)) 1)
             0)]
         [(SelfhostLintConfig.Package
             manifest-path
@@ -2706,7 +2702,7 @@
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
-      (vector.string-vec-new))))
+      (svec.new))))
 
 (define (selfhost-lint-findings-rule-count-from
   [findings : LintFindings]
@@ -2741,7 +2737,7 @@
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
-      (vector.string-vec-new))
+      (svec.new))
     rule-id))
 
 (define (selfhost-lint-unused-import-finding-ok? [findings : LintFindings]) : bool
@@ -2761,12 +2757,12 @@
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unused-dotted-import-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [unused-path-alias : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unused-explicit-path-alias-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     (cond
       [(not (selfhost-lint-unused-import-finding-ok? unused)) 30]
       [(not (selfhost-lint-unused-import-finding-ok? unused-path-alias)) 31]
@@ -2841,9 +2837,7 @@
     [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
     [scan-a : SelfhostLintDeadScan
       (selfhost-lint-dead-scan-source
-        (SelfhostLintDeadScan
-          (selfhost-lint-dead-decls-empty)
-          (vector.string-vec-new))
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (svec.new))
         "pkg/a.tl"
         source-a
         visible-root
@@ -3146,57 +3140,57 @@
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [guard-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-guard-ladder-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [return-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [all-exit-ladder-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-all-exit-ladder-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [unit-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [unit-set-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [two-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [cascading-and-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-and-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [cascading-or-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-or-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [cascading-core-and-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     [transitional-core-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-transitional-core-macro-source)
-        (vector.string-vec-new))]
+        (svec.new))]
     (cond
       [(or
           (not (= (lint-findings-count reported) 1))
@@ -3348,7 +3342,7 @@
             (selfhost-lint-source-with-roots
               "lint_driver_self_test.tl"
               (selfhost-lint-nested-let-source)
-              (vector.string-vec-new))))
+              (svec.new))))
         9]
       [(not
           (=

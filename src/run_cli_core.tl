@@ -4,7 +4,7 @@
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
 (import stdlib.io)
 (import stdlib.process)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "host_plan.tl")
 (import "build_run_core.tl")
 (import "doc_test.tl")
@@ -24,7 +24,7 @@
     String
     CompilerBackendTarget
     CompilerBackendMode
-    vector.StringVec
+    svec.StringVector
     SourceToolCfgNames
     process.ProcessStringList
     i64
@@ -252,7 +252,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -349,7 +349,11 @@
               source
               target
               mode
-              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
+              (let
+                [next-roots : svec.StringVector stdlib-roots]
+                (begin
+                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  next-roots))
               cfgs
               runtime-args
               opt-level
@@ -442,7 +446,7 @@
           source
           (source-tool-default-target)
           (CompilerBackendMode.Scalar)
-          (vector.string-vec-new)
+          (svec.new)
           (source-tool-cfg-names-empty)
           (process.args-empty)
           (compiler-optimize-default-level)
@@ -450,7 +454,7 @@
 
 (define (run-cli-typecheck-doctests
   [source : String]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (match (io.try-read-file (& source))
     [(io.ErrIoString _) 0]
     [(io.OkIoString text)
@@ -466,7 +470,7 @@
 (define (run-cli-run-source-with-doctests
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]

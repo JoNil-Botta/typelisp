@@ -4,14 +4,13 @@
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
 (import stdlib.io)
-(import stdlib.vector)
-(import (vector.vector String) as svec)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
 
 (defenum FmtConfig
-  (File bool svec.Vec)
+  (File bool svec.StringVector)
   (Package bool String bool))
 
 (defenum ResultFmtConfig
@@ -99,16 +98,16 @@
 (define (fmt-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
-(define (fmt-svec-push [items : svec.Vec] [value : String]) : svec.Vec
+(define (fmt-svec-push [items : svec.StringVector] [value : String]) : svec.StringVector
   (let
-    [out : svec.Vec items]
+    [out : svec.StringVector items]
     (begin
       (svec.push (&mut out) value)
       out)))
 
 (define (fmt-config-finish
   [check : bool]
-  [paths : svec.Vec]
+  [paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (svec.is-empty? (& paths))
@@ -122,7 +121,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : svec.Vec]
+  [paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -191,7 +190,7 @@
 
 (define (fmt-files-from
   [check : bool]
-  [paths : svec.Vec]
+  [paths : svec.StringVector]
   [index : i64]
   [status : i64]) : i64
   (if (>= index (svec.len (& paths)))
@@ -207,7 +206,7 @@
           file-status
           status)))))
 
-(define (fmt-files [check : bool] [paths : svec.Vec] [status : i64]) : i64
+(define (fmt-files [check : bool] [paths : svec.StringVector] [status : i64]) : i64
   (fmt-files-from check paths 0 status))
 
 (define (fmt-package-files-from

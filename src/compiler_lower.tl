@@ -6,7 +6,7 @@
 ;; explicit future work.
 (import stdlib.io)
 (import stdlib.arena)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_typecheck.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
@@ -1495,42 +1495,57 @@
         (string.substring path 0 (+ last 1))))))
 
 (define (lower-path-segment-vec-render-from
-  [segments : vector.StringVec]
+  [segments : svec.StringVector]
   [index : i64]
   [prefix : String]) : String
-  (if (>= index (vector.string-vec-len segments))
+  (if (>= index (svec.len (& segments)))
     prefix
     (let
-      [segment : String (vector.string-vec-get segments index "")]
+      [segment : String (svec.get (& segments) index "")]
       [next-prefix : String
         (if (= (string.string-length prefix) 0)
           segment
           (string.append prefix (string.append "/" segment)))]
       (lower-path-segment-vec-render-from segments (+ index 1) next-prefix))))
 
-(define (lower-path-segment-vec-render [segments : vector.StringVec]) : String
+(define (lower-path-segment-vec-render [segments : svec.StringVector]) : String
   (lower-path-segment-vec-render-from segments 0 ""))
 
 (define (lower-path-normalize-segment
   [segment : String]
-  [segments : vector.StringVec]
-  [rooted : bool]) : vector.StringVec
+  [segments : svec.StringVector]
+  [rooted : bool]) : svec.StringVector
   (cond
     [(string.eq segment "") segments]
     [(string.eq segment ".") segments]
-    [(not (string.eq segment "..")) (vector.string-vec-push segments segment)]
-    [(<= (vector.string-vec-len segments) 0)
+    [(not (string.eq segment ".."))
+      (let
+        [next-segments : svec.StringVector segments]
+        (begin
+          (svec.push (&mut next-segments) segment)
+          next-segments))]
+    [(<= (svec.len (& segments)) 0)
       (if rooted
         segments
-        (vector.string-vec-push segments segment))]
+        (let
+          [next-segments : svec.StringVector segments]
+          (begin
+            (svec.push (&mut next-segments) segment)
+            next-segments)))]
     [else
       (let
-        [top : String (vector.string-vec-last segments "")]
+        [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
-          (vector.string-vec-push segments segment)
-          (vector.string-vec-pop-rest-or
-            (vector.string-vec-pop segments)
-            segments)))]))
+          (let
+            [next-segments : svec.StringVector segments]
+            (begin
+              (svec.push (&mut next-segments) segment)
+              next-segments))
+          (let
+            [next-segments : svec.StringVector segments]
+            (begin
+              (svec.pop! (&mut next-segments))
+              next-segments))))]))
 
 (define (lower-normalize-path [path : String]) : String
   (let
@@ -1554,7 +1569,7 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : vector.StringVec (vector.string-vec-new)]
+    [segments : svec.StringVector (svec.new)]
     (begin
       (while (< i n)
         (begin
@@ -7952,7 +7967,7 @@
           state
           (clone-helper-name name)))]))
 
-;; Functions with an `(:export-symbol …)` declaration (#2143) publish a fixed
+;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration (#2143) publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
 ;; backend-emitted bounds/division/shift checks call the runtime-prelude
 ;; handlers). Seed every exported function as a reachability root so the prune
@@ -43746,7 +43761,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
@@ -43947,7 +43962,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
     entry-path
@@ -43963,7 +43978,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]) : ResultCompilerLower
   (let
     [prev-active : bool lower-entry-main-module-active]
@@ -43992,7 +44007,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
@@ -44028,7 +44043,7 @@
     program
     paths
     mode
-    (vector.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
@@ -44036,7 +44051,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools
     entry-path
@@ -44052,7 +44067,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
@@ -44115,7 +44130,7 @@
     program
     paths
     mode
-    (vector.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths
@@ -44489,7 +44504,7 @@
       [(ResultAstProgram.Ok program)
         (if (lower-source-program-needs-loader? program)
           (let
-            [stdlib-roots : vector.StringVec (vector.string-vec-new)]
+            [stdlib-roots : svec.StringVector (svec.new)]
             [cfgs : sym_i64_env.SymI64Env
               (typecheck-compiler-source-language-cfgs)]
             (match (typecheck-compiler-source-load src)
@@ -49640,6 +49655,7 @@
 
 (define (compiler-lower-module-macro-stdlib-vector-import-source) : String
   "(import stdlib.vector)
+(import (vector.vector String) as svec)
 (defmacro (vector-user) : Module
   `(begin
     (module generated.lower_vector_user)

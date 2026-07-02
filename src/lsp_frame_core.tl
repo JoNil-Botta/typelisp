@@ -8,7 +8,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.json)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")
@@ -211,6 +211,13 @@
             (LspLengthParse.Ok n)))
         (LspLengthParse.Err "lsp: invalid Content-Length")))
     LspLengthParse.Ignore))
+
+(define (lsp-string-vec-push-copy [items : svec.StringVector] [value : String]) : svec.StringVector
+  (let
+    [next-items : svec.StringVector items]
+    (begin
+      (svec.push (&mut next-items) value)
+      next-items)))
 
 (define (lsp-frame-read-message) : LspFrameRead
   (let
@@ -1092,7 +1099,7 @@
 (define (lsp-lint-diagnostics
   [path : String]
   [text : String]
-  [stdlib-roots : vector.StringVec]) : json.JsonList
+  [stdlib-roots : svec.StringVector]) : json.JsonList
   (lsp-lint-findings-to-json
     text
     (selfhost-lint-source-with-roots path text stdlib-roots)
@@ -1103,7 +1110,7 @@
   [uri : String]
   [path : String]
   [text : String]
-  [stdlib-roots : vector.StringVec]) : String
+  [stdlib-roots : svec.StringVector]) : String
   (let
     [lint-diags : json.JsonList (lsp-lint-diagnostics path text stdlib-roots)]
     (match (compiler-check-source-with-roots path text stdlib-roots)
@@ -1147,7 +1154,7 @@
 (define (lsp-did-open
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : LspHandleResult
+  [stdlib-roots : svec.StringVector]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -1175,7 +1182,7 @@
 (define (lsp-did-change
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : LspHandleResult
+  [stdlib-roots : svec.StringVector]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -1638,7 +1645,7 @@
 (define (lsp-resolve-module-import-target
   [path : String]
   [module-name : String]
-  [stdlib-roots : vector.StringVec]) : String
+  [stdlib-roots : svec.StringVector]) : String
   (match (compiler-load-resolve-module-import-with-roots
     path
     (compiler-load-dirname path)
@@ -1650,7 +1657,7 @@
 (define (lsp-resolve-import-target-at
   [text : String]
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [operand-start : i64]) : LspImportTarget
   (let
     [n : i64 (string.string-length text)]
@@ -1700,12 +1707,12 @@
 (define (lsp-collect-import-targets
   [text : String]
   [path : String]
-  [stdlib-roots : vector.StringVec]
-  [acc : vector.StringVec]) : vector.StringVec
+  [stdlib-roots : svec.StringVector]
+  [acc : svec.StringVector]) : svec.StringVector
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [out : vector.StringVec acc]
+    [out : svec.StringVector acc]
     (begin
       (while (< i n)
         (let
@@ -1731,7 +1738,7 @@
                       operand-start)
                       [(LspImportTarget.Found resolved _ end)
                         (begin
-                          (set! out (vector.string-vec-push out resolved))
+                          (set! out (lsp-string-vec-push-copy out resolved))
                           (set! i end))]
                       [(LspImportTarget.Missing) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
@@ -1741,7 +1748,7 @@
 (define (lsp-import-target-at-offset
   [text : String]
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [off : i64]) : LspImportTarget
   (let
     [n : i64 (string.string-length text)]
@@ -1789,17 +1796,17 @@
       target)))
 
 (defstruct LspModuleSet
-  (paths vector.StringVec)
-  (texts vector.StringVec))
+  (paths svec.StringVector)
+  (texts svec.StringVector))
 
-(define (lsp-string-vec-contains? [v : vector.StringVec] [s : String]) : bool
+(define (lsp-string-vec-contains? [v : svec.StringVector] [s : String]) : bool
   (let
-    [n : i64 (vector.string-vec-len v)]
+    [n : i64 (svec.len (& v))]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
-        (if (string.eq (vector.string-vec-get v i "") s)
+        (if (string.eq (svec.get (& v) i "") s)
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -1807,37 +1814,31 @@
 ;; Add a resolved module path (and its source) to the set if new and under cap.
 (define (lsp-module-set-add-path [set : LspModuleSet] [resolved : String]) : LspModuleSet
   (let
-    [paths : vector.StringVec (struct-get set paths)]
-    [texts : vector.StringVec (struct-get set texts)]
+    [paths : svec.StringVector (struct-get set paths)]
+    [texts : svec.StringVector (struct-get set texts)]
     (if (and
-      (< (vector.string-vec-len paths) 512)
+      (< (svec.len (& paths)) 512)
       (not (lsp-string-vec-contains? paths resolved)))
       (LspModuleSet
-        (vector.string-vec-push paths resolved)
-        (vector.string-vec-push texts (io.read-file-or (& resolved) "")))
+        (lsp-string-vec-push-copy paths resolved)
+        (lsp-string-vec-push-copy texts (io.read-file-or (& resolved) "")))
       set)))
 
 ;; Add every module `text` imports (resolved like the loader) to the set.
 (define (lsp-module-set-add-imports
   [importer-path : String]
   [text : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [set : LspModuleSet]) : LspModuleSet
   (let
-    [paths : vector.StringVec
-      (lsp-collect-import-targets
-        text
-        importer-path
-        stdlib-roots
-        (vector.string-vec-new))]
+    [paths : svec.StringVector
+      (lsp-collect-import-targets text importer-path stdlib-roots (svec.new))]
     [out : LspModuleSet set]
     [j : i64 0]
     (begin
-      (while (< j (vector.string-vec-len paths))
+      (while (< j (svec.len (& paths)))
         (begin
-          (set!
-            out
-            (lsp-module-set-add-path out (vector.string-vec-get paths j "")))
+          (set! out (lsp-module-set-add-path out (svec.get (& paths) j "")))
           (set! j (+ j 1))))
       out)))
 
@@ -1846,11 +1847,11 @@
 (define (lsp-transitive-modules
   [start-path : String]
   [start-text : String]
-  [stdlib-roots : vector.StringVec]) : LspModuleSet
+  [stdlib-roots : svec.StringVector]) : LspModuleSet
   (let
     [seeded : LspModuleSet
       (lsp-module-set-add-path
-        (LspModuleSet (vector.string-vec-new) (vector.string-vec-new))
+        (LspModuleSet (svec.new) (svec.new))
         (compiler-load-normalize-path
           (compiler-load-resolve-import-with-roots
             start-path
@@ -1860,16 +1861,16 @@
       (lsp-module-set-add-imports start-path start-text stdlib-roots seeded)]
     [i : i64 0]
     (begin
-      (while (< i (vector.string-vec-len (struct-get set paths)))
+      (while (< i (svec.len (& (struct-get set paths))))
         (let
-          [src : String (vector.string-vec-get (struct-get set texts) i "")]
+          [src : String (svec.get (& (struct-get set texts)) i "")]
           (begin
             (if (string.eq src "")
               unit
               (set!
                 set
                 (lsp-module-set-add-imports
-                  (vector.string-vec-get (struct-get set paths) i "")
+                  (svec.get (& (struct-get set paths)) i "")
                   src
                   stdlib-roots
                   set)))
@@ -1881,15 +1882,15 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspDefLocation
-  (if (>= idx (vector.string-vec-len (struct-get set paths)))
+  (if (>= idx (svec.len (& (struct-get set paths))))
     LspDefLocation.Missing
     (let
-      [src : String (vector.string-vec-get (struct-get set texts) idx "")]
+      [src : String (svec.get (& (struct-get set texts)) idx "")]
       [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
       (if (>= off 0)
         (lsp-def-loc-from
           (lsp-resolved-path-to-file-uri
-            (vector.string-vec-get (struct-get set paths) idx ""))
+            (svec.get (& (struct-get set paths)) idx ""))
           src
           off
           needle)
@@ -1902,7 +1903,7 @@
   [current-uri : String]
   [current-path : String]
   [current-text : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [needle : String]) : LspDefLocation
   (let
     [off : i64 (lsp-find-def-or-variant-offset-in current-text needle)]
@@ -1951,7 +1952,7 @@
   [uri : String]
   [position : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -1991,7 +1992,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -2020,7 +2021,7 @@
         "file:///smoke.tl"
         "smoke.tl"
         src
-        (vector.string-vec-new)
+        (svec.new)
         (lsp-symbol-base sym))
         [(LspDefLocation.Found _ line col len)
           (and (= line 1) (= col 10) (= len 3))]
@@ -2035,7 +2036,7 @@
       "file:///smoke.tl"
       "smoke.tl"
       src
-      (vector.string-vec-new)
+      (svec.new)
       "decoy")
       [(LspDefLocation.Found _ _ _ _) false]
       [(LspDefLocation.Missing) true])))
@@ -2049,7 +2050,7 @@
       "file:///smoke.tl"
       "smoke.tl"
       src
-      (vector.string-vec-new)
+      (svec.new)
       "target")
       [(LspDefLocation.Found _ line col len)
         (and (= line 3) (= col 10) (= len 6))]
@@ -2074,7 +2075,7 @@
         "file:///smoke.tl"
         "smoke.tl"
         src
-        (vector.string-vec-new)
+        (svec.new)
         (lsp-symbol-base sym))
         [(LspDefLocation.Found def-uri line _ len)
           (and
@@ -2108,31 +2109,25 @@
 (define (lsp-completion-types) : String
   "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
 
-(define (lsp-split-spaces [s : String]) : vector.StringVec
+(define (lsp-split-spaces [s : String]) : svec.StringVector
   (let
     [n : i64 (string.string-length s)]
     [i : i64 0]
     [start : i64 0]
-    [acc : vector.StringVec (vector.string-vec-new)]
+    [acc : svec.StringVector (svec.new)]
     (begin
       (while (< i n)
         (begin
           (if (= (string.string-ref s i) ' ')
             (begin
               (if (> i start)
-                (set!
-                  acc
-                  (vector.string-vec-push
-                    acc
-                    (string.substring s start (- i start))))
+                (svec.push (&mut acc) (string.substring s start (- i start)))
                 unit)
               (set! start (+ i 1)))
             unit)
           (set! i (+ i 1))))
       (if (> n start)
-        (set!
-          acc
-          (vector.string-vec-push acc (string.substring s start (- n start))))
+        (svec.push (&mut acc) (string.substring s start (- n start)))
         unit)
       acc)))
 
@@ -2144,26 +2139,26 @@
     (lsp-json-number kind)))
 
 (define (lsp-completion-items-from
-  [labels : vector.StringVec]
+  [labels : svec.StringVector]
   [kind : i64]
   [idx : i64]
   [acc : json.JsonList]) : json.JsonList
-  (if (>= idx (vector.string-vec-len labels))
+  (if (>= idx (svec.len (& labels)))
     acc
     (lsp-completion-items-from
       labels
       kind
       (+ idx 1)
       (lsp-json-list-cons
-        (lsp-completion-item (vector.string-vec-get labels idx "") kind)
+        (lsp-completion-item (svec.get (& labels) idx "") kind)
         acc))))
 
 ;; Collect every top-level definition name in `text`, skipping strings/comments.
-(define (lsp-collect-def-names [text : String] [acc : vector.StringVec]) : vector.StringVec
+(define (lsp-collect-def-names [text : String] [acc : svec.StringVector]) : svec.StringVector
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [out : vector.StringVec acc]
+    [out : svec.StringVector acc]
     (begin
       (while (< i n)
         (let
@@ -2178,7 +2173,7 @@
                   (if (>= name-off 0)
                     (set!
                       out
-                      (vector.string-vec-push
+                      (lsp-string-vec-push-copy
                         out
                         (lsp-symbol-at-offset text name-off)))
                     unit)
@@ -2189,7 +2184,7 @@
 (define (lsp-collect-def-names-all
   [docs : LspDocuments]
   [idx : i64]
-  [acc : vector.StringVec]) : vector.StringVec
+  [acc : svec.StringVector]) : svec.StringVector
   (if (>= idx (lsp-documents-len (& docs)))
     acc
     (lsp-collect-def-names-all
@@ -2203,8 +2198,7 @@
 
 (define (lsp-completion-respond [id : json.Json] [docs : LspDocuments]) : unit
   (let
-    [names : vector.StringVec
-      (lsp-collect-def-names-all docs 0 (vector.string-vec-new))]
+    [names : svec.StringVector (lsp-collect-def-names-all docs 0 (svec.new))]
     [items : json.JsonList
       (lsp-completion-items-from
         names
@@ -2305,7 +2299,7 @@
   [uri : String]
   [range : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -2328,7 +2322,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -2737,10 +2731,10 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspDefSource
-  (if (>= idx (vector.string-vec-len (struct-get set paths)))
+  (if (>= idx (svec.len (& (struct-get set paths))))
     LspDefSource.Missing
     (let
-      [src : String (vector.string-vec-get (struct-get set texts) idx "")]
+      [src : String (svec.get (& (struct-get set texts)) idx "")]
       [off : i64 (lsp-find-def-form-in src needle)]
       (if (>= off 0)
         (LspDefSource.Found src off)
@@ -2751,7 +2745,7 @@
   [current-uri : String]
   [current-path : String]
   [current-text : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [needle : String]) : LspDefSource
   (let
     [off : i64 (lsp-find-def-form-in current-text needle)]
@@ -2992,10 +2986,10 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspVariantHit
-  (if (>= idx (vector.string-vec-len (struct-get set paths)))
+  (if (>= idx (svec.len (& (struct-get set paths))))
     LspVariantHit.Missing
     (match (lsp-enum-of-variant
-      (vector.string-vec-get (struct-get set texts) idx "")
+      (svec.get (& (struct-get set texts)) idx "")
       needle)
       [(LspVariantHit.Found enum-name variant-form)
         (LspVariantHit.Found enum-name variant-form)]
@@ -3009,7 +3003,7 @@
   [current-uri : String]
   [current-path : String]
   [current-text : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [needle : String]) : LspVariantHit
   (match (lsp-enum-of-variant current-text needle)
     [(LspVariantHit.Found enum-name variant-form)
@@ -3236,7 +3230,7 @@
   [uri : String]
   [position : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -3313,7 +3307,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -3354,7 +3348,7 @@
 (define (lsp-document-links
   [text : String]
   [path : String]
-  [stdlib-roots : vector.StringVec]) : json.JsonList
+  [stdlib-roots : svec.StringVector]) : json.JsonList
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -3400,7 +3394,7 @@
   [id : json.Json]
   [uri : String]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (lsp-write-response
@@ -3413,7 +3407,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -4047,7 +4041,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : LspHandleResult
+  [stdlib-roots : svec.StringVector]) : LspHandleResult
   (let
     [uri : String
       (match (lsp-json-string-field params "uri")
@@ -4166,7 +4160,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : LspHandleResult
+  [stdlib-roots : svec.StringVector]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -4559,7 +4553,7 @@
 (define (lsp-handle-message
   [message : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : LspHandleResult
+  [stdlib-roots : svec.StringVector]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(LspJsonText.Ok method)
       (let
@@ -4803,7 +4797,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (cond
     [(string.eq method "tl/astDump")
       (begin
@@ -4916,7 +4910,7 @@
   [method : String]
   [message : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : vector.StringVec]) : unit
+  [stdlib-roots : svec.StringVector]) : unit
   (let
     [id-key : String "id"]
     (match (json.object-get message (& id-key))
@@ -4939,22 +4933,22 @@
           (lsp-maybe-write-method-not-found message)
           unit)])))
 
-(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : vector.StringVec
+(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : svec.StringVector
   (let
     [i : i64 idx]
-    [roots : vector.StringVec (vector.string-vec-new)]
+    [roots : svec.StringVector (svec.new)]
     (begin
       (while (< i count)
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) count)
             (begin
-              (set! roots (vector.string-vec-push roots (io.arg (+ i 1))))
+              (svec.push (&mut roots) (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i count))
           (set! i (+ i 1))))
       roots)))
 
-(define (lsp-stdlib-roots [idx : i64]) : vector.StringVec
+(define (lsp-stdlib-roots [idx : i64]) : svec.StringVector
   (lsp-stdlib-roots-from idx (arg-count)))
 
 (define (lsp-frame-session-cache-enable!) : unit
@@ -4975,7 +4969,7 @@
     [done : bool false]
     [status : i64 0]
     [docs : LspDocuments (lsp-documents-new)]
-    [stdlib-roots : vector.StringVec (lsp-stdlib-roots-from idx count)]
+    [stdlib-roots : svec.StringVector (lsp-stdlib-roots-from idx count)]
     (begin
       (lsp-frame-session-cache-enable!)
       (while (not done)

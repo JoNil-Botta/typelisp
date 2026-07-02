@@ -1,21 +1,21 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.json)
 (import stdlib.string)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains?
-  [items : vector.StringVec]
+  [items : svec.StringVector]
   [needle : String]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
     (begin
-      (while (< idx (vector.string-vec-len items))
-        (if (string.eq (vector.string-vec-get items idx "") needle)
+      (while (< idx (svec.len (& items)))
+        (if (string.eq (svec.get (& items) idx "") needle)
           (begin
             (set! found true)
-            (set! idx (vector.string-vec-len items)))
+            (set! idx (svec.len (& items))))
           (set! idx (+ idx 1))))
       found)))
 
@@ -23,11 +23,10 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : vector.StringVec
-      (lsp-collect-def-names src (vector.string-vec-new))]
-    [keywords : vector.StringVec (lsp-split-spaces (lsp-completion-keywords))]
-    [builtins : vector.StringVec (lsp-split-spaces (lsp-completion-builtins))]
-    [types : vector.StringVec (lsp-split-spaces (lsp-completion-types))]
+    [names : svec.StringVector (lsp-collect-def-names src (svec.new))]
+    [keywords : svec.StringVector (lsp-split-spaces (lsp-completion-keywords))]
+    [builtins : svec.StringVector (lsp-split-spaces (lsp-completion-builtins))]
+    [types : svec.StringVector (lsp-split-spaces (lsp-completion-types))]
     (and
       (lsp-smoke-string-vec-contains? names "square")
       (lsp-smoke-string-vec-contains? names "answer")
@@ -112,17 +111,11 @@
     [ok-src : String "(define (main) : i64 42)"]
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
-      (match (compiler-check-source-with-roots
-        "ok.tl"
-        ok-src
-        (vector.string-vec-new))
+      (match (compiler-check-source-with-roots "ok.tl" ok-src (svec.new))
         [(ResultCompilerCheck.Ok _) true]
         [(ResultCompilerCheck.Err _) false])]
     [bad-result : bool
-      (match (compiler-check-source-with-roots
-        "bad.tl"
-        bad-src
-        (vector.string-vec-new))
+      (match (compiler-check-source-with-roots "bad.tl" bad-src (svec.new))
         [(ResultCompilerCheck.Ok _) false]
         [(ResultCompilerCheck.Err _) true])]
     (and ok-result bad-result)))
@@ -136,10 +129,7 @@
       false
       (begin
         (tc-inlay-hints-enable!)
-        (match (compiler-check-source-with-roots
-          "test.tl"
-          src
-          (vector.string-vec-new))
+        (match (compiler-check-source-with-roots "test.tl" src (svec.new))
           [(ResultCompilerCheck.Ok _) unit]
           [(ResultCompilerCheck.Err _) unit])
         (let

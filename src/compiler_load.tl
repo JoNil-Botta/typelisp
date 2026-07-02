@@ -7,7 +7,7 @@
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.hashmap)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_embedded_stdlib.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -872,14 +872,14 @@
     (compiler-load-session-note-persistent-with-pools! pools)))
 
 (define (compiler-load-roots-cache-key-from
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [index : i64]
   [count : i64]
   [out : String]) : String
   (if (>= index count)
     out
     (let
-      [root : String (vector.string-vec-get roots index "")]
+      [root : String (svec.get (& roots) index "")]
       (compiler-load-roots-cache-key-from
         roots
         (+ index 1)
@@ -891,8 +891,8 @@
           root
           ";")))))
 
-(define (compiler-load-roots-cache-key [roots : vector.StringVec]) : String
-  (compiler-load-roots-cache-key-from roots 0 (vector.string-vec-len roots) ""))
+(define (compiler-load-roots-cache-key [roots : svec.StringVector]) : String
+  (compiler-load-roots-cache-key-from roots 0 (svec.len (& roots)) ""))
 
 (define (compiler-load-cfg-cache-key-from
   [cfgs : sym_i64_env.SymI64Env]
@@ -914,10 +914,10 @@
 
 (define (compiler-load-prelude-cache-key
   [kind : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : String
   (let
-    [effective-roots : vector.StringVec
+    [effective-roots : svec.StringVector
       (compiler-load-roots-with-env stdlib-roots)]
     (str_cat.str-cat
       kind
@@ -1257,7 +1257,22 @@
           (string.append root suffix)
           (string.append root (string.append "/" suffix)))))))
 
-(define (compiler-load-roots-with-env [roots : vector.StringVec]) : vector.StringVec
+(define (compiler-load-string-vec-push-copy
+  [roots : svec.StringVector]
+  [root : String]) : svec.StringVector
+  (let
+    [next-roots : svec.StringVector roots]
+    (begin
+      (svec.push (&mut next-roots) root)
+      next-roots)))
+
+(define (compiler-load-string-vec-one [root : String]) : svec.StringVector
+  (compiler-load-string-vec-push-copy (svec.new) root))
+
+(define (compiler-load-string-vec-two [left : String] [right : String]) : svec.StringVector
+  (compiler-load-string-vec-push-copy (compiler-load-string-vec-one left) right))
+
+(define (compiler-load-roots-with-env [roots : svec.StringVector]) : svec.StringVector
   (let
     [name : String "TYPELISP_STDLIB_ROOT"]
     (match (env.get (& name))
@@ -1265,7 +1280,7 @@
       [(env.EnvSomeString root)
         (if (= (string.string-length root) 0)
           roots
-          (vector.string-vec-push roots root))])))
+          (compiler-load-string-vec-push-copy roots root))])))
 
 (define (compiler-load-cache-root-prefix [root : String]) : String
   (compiler-load-join-root-path (compiler-load-normalize-path root) ""))
@@ -1282,14 +1297,14 @@
 
 (define (compiler-load-path-under-roots-from?
   [normalized-path : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [index : i64]
   [count : i64]) : bool
   (if (>= index count)
     false
     (if (compiler-load-cache-path-under-root?
       normalized-path
-      (vector.string-vec-get roots index ""))
+      (svec.get (& roots) index ""))
       true
       (compiler-load-path-under-roots-from?
         normalized-path
@@ -1299,30 +1314,30 @@
 
 (define (compiler-load-session-file-cacheable?
   [path : String]
-  [_stdlib-roots : vector.StringVec]) : bool
+  [_stdlib-roots : svec.StringVector]) : bool
   ;; Entry files opt out before this helper. Resolved import files are safe to
   ;; cache by path + cfg, including local and package-owned modules.
   (> (string.string-length (compiler-load-normalize-path path)) 0))
 
 (define (compiler-load-session-file-cache-immediate?
   [path : String]
-  [stdlib-roots : vector.StringVec]) : bool
+  [stdlib-roots : svec.StringVector]) : bool
   (let
     [normalized : String (compiler-load-normalize-path path)]
     (if (compiler-load-stdlib-import? normalized)
       true
       (let
-        [effective-roots : vector.StringVec
+        [effective-roots : svec.StringVector
           (compiler-load-roots-with-env stdlib-roots)]
         (compiler-load-path-under-roots-from?
           normalized
           effective-roots
           0
-          (vector.string-vec-len effective-roots))))))
+          (svec.len (& effective-roots)))))))
 
 (define (compiler-load-stdlib-private-path?
   [path : String]
-  [stdlib-roots : vector.StringVec]) : bool
+  [stdlib-roots : svec.StringVector]) : bool
   (if (compiler-load-string-contains? path "vector")
     (let
       [normalized : String (compiler-load-normalize-path path)]
@@ -1338,7 +1353,7 @@
 
 (define (compiler-load-stdlib-comptime-path?
   [path : String]
-  [stdlib-roots : vector.StringVec]) : bool
+  [stdlib-roots : svec.StringVector]) : bool
   (if (compiler-load-string-contains? path "comptime")
     (let
       [normalized : String (compiler-load-normalize-path path)]
@@ -1354,7 +1369,7 @@
 
 (define (compiler-load-stdlib-private-cfgs
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -1382,17 +1397,17 @@
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
-  [roots : vector.StringVec]) : CompilerLoadMaybePath
+  [roots : svec.StringVector]) : CompilerLoadMaybePath
   (if (compiler-load-safe-relative? suffix)
     (let
       [i : i64 0]
-      [n : i64 (vector.string-vec-len roots)]
+      [n : i64 (svec.len (& roots))]
       [found : bool false]
       [found-path : String ""]
       (begin
         (while (and (not found) (< i n))
           (let
-            [root : String (vector.string-vec-get roots i "")]
+            [root : String (svec.get (& roots) i "")]
             [candidate : String (compiler-load-join-root-path root suffix)]
             (if (io.file-exists? candidate)
               (begin
@@ -1406,7 +1421,7 @@
 
 (define (compiler-load-resolve-stdlib-root
   [suffix : String]
-  [roots : vector.StringVec]) : CompilerLoadMaybePath
+  [roots : svec.StringVector]) : CompilerLoadMaybePath
   (compiler-load-resolve-stdlib-root-raw
     suffix
     (compiler-load-roots-with-env roots)))
@@ -1430,15 +1445,12 @@
 (define (compiler-load-resolve-import
   [importer-path : String]
   [import-path : String]) : String
-  (compiler-load-resolve-import-with-roots
-    importer-path
-    import-path
-    (vector.string-vec-new)))
+  (compiler-load-resolve-import-with-roots importer-path import-path (svec.new)))
 
 (define (compiler-load-resolve-import-with-roots
   [importer-path : String]
   [import-path : String]
-  [stdlib-roots : vector.StringVec]) : String
+  [stdlib-roots : svec.StringVector]) : String
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     import-path
@@ -1449,7 +1461,7 @@
 (define (compiler-load-resolve-import-result-with-roots
   [importer-path : String]
   [import-path : String]
-  [stdlib-roots : vector.StringVec]) : ResultPkgResolve
+  [stdlib-roots : svec.StringVector]) : ResultPkgResolve
   (if (compiler-load-pkg-import? import-path)
     (compiler-load-resolve-pkg-import-from-disk importer-path import-path)
     (let
@@ -1613,7 +1625,7 @@
 
 (define (compiler-load-resolve-stdlib-module-path
   [module-path : String]
-  [stdlib-roots : vector.StringVec]) : String
+  [stdlib-roots : svec.StringVector]) : String
   (let
     [suffix : String (compiler-load-stdlib-suffix module-path)]
     (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
@@ -1627,7 +1639,7 @@
 
 (define (compiler-load-resolve-root-module-path
   [module-path : String]
-  [stdlib-roots : vector.StringVec]) : CompilerLoadMaybePath
+  [stdlib-roots : svec.StringVector]) : CompilerLoadMaybePath
   (compiler-load-resolve-stdlib-root-raw module-path stdlib-roots))
 
 (define (compiler-load-nested-import-root? [root : String]) : bool
@@ -1639,7 +1651,7 @@
   [importer-path : String]
   [import-root : String]
   [module-name : String]
-  [stdlib-roots : vector.StringVec]) : ResultPkgResolve
+  [stdlib-roots : svec.StringVector]) : ResultPkgResolve
   (let
     [module-path : String (compiler-load-dotted-module-path module-name)]
     (if (compiler-load-stdlib-import? module-path)
@@ -1679,7 +1691,7 @@
   [import-root : String]
   [kind : AstImportKind]
   [import-path : String]
-  [stdlib-roots : vector.StringVec]) : ResultPkgResolve
+  [stdlib-roots : svec.StringVector]) : ResultPkgResolve
   (match kind
     [(AstImportKind.Path)
       (compiler-load-resolve-import-result-with-roots
@@ -1704,7 +1716,7 @@
   [importer-path : String]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [stdlib-roots : vector.StringVec]) : ResultPkgResolve
+  [stdlib-roots : svec.StringVector]) : ResultPkgResolve
   (let
     [first-len : i64 (compiler-load-dotted-module-first-len module-name)]
     [first : String (string.substring module-name 0 first-len)]
@@ -1755,7 +1767,7 @@
   [importer-path : String]
   [kind : AstImportKind]
   [import-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultPkgResolve
   (match kind
@@ -1965,7 +1977,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadInclude
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -1984,7 +1996,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
@@ -2005,7 +2017,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadInclude
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -2024,7 +2036,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
@@ -2145,7 +2157,7 @@
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg
@@ -2156,7 +2168,7 @@
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
@@ -2169,7 +2181,7 @@
 
 (define (compiler-load-core-macro-prelude-with-roots
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-core-macro-prelude-with-roots-cfg
     seen
     stdlib-roots
@@ -2623,7 +2635,7 @@
 
 (define (compiler-load-stdlib-array-surface-summary-ensure-with-pools
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -3412,11 +3424,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-paths-and-roots
-    decls
-    importer-path
-    seen
-    (vector.string-vec-new)))
+  (compiler-load-decls-with-paths-and-roots decls importer-path seen (svec.new)))
 
 (define (compiler-load-alias-decl-list
   [kind : AstImportKind]
@@ -3509,7 +3517,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg
     decls
     importer-path
@@ -3525,7 +3533,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg-root
     decls
@@ -3543,7 +3551,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
@@ -3563,7 +3571,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -3934,7 +3942,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
@@ -3958,7 +3966,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-paths-and-roots-cfg
     decls
     importer-path
@@ -3970,7 +3978,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
     [(ResultCompilerLoadModuleId.Ok module-id)
@@ -3995,7 +4003,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
@@ -4029,7 +4037,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-decls-with-paths-and-roots
       decls
@@ -4041,17 +4049,13 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-program-with-paths-and-roots
-    path
-    program
-    seen
-    (vector.string-vec-new)))
+  (compiler-load-program-with-paths-and-roots path program seen (svec.new)))
 
 (define (compiler-load-program-with-paths-and-roots
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect
     path
     program
@@ -4063,7 +4067,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg
     path
@@ -4077,7 +4081,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -4093,7 +4097,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -4111,7 +4115,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -4132,7 +4136,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -4205,7 +4209,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -4236,7 +4240,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-program-with-paths-and-roots path program seen stdlib-roots)))
 
@@ -4244,17 +4248,13 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-source-with-paths-and-roots
-    path
-    source
-    seen
-    (vector.string-vec-new)))
+  (compiler-load-source-with-paths-and-roots path source seen (svec.new)))
 
 (define (compiler-load-source-with-paths-and-roots
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect
     path
     source
@@ -4266,7 +4266,7 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg
     path
@@ -4280,7 +4280,7 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg
     path
@@ -4494,7 +4494,7 @@
 
 (define (compiler-load-parse-file-diagnostic-session
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
@@ -4526,7 +4526,7 @@
 
 (define (compiler-load-parse-file-diagnostic-session-with-pools
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (and
@@ -4682,7 +4682,7 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
@@ -4701,7 +4701,7 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -4732,19 +4732,19 @@
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-source-with-paths-and-roots path source seen stdlib-roots)))
 
 (define (compiler-load-file-with-paths
   [path : String]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-file-with-paths-and-roots path seen (vector.string-vec-new)))
+  (compiler-load-file-with-paths-and-roots path seen (svec.new)))
 
 (define (compiler-load-file-with-paths-and-roots
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect
     path
     seen
@@ -4754,7 +4754,7 @@
 (define (compiler-load-file-with-paths-and-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg
     path
@@ -4766,7 +4766,7 @@
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
@@ -4780,7 +4780,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg
     path
@@ -4808,7 +4808,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root
@@ -4822,7 +4822,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -4838,7 +4838,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -4854,7 +4854,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -4872,7 +4872,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [kind : AstImportKind]
   [import-path : String]
   [expected-module : AstMaybeModuleName]
@@ -4906,7 +4906,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -4983,7 +4983,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -5005,7 +5005,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -5097,7 +5097,7 @@
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
@@ -5124,7 +5124,7 @@
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
     path
@@ -5138,7 +5138,7 @@
 (define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
@@ -5157,7 +5157,7 @@
 (define (compiler-load-file-with-roots
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
+  [stdlib-roots : svec.StringVector]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
 
@@ -5351,17 +5351,17 @@
 
 (define (compiler-load-stdlib-owned-path-from-roots
   [path : String]
-  [stdlib-roots : vector.StringVec]) : String
+  [stdlib-roots : svec.StringVector]) : String
   (let
-    [roots : vector.StringVec (compiler-load-roots-with-env stdlib-roots)]
+    [roots : svec.StringVector (compiler-load-roots-with-env stdlib-roots)]
     [i : i64 0]
-    [n : i64 (vector.string-vec-len roots)]
+    [n : i64 (svec.len (& roots))]
     [found : bool false]
     [out : String ""]
     (begin
       (while (and (not found) (< i n))
         (let
-          [root : String (vector.string-vec-get roots i "")]
+          [root : String (svec.get (& roots) i "")]
           [prefix : String (compiler-load-root-prefix root)]
           [prefix-len : i64 (string.string-length prefix)]
           [path-len : i64 (string.string-length path)]
@@ -5384,7 +5384,7 @@
 (define (compiler-load-package-owned-path
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [path : String]) : String
   (let
     [stdlib-path : String
@@ -5404,7 +5404,7 @@
   [cache : hashmap.StringStringMap]
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [path : String]) : CompilerLoadOwnedPathCacheResult
   (match (hashmap.string-string-map-get cache path)
     [(hashmap.StringStringMapFound owned)
@@ -5465,7 +5465,7 @@
 (define (compiler-load-package-def-fn-extern
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [decl-path : String]
   [module : String]
   [name : i64]
@@ -5494,7 +5494,7 @@
 (define (compiler-load-package-transform-decl
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [decl-path : String]
   [module : String]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
@@ -5579,7 +5579,7 @@
 (define (compiler-load-package-owned-paths-for-decls-in-module
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [entry-path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -5631,7 +5631,7 @@
 (define (compiler-load-package-owned-paths-for-decls
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [entry-path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : AstDeclPathList
@@ -5647,7 +5647,7 @@
 (define (compiler-load-package-extern-decls
   [package-owner : String]
   [package-root : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
@@ -5747,7 +5747,7 @@
 (define (compiler-load-package-externs-from-import
   [resolved : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
@@ -5785,7 +5785,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
   (match (if (compiler-load-pkg-import? include-path)
@@ -5808,7 +5808,7 @@
   [importer-path : String]
   [include-path : String]
   [name : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
   (match (if (compiler-load-pkg-import? include-path)
@@ -5833,7 +5833,7 @@
   [importer-module : String]
   [importer-source-module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -6155,7 +6155,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -6228,7 +6228,7 @@
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -6248,7 +6248,7 @@
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -6315,7 +6315,7 @@
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -6336,7 +6336,7 @@
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -6354,7 +6354,7 @@
 (define (compiler-load-package-file-with-paths-and-roots
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect
@@ -6369,7 +6369,7 @@
 (define (compiler-load-package-file-with-paths-and-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -6385,7 +6385,7 @@
 (define (compiler-load-package-entry-file-with-paths-and-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -6401,7 +6401,7 @@
 
 (define (compiler-load-package-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -6416,7 +6416,7 @@
 
 (define (compiler-load-package-file-with-runtime-cfg
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
@@ -7021,7 +7021,7 @@
     "(module lib.actual)
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty)
-    (vector.string-vec-new)
+    (svec.new)
     (AstMaybeModuleName.Some "lib.want"))
     [(ResultCompilerLoadWithPaths.Err diag)
       (string.eq
@@ -7122,7 +7122,7 @@
         "src/main.tl"
         source
         (sym_i64_env.sym-i64-empty)
-        (vector.string-vec-new)
+        (svec.new)
         (compiler-cfg-empty))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (= (compiler-load-decl-list-count decls) 2)]
@@ -7131,7 +7131,7 @@
         "src/main.tl"
         enabled-source
         (sym_i64_env.sym-i64-empty)
-        (vector.string-vec-new)
+        (svec.new)
         feature-cfg)
         [(ResultCompilerLoadWithPaths.Err _) true]
         [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
@@ -7270,7 +7270,7 @@
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_legacy_module_entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-new)
+      (svec.new)
       "target"
       (compiler-pkg-deps-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -7295,7 +7295,7 @@
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_seen_legacy_module_entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-new)
+      (svec.new)
       "target"
       (compiler-pkg-deps-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -7328,14 +7328,14 @@
       "src/main.tl"
       "src/"
       "app.lib"
-      (vector.string-vec-new))
+      (svec.new))
       [(ResultPkgResolve.Ok path) (string.eq path "src/app/lib.tl")]
       [(ResultPkgResolve.Err _) false])
     (match (compiler-load-resolve-module-import-with-roots
       "src/main.tl"
       "src/"
       "stdlib.core_macros"
-      (vector.string-vec-new))
+      (svec.new))
       [(ResultPkgResolve.Ok path) (string.eq path "stdlib/core_macros.tl")]
       [(ResultPkgResolve.Err _) false])))
 
@@ -7356,8 +7356,7 @@
     [root : String "target/cl_cache_common_root"]
     [dep-suffix : String "cache_dep.tl"]
     [dep-file : String (compiler-load-join-root-path root dep-suffix)]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root)]
+    [roots : svec.StringVector (compiler-load-string-vec-one root)]
     (begin
       (compiler-load-test-mkdir root)
       (io.write-file dep-file "(module cache.dep)
@@ -7408,10 +7407,8 @@
     [dep-suffix : String "cache_root_dep.tl"]
     [root-a-file : String (compiler-load-join-root-path root-a dep-suffix)]
     [root-b-file : String (compiler-load-join-root-path root-b dep-suffix)]
-    [roots-a : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root-a)]
-    [roots-b : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root-b)]
+    [roots-a : svec.StringVector (compiler-load-string-vec-one root-a)]
+    [roots-b : svec.StringVector (compiler-load-string-vec-one root-b)]
     (begin
       (compiler-load-test-mkdir root-a)
       (compiler-load-test-mkdir root-b)
@@ -7471,7 +7468,7 @@
         (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
           "target/cl_cache_cold_entry.tl"
           (sym_i64_env.sym-i64-empty)
-          (vector.string-vec-new)
+          (svec.new)
           (compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
           [(ResultCompilerLoadWithPaths.Err _) false])
@@ -7481,7 +7478,7 @@
             (match (compiler-load-entry-file-with-paths-and-roots-cfg
               "target/cl_cache_cold_entry.tl"
               (sym_i64_env.sym-i64-empty)
-              (vector.string-vec-new)
+              (svec.new)
               (compiler-cfg-empty))
               [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                 (set!
@@ -7569,7 +7566,7 @@
           (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
             entry-a
             (sym_i64_env.sym-i64-empty)
-            (vector.string-vec-new)
+            (svec.new)
             (compiler-cfg-empty))
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
             [(ResultCompilerLoadWithPaths.Err _) false])
@@ -7579,7 +7576,7 @@
               (match (compiler-load-entry-file-with-paths-and-roots-cfg
                 entry-b
                 (sym_i64_env.sym-i64-empty)
-                (vector.string-vec-new)
+                (svec.new)
                 (compiler-cfg-empty))
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (begin
@@ -7588,7 +7585,7 @@
                     (match (compiler-load-entry-file-with-paths-and-roots-cfg
                       entry-c
                       (sym_i64_env.sym-i64-empty)
-                      (vector.string-vec-new)
+                      (svec.new)
                       (compiler-cfg-empty))
                       [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                         (set!
@@ -7643,7 +7640,7 @@
           (if (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
             entry-a
             (sym_i64_env.sym-i64-empty)
-            (vector.string-vec-new)
+            (svec.new)
             root
             deps
             (compiler-cfg-empty))
@@ -7655,7 +7652,7 @@
               (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
                 entry-b
                 (sym_i64_env.sym-i64-empty)
-                (vector.string-vec-new)
+                (svec.new)
                 root
                 deps
                 (compiler-cfg-empty))
@@ -7666,7 +7663,7 @@
                     (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
                       entry-c
                       (sym_i64_env.sym-i64-empty)
-                      (vector.string-vec-new)
+                      (svec.new)
                       root
                       deps
                       (compiler-cfg-empty))
@@ -7747,8 +7744,7 @@
     [leaf : String (compiler-load-join-root-path root "leaf.tl")]
     [mid : String (compiler-load-join-root-path root "mid.tl")]
     [entry : String (compiler-load-join-root-path tests "entry.tl")]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root)]
+    [roots : svec.StringVector (compiler-load-string-vec-one root)]
     (begin
       (compiler-load-test-mkdir "target/cl_dotted_src_fallback")
       (compiler-load-test-mkdir root)
@@ -7813,7 +7809,7 @@
         "proj/src/main.tl"
         (AstImportKind.Module)
         "app.lib"
-        (vector.string-vec-new)
+        (svec.new)
         "proj"
         deps)
         [(ResultPkgResolve.Ok path) (string.eq path "proj/app/lib.tl")]
@@ -7822,7 +7818,7 @@
         "proj/src/main.tl"
         (AstImportKind.Module)
         "math.src.add"
-        (vector.string-vec-new)
+        (svec.new)
         "proj"
         deps)
         [(ResultPkgResolve.Ok path) (string.eq path "math/src/add.tl")]
@@ -7853,7 +7849,7 @@
         entry
         (AstImportKind.Module)
         "dep"
-        (vector.string-vec-new)
+        (svec.new)
         root
         deps)
         [(ResultPkgResolve.Ok path)
@@ -7892,7 +7888,7 @@
       (match (compiler-load-package-file-with-paths-and-roots
         entry
         (sym_i64_env.sym-i64-empty)
-        (vector.string-vec-new)
+        (svec.new)
         app-root
         deps)
         [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
@@ -7918,7 +7914,7 @@
     (match (compiler-load-package-transform-decl
       "demo"
       ""
-      (vector.string-vec-new)
+      (svec.new)
       "src/main.tl"
       "main"
       decl)
@@ -8051,7 +8047,7 @@
       "(include-str embedded \"stdlib/cl_include_root_payload.txt\")
 (define (main) : i64 0)"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-push (vector.string-vec-new) "target"))
+      (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
@@ -8127,7 +8123,7 @@
         "stdlib/string.tl"
         source
         (sym_i64_env.sym-i64-empty)
-        (vector.string-vec-new))
+        (svec.new))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (> (compiler-load-decl-list-count decls) 0)]
         [(ResultCompilerLoadWithPaths.Err _) false])]
@@ -8210,7 +8206,7 @@
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_srf_entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-push (vector.string-vec-new) "target"))
+      (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (sym_i64_env.sym-i64-contains seen "srf.mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -8229,11 +8225,7 @@
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_ssr_entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-push
-        (vector.string-vec-push
-          (vector.string-vec-new)
-          "target/cl_ssr_absent_root")
-        "target"))
+      (compiler-load-string-vec-two "target/cl_ssr_absent_root" "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (sym_i64_env.sym-i64-contains seen "ssr.mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -8250,7 +8242,7 @@
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_sur_entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (vector.string-vec-push (vector.string-vec-new) "target"))
+      (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
           (compiler-diagnostic-message (box-get diag))
@@ -8278,7 +8270,7 @@
       (match (compiler-load-file-with-paths-and-roots
         "target/cl_sre_entry_dir/entry.tl"
         (sym_i64_env.sym-i64-empty)
-        (vector.string-vec-push (vector.string-vec-new) "target/cl_sre_root"))
+        (compiler-load-string-vec-one "target/cl_sre_root"))
         [(ResultCompilerLoadWithPaths.Err _) true]
         [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
@@ -10126,18 +10118,12 @@
   (begin
     (io.write-file "target/cl_vec_root_payload.tl" "(define v : i64 1)")
     (let
-      [roots : vector.StringVec
-        (vector.string-vec-push
-          (vector.string-vec-push
-            (vector.string-vec-new)
-            "target/cl_vec_missing_root")
-          "target")]
+      [roots : svec.StringVector
+        (compiler-load-string-vec-two "target/cl_vec_missing_root" "target")]
       (and
-        (= (vector.string-vec-len roots) 2)
-        (string.eq
-          (vector.string-vec-get roots 0 "")
-          "target/cl_vec_missing_root")
-        (string.eq (vector.string-vec-get roots 1 "") "target")
+        (= (svec.len (& roots)) 2)
+        (string.eq (svec.get (& roots) 0 "") "target/cl_vec_missing_root")
+        (string.eq (svec.get (& roots) 1 "") "target")
         (match (compiler-load-resolve-stdlib-root-raw
           "cl_vec_root_payload.tl"
           roots)
@@ -10221,12 +10207,9 @@
 
 (define (compiler-load-package-owner-paths-ok?) : bool
   (let
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "C:/repo/stdlib")]
-    [mixed-roots : vector.StringVec
-      (vector.string-vec-push
-        (vector.string-vec-push (vector.string-vec-new) "C:/repo/stdlib")
-        "C:/repo/selfhost")]
+    [roots : svec.StringVector (compiler-load-string-vec-one "C:/repo/stdlib")]
+    [mixed-roots : svec.StringVector
+      (compiler-load-string-vec-two "C:/repo/stdlib" "C:/repo/selfhost")]
     [runtime-decl : AstDecl
       (ast-decl-def-fn
         "runtime-helper"
@@ -10304,7 +10287,7 @@
       (compiler-load-package-def-fn-extern
         "dep"
         "C:/dep/"
-        (vector.string-vec-new)
+        (svec.new)
         "C:/dep/src/lib.tl"
         ""
         (intern "helper")

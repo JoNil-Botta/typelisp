@@ -12907,6 +12907,50 @@
           plan
           program-index)))))
 
+;; GAP6d: constant-index bounds check. The normal path materialises the index
+;; (`movl $K, %r`) then `cmpq len, %r; jb ok`. When the index is an imm32
+;; constant K and the length is a register/memory operand, the compare folds to
+;; `cmpq $K, len; ja ok`: the check `K < len` <=> `len > K` (both non-negative;
+;; and a negative K sign-extends to a huge unsigned value so `len > K` is false
+;; -> abort, exactly as materialising K and taking `jb` did). This drops the
+;; index materialisation mov. length-operand MUST be a register or memory (never
+;; an immediate) -- `cmpq $K, $L` is illegal; the caller guarantees it.
+(define (compiler-backend-bounds-check-const-index-asm
+  [length-asm : String]
+  [length-operand : String]
+  [index-imm : String]
+  [call-space : i64]
+  [ok-symbol : String]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : String
+  (string.string-append
+    length-asm
+    (string.string-append
+      (str_cat.str-cat
+        "    cmpq "
+        index-imm
+        ", "
+        length-operand
+        "\n    ja "
+        ok-symbol
+        "\n")
+      (compiler-backend-bounds-check-tail
+        call-space
+        ok-symbol
+        plan
+        program-index))))
+
+;; "$K" when the index is an imm32-fitting constant, else "". imm32 is required
+;; so `cmpq $K, len` is encodable.
+(define (compiler-backend-bounds-const-index-imm
+  [index : CompilerIrValue]) : String
+  (match (compiler-backend-value-as-i64 index)
+    [(CompilerBackendSomeI64 k)
+      (if (compiler-backend-imm32? k)
+        (str_cat.str-cat "$" (string.int->string k))
+        "")]
+    [(CompilerBackendNoI64) ""]))
+
 (define (compiler-backend-emit-bounds-check
   [target : CompilerBackendTarget]
   [function : String]
@@ -12949,6 +12993,41 @@
           "%r10")
         index-reg)]
     (if (string-eq index-reg "")
+      (let
+        [const-imm : String (compiler-backend-bounds-const-index-imm index)]
+        [fold-length-operand : String
+          (compiler-backend-bounds-length-operand assignments length)]
+        (if (and
+          (not (string.string-eq const-imm ""))
+          ;; length must be a register/memory operand (never immediate:
+          ;; `cmpq $K, $L` is illegal). A "" operand is loaded into scav-len.
+          (not (compiler-backend-string-prefix-at? fold-length-operand "$" 0)))
+          ;; GAP6d: constant index -- `cmpq $K, len; ja ok`, no index mov.
+          (if (not (string.string-eq fold-length-operand ""))
+            (OkCompilerBackend
+              (compiler-backend-bounds-check-const-index-asm
+                ""
+                fold-length-operand
+                const-imm
+                call-space
+                ok-symbol
+                plan
+                program-index))
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              length
+              scav-len)
+              [(OkCompilerBackend length-asm)
+                (OkCompilerBackend
+                  (compiler-backend-bounds-check-const-index-asm
+                    length-asm
+                    scav-len
+                    const-imm
+                    call-space
+                    ok-symbol
+                    plan
+                    program-index))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         index
@@ -12984,7 +13063,7 @@
                       plan
                       program-index))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
       (let
         [length-operand : String
           (compiler-backend-bounds-length-operand assignments length)]

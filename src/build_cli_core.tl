@@ -2694,7 +2694,7 @@
       (build-package-direct-object-test-paths
         (- count 1)
         path
-        (ast-decl-path-cons path out)))))
+        (ast-decl-path-list-prepend-builder path out)))))
 
 (cfg
   test
@@ -3243,7 +3243,7 @@
           (build-package-doctest-paths owner (box-get rest))]
         (if (build-package-tlci-stdlib-path? owner path)
           tail
-          (ast-decl-path-cons path tail)))]))
+          (ast-decl-path-list-prepend-builder path tail)))]))
 
 (define (build-package-closure-doctest-status
   [owner : String]

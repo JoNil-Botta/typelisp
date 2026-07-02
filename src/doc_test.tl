@@ -2827,7 +2827,7 @@ typecheck: return type mismatch"))]
           (begin
             (io.write-file path ";; no doctest fence
 ")
-            (set! out (ast-decl-path-cons path out))
+            (set! out (ast-decl-path-list-prepend-builder path out))
             (set! i (+ i 1)))))
       out)))
 

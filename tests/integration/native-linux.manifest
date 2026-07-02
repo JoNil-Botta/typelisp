@@ -50,6 +50,8 @@ idx_copy_coalesce|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl
 call_result_rax|tests/integration/call_result_rax.tl|42|-|-|stdlib/io.tl
 gep_direct_base|tests/integration/gep_direct_base.tl|42|-|-|stdlib/io.tl
 tail_arg_reg|tests/integration/tail_arg_reg.tl|42|-|-|stdlib/io.tl
+callregion_split|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl
+callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-

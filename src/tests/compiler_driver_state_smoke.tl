@@ -1074,6 +1074,117 @@
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 
+(define (compiler-driver-state-smoke-lower-tail-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [callee-name : i64 (intern "loop")]
+        [callee-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var callee-name))]
+        [callee-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [call-a : i64
+          (ast-expr-call-with-pools pools-a callee-a (ast-expr-list-new))]
+        [call-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [rvo-cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [rvo-cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 72)))]
+        [rvo-value-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [rvo-value-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 73)))]
+        [rvo-return-a : i64 (ast-expr-return-with-pools pools-a rvo-value-a)]
+        [rvo-return-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 74)))]
+        [rvo-else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 0)))]
+        [rvo-else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 75)))]
+        [tail-exprs : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) call-a)
+              items))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "loop"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Scalar)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [tail-candidate : bool
+                    (lower-tail-expr-candidate?
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (AstExpr.Begin tail-exprs))]
+                  [rvo-has-return : bool
+                    (lower-rvo-expr-has-early-return?
+                      ctx
+                      (AstExpr.If rvo-cond-a rvo-return-a rvo-else-a))]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= callee-a callee-b)
+                    (= call-a call-b)
+                    (= rvo-cond-a rvo-cond-b)
+                    (= rvo-value-a rvo-value-b)
+                    (= rvo-return-a rvo-return-b)
+                    (= rvo-else-a rvo-else-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    tail-candidate
+                    rvo-has-return))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lower-vector-analysis-uses-context?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1683,6 +1794,9 @@
     (unless
       (compiler-driver-state-smoke-lower-expr-reads-use-context?)
       (return 22))
+    (unless
+      (compiler-driver-state-smoke-lower-tail-reads-use-context?)
+      (return 24))
     (unless
       (compiler-driver-state-smoke-lower-vector-analysis-uses-context?)
       (return 23))

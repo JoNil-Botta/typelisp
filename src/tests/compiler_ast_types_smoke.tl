@@ -1,5 +1,6 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
 (import "../compiler_ast_types.tl")
+(import stdlib.string)
 
 (define (compiler-ast-state-expr-int-lit?
   [pool : AstExprNodePoolState]
@@ -368,10 +369,64 @@
             (ast-node-pool-context-install! active-before)
             (and shape-ok installed-ok)))])))
 
+(define (compiler-ast-decl-list-module-name?
+  [decls : AstDeclList]
+  [index : i64]
+  [expected : String]) : bool
+  (match (ast-decl-list-get (& decls) index (ast-decl-fallback))
+    [(AstDecl.Module name) (string.eq (intern-str name) expected)]
+    [_ false]))
+
+(define (compiler-ast-decl-cons-growth-smoke?) : bool
+  (let
+    [i : i64 15]
+    [decls : AstDeclList (ast-decl-list-new)]
+    [paths : AstDeclPathList (ast-decl-path-list-new)]
+    [modules : AstDeclModuleList (ast-decl-module-list-new)]
+    (begin
+      (while (>= i 0)
+        (let
+          [suffix : String (string.int->string i)]
+          [module : String (string.append "m" suffix)]
+          [path : String (string.append "p" suffix)]
+          (begin
+            (set! decls (ast-decl-cons (ast-decl-module module) decls))
+            (set! paths (ast-decl-path-cons path paths))
+            (set! modules (ast-decl-module-cons module modules))
+            (set! i (- i 1)))))
+      (let
+        [tail : AstDeclList (ast-decl-list-tail decls)]
+        (and
+          (= (ast-decl-list-len (& decls)) 16)
+          (= (ast-decl-path-list-len (& paths)) 16)
+          (= (ast-decl-module-list-len (& modules)) 16)
+          (compiler-ast-decl-list-module-name? decls 0 "m0")
+          (compiler-ast-decl-list-module-name? decls 7 "m7")
+          (compiler-ast-decl-list-module-name? decls 15 "m15")
+          (compiler-ast-decl-list-module-name? tail 0 "m1")
+          (string.eq (ast-decl-path-list-get (& paths) 0 "") "p0")
+          (string.eq (ast-decl-path-list-get (& paths) 15 "") "p15")
+          (string.eq (ast-decl-module-list-get (& modules) 0 "") "m0")
+          (string.eq (ast-decl-module-list-get (& modules) 15 "") "m15"))))))
+
+(define (compiler-ast-decl-cons-pure-smoke?) : bool
+  (let
+    [tail : AstDeclList
+      (ast-decl-cons (ast-decl-module "tail") (ast-decl-list-new))]
+    [left : AstDeclList (ast-decl-cons (ast-decl-module "left") tail)]
+    [right : AstDeclList (ast-decl-cons (ast-decl-module "right") tail)]
+    (and
+      (compiler-ast-decl-list-module-name? left 0 "left")
+      (compiler-ast-decl-list-module-name? left 1 "tail")
+      (compiler-ast-decl-list-module-name? right 0 "right")
+      (compiler-ast-decl-list-module-name? right 1 "tail"))))
+
 (define (main) : i64
   (if (and
     (= (compiler-ast-smoke) 23)
     (compiler-ast-state-owned-node-pools-smoke?)
-    (compiler-ast-program-compaction-smoke?))
+    (compiler-ast-program-compaction-smoke?)
+    (compiler-ast-decl-cons-growth-smoke?)
+    (compiler-ast-decl-cons-pure-smoke?))
     42
     1))

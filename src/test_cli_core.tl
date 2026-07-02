@@ -462,7 +462,7 @@
     (tltest-decls-onto
       items
       (- index 1)
-      (ast-decl-cons (array-ref items index) out))))
+      (ast-decl-list-prepend-builder (array-ref items index) out))))
 
 (define (tltest-paths-onto
   [items : (Array String)]
@@ -473,7 +473,7 @@
     (tltest-paths-onto
       items
       (- index 1)
-      (ast-decl-path-cons (array-ref items index) out))))
+      (ast-decl-path-list-prepend-builder (array-ref items index) out))))
 
 (define (tltest-decl-list-reverse-onto
   [items : AstDeclList]
@@ -488,7 +488,7 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (begin
-              (set! result (ast-decl-cons decl result))
+              (set! result (ast-decl-list-prepend-builder decl result))
               (set! cur (box-get rest)))]))
       result)))
 
@@ -505,7 +505,7 @@
           [(AstDeclPathListStep.Nil) (set! done true)]
           [(AstDeclPathListStep.Cons path rest)
             (begin
-              (set! result (ast-decl-path-cons path result))
+              (set! result (ast-decl-path-list-prepend-builder path result))
               (set! cur (box-get rest)))]))
       result)))
 
@@ -596,10 +596,12 @@
                     (begin
                       (set!
                         runtime-decls-out
-                        (ast-decl-cons decl runtime-decls-out))
+                        (ast-decl-list-prepend-builder decl runtime-decls-out))
                       (set!
                         runtime-paths-out
-                        (ast-decl-path-cons decl-path runtime-paths-out)))]
+                        (ast-decl-path-list-prepend-builder
+                          decl-path
+                          runtime-paths-out)))]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
                   [_
@@ -608,10 +610,12 @@
                       (begin
                         (set!
                           runtime-decls-out
-                          (ast-decl-cons decl runtime-decls-out))
+                          (ast-decl-list-prepend-builder decl runtime-decls-out))
                         (set!
                           runtime-paths-out
-                          (ast-decl-path-cons decl-path runtime-paths-out))))])
+                          (ast-decl-path-list-prepend-builder
+                            decl-path
+                            runtime-paths-out))))])
                 (set! cur-decls rest-decls)
                 (set! cur-paths rest-paths)))]))
       (InlineCollect.Collect
@@ -932,7 +936,7 @@
           (tltest-test-decls-onto
             tests
             (- index 1)
-            (ast-decl-cons
+            (ast-decl-list-prepend-builder
               (ast-decl-def-fn
                 private-name
                 (ast-param-list-new)
@@ -953,7 +957,7 @@
           (tltest-test-paths-onto
             tests
             (- index 1)
-            (ast-decl-path-cons path out))]))))
+            (ast-decl-path-list-prepend-builder path out))]))))
 
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn
@@ -1827,10 +1831,14 @@
                       (not (tltest-owned-test-path? target-path decl-path))
                       (tltest-generated-comptime-decl? decl)))
                     (begin
-                      (set! result-decls (ast-decl-cons decl result-decls))
+                      (set!
+                        result-decls
+                        (ast-decl-list-prepend-builder decl result-decls))
                       (set!
                         result-paths
-                        (ast-decl-path-cons decl-path result-paths)))
+                        (ast-decl-path-list-prepend-builder
+                          decl-path
+                          result-paths)))
                     unit)
                   (set! cur-decls (box-get rest))
                   (set! cur-paths (box-get path-rest)))])]))

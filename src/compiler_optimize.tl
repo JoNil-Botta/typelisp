@@ -11235,13 +11235,22 @@
       (opt-cfg-fill-bool! marks (array.array-length marks) false)]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
+    ;; #M-E: a self-loop (latch == header) has body {header}. Seeding the
+    ;; worklist with the latch unconditionally walked the HEADER's own
+    ;; predecessors, pulling the outside guard block into the body -- which
+    ;; left every rotated single-block loop with zero outside predecessors, so
+    ;; preheader detection AND synthesis failed and LICM/induction never ran
+    ;; on them. The classic algorithm only expands predecessors of body nodes
+    ;; other than the header.
     [body-labels : OptLabelSet
       (opt-natural-loop-collect-body
         pred-map
         index
         marks
         (opt-label-add (opt-label-add (OptLabelNil) header) latch)
-        (opt-label-add (OptLabelNil) latch))]
+        (if (string.string-eq header latch)
+          (OptLabelNil)
+          (opt-label-add (OptLabelNil) latch)))]
     [body : OptLoopBody
       (opt-loop-body-build blocks (struct-get pred-map index) body-labels)]
     (OptNaturalLoop
@@ -12439,9 +12448,16 @@
     [(OptSomeAstType ty) (opt-licm-array-header-type? ty)]
     [(OptNoAstType) false]))
 
-(define (opt-licm-data-slot? [offset : CompilerIrValue] [ty : AstType]) : bool
+;; #M-E: the data-pointer slot of an array/string descriptor is fat offset 0.
+;; A zero literal offset addresses byte 0 regardless of the GEP's scale type,
+;; so accept any element type here: the real array lowering emits
+;; `Gep arr 0 i64` (lower-array-element-addr-finish) while the string path
+;; emits `Gep arr 0 u8` -- the old U8-only match classified array data-slot
+;; GEPs as Unknown, which turned element stores into header-or-unknown stores
+;; and blocked descriptor-load hoisting.
+(define (opt-licm-data-slot? [offset : CompilerIrValue] [_ty : AstType]) : bool
   (match offset
-    [(IrValueI64 value) (and (= value 0) (opt-type-eq ty (AstTyU8)))]
+    [(IrValueI64 value) (= value 0)]
     [_ false]))
 
 (define (opt-licm-header-slot-gep?

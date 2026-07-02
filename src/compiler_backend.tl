@@ -13657,6 +13657,59 @@
           (compiler-backend-value-scalar-register assignments base)]
         [offset-home : String
           (compiler-backend-value-scalar-register assignments offset)]
+        ;; M-G (B2, M-C2 for stores): base AND index both register-homed with a
+        ;; SIB-encodable scale -> address them directly (`mov src, (base,idx,s)`),
+        ;; skipping the index staging copy (`movq <idx-home>, %rSCAV`) AND both
+        ;; scavenge picks -- under full occupancy those picks force the
+        ;; emergency save/restore wrap around the store (the vm_run pattern:
+        ;; `movq %r10,-N(%rbp); movq %rsi,%r11; movq %rax,(%rdi,%r11,8);
+        ;; movq -N(%rbp),%r10`). The store writes only memory, so reading the
+        ;; homes directly is always safe (the load side proved this shape in
+        ;; M-C2). Spilled/remat/non-var operands and non-SIB scales keep the
+        ;; staged path below.
+        [direct-addr : String
+          (if (and
+            (not (string-eq base-home ""))
+            (not (string-eq offset-home "")))
+            (compiler-backend-gep-index-address base-home scale offset-home)
+            "")]
+        (if (not (string-eq direct-addr ""))
+          (compiler-backend-emit-store-value-to-address
+            assignments
+            value
+            store-ty
+            direct-addr
+            program-index
+            (compiler-backend-two-exclude base-home offset-home)
+            2)
+          (compiler-backend-emit-store-to-gep-staged
+            assignments
+            base
+            offset
+            value
+            store-ty
+            program-index
+            scale
+            value-home
+            base-home
+            offset-home)))]))
+
+;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
+;; fold-base scratch for non-SIB scales), load the offset into it, then store
+;; through the composed address. Reached when the base or offset is not
+;; register-homed or the scale is not SIB-encodable.
+(define (compiler-backend-emit-store-to-gep-staged
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [value : CompilerIrValue]
+  [store-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [scale : i64]
+  [value-home : String]
+  [base-home : String]
+  [offset-home : String]) : ResultCompilerBackend
+      (let
         [scav-idx : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-scavenge-exclude-ops2 assignments base value)
@@ -13734,7 +13787,7 @@
                           (string.string-append addr-asm store-asm)))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]))
+          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-store-ptr-pair
   [assignments : CompilerRegAssignmentList]

@@ -3045,6 +3045,131 @@
           [(= idx 3) (CompilerRegSomeString "%r9")]
           [else CompilerRegNoString])])))
 
+;; GAP3c: inclusive-START point-range spanning test for the pin gate. A param
+;; is defined by the PROLOGUE (before point 0) and its interval is
+;; entry-extended to start at 0 (M-A), so -- unlike an ordinary var, whose
+;; start point is its own defining instruction (a call result born AT a call
+;; is not clobbered by it) -- a clobber point AT the interval start is already
+;; inside the param's live range: `start <= c < end`. The greedy's
+;; strict-interior test (compiler-reg-greedy-var-spans-clobber?) would let a
+;; param live ACROSS a call at point 0 (function opens with the call, param
+;; used after) keep its caller-saved pin -- a miscompile. A clobber at `end`
+;; stays non-spanning: it is the param's own last-use instruction, whose
+;; operands are read before the clobber lands (the model every register-homed
+;; value already relies on). Out-of-range vars conservatively span.
+(define (compiler-reg-param-pin-word-in-range?
+  [bits : i64]
+  [var-base : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (if (= bits 0)
+    false
+    (let
+      [i : i64 (compiler-reg-low-bit-index bits)]
+      [c : i64 (+ var-base i)]
+      (if (if (<= start c)
+        (< c end)
+        false)
+        true
+        (compiler-reg-param-pin-word-in-range?
+          (bit-and bits (- bits 1))
+          var-base
+          start
+          end)))))
+
+(define (compiler-reg-param-pin-set-in-range-words?
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]
+  [word-index : i64]) : bool
+  (if (>= word-index (compiler-live-set-word-count set))
+    false
+    (if (compiler-reg-param-pin-word-in-range?
+      (compiler-live-set-word-at set word-index)
+      (* word-index (compiler-live-set-word-bits))
+      start
+      end)
+      true
+      (compiler-reg-param-pin-set-in-range-words?
+        set
+        start
+        end
+        (+ word-index 1)))))
+
+(define (compiler-reg-param-pin-spans-clobber?
+  [interval-index : CompilerRegIntervalIndex]
+  [clobber-points : CompilerLiveI64Set]
+  [var : i64]) : bool
+  (let
+    [starts : (Array i64) (struct-get interval-index starts)]
+    [ends : (Array i64) (struct-get interval-index ends)]
+    (if (and (>= var 0) (< var (array.array-length starts)))
+      (if (< (array.array-ref starts var) 0)
+        false
+        (compiler-reg-param-pin-set-in-range-words?
+          clobber-points
+          (array.array-ref starts var)
+          (array.array-ref ends var)
+          0))
+      true)))
+
+;; GAP3c: per-interval pin clobber gate. A param may keep its incoming ABI
+;; register iff no clobber/pressure point falls inside the pinned interval
+;; (inclusive-start spanning test above), by the greedy's kind point sets:
+;;   * kind 0 (call-like: call/tailcall/syscall/cpuid/xgetbv) clobbers every
+;;     caller-saved register: bans any spanned pin;
+;;   * kind 1 (div/mod, constant divisors included): bans any spanned pin.
+;;     The register hazard alone is only %rax:%rdx, but the canned divmod
+;;     expansion is SCRATCH-HUNGRY (magic reciprocal + rounding temps), and a
+;;     pin live across it measurably starves the scavenger into per-iteration
+;;     emergency save/restore pairs (qs_checksum: +4 movs/iter for -4
+;;     prologue movs = a net loss in every loop) -- so all pins are refused,
+;;     not just %rdx;
+;;   * kind 2 (VARIABLE-count shift) hardwires only %rcx/%cl and stages at
+;;     most the count: bans only a spanned %rcx pin;
+;;   * kind 3 (switch dispatch): ANY switch in the function bans ALL pins
+;;     (function-global, unlike the other kinds). The dispatch emitter's
+;;     EMERGENCY scavenge is unsound (its restore lands after the indirect
+;;     jmp = unreachable, so the occupant arrives in the arms holding the
+;;     jump-table address -- the documented GAP2b vm_run finding). Pre-pin
+;;     the pool never saturated at a dispatch; pins were MEASURED to
+;;     re-trigger it, and not only by direct spanning: vm_run's %rdi pin
+;;     ends before its dispatch loop, yet removing that param's entry copy
+;;     dropped one saved CSR and re-shuffled which values held the others, so
+;;     the dispatch's scavenge lost its one dead-occupant candidate and went
+;;     emergency. Occupancy at a dispatch is a whole-function property of the
+;;     allocation the pin perturbs, so the sound guard is function-global --
+;;     the GAP2b #switch-headroom precedent (its pair guard also costs a few
+;;     placements until the dispatch emitter is fixed; fixing IT re-admits
+;;     these pins, the natural v2).
+;; "Spanned" is the inclusive-start test: a param whose LAST use is the
+;; clobbering instruction itself (the dividend/divisor of the div, an
+;; outgoing argument of the call) is read before the clobber lands, exactly
+;; as the greedy already assumes for every register-homed value.
+;; BoundsCheck/Pack are absent from all kinds (clobber-point-instr?/kind sets
+;; exclude them); their scavenged scratches see the pin through the
+;; interval-driven occupancy masks like any other register-homed value. A var
+;; without an interval never spans here; pin-safe? independently refuses
+;; params without an interval (unused params are never pinned).
+(define (compiler-reg-param-pin-clobber-free?
+  [interval-index : CompilerRegIntervalIndex]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [switch-points : CompilerLiveI64Set]
+  [var : i64]
+  [reg : String]) : bool
+  (and
+    (= (compiler-live-set-count switch-points) 0)
+    (not (compiler-reg-param-pin-spans-clobber? interval-index call-points var))
+    (not (compiler-reg-param-pin-spans-clobber? interval-index div-points var))
+    (or
+      (not (string.string-eq reg "%rcx"))
+      (not (compiler-reg-param-pin-spans-clobber?
+        interval-index
+        shift-points
+        var)))))
+
 (define (compiler-reg-param-pin-safe?
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -3075,7 +3200,11 @@
   [blocked : CompilerLiveI64Set]
   [int-idx : i64]
   [position : i64]
-  [can-pin? : bool]) : CompilerRegParamAssignPlan
+  [pins-ok? : bool]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [switch-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
   (match params
     [(IrParamNil) (CompilerRegParamAssignPlan assignments ineligible blocked)]
     [(IrParamCons param rest)
@@ -3089,22 +3218,43 @@
                 int-idx
                 (+ int-idx 1))]
             [next-position : i64 (+ position 1)]
-            [tail-can-pin? : bool (and can-pin? (not is-group))]
+            ;; A register-group param occupies TWO ABI slots; this walk's
+            ;; int-idx accounting does not model that, so every pin PAST a
+            ;; group param is disabled (the group itself never pins).
+            [tail-pins-ok? : bool (and pins-ok? (not is-group))]
             [reg : CompilerRegMaybeString
               (if (and
-                can-pin?
+                pins-ok?
                 (not is-group)
                 (compiler-reg-integer-param-type? ty))
                 (compiler-reg-param-int-reg abi int-idx position)
                 CompilerRegNoString)]
             (match reg
               [(CompilerRegSomeString home)
-                (if (compiler-reg-param-pin-safe?
-                  assignments
-                  interval-index
-                  ineligible
-                  var-id
-                  home)
+                ;; GAP3c: the pin gate is PER-INTERVAL and per-register (the
+                ;; old function-global backend-clobber-point? gate revoked
+                ;; every pin on any call/div/shift anywhere -- apply_op's div
+                ;; disqualified pins its add arm never reached). The pinned
+                ;; var is deliberately NOT inserted into `blocked`: the greedy
+                ;; skips already-assigned vars, and plan-from's coalesce-hull
+                ;; validation (compiler-reg-param-pins-demote!) may still
+                ;; revoke the pin, after which the param must compete as an
+                ;; ordinary callee-saved greedy candidate.
+                (if (and
+                  (compiler-reg-param-pin-clobber-free?
+                    interval-index
+                    call-points
+                    div-points
+                    shift-points
+                    switch-points
+                    var-id
+                    home)
+                  (compiler-reg-param-pin-safe?
+                    assignments
+                    interval-index
+                    ineligible
+                    var-id
+                    home))
                   (compiler-reg-param-assign-walk
                     abi
                     (box-get rest)
@@ -3114,12 +3264,16 @@
                       var-id
                       (CompilerRegRegister home))
                     ineligible
-                    (compiler-live-set-insert blocked var-id)
+                    blocked
                     next-int
                     next-position
-                    tail-can-pin?)
-                  ;; Pin-unsafe scalar param: reached only for integer-param
-                  ;; types, which are always greedy-eligible -- leave it out of
+                    tail-pins-ok?
+                    call-points
+                    div-points
+                    shift-points
+                    switch-points)
+                  ;; Pin-unsafe param: reached only for integer-param types,
+                  ;; which are always greedy-eligible -- leave it out of
                   ;; ineligible/blocked so the greedy may home it callee-saved.
                   (compiler-reg-param-assign-walk
                     abi
@@ -3130,10 +3284,14 @@
                     blocked
                     next-int
                     next-position
-                    tail-can-pin?))]
+                    tail-pins-ok?
+                    call-points
+                    div-points
+                    shift-points
+                    switch-points))]
               [(CompilerRegNoString)
-                ;; No ABI pin available (clobber-point function, skipped arg
-                ;; register, stack-passed position, or non-scalar type). A
+                ;; No ABI pin available (skipped arg register, stack-passed
+                ;; position, post-group position, or non-pinnable type). A
                 ;; greedy-eligible param stays unblocked (M-A candidate);
                 ;; group/float/otherwise-ineligible params keep the legacy
                 ;; stack home. base-ineligible members (address-taken, stack
@@ -3148,7 +3306,11 @@
                     blocked
                     next-int
                     next-position
-                    tail-can-pin?)
+                    tail-pins-ok?
+                    call-points
+                    div-points
+                    shift-points
+                    switch-points)
                   (compiler-reg-param-assign-walk
                     abi
                     (box-get rest)
@@ -3158,7 +3320,11 @@
                     (compiler-live-set-insert blocked var-id)
                     next-int
                     next-position
-                    tail-can-pin?))]))])]))
+                    tail-pins-ok?
+                    call-points
+                    div-points
+                    shift-points
+                    switch-points))]))])]))
 
 (define (compiler-reg-param-assign-plan
   [abi : CompilerRegTargetAbi]
@@ -3178,15 +3344,20 @@
           (let
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
-            ;; M-A (RC1): the walk always runs. Pinning a param to its incoming
-            ;; ABI register is still gated on clobber-POINT-free functions
-            ;; (bounds-checks excluded -- a bounds check clobbers no caller-saved
-            ;; reg on the success path; real calls + div/mod + shift + Pack
-            ;; overwrite fixed SysV arg registers, so a pin there is unsound).
-            ;; Non-pinned greedy-eligible params are NO LONGER stack-homed: the
-            ;; walk leaves them out of ineligible/blocked in ALL functions, so
-            ;; they compete in the greedy for a callee-saved home instead of
-            ;; being reloaded from the stack at every use.
+            ;; M-A (RC1): the walk always runs -- non-pinned greedy-eligible
+            ;; params stay out of ineligible/blocked in ALL functions and
+            ;; compete in the greedy for a callee-saved home.
+            ;; GAP3c: the pin gate is PER-INTERVAL and per-register instead of
+            ;; the old function-global backend-clobber-point? test: a param
+            ;; whose live range crosses no clobber point that could overwrite
+            ;; ITS register keeps the incoming ABI register even in a function
+            ;; with calls/divs/shifts elsewhere (the greedy's kind 0/1/2 point
+            ;; sets; see compiler-reg-param-pin-clobber-free?). The walk's
+            ;; per-var check uses the param's OWN interval; plan-from
+            ;; re-validates every surviving pin against its coalesce-class
+            ;; hull once the coalesce map exists (a disjoint-coalesced member
+            ;; may extend the pinned register's effective range past a
+            ;; clobber; compiler-reg-param-pins-demote!).
             (compiler-reg-param-assign-walk
               abi
               params
@@ -3196,7 +3367,11 @@
               base-ineligible
               0
               0
-              (not (compiler-reg-backend-clobber-point? func))))])]))
+              true
+              (compiler-reg-clobber-kind-points func 0)
+              (compiler-reg-clobber-kind-points func 1)
+              (compiler-reg-clobber-kind-points func 2)
+              (compiler-reg-clobber-kind-points func 3)))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -6242,55 +6417,6 @@
         (compiler-reg-clobber-binop-shift? op rhs ty))]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
-;; Param-pin gate predicate: like a caller-clobber scan EXCEPT bounds checks do not
-;; count (it scans with clobber-point-instr?, which is caller-clobber-instr?
-;; minus IrInstrBoundsCheck). A bounds check's only register-clobbering effect is
-;; the cold `call tl_oob_abort` on the never-taken failure branch, and that abort
-;; is NORETURN -- on the success (fall-through) path NO caller-saved register is
-;; clobbered, so it can never evict an incoming ABI param from its register home.
-;; Real calls (clobber every caller-saved reg), idiv/mod (hardwire %rdx:%rax) and
-;; variable shift (hardwire %rcx) DO overwrite fixed SysV arg registers, so they
-;; stay in the gate -- the legacy zero-call pin set spills params to memory when
-;; any of those is present, which is conservative and SOUND. Removing only
-;; bounds-checks lets a leaf whose sole "clobber" is an array bounds check keep
-;; its scalar params pinned to %rdi/%rsi/... (matching clang) instead of homing
-;; every param on the stack and reloading it per use. Same reasoning as the
-;; bounds-check clobber-point narrowing above.
-(define (compiler-reg-backend-clobber-point-seq? [instrs : CompilerIrInstrSeq]) : bool
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (begin
-          (set!
-            found
-            (compiler-reg-backend-clobber-point-instr?
-              (array.array-ref slots index)))
-          (set! index (+ index 1))))
-      found)))
-
-(define (compiler-reg-backend-clobber-point-blocks?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-reg-backend-clobber-point-seq? instrs)
-            true
-            (compiler-reg-backend-clobber-point-blocks? (box-get rest)))])]
-    [(IrBlockArray seq)
-      (compiler-reg-backend-clobber-point-blocks?
-        (compiler-ir-block-seq-to-list seq))]))
-
-(define (compiler-reg-backend-clobber-point? [func : CompilerIrFunction]) : bool
-  (match func
-    [(IrFunction _ _ _ _ blocks)
-      (compiler-reg-backend-clobber-point-blocks? blocks)]))
-
 ;; Backend caller-clobber points include ordinary calls plus non-call IR that
 ;; emits caller-clobbering machine instructions or helper calls. The zero-call
 ;; caller-saved pass rejects any interval spanning one of these points.
@@ -6418,6 +6544,13 @@
         (if (= kind 2)
           (compiler-reg-clobber-binop-shift? op rhs ty)
           false))]
+    ;; kind 3 = switch dispatch points (GAP3c pin gate only; never kind 0 --
+    ;; a switch clobbers no register per se, but its DISPATCH emitter's
+    ;; emergency scavenge wraps a save/restore around the indirect jmp whose
+    ;; restore lands AFTER the jmp = unreachable (the GAP2b vm_run finding),
+    ;; so occupancy added at a dispatch by an ABI pin must be refused until
+    ;; that emitter is fixed).
+    [(IrInstrSwitch _ _ _ _) (= kind 3)]
     [_
       (if (= kind 0)
         (compiler-reg-backend-clobber-point-instr? instr)
@@ -15968,6 +16101,95 @@
           (set! m (+ m 1))))
       hit)))
 
+;; GAP3c: coalesce-hull validation of the ABI pins. The pin walk judged each
+;; param on its OWN interval, but expand-class-assignments later copies a
+;; coalesce ROOT's location onto every class member -- so a pinned param that
+;; roots a class effectively occupies its caller-saved register over the whole
+;; MERGED hull. A disjoint-coalesced member living past a call would then read
+;; the pin register after the call clobbered it (the same hazard the comment at
+;; eff-blocked describes for blocked vars, made live by per-interval pins: the
+;; old function-global gate could never pin in a clobber-having function, so no
+;; member hull could contain a clobber point). Re-run the per-register clobber
+;; test on the ROOT's eff-index hull; a failing pin -- or a pin on a var some
+;; smaller-id root absorbed (its assignment would be discarded at expansion
+;; anyway) -- is UNASSIGNED. The demoted param was never inserted into
+;; `blocked` (GAP3c walk), so its root competes in the greedy as an ordinary
+;; callee-saved candidate, exactly the M-A contract.
+(define (compiler-reg-param-pins-demote-walk!
+  [params : CompilerIrParamList]
+  [assignments : CompilerRegAssignmentTable]
+  [parents : (Array i64)]
+  [eff-index : CompilerRegIntervalIndex]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [switch-points : CompilerLiveI64Set]) : unit
+  (match params
+    [(IrParamNil) unit]
+    [(IrParamCons param rest)
+      (begin
+        (match param
+          [(IrParam _ _ var-id)
+            (match (compiler-reg-assignment-table-lookup assignments var-id)
+              [(CompilerRegSomeLocation location)
+                (match location
+                  [(CompilerRegRegister home)
+                    (let
+                      [root : i64
+                        (if (and
+                          (>= var-id 0)
+                          (< var-id (array.array-length parents)))
+                          (array.array-ref parents var-id)
+                          var-id)]
+                      (if (and
+                        (= root var-id)
+                        (compiler-reg-param-pin-clobber-free?
+                          eff-index
+                          call-points
+                          div-points
+                          shift-points
+                          switch-points
+                          var-id
+                          home))
+                        unit
+                        (begin
+                          (compiler-reg-assignment-table-unassign
+                            assignments
+                            var-id)
+                          unit)))]
+                  [_ unit])]
+              [(CompilerRegNoLocation) unit])])
+        (compiler-reg-param-pins-demote-walk!
+          (box-get rest)
+          assignments
+          parents
+          eff-index
+          call-points
+          div-points
+          shift-points
+          switch-points))]))
+
+(define (compiler-reg-param-pins-demote!
+  [func : CompilerIrFunction]
+  [assignments : CompilerRegAssignmentTable]
+  [coalesce : CompilerRegCoalesceMap]
+  [eff-index : CompilerRegIntervalIndex]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [switch-points : CompilerLiveI64Set]) : unit
+  (match func
+    [(IrFunction _ params _ _ _)
+      (compiler-reg-param-pins-demote-walk!
+        params
+        assignments
+        (struct-get coalesce parents)
+        eff-index
+        call-points
+        div-points
+        shift-points
+        switch-points)]))
+
 (define (compiler-reg-plan-from
   [func : CompilerIrFunction]
   [type-info : CompilerRegVarTypes]
@@ -16069,6 +16291,30 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce interval-index)
         interval-index)]
+    ;; Per-register clobber point sets (15c): kind 0 = call-like sites (all
+    ;; caller-saved; == clobber-points above), kind 1 = idiv (rax:rdx),
+    ;; kind 2 = variable shift (rcx). Bound here (before the greedy) so the
+    ;; GAP3c pin demotion below and the greedy share one computation.
+    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
+    [shift-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 2)]
+    ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
+    ;; the coalesce map exists; unsound pins are unassigned and their params
+    ;; fall through to the ordinary greedy CSR path (see
+    ;; compiler-reg-param-pins-demote!). Scalar-opt2 only -- the SIMD path
+    ;; never pins (param-assign-plan is not on it).
+    [_pin-demote : unit
+      (if allow-caller-saved-zero-call
+        (compiler-reg-param-pins-demote!
+          func
+          assignment-table
+          coalesce
+          eff-index
+          clobber-points
+          div-points
+          shift-points
+          (compiler-reg-clobber-kind-points func 3))
+        unit)]
     ;; move census (cfg regalloc-census only; no-op otherwise): categorise the
     ;; harvested moves against the final coalesce result + per-var and per-root
     ;; segments.
@@ -16182,17 +16428,15 @@
             (compiler-reg-function-spill-weights func)
             (array.array-length (struct-get interval-index starts))))
         (array.make-array i64 0))]
-    ;; Per-register clobber point sets (15c): kind 0 = call sites (all caller-saved),
-    ;; kind 1 = idiv (rax:rdx), kind 2 = shift (rcx). Splitting the
-    ;; old merged set lets the greedy forbid only the registers each op actually
-    ;; clobbers, so a div/shift-spanning value keeps the caller-saved regs the op
-    ;; leaves alone instead of being forced callee-saved. On the SIMD-integer path
-    ;; caller-saved-count=0 makes every pool register callee-saved (no restriction);
-    ;; on the XMM path call-spanning floats are already excluded pre-allocation.
-    [call-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 0)]
-    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
-    [shift-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 2)]
+    ;; The greedy's per-register clobber restriction (15c) reuses the kind
+    ;; point sets bound above: `clobber-points` IS the kind-0 set, and
+    ;; div-points/shift-points let the greedy forbid only the registers each op
+    ;; actually clobbers, so a div/shift-spanning value keeps the caller-saved
+    ;; regs the op leaves alone instead of being forced callee-saved. On the
+    ;; SIMD-integer path caller-saved-count=0 makes every pool register
+    ;; callee-saved (no restriction); on the XMM path call-spanning floats are
+    ;; already excluded pre-allocation.
+    [call-points : CompilerLiveI64Set clobber-points]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
     ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
@@ -20574,10 +20818,13 @@
 
 (cfg
   test
-  ;; GAP3a: a variable-count shift IS a clobber point, so the function-global
-  ;; pin gate refuses pins and both params become greedy candidates with
-  ;; callee-saved homes (the M-A contract for clobber-point functions).
-  (define (compiler-reg-scalar-param-var-shift-no-pin-ok?) : bool
+  ;; GAP3c: a variable-count shift clobbers only %rcx, so per-register pin
+  ;; gating keeps BOTH pins here: a (%rdi) spans the shift but %rdi is not
+  ;; shift-clobbered, and n (%rsi, the count) is last-used AT the shift so it
+  ;; does not span it. (Pre-GAP3c the function-global gate revoked both ->
+  ;; greedy CSR homes; the %rcx narrowing is asserted by
+  ;; compiler-reg-scalar-param-rcx-shift-span-ok? below.)
+  (define (compiler-reg-scalar-param-var-shift-pin-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-var-shift-function))
@@ -20587,10 +20834,266 @@
           (not (compiler-live-set-contains? ineligible 1))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r12")
+            "%rdi")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%r13"))])))
+            "%rsi"))])))
+
+(cfg
+  test
+  ;; GAP3c: params fully consumed BEFORE the first clobber point keep their
+  ;; ABI pins even though the function has a call. t = a + a; call; return
+  ;; t + t -- a (var 0) ends at point 0, the call is at point 2, so %rdi stays
+  ;; pinned while the call-spanning t (var 1) takes a callee-saved home.
+  (define (compiler-reg-param-dead-before-call-function) : CompilerIrFunction
+    (IrFunction
+      "param_dead_before_call"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        IrParamNil)
+      (AstTyI64)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              1
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 0)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrCall 2 "side_effect" (IrCallArgsNil) (AstTyUnit))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  3
+                  (IrBinAdd)
+                  (IrValueVar 1)
+                  (IrValueVar 1)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  IrInstrNil)))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-param-dead-before-call-pin-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-dead-before-call-function))
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rdi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%r12"))])))
+
+(cfg
+  test
+  ;; GAP3c div spanning: v3 = v0 + v0; v4 = v3 / v1; v5 = v4 + v2; return v5.
+  ;; A div bans EVERY pin it is spanned by (%rax:%rdx hardwiring + the canned
+  ;; divmod expansion's scratch hunger), so the %rdx param v2 -- live across
+  ;; it (last use point 4) -- must NOT keep its pin (greedy CSR home instead),
+  ;; while v0 (%rdi, ends point 0) and v1 (%rsi, the divisor, last-used AT
+  ;; the div = read before the clobber) keep theirs.
+  (define (compiler-reg-param-rdx-div-span-function) : CompilerIrFunction
+    (IrFunction
+      "param_rdx_div_span"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (IrParam "b" (compiler-reg-i64-ty) 1)
+          (compiler-ir-param-cons
+            (IrParam "c" (compiler-reg-i64-ty) 2)
+            IrParamNil)))
+      (AstTyI64)
+      6
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              3
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 0)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                4
+                (IrBinDiv)
+                (IrValueVar 3)
+                (IrValueVar 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 4)
+                  (IrValueVar 2)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                  IrInstrNil)))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-param-rdx-div-span-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-rdx-div-span-function))
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 2))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rdi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%rsi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%r12"))])))
+
+(cfg
+  test
+  ;; GAP3c per-register narrowing, shift: v4 = v0 + v0; v5 = v4 << v1;
+  ;; v6 = v5 + v2; v7 = v6 + v3; return v7. The variable shift (point 2)
+  ;; hardwires only %rcx, so the %rcx param v3 -- live across it (last use
+  ;; point 6) -- must NOT keep its pin, while v2 (%rdx) ALSO spans the shift
+  ;; and keeps its pin (%rdx is not shift-clobbered), and v0/v1 end at/before
+  ;; the shift and keep theirs.
+  (define (compiler-reg-param-rcx-shift-span-function) : CompilerIrFunction
+    (IrFunction
+      "param_rcx_shift_span"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (IrParam "n" (compiler-reg-i64-ty) 1)
+          (compiler-ir-param-cons
+            (IrParam "c" (compiler-reg-i64-ty) 2)
+            (compiler-ir-param-cons
+              (IrParam "d" (compiler-reg-i64-ty) 3)
+              IrParamNil))))
+      (AstTyI64)
+      8
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              4
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 0)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                5
+                (IrBinShl)
+                (IrValueVar 4)
+                (IrValueVar 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  6
+                  (IrBinAdd)
+                  (IrValueVar 5)
+                  (IrValueVar 2)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    7
+                    (IrBinAdd)
+                    (IrValueVar 6)
+                    (IrValueVar 3)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn (IrSomeValue (IrValueVar 7)))
+                    IrInstrNil))))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-param-rcx-shift-span-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-rcx-shift-span-function))
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 3))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rdi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%rsi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%rdx")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 3)
+            "%r12"))])))
+
+(cfg
+  test
+  ;; GAP3c coalesce-hull demotion (the soundness net for per-interval pins):
+  ;; v3 = v0 + v0; Mov v1 <- v0 (v0's last use, boundary touch -> v1
+  ;; disjoint-coalesces with the param); call; store v1. The walk pins v0 on
+  ;; its own clobber-free interval [0,2], but the class {v0,v1} hull [0,6]
+  ;; spans the call -- a kept pin would make the post-call store read a
+  ;; clobbered %rdi. compiler-reg-param-pins-demote! must revoke the pin and
+  ;; the class must land on ONE callee-saved home instead.
+  (define (compiler-reg-param-pin-coalesce-demote-function) : CompilerIrFunction
+    (IrFunction
+      "param_pin_coalesce_demote"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        IrParamNil)
+      (AstTyUnit)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              3
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 0)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrCall 2 "side_effect" (IrCallArgsNil) (AstTyUnit))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn IrNoValue)
+                    IrInstrNil))))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-param-pin-coalesce-demote-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-pin-coalesce-demote-function))
+      [(CompilerRegPlan assignments _ _ _ _ _)
+        (and
+          (not
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 0)
+              "%rdi"))
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 0))
+          (compiler-reg-same-location? assignments 0 1))])))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (IrFunction
@@ -24635,7 +25138,11 @@
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
     (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
-    (cfg test (compiler-reg-scalar-param-var-shift-no-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-dead-before-call-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-rdx-div-span-ok?) true)
+    (cfg test (compiler-reg-scalar-param-rcx-shift-span-ok?) true)
+    (cfg test (compiler-reg-scalar-param-pin-coalesce-demote-ok?) true)
     (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)

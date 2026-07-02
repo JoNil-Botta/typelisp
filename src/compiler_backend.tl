@@ -29999,6 +29999,358 @@
             entry
             (box-get rest))])]))
 
+;; ============================================================================
+;; M-G3 stage 1: rsp-relative frame addressing (behavior-neutral rebase).
+;;
+;; Every frame slot is emitted rbp-relative (`-K(%rbp)`; prologue: pushq %rbp /
+;; movq %rsp,%rbp / subq $frame,%rsp), so `-K(%rbp)` == `(frame-K)(%rsp)`
+;; whenever %rsp still sits at its post-prologue value. The final frame constant
+;; is only known AFTER the body is emitted (emergency-scavenge use grows the
+;; callee-save area and appends extra slots), so the rebase runs as a
+;; post-emission text pass over the function's post-prologue text -- this is the
+;; single point where the per-function frame model (frame constant + rbp-or-rsp
+;; choice) is applied; stage 2 (frame-pointer omission) changes only the
+;; prologue/epilogue and the bias fed to this pass.
+;;
+;; The pass PROVES rsp-constancy line by line instead of assuming it:
+;;   * `delta` tracks the in-body %rsp displacement (bytes pushed beyond the
+;;     prologue sub): pushq/popq (the phi/arg parallel-move cycle break, the
+;;     AVX-512 `pushq $1` mask dip) and `subq/addq $N, %rsp` (the c-abi
+;;     per-call outgoing dip, #65a-ii). All such windows are straight-line and
+;;     balanced within one instruction emission; a label inside a nonzero-delta
+;;     window, or a net-negative delta, fails the audit.
+;;   * `pushq MEM` computes its address BEFORE %rsp moves; `popq MEM` AFTER --
+;;     the delta updates are ordered accordingly.
+;;   * `leave` and any other %rsp write (`leaq slot,%rsp` pop-restore
+;;     epilogues, the closure adapters' `movq %rbp,%rsp`) end rsp validity;
+;;     validity resumes at the next label (labels are only reachable at
+;;     delta 0). A frame reference while %rsp is unknown fails the audit.
+;;   * POSITIVE rbp offsets (incoming stack args at 16+8k(%rbp) and tail-call
+;;     final stack-arg stores into those same slots) are LEFT on rbp: %rbp is
+;;     still materialized in stage 1, and those accesses stay valid regardless
+;;     of %rsp motion. Stage 2 rebases them with its adjusted constant.
+;;   * Indexed rbp forms (`(%rbp,...`), a bare `(%rbp)`, or a rewritten offset
+;;     that would go negative fail the audit (none are emitted today).
+;; On ANY audit failure the ORIGINAL text is returned unchanged -- that
+;; function simply keeps rbp addressing (needs-rbp), preserving behavior.
+;;
+;; The post-emission peephole recognizes both slot spellings
+;; (compiler-backend-peephole-stack-slot-operand?). Within any owner-map
+;; lifetime every %rsp-mutating line (pushq/popq/subq/addq/leave/movq-to-rsp/
+;; leaq-to-rsp/call/ret) conservatively clears the map, so equal operand
+;; strings imply equal addresses in both worlds and the elision behavior
+;; carries over 1:1.
+
+(define compiler-backend-rsp-rebase-ok-count : i64
+  0)
+
+(define compiler-backend-rsp-rebase-keep-count : i64
+  0)
+
+;; Index of the first "(%rbp" occurrence in [start,end), or -1.
+(define (compiler-backend-rsp-rebase-find-rbp
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (<= (+ i 5) end))
+        (if (and
+          (= (compiler-backend-peephole-byte-at data i) 40)
+          (and
+            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
+            (and
+              (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
+              (and
+                (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
+                (= (compiler-backend-peephole-byte-at data (+ i 4)) 112)))))
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+;; Start index of the signed decimal immediately preceding `pos`, or -1 when
+;; there is none (a bare/indexed form the audit must reject).
+(define (compiler-backend-rsp-rebase-int-start
+  [data : (Ptr u8)]
+  [line-start : i64]
+  [pos : i64]) : i64
+  (let
+    [j : i64 pos]
+    (begin
+      (while (and
+        (> j line-start)
+        (let
+          [b : i64 (compiler-backend-peephole-byte-at data (- j 1))]
+          (and (>= b 48) (<= b 57))))
+        (set! j (- j 1)))
+      (if (= j pos)
+        -1
+        (if (and
+          (> j line-start)
+          (= (compiler-backend-peephole-byte-at data (- j 1)) 45))
+          (- j 1)
+          j)))))
+
+;; Parse the (optionally '-'-signed) decimal in [start,end).
+(define (compiler-backend-rsp-rebase-parse-int
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [neg : bool (= (compiler-backend-peephole-byte-at data start) 45)]
+    [j : i64 (if neg (+ start 1) start)]
+    [v : i64 0]
+    (begin
+      (while (< j end)
+        (begin
+          (set!
+            v
+            (+ (* v 10) (- (compiler-backend-peephole-byte-at data j) 48)))
+          (set! j (+ j 1))))
+      (if neg (- 0 v) v))))
+
+;; Rewrite one function's POST-PROLOGUE text to rsp-relative frame addressing
+;; (`-K(%rbp)` -> `(frame+delta-K)(%rsp)`); returns the ORIGINAL text when the
+;; rsp-constancy audit fails (the function keeps rbp addressing).
+(define (compiler-backend-rsp-rebase [text : String] [frame : i64]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
+    [i : i64 0]
+    [delta : i64 0]
+    [valid : bool true]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i n))
+        (let
+          [end : i64 (compiler-backend-peephole-line-end data i n)]
+          [nl : bool (< end n)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m end)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m end)
+              ;; blank line
+              (set!
+                buf
+                (compiler-backend-peephole-append-line-range buf text i end nl))
+              (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
+                ;; a label: only reachable at delta 0 (dip windows are
+                ;; straight-line); it also re-establishes rsp validity after an
+                ;; epilogue's terminal rsp motion.
+                (begin
+                  (if (and valid (not (= delta 0)))
+                    (set! ok false)
+                    unit)
+                  (set! delta 0)
+                  (set! valid true)
+                  (set!
+                    buf
+                    (compiler-backend-peephole-append-line-range
+                      buf
+                      text
+                      i
+                      end
+                      nl)))
+                (let
+                  [tok : i64 (compiler-backend-peephole-token-len data m end)]
+                  [te : i64 (+ m tok)]
+                  [push? : bool
+                    (or
+                      (compiler-backend-peephole-range-eq? data m te "pushq")
+                      (compiler-backend-peephole-range-eq? data m te "push"))]
+                  [pop? : bool
+                    (or
+                      (compiler-backend-peephole-range-eq? data m te "popq")
+                      (compiler-backend-peephole-range-eq? data m te "pop"))]
+                  [leave? : bool
+                    (compiler-backend-peephole-range-eq? data m te "leave")]
+                  [rsp-dst? : bool
+                    (and
+                      (>= (- end i) 6)
+                      (compiler-backend-peephole-range-eq?
+                        data
+                        (- end 6)
+                        end
+                        ", %rsp"))]
+                  (begin
+                    ;; popq MEM computes its address AFTER the rsp increment.
+                    (if (and valid pop?)
+                      (begin
+                        (set! delta (- delta 8))
+                        (if (< delta 0)
+                          (set! ok false)
+                          unit))
+                      unit)
+                    ;; frame-reference rewrite
+                    (let
+                      [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
+                      (if (< p 0)
+                        (set!
+                          buf
+                          (compiler-backend-peephole-append-line-range
+                            buf
+                            text
+                            i
+                            end
+                            nl))
+                        (if (not valid)
+                          (set! ok false)
+                          (let
+                            [cursor : i64 i]
+                            (begin
+                              (while (and ok (>= p 0))
+                                (begin
+                                  (if (or
+                                    (>= (+ p 5) end)
+                                    (not (=
+                                      (compiler-backend-peephole-byte-at
+                                        data
+                                        (+ p 5))
+                                      41)))
+                                    ;; "(%rbp," indexed or truncated
+                                    (set! ok false)
+                                    (let
+                                      [ks : i64
+                                        (compiler-backend-rsp-rebase-int-start
+                                          data
+                                          i
+                                          p)]
+                                      (if (< ks 0)
+                                        ;; bare "(%rbp)"
+                                        (set! ok false)
+                                        (let
+                                          [k : i64
+                                            (compiler-backend-rsp-rebase-parse-int
+                                              data
+                                              ks
+                                              p)]
+                                          (if (>= k 0)
+                                            ;; incoming stack-arg slot: keep rbp
+                                            unit
+                                            (let
+                                              [noff : i64 (+ (+ frame delta) k)]
+                                              (if (< noff 0)
+                                                (set! ok false)
+                                                (begin
+                                                  (set!
+                                                    buf
+                                                    (compiler-backend-peephole-append-line-range
+                                                      buf
+                                                      text
+                                                      cursor
+                                                      ks
+                                                      false))
+                                                  (set!
+                                                    buf
+                                                    (text_buf.text-buf-append
+                                                      buf
+                                                      (string.int->string noff)))
+                                                  (set!
+                                                    buf
+                                                    (text_buf.text-buf-append
+                                                      buf
+                                                      "(%rsp)"))
+                                                  (set! cursor (+ p 6))))))))))
+                                  (set!
+                                    p
+                                    (if ok
+                                      (compiler-backend-rsp-rebase-find-rbp
+                                        data
+                                        (+ p 6)
+                                        end)
+                                      -1))))
+                              (if ok
+                                (set!
+                                  buf
+                                  (compiler-backend-peephole-append-line-range
+                                    buf
+                                    text
+                                    cursor
+                                    end
+                                    nl))
+                                unit))))))
+                    ;; pushq MEM computes its address BEFORE the rsp decrement.
+                    (if (and valid push?)
+                      (set! delta (+ delta 8))
+                      unit)
+                    ;; explicit %rsp writes
+                    (if (and rsp-dst? (not pop?))
+                      (if (and
+                        valid
+                        (and
+                          (compiler-backend-peephole-range-eq? data m te "subq")
+                          (and
+                            (< (+ te 1) end)
+                            (=
+                              (compiler-backend-peephole-byte-at data (+ te 1))
+                              36))))
+                        (set!
+                          delta
+                          (+
+                            delta
+                            (compiler-backend-rsp-rebase-parse-int
+                              data
+                              (+ te 2)
+                              (- end 6))))
+                        (if (and
+                          valid
+                          (and
+                            (compiler-backend-peephole-range-eq?
+                              data
+                              m
+                              te
+                              "addq")
+                            (and
+                              (< (+ te 1) end)
+                              (=
+                                (compiler-backend-peephole-byte-at
+                                  data
+                                  (+ te 1))
+                                36))))
+                          (begin
+                            (set!
+                              delta
+                              (-
+                                delta
+                                (compiler-backend-rsp-rebase-parse-int
+                                  data
+                                  (+ te 2)
+                                  (- end 6))))
+                            (if (< delta 0)
+                              (set! ok false)
+                              unit))
+                          ;; unknown rsp write (leaq slot,%rsp epilogue,
+                          ;; movq %rbp,%rsp, ...): rsp no longer tracked.
+                          (set! valid false)))
+                      unit)
+                    (if leave?
+                      (set! valid false)
+                      unit)))))
+            (set!
+              i
+              (if (< end n)
+                (+ end 1)
+                end)))))
+      (if ok
+        (begin
+          (set!
+            compiler-backend-rsp-rebase-ok-count
+            (+ compiler-backend-rsp-rebase-ok-count 1))
+          (text_buf.text-buf-render buf))
+        (begin
+          (set!
+            compiler-backend-rsp-rebase-keep-count
+            (+ compiler-backend-rsp-rebase-keep-count 1))
+          text)))))
+
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -30423,38 +30775,46 @@
                               frame)
                             ""
                             ""
-                            (compiler-backend-mode-prologue mode)
-                            (compiler-backend-emit-save-callee-regs
-                              assignments
-                              slot-vars)
-                            (compiler-backend-emit-windows-main-argv-capture
-                              target
-                              name
-                              emit-entry
-                              plan)
-                            (compiler-backend-emit-linux-crt-main-argv-capture
-                              target
-                              name
-                              crt-entry
-                              plan)
-                            (if (and
-                              (string.string-eq name "main")
-                              (or
-                                (compiler-backend-target-windows? target)
-                                (and
+                            ;; M-G3 stage 1: rebase the whole post-prologue
+                            ;; text (CSR saves, param spills, body, shared
+                            ;; return epilogue) to rsp-relative frame
+                            ;; addressing; on audit failure it stays on rbp.
+                            (compiler-backend-rsp-rebase
+                              (str_cat.str-cat
+                                (compiler-backend-mode-prologue mode)
+                                (compiler-backend-emit-save-callee-regs
+                                  assignments
+                                  slot-vars)
+                                (compiler-backend-emit-windows-main-argv-capture
+                                  target
+                                  name
+                                  emit-entry
+                                  plan)
+                                (compiler-backend-emit-linux-crt-main-argv-capture
+                                  target
+                                  name
                                   crt-entry
-                                  (compiler-backend-target-linux? target))))
-                              (compiler-backend-global-initializers
-                                globals
-                                program-index)
-                              "")
-                            spills
-                            body
-                            (compiler-backend-return-epilogue
-                              name
-                              assignments
-                              slot-vars
-                              emit-blocks-list)
+                                  plan)
+                                (if (and
+                                  (string.string-eq name "main")
+                                  (or
+                                    (compiler-backend-target-windows? target)
+                                    (and
+                                      crt-entry
+                                      (compiler-backend-target-linux? target))))
+                                  (compiler-backend-global-initializers
+                                    globals
+                                    program-index)
+                                  "")
+                                spills
+                                body
+                                (compiler-backend-return-epilogue
+                                  name
+                                  assignments
+                                  slot-vars
+                                  emit-blocks-list)
+                                "")
+                              frame)
                             (compiler-backend-emit-windows-seh-endproc target)
                             "\n")))]
                     [(ErrCompilerBackend message)
@@ -31024,34 +31384,39 @@
                   frame)
                 ""
                 ""
-                (string.string-append
-                  spills
+                ;; M-G3 stage 1: adapters go through the same rsp rebase as
+                ;; user functions (their `movq %rbp,%rsp` epilogue ends rsp
+                ;; validity; no frame refs follow it).
+                (compiler-backend-rsp-rebase
                   (string.string-append
-                    (compiler-backend-emit-call-space-sub call-space)
+                    spills
                     (string.string-append
-                      args-asm
+                      (compiler-backend-emit-call-space-sub call-space)
                       (string.string-append
-                        (compiler-backend-varargs-pre-call
-                          target
-                          name
-                          externs
-                          param-types)
-                        (str_cat.str-cat
-                          "    call "
-                          (compiler-backend-call-symbol-index
+                        args-asm
+                        (string.string-append
+                          (compiler-backend-varargs-pre-call
+                            target
                             name
-                            plan
-                            program-index)
-                          "\n"
-                          (string.string-append
-                            (compiler-backend-emit-call-space-add call-space)
+                            externs
+                            param-types)
+                          (str_cat.str-cat
+                            "    call "
+                            (compiler-backend-call-symbol-index
+                              name
+                              plan
+                              program-index)
+                            "\n"
                             (string.string-append
-                              "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                              (compiler-backend-emit-call-space-add call-space)
                               (string.string-append
-                                (compiler-backend-emit-windows-seh-endproc
-                                  target)
-                                "\n")))
-                          "")))))
+                                "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                                (string.string-append
+                                  (compiler-backend-emit-windows-seh-endproc
+                                    target)
+                                  "\n")))
+                            "")))))
+                  frame)
                 ""))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
@@ -35919,7 +36284,17 @@ tl_memchr:
                             regalloc-census
                             (begin
                               (compiler-reg-call-span-census-print!)
-                              (compiler-reg-move-census-print!)))
+                              (compiler-reg-move-census-print!)
+                              (io.print-error
+                                (str_cat.str-cat
+                                  "rsp-rebase|ok="
+                                  (string.int->string
+                                    compiler-backend-rsp-rebase-ok-count)
+                                  "|keep-rbp="
+                                  (string.int->string
+                                    compiler-backend-rsp-rebase-keep-count)
+                                  "\n"
+                                  ""))))
                           (OkCompilerBackendBuffer buf))))]
                   [(ErrCompilerBackendBuffer message)
                     (begin
@@ -35944,6 +36319,8 @@ tl_memchr:
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
+    (set! compiler-backend-rsp-rebase-ok-count 0)
+    (set! compiler-backend-rsp-rebase-keep-count 0)
     (cfg
       regalloc-census
       (begin
@@ -38931,14 +39308,30 @@ tl_memchr:
     (> (string.string-length operand) 0)
     (= (string.string-ref operand 0) '%')))
 
+;; M-G3 stage 1: frame slots are emitted rsp-relative (`N(%rsp)`); rbp forms
+;; survive in needs-rbp functions and at positive incoming-stack-arg offsets.
+;; Recognizing `(%rsp)` operands as slots is sound with the same argument as
+;; rbp: every %rsp-mutating line (pushq/popq/subq/addq/leave/leaq-to-rsp/
+;; movq-to-rsp/call/ret) is a non-movq/movq-to-untracked line that clears the
+;; whole owner map, so within any owner-map lifetime %rsp is constant and equal
+;; operand strings imply equal addresses (and distinct strings, distinct
+;; addresses). Indexed forms contain "(%rsp," / "(%rbp," and stay excluded.
 (define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
-  (compiler-backend-string-contains? operand "(%rbp)"))
+  (or
+    (compiler-backend-string-contains? operand "(%rbp)")
+    (compiler-backend-string-contains? operand "(%rsp)")))
 
+;; Local frame slots: every rsp-form slot (the rebased local frame; incoming
+;; stack args stay on rbp in stage 1), plus the pre-rebase rbp spelling at
+;; NEGATIVE offsets (needs-rbp functions), mirroring the historical exclusion
+;; of the positive incoming-arg region.
 (define (compiler-backend-peephole-local-frame-slot-operand? [operand : String]) : bool
-  (and
-    (> (string.string-length operand) 0)
-    (= (string.string-ref operand 0) '-')
-    (compiler-backend-peephole-stack-slot-operand? operand)))
+  (or
+    (compiler-backend-string-contains? operand "(%rsp)")
+    (and
+      (> (string.string-length operand) 0)
+      (= (string.string-ref operand 0) '-')
+      (compiler-backend-string-contains? operand "(%rbp)"))))
 
 (define (compiler-backend-peephole-local-move-operand? [operand : String]) : bool
   (or

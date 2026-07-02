@@ -68,6 +68,11 @@
   (Miss TcTypeEnv)
   (Found AstType))
 
+(defenum TcTypeEnvBoundStep
+  (Missing)
+  (Miss TcTypeEnv)
+  (Found))
+
 (defenum TcTypeEnvUnsafeLookupStep
   (Missing)
   (Miss TcTypeEnv)
@@ -2697,6 +2702,21 @@
       (if (= key name-id)
         (TcTypeEnvLookupStep.Found ty)
         (TcTypeEnvLookupStep.Miss (box-get rest)))]))
+
+(define (tc-type-env-bound-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvBoundStep
+  (match env
+    [(TcTypeEnv.Nil) (TcTypeEnvBoundStep.Missing)]
+    [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound _) (TcTypeEnvBoundStep.Found)]
+        [(hashmap.I64I64MapMissing)
+          (if partial
+            (TcTypeEnvBoundStep.Miss (box-get below))
+            (TcTypeEnvBoundStep.Missing))])]
+    [(TcTypeEnv.Bind key _ rest)
+      (if (= key name-id)
+        (TcTypeEnvBoundStep.Found)
+        (TcTypeEnvBoundStep.Miss (box-get rest)))]))
 
 (define (tc-type-env-unsafe-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvUnsafeLookupStep
   (match env
@@ -6232,81 +6252,42 @@
         (set! tc-macro-helper-env-cache-ready true)
         tc-macro-helper-env-cache-value))))
 
-(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+(define (tc-lookup-id-walk [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
+    (match (tc-type-env-lookup-step env name-id)
+      [(TcTypeEnvLookupStep.Missing)
         (ResultTcType.Err
           (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
-          ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
-          ;; element stride, reading garbage.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcType.Ok (array-ref values index))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-id (box-get below) name-id)
-              (ResultTcType.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcType.Ok ty)
-          (tc-lookup-id (box-get rest) name-id))])))
+      [(TcTypeEnvLookupStep.Miss rest-env) (tc-lookup-id-walk rest-env name-id)]
+      [(TcTypeEnvLookupStep.Found ty) (ResultTcType.Ok ty)])))
+
+(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+  (tc-lookup-id-walk env name-id))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-id env (tc-name-id name)))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound _) true]
-        [(hashmap.I64I64MapMissing)
-          (if partial
-            (tc-name-bound-id? (box-get below) name-id)
-            false)])]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        true
-        (tc-name-bound-id? (box-get rest) name-id))]))
+  (match (tc-type-env-bound-step env name-id)
+    [(TcTypeEnvBoundStep.Missing) false]
+    [(TcTypeEnvBoundStep.Miss rest-env) (tc-name-bound-id? rest-env name-id)]
+    [(TcTypeEnvBoundStep.Found) true]))
 
-(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+(define (tc-lookup-unsafe-id-walk [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
+    (match (tc-type-env-unsafe-lookup-step env name-id)
+      [(TcTypeEnvUnsafeLookupStep.Missing)
         (ResultTcTypeUnsafe.Err
           (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
-          ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
-          ;; is still sound there.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcTypeUnsafe.Ok
-              (array-ref values index)
-              (=
-                (unsafe
-                  (ptr-read
-                    (ptr-offset
-                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
-                      index)))
-                1))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-unsafe-id (box-get below) name-id)
-              (ResultTcTypeUnsafe.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcTypeUnsafe.Ok
-            ty
-            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
-          (tc-lookup-unsafe-id (box-get rest) name-id))])))
+      [(TcTypeEnvUnsafeLookupStep.Miss rest-env)
+        (tc-lookup-unsafe-id-walk rest-env name-id)]
+      [(TcTypeEnvUnsafeLookupStep.Found ty unsafe)
+        (ResultTcTypeUnsafe.Ok ty unsafe)])))
+
+(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-id-walk env name-id))
 
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))
@@ -13168,6 +13149,12 @@
       (match (tc-type-env-lookup-step lookup-local (tc-name-id "local"))
         [(TcTypeEnvLookupStep.Found (AstType.I64)) true]
         [_ false])
+      (match (tc-type-env-bound-step lookup-local (tc-name-id "local"))
+        [(TcTypeEnvBoundStep.Found) true]
+        [_ false])
+      (match (tc-type-env-bound-step lookup-base (tc-name-id "missing"))
+        [(TcTypeEnvBoundStep.Missing) true]
+        [_ false])
       (match (tc-type-env-lookup-step lookup-local (tc-name-id "global"))
         [(TcTypeEnvLookupStep.Miss rest-env)
           (match (tc-type-env-lookup-step rest-env (tc-name-id "global"))
@@ -13191,6 +13178,7 @@
       (match (tc-lookup lookup-deep "local")
         [(ResultTcType.Ok (AstType.I64)) true]
         [_ false])
+      (tc-name-bound-id? lookup-deep (tc-name-id "global"))
       (match (tc-active-region marker-deep)
         [(TcMaybeString.Some region) (string.eq region "inner")]
         [_ false])

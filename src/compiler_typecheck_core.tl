@@ -47420,47 +47420,46 @@
     (macro-generated-type-param-expr env (ast-node-get arg))
     arg))
 
+(define (macro-generated-import-type-args-for-param
+  [param : AstMacroParam]
+  [head : i64]
+  [rest-args : AstExprList]
+  [rest-params : AstMacroParamList]
+  [args : AstExprList]
+  [env : CtfeEnv]) : AstExprList
+  (match param
+    [(AstMacroParam.Param _ ty variadic)
+      (if variadic
+        (if (tc-macro-type-param-kind? ty)
+          (macro-generated-type-param-expr-list env args)
+          args)
+        (ast-expr-cons
+          (macro-generated-import-type-arg ty head env)
+          (macro-generated-import-type-args rest-params rest-args env)))]))
+
 (define (macro-generated-import-type-args
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
-  (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (ast-expr-list-len (& args)))]
-    (begin
-      (macro-generated-import-type-args-into params (& args) 0 env (&mut out))
-      out)))
+  (macro-generated-import-type-args-at params (& args) 0 env))
 
-(define (macro-generated-import-type-args-into
+(define (macro-generated-import-type-args-at
   [params : AstMacroParamList]
   [args : (& args AstExprList)]
   [index : i64]
-  [env : CtfeEnv]
-  [out : (&mut out AstExprList)]) : unit
+  [env : CtfeEnv]) : AstExprList
   (match params
-    [(AstMacroParamList.Nil) (ast-expr-list-append-from out args index)]
+    [(AstMacroParamList.Nil) (ast-expr-list-tail-from-ref args index)]
     [(AstMacroParamList.Cons param rest-params-box)
       (if (>= index (ast-expr-list-len args))
-        unit
-        (match param
-          [(AstMacroParam.Param _ ty variadic)
-            (if variadic
-              (if (tc-macro-type-param-kind? ty)
-                (macro-generated-type-param-expr-list-into env args index out)
-                (ast-expr-list-append-from out args index))
-              (begin
-                (ast-expr-list-push
-                  out
-                  (macro-generated-import-type-arg
-                    ty
-                    (ast-expr-list-get args index 0)
-                    env))
-                (macro-generated-import-type-args-into
-                  (box-get rest-params-box)
-                  args
-                  (+ index 1)
-                  env
-                  out)))]))]))
+        (ast-expr-list-new)
+        (macro-generated-import-type-args-for-param
+          param
+          (ast-expr-list-get args index 0)
+          (ast-expr-list-tail-from-ref args (+ index 1))
+          (box-get rest-params-box)
+          (ast-expr-list-tail-from-ref args index)
+          env))]))
 
 (define (macro-rewrite-generated-import-call-with-decl
   [func-box : i64]

@@ -3457,10 +3457,31 @@
                           (compiler-live-call-args-vars args)
                           base)
                         func))])]
+              ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
+              ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
+              ;; tail-stack-count 0, target always an in-program function, so
+              ;; never c-abi -- through the same conflict-checked
+              ;; compiler-backend-emit-call-args as direct calls) and only THEN
+              ;; emits the epilogue (compiler-backend-tail-jump-tail: CSR
+              ;; restores + leave + jmp). CSR-homed sources are read before
+              ;; their restore overwrites them; the arg registers are all
+              ;; caller-saved on both ABIs, so the restores never touch
+              ;; marshalled args; register-only marshalling writes no frame
+              ;; slot the restores read. So a gp-parallel tail call
+              ;; disqualifies NO arg vars, exactly like a gp-parallel direct
+              ;; call. Float / register-group / over-arity tail calls keep the
+              ;; naive ascending (frame-staged) marshalling -> args stay
+              ;; ineligible.
               [(IrInstrTailCall _ args _)
-                (compiler-live-set-union
+                (if (compiler-reg-call-gp-parallel? args types limit)
                   out
-                  (compiler-live-call-args-vars args))]
+                  (compiler-live-set-union
+                    out
+                    (compiler-live-call-args-vars args)))]
+              ;; Indirect tail calls marshal at base 1 (closure env reserved in
+              ;; ABI arg-register 0) but the parallel-move builder is base-0
+              ;; only, so their arg vars must stay memory-sourced (the naive
+              ;; base-correct path handles them; no register cycle can form).
               [(IrInstrTailCallIndirect func args _)
                 (compiler-live-set-union
                   out

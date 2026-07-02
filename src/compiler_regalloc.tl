@@ -15450,226 +15450,6 @@
     [(= idx 3) "%r15"]
     [else "%rbx"]))
 
-;; The backend scavenger's GP candidate order (scavenge-reg-bit order):
-;; 6 caller-saved then the 5 pool CSRs.
-(define (compiler-reg-group-pair-scav-candidate [idx : i64]) : String
-  (cond
-    [(= idx 0) "%r9"]
-    [(= idx 1) "%rcx"]
-    [(= idx 2) "%rdx"]
-    [(= idx 3) "%r10"]
-    [(= idx 4) "%r11"]
-    [(= idx 5) "%r8"]
-    [(= idx 6) "%r12"]
-    [(= idx 7) "%r13"]
-    [(= idx 8) "%r14"]
-    [(= idx 9) "%r15"]
-    [else "%rbx"]))
-
-;; #switch-headroom: collect the program points (2*I, the live-interval point
-;; space) of every IrInstrSwitch. The switch DISPATCH emitter scavenges up to
-;; TWO scratches (index + jump-table base) whose last read is the indirect
-;; `jmp *(table,idx,8)` itself -- an EMERGENCY pick there is unsound (the
-;; wrap's trailing restore lands AFTER the jmp, unreachable, so a live
-;; occupant is silently clobbered on every arm; observed as a neutered bounds
-;; check in vm_run when this pass first saturated the pool). Pre-GAP2b the
-;; pool never saturated at a dispatch (zero emergency-at-jmp occurrences in
-;; the s2 corpus); the pair pass must PRESERVE that invariant, so a component
-;; is only placed if every switch point covered by a member hull keeps >= 2
-;; free scavenger candidates after the pair claims its registers.
-(define (compiler-reg-group-pair-switch-scan-instrs
-  [instrs : CompilerIrInstrSeq]
-  [out : (Array i64)]
-  [acc : (Array i64)]) : unit
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i count)
-      (begin
-        (match (array.array-ref slots i)
-          [(IrInstrSwitch _ _ _ _)
-            (begin
-              (if (< (array.array-ref acc 1) (array.array-length out))
-                (array.array-set!
-                  out
-                  (array.array-ref acc 1)
-                  (array.array-ref acc 0))
-                unit)
-              (array.array-set! acc 1 (+ (array.array-ref acc 1) 1)))]
-          [_ unit])
-        (array.array-set! acc 0 (+ (array.array-ref acc 0) 2))
-        (set! i (+ i 1))))))
-
-(define (compiler-reg-group-pair-switch-scan-blocks
-  [blocks : CompilerIrBlockList]
-  [out : (Array i64)]
-  [acc : (Array i64)]) : unit
-  (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (begin
-            (compiler-reg-group-pair-switch-scan-instrs instrs out acc)
-            (compiler-reg-group-pair-switch-scan-blocks
-              (box-get rest)
-              out
-              acc))])]
-    [(IrBlockArray seq)
-      (compiler-reg-group-pair-switch-scan-blocks
-        (compiler-ir-block-seq-to-list seq)
-        out
-        acc)]))
-
-(define (compiler-reg-group-pair-switch-points
-  [blocks : CompilerIrBlockList]) : (Array i64)
-  (let
-    [acc : (Array i64) (array.make-array i64 2)]
-    [none : (Array i64) (array.make-array i64 0)]
-    (begin
-      (array.array-set! acc 0 0)
-      (array.array-set! acc 1 0)
-      (compiler-reg-group-pair-switch-scan-blocks blocks none acc)
-      (let
-        [n : i64 (array.array-ref acc 1)]
-        [out : (Array i64) (array.make-array i64 n)]
-        (begin
-          (array.array-set! acc 0 0)
-          (array.array-set! acc 1 0)
-          (compiler-reg-group-pair-switch-scan-blocks blocks out acc)
-          out)))))
-
-;; reg held at point p by any var whose hull covers p.
-(define (compiler-reg-group-pair-reg-busy-at?
-  [assignments : CompilerRegAssignmentTable]
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [vars : i64]
-  [reg : String]
-  [p : i64]) : bool
-  (let
-    [w : i64 0]
-    [hit : bool false]
-    (begin
-      (while (and (< w vars) (not hit))
-        (begin
-          (if (and
-            (>= (array.array-ref starts w) 0)
-            (<= (array.array-ref starts w) p)
-            (<= p (array.array-ref ends w))
-            (compiler-reg-greedy-holds-reg? assignments w reg))
-            (set! hit true)
-            unit)
-          (set! w (+ w 1))))
-      hit)))
-
-(define (compiler-reg-group-pair-reg-used-anywhere?
-  [assignments : CompilerRegAssignmentTable]
-  [vars : i64]
-  [reg : String]) : bool
-  (let
-    [w : i64 0]
-    [hit : bool false]
-    (begin
-      (while (and (< w vars) (not hit))
-        (begin
-          (if (compiler-reg-greedy-holds-reg? assignments w reg)
-            (set! hit true)
-            unit)
-          (set! w (+ w 1))))
-      hit)))
-
-;; Free scavenger candidates at point p with the tentative pair regs treated
-;; busy. A CSR candidate only counts when some var holds it SOMEWHERE in the
-;; function (the scavenger's plan-mask gate: an unsaved CSR is never handed
-;; out); the 6 caller-saved candidates are always scavengeable.
-(define (compiler-reg-group-pair-free-candidates-at
-  [assignments : CompilerRegAssignmentTable]
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [vars : i64]
-  [p : i64]
-  [pair0 : String]
-  [pair1 : String]) : i64
-  (let
-    [idx : i64 0]
-    [free : i64 0]
-    (begin
-      (while (< idx 11)
-        (let
-          [reg : String (compiler-reg-group-pair-scav-candidate idx)]
-          (begin
-            (if (and
-              (not (string.string-eq reg pair0))
-              (not (string.string-eq reg pair1))
-              (not (compiler-reg-group-pair-reg-busy-at?
-                assignments
-                starts
-                ends
-                vars
-                reg
-                p))
-              (or
-                (< idx 6)
-                (compiler-reg-group-pair-reg-used-anywhere?
-                  assignments
-                  vars
-                  reg)))
-              (set! free (+ free 1))
-              unit)
-            (set! idx (+ idx 1)))))
-      free)))
-
-;; TRUE when placing pair0:pair1 for `members` keeps >= 2 free scavenger
-;; candidates at every switch point covered by a member hull.
-(define (compiler-reg-group-pair-switch-headroom-ok?
-  [assignments : CompilerRegAssignmentTable]
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [vars : i64]
-  [switch-points : (Array i64)]
-  [members : (Array i64)]
-  [count : i64]
-  [pair0 : String]
-  [pair1 : String]) : bool
-  (let
-    [si : i64 0]
-    [n : i64 (array.array-length switch-points)]
-    [ok : bool true]
-    (begin
-      (while (and (< si n) ok)
-        (let
-          [p : i64 (array.array-ref switch-points si)]
-          [covered : bool false]
-          [m : i64 0]
-          (begin
-            (while (and (< m count) (not covered))
-              (let
-                [v : i64 (array.array-ref members m)]
-                (begin
-                  (if (and
-                    (<= (array.array-ref starts v) p)
-                    (<= p (array.array-ref ends v)))
-                    (set! covered true)
-                    unit)
-                  (set! m (+ m 1)))))
-            (if (and
-              covered
-              (< (compiler-reg-group-pair-free-candidates-at
-                assignments
-                starts
-                ends
-                vars
-                p
-                pair0
-                pair1)
-                2))
-              (set! ok false)
-              unit)
-            (set! si (+ si 1)))))
-      ok)))
-
 ;; TRUE when any var holding `reg` (scalar home or either pair half)
 ;; interferes with v under the segment-precise index.
 (define (compiler-reg-group-pair-reg-conflicts?
@@ -15892,8 +15672,6 @@
             blocks
             group-vars)]
         [def-counts : (Array i64) (compiler-reg-function-def-counts func)]
-        [switch-points : (Array i64)
-          (compiler-reg-group-pair-switch-points blocks)]
         [parents : (Array i64) (array.make-array i64 vars)]
         [poisoned : (Array bool) (array.make-array bool vars)]
         [members : (Array i64) (array.make-array i64 vars)]
@@ -15933,7 +15711,6 @@
                   excluded
                   starts
                   ends
-                  switch-points
                   poisoned
                   parents
                   members
@@ -15958,7 +15735,6 @@
   [excluded : CompilerLiveI64Set]
   [starts : (Array i64)]
   [ends : (Array i64)]
-  [_switch-points : (Array i64)]
   [poisoned : (Array bool)]
   [parents : (Array i64)]
   [members : (Array i64)]

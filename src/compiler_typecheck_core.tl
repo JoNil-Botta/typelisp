@@ -56025,10 +56025,7 @@
                 (and
                   has-pass-followup
                   (macro-local-followup-work-supported? pass-followup-work))]
-              [can-process-local-module-placeholder : bool
-                (and
-                  has-module-placeholder-followup
-                  (macro-local-followup-work-supported? module-placeholder-work))]
+              [can-process-local-module-placeholder : bool false]
               (cond
                 [can-process-local-pass-followup
                   (match (macro-expand-local-followup-with-setup

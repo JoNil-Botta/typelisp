@@ -47288,18 +47288,20 @@
       resolved)))
 
 (define (macro-type-arg [ctx : TcContext] [decls : AstDeclList] [arg : AstExpr]) : ResultMacroTypeArg
-  (match (ctfe-expr-to-type
-    arg
-    arg
-    (ctfe-env-empty-with-pools (tc-context-pools ctx))
-    (ctfe-fuel-limit))
-    [(ResultCtfeQuoteType.Ok ty _)
-      (match (tc-source-type-policy-ok ctx ty)
-        [(ResultTcUnit.Ok)
-          (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
-        [(ResultTcUnit.Err message)
-          (ResultMacroTypeArg.Err (box (ctfe-diagnostic-at-expr arg message)))])]
-    [(ResultCtfeQuoteType.Err diag) (ResultMacroTypeArg.Err diag)]))
+  (begin
+    (tc-context-capture-active-pools! ctx)
+    (match (ctfe-expr-to-type
+      arg
+      arg
+      (ctfe-env-empty-with-pools (tc-context-pools ctx))
+      (ctfe-fuel-limit))
+      [(ResultCtfeQuoteType.Ok ty _)
+        (match (tc-source-type-policy-ok ctx ty)
+          [(ResultTcUnit.Ok)
+            (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
+          [(ResultTcUnit.Err message)
+            (ResultMacroTypeArg.Err (box (ctfe-diagnostic-at-expr arg message)))])]
+      [(ResultCtfeQuoteType.Err diag) (ResultMacroTypeArg.Err diag)])))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]

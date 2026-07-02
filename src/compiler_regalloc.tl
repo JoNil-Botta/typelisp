@@ -1147,6 +1147,88 @@
     [(IrFunction _ _ _ _ blocks)
       (compiler-reg-block-list-moves blocks CompilerRegMoveNil strict-pairs)]))
 
+;; M-C (part 1): a 64-bit-width integer cast (i64 <-> u64) is a pure register
+;; copy -- the optimizer deliberately KEEPS same-width sign-reinterpreting casts
+;; as IrInstrCast (opt-int-cast-as-mov?) and the backend emits them as a plain
+;; `movq src-home, dst-home` (compiler-backend-emit-cast, the same-size arm),
+;; eliding it when the homes coincide. The bounds-check index temp is exactly
+;; this shape (lower-cast-value i64->u64 feeding IrInstrBoundsCheck). Narrower
+;; same-width casts (i32<->u32 ...) are excluded: their register homes hold the
+;; sign/zero-NORMALIZED 64-bit value, which differs between the signednesses,
+;; so those pairs are not same-valued at the 64-bit register level.
+(define (compiler-reg-int-width-64? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [_ false]))
+
+(define (compiler-reg-cast-copy-64? [from-ty : AstType] [to-ty : AstType]) : bool
+  (and
+    (compiler-reg-int-width-64? from-ty)
+    (compiler-reg-int-width-64? to-ty)))
+
+;; Harvest width-64 int casts as coalescable moves (M-C part 1). Kept SEPARATE
+;; from compiler-reg-function-moves so the SIMD/AVX plan path and the post-hoc
+;; loop-split/remat coalesce rebuilds stay byte-identical; only the scalar-opt2
+;; plan-from seeds its move list with these (appended BEHIND the real moves so
+;; existing first-wins copy-hint priorities are unchanged).
+(define (compiler-reg-cast-move-instr
+  [instr : CompilerIrInstr]
+  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  (match instr
+    [(IrInstrCast dst src from-ty to-ty)
+      (match src
+        [(IrValueVar var)
+          (if (compiler-reg-cast-copy-64? from-ty to-ty)
+            (compiler-reg-move-list-add moves var dst false false)
+            moves)]
+        [_ moves])]
+    [_ moves]))
+
+(define (compiler-reg-cast-moves-seq
+  [instrs : CompilerIrInstrSeq]
+  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerRegMoveList moves]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set! out (compiler-reg-cast-move-instr (array.array-ref slots index) out))
+          (set! index (- index 1))))
+      out)))
+
+(define (compiler-reg-cast-moves-blocks
+  [blocks : CompilerIrBlockList]
+  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  (match blocks
+    [(IrBlockNil) moves]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-cast-moves-blocks
+            (box-get rest)
+            (compiler-reg-cast-moves-seq instrs moves))])]
+    [(IrBlockArray seq)
+      (compiler-reg-cast-moves-blocks
+        (compiler-ir-block-seq-to-list seq)
+        moves)]))
+
+;; function-moves with the width-64 cast copies appended at the TAIL (the cast
+;; list is built first and used as the seed accumulator the real moves are
+;; prepended onto), so every existing move keeps its first-wins position for
+;; copy-hints and the coalesce pass sees the cast pairs last.
+(define (compiler-reg-function-moves-with-casts
+  [func : CompilerIrFunction]
+  [strict-pairs : bool]) : CompilerRegMoveList
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-block-list-moves
+        blocks
+        (compiler-reg-cast-moves-blocks blocks CompilerRegMoveNil)
+        strict-pairs)]))
+
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
@@ -4650,6 +4732,423 @@
             unit)
           (set! var (+ var 1))))
       eligible)))
+
+;; ---------------------------------------------------------------------------
+;; M-C (part 1): same-value coalescing for copies OF mutable sources.
+;;
+;; The single-def-only same-value relation above never merges a copy of a
+;; MUTABLE var (multi-def loop counter, or a phi-defined carry), so the
+;; lowerer's fresh bounds-check index temps (`t = Mov i` / the width-64
+;; `t = Cast i : u64`) each burn a register and a `movq` per iteration.
+;;
+;; Extension rule for `Mov/Cast64 dst <- src` where src is mutable:
+;;   * dst is single-def non-phi and kind-0-eligible (existing semantics),
+;;   * src is kind-0-eligible (existing clobber-span exclusion semantics),
+;;   * both are GP-int scalars (floats/handles/groups excluded),
+;;   * NO def point of the class's mutable member falls inside the LIVENESS
+;;     (segments, hull fallback) of any single-def member of the other class.
+;;
+;; Soundness: the shared register is written by every def of the mutable m and
+;; by each member's copy; two members co-live at q hold different values only
+;; if some def D of m executed between their copy anchors -- but then the
+;; earlier chain link is live AT D (its next use is reachable), so D lies in
+;; that member's live segments and the merge was refused. Phi defs are modeled
+;; at the phi instruction point: the backend writes phi homes only on the
+;; specific CFG edge (single-successor pred ends, where live-out(pred) =
+;; live-in(header), or dedicated `_branch_*` edge blocks -- switches reject phi
+;; targets), and intra-edge-block read/write conflicts are ordered by the
+;; parallel-copy solver, so "live at a write" implies "live at the phi point",
+;; which the segment test sees. A class carries AT MOST ONE mutable member
+;; (mutables only ever enter as copy SOURCES; a second one is refused), and the
+;; def-inside check runs against the WHOLE other class on every union, so
+;; copy-of-copy chains cannot smuggle a member past a def (the chain test).
+;; The conservative interval-index is used (over-approximated liveness can only
+;; refuse more), NOT the EP-relaxed coalesce index.
+;;
+;; The relation is consumed exactly like the single-def one: it only WAIVES the
+;; overlap test for scalar pairs in compiler-reg-coalesce-vars-compatible?; the
+;; merged root inherits the union interval/segments (merged-root-index), so
+;; spans-call/div/shift for the class is the conservative OR of its members.
+;; Only the scalar-opt2 plan builds this relation; SIMD/AVX and the post-hoc
+;; loop-split/remat coalesce rebuilds keep the old builder byte-identical.
+;; ---------------------------------------------------------------------------
+
+(defstruct CompilerRegSvMultiCtx
+  (parents (Array i64))
+  (counts (Array i64))
+  (phi-defs (Array i64))
+  (eligible (Array i64))
+  (class-multi (Array i64))
+  (def-off (Array i64))
+  (def-pts (Array i64))
+  (starts (Array i64))
+  (ends (Array i64))
+  (segments (Array CompilerRegIntervalList))
+  (int-ok (Array i64)))
+
+;; Fill the flattened per-var def-point buckets (block defs only; param entry
+;; defs execute before every instruction and can never fall between two copy
+;; anchors, so they are excluded). Same 2-points-per-instruction numbering as
+;; compiler-reg-clobber-kind-points and the interval builders.
+(define (compiler-reg-sv-def-points-fill-seq
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [cursor : (Array i64)]
+  [pts : (Array i64)]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [v : i64 (compiler-reg-instr-def-var (array.array-ref slots index))]
+            (if (and (>= v 0) (< v (array.array-length cursor)))
+              (let
+                [slot : i64 (array.array-ref cursor v)]
+                (begin
+                  (if (and (>= slot 0) (< slot (array.array-length pts)))
+                    (array.array-set! pts slot p)
+                    unit)
+                  (array.array-set! cursor v (+ slot 1))))
+              unit))
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      p)))
+
+(define (compiler-reg-sv-def-points-fill-blocks
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [cursor : (Array i64)]
+  [pts : (Array i64)]) : i64
+  (match blocks
+    [(IrBlockNil) point]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-sv-def-points-fill-blocks
+            (box-get rest)
+            (compiler-reg-sv-def-points-fill-seq instrs point cursor pts)
+            cursor
+            pts)])]
+    [(IrBlockArray seq)
+      (compiler-reg-sv-def-points-fill-blocks
+        (compiler-ir-block-seq-to-list seq)
+        point
+        cursor
+        pts)]))
+
+(define (compiler-reg-sv-point-in-segments?
+  [segs : CompilerRegIntervalList]
+  [p : i64]) : bool
+  (match segs
+    [(CompilerRegIntervalNil) false]
+    [(CompilerRegIntervalCons head rest)
+      (match head
+        [(CompilerRegInterval _ s e)
+          (if (and (<= s p) (<= p e))
+            true
+            (compiler-reg-sv-point-in-segments? (box-get rest) p))])]))
+
+;; Is point p inside var v's liveness? Segment-precise when segments exist,
+;; whole-hull fallback otherwise. Inclusive at both ends: a def point can never
+;; equal another instruction's point, so inclusivity only rounds block-boundary
+;; geometry conservatively (toward refusing a merge).
+(define (compiler-reg-sv-point-in-var-live?
+  [ctx : CompilerRegSvMultiCtx]
+  [v : i64]
+  [p : i64]) : bool
+  (let
+    [segments : (Array CompilerRegIntervalList) (struct-get ctx segments)]
+    [starts : (Array i64) (struct-get ctx starts)]
+    [ends : (Array i64) (struct-get ctx ends)]
+    [segs : CompilerRegIntervalList
+      (if (and (>= v 0) (< v (array.array-length segments)))
+        (array.array-ref segments v)
+        CompilerRegIntervalNil)]
+    (match segs
+      [(CompilerRegIntervalNil)
+        (if (and (>= v 0) (< v (array.array-length starts)))
+          (and
+            (>= (array.array-ref starts v) 0)
+            (<= (array.array-ref starts v) p)
+            (<= p (array.array-ref ends v)))
+          false)]
+      [_ (compiler-reg-sv-point-in-segments? segs p)])))
+
+;; Does any def point of mutable var m fall inside v's liveness?
+(define (compiler-reg-sv-multi-def-in-var?
+  [ctx : CompilerRegSvMultiCtx]
+  [m : i64]
+  [v : i64]) : bool
+  (let
+    [def-off : (Array i64) (struct-get ctx def-off)]
+    [def-pts : (Array i64) (struct-get ctx def-pts)]
+    (if (or (< m 0) (>= (+ m 1) (array.array-length def-off)))
+      true
+      (let
+        [i : i64 (array.array-ref def-off m)]
+        [stop : i64 (array.array-ref def-off (+ m 1))]
+        [hit : bool false]
+        (begin
+          (while (< i stop)
+            (begin
+              (if (and
+                (not hit)
+                (compiler-reg-sv-point-in-var-live?
+                  ctx
+                  v
+                  (if (and (>= i 0) (< i (array.array-length def-pts)))
+                    (array.array-ref def-pts i)
+                    (- 0 1))))
+                (set! hit true)
+                unit)
+              (set! i (+ i 1))))
+          hit)))))
+
+;; Does any def point of m fall inside the liveness of ANY single-def member of
+;; the class rooted at `root`?
+(define (compiler-reg-sv-multi-conflict?
+  [ctx : CompilerRegSvMultiCtx]
+  [m : i64]
+  [root : i64]) : bool
+  (let
+    [parents : (Array i64) (struct-get ctx parents)]
+    [counts : (Array i64) (struct-get ctx counts)]
+    [phi-defs : (Array i64) (struct-get ctx phi-defs)]
+    [n : i64 (array.array-length parents)]
+    [v : i64 0]
+    [hit : bool false]
+    (begin
+      (while (< v n)
+        (begin
+          (if (and
+            (not hit)
+            (compiler-reg-sv-single-def-non-phi? counts phi-defs v)
+            (= (compiler-reg-sv-find parents v) root)
+            (compiler-reg-sv-multi-def-in-var? ctx m v))
+            (set! hit true)
+            unit)
+          (set! v (+ v 1))))
+      hit)))
+
+;; Metadata-maintaining union: refuses a second mutable member, refuses when the
+;; (dragged or direct) mutable's defs intrude into the other class's liveness,
+;; and records the surviving class's mutable member under the new root.
+(define (compiler-reg-sv-multi-union!
+  [ctx : CompilerRegSvMultiCtx]
+  [a : i64]
+  [b : i64]) : unit
+  (let
+    [parents : (Array i64) (struct-get ctx parents)]
+    [class-multi : (Array i64) (struct-get ctx class-multi)]
+    [ra : i64 (compiler-reg-sv-find parents a)]
+    [rb : i64 (compiler-reg-sv-find parents b)]
+    (if (or (< ra 0) (< rb 0) (= ra rb))
+      unit
+      (let
+        [ma : i64
+          (if (< ra (array.array-length class-multi))
+            (array.array-ref class-multi ra)
+            (- 0 1))]
+        [mb : i64
+          (if (< rb (array.array-length class-multi))
+            (array.array-ref class-multi rb)
+            (- 0 1))]
+        (if (and (>= ma 0) (>= mb 0))
+          unit
+          (let
+            [m : i64
+              (if (>= ma 0)
+                ma
+                mb)]
+            (if (and
+              (>= m 0)
+              (compiler-reg-sv-multi-conflict?
+                ctx
+                m
+                (if (>= ma 0)
+                  rb
+                  ra)))
+              unit
+              (begin
+                (compiler-reg-sv-union! parents a b)
+                (let
+                  [r : i64 (compiler-reg-sv-find parents a)]
+                  (if (and (>= r 0) (< r (array.array-length class-multi)))
+                    (array.array-set! class-multi r m)
+                    unit))))))))))
+
+(define (compiler-reg-sv-int-ok? [int-ok : (Array i64)] [v : i64]) : bool
+  (and
+    (>= v 0)
+    (< v (array.array-length int-ok))
+    (= (array.array-ref int-ok v) 1)))
+
+;; One copy pair (Mov, or width-64 int Cast). The single-def-src path mirrors
+;; the original relation (no type restriction); the mutable-src path is the
+;; M-C extension, GP-int scalars only.
+(define (compiler-reg-sv-multi-pair!
+  [ctx : CompilerRegSvMultiCtx]
+  [svar : i64]
+  [dst : i64]) : unit
+  (let
+    [counts : (Array i64) (struct-get ctx counts)]
+    [phi-defs : (Array i64) (struct-get ctx phi-defs)]
+    [eligible : (Array i64) (struct-get ctx eligible)]
+    [int-ok : (Array i64) (struct-get ctx int-ok)]
+    (if (and
+      (compiler-reg-sv-single-def-non-phi? counts phi-defs dst)
+      (compiler-reg-sv-eligible? eligible dst)
+      (compiler-reg-sv-eligible? eligible svar))
+      (if (compiler-reg-sv-single-def-non-phi? counts phi-defs svar)
+        (compiler-reg-sv-multi-union! ctx svar dst)
+        (if (and
+          (compiler-reg-sv-int-ok? int-ok svar)
+          (compiler-reg-sv-int-ok? int-ok dst))
+          (compiler-reg-sv-multi-union! ctx svar dst)
+          unit))
+      unit)))
+
+(define (compiler-reg-sv-multi-add-instr!
+  [instr : CompilerIrInstr]
+  [ctx : CompilerRegSvMultiCtx]) : unit
+  (match instr
+    [(IrInstrMov dst src _)
+      (match src
+        [(IrValueVar svar) (compiler-reg-sv-multi-pair! ctx svar dst)]
+        [_ unit])]
+    [(IrInstrCast dst src from-ty to-ty)
+      (match src
+        [(IrValueVar svar)
+          (if (compiler-reg-cast-copy-64? from-ty to-ty)
+            (compiler-reg-sv-multi-pair! ctx svar dst)
+            unit)]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-reg-sv-multi-seq!
+  [instrs : CompilerIrInstrSeq]
+  [ctx : CompilerRegSvMultiCtx]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-sv-multi-add-instr! (array.array-ref slots index) ctx)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-sv-multi-blocks!
+  [blocks : CompilerIrBlockList]
+  [ctx : CompilerRegSvMultiCtx]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs) (compiler-reg-sv-multi-seq! instrs ctx)])
+        (compiler-reg-sv-multi-blocks! (box-get rest) ctx))]
+    [(IrBlockArray seq)
+      (compiler-reg-sv-multi-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        ctx)]))
+
+;; Build the extended same-value relation (scalar-opt2 plan path only).
+(define (compiler-reg-function-same-value-parents-multi
+  [func : CompilerIrFunction]
+  [eligible : (Array i64)]
+  [type-info : CompilerRegVarTypes]
+  [interval-index : CompilerRegIntervalIndex]) : (Array i64)
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [counts : (Array i64) (compiler-reg-function-def-counts func)]
+        [phi-defs : (Array i64) (array.make-array i64 vars)]
+        [parents : (Array i64) (array.make-array i64 vars)]
+        [class-multi : (Array i64) (array.make-array i64 vars)]
+        [int-ok : (Array i64) (array.make-array i64 vars)]
+        [bucket : (Array i64) (array.make-array i64 vars)]
+        [def-off : (Array i64) (array.make-array i64 (+ vars 1))]
+        [index : i64 0]
+        (begin
+          (compiler-reg-fill-i64-array phi-defs 0)
+          (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
+          (compiler-reg-fill-i64-array bucket 0)
+          (compiler-reg-count-block-defs! blocks bucket)
+          (array.array-set! def-off 0 0)
+          (while (< index vars)
+            (begin
+              (array.array-set!
+                def-off
+                (+ index 1)
+                (+
+                  (array.array-ref def-off index)
+                  (array.array-ref bucket index)))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (let
+            [total : i64 (array.array-ref def-off vars)]
+            [def-pts : (Array i64)
+              (array.make-array
+                i64
+                (if (< total 1)
+                  1
+                  total))]
+            [cursor : (Array i64) (array.make-array i64 vars)]
+            (begin
+              (while (< index vars)
+                (begin
+                  (array.array-set! parents index index)
+                  (array.array-set! cursor index (array.array-ref def-off index))
+                  (array.array-set!
+                    class-multi
+                    index
+                    (if (compiler-reg-sv-single-def-non-phi?
+                      counts
+                      phi-defs
+                      index)
+                      (- 0 1)
+                      index))
+                  (array.array-set!
+                    int-ok
+                    index
+                    (match (compiler-reg-var-types-lookup type-info index)
+                      [(CompilerRegSomeType ty)
+                        (if (and
+                          (compiler-reg-scalar-type? ty)
+                          (not (compiler-reg-float-type? ty)))
+                          1
+                          0)]
+                      [(CompilerRegNoType) 0]))
+                  (set! index (+ index 1))))
+              (let
+                [_fill : i64
+                  (compiler-reg-sv-def-points-fill-blocks
+                    blocks
+                    0
+                    cursor
+                    def-pts)]
+                (begin
+                  (compiler-reg-sv-multi-blocks!
+                    blocks
+                    (CompilerRegSvMultiCtx
+                      parents
+                      counts
+                      phi-defs
+                      eligible
+                      class-multi
+                      def-off
+                      def-pts
+                      (struct-get interval-index starts)
+                      (struct-get interval-index ends)
+                      (struct-get interval-index segments)
+                      int-ok))
+                  parents))))))]))
 
 (define (compiler-reg-same-value-class?
   [parents : (Array i64)]
@@ -13515,6 +14014,111 @@
       (compiler-reg-arg-pref-args! args prefs parents)]
     [_ unit]))
 
+;; M-C (part 2): call-result %rax preference. The backend stores a scalar call
+;; result from %rax into the dst var's home (`movq %rax, <home>` via
+;; emit-call-result-store), so homing the dst IN %rax turns that store into an
+;; elided self-move. Record a free-only bias toward the pool index of %rax for
+;; every var defined by a call-like instruction with a GP-scalar result. Same
+;; substrate and consumption as the outgoing-arg preference: first-wins per
+;; coalesce root, tried free-only in alloc-one! (never evicts), declined for
+;; csr-only roots (call-spanning or param classes -- %rax is illegal across a
+;; kind-0 clobber anyway), and filtered against the per-root forbidden set (a
+;; div-spanning root already excludes %rax). Float results return in %xmm0 --
+;; skipped. Group results use the return register PAIR -- their dst is a group
+;; var alloc-one! skips before reading prefs, so a stray pref would be inert;
+;; the C-ABI StoreResult forms write memory slots and are omitted entirely.
+;; Registered AFTER the arg walk so an existing arg-register preference keeps
+;; priority (either bias elides exactly one mov for arg-and-result vars).
+(define (compiler-reg-result-pref-var!
+  [dst : i64]
+  [rax-idx : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (if (< rax-idx 0)
+    unit
+    (let
+      [root : i64
+        (if (if (>= dst 0)
+          (< dst (array.array-length parents))
+          false)
+          (array.array-ref parents dst)
+          dst)]
+      (if (if (>= root 0)
+        (< root (array.array-length prefs))
+        false)
+        (if (< (array.array-ref prefs root) 0)
+          (begin
+            (array.array-set! prefs root rax-idx)
+            unit)
+          unit)
+        unit))))
+
+(define (compiler-reg-result-pref-instr!
+  [instr : CompilerIrInstr]
+  [rax-idx : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match instr
+    [(IrInstrCall dst _ _ ty)
+      (if (compiler-reg-float-type? ty)
+        unit
+        (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
+    [(IrInstrCallIndirect dst _ _ ty)
+      (if (compiler-reg-float-type? ty)
+        unit
+        (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
+    [(IrInstrCallIndirectC dst _ _ ty)
+      (if (compiler-reg-float-type? ty)
+        unit
+        (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
+    [(IrInstrSyscall dst _)
+      (compiler-reg-result-pref-var! dst rax-idx prefs parents)]
+    [_ unit]))
+
+(define (compiler-reg-result-pref-seq!
+  [instrs : CompilerIrInstrSeq]
+  [rax-idx : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-result-pref-instr!
+            (array.array-ref slots index)
+            rax-idx
+            prefs
+            parents)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-result-pref-blocks!
+  [blocks : CompilerIrBlockList]
+  [rax-idx : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])
+        (compiler-reg-result-pref-blocks!
+          (box-get rest)
+          rax-idx
+          prefs
+          parents))]
+    [(IrBlockArray seq)
+      (compiler-reg-result-pref-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        rax-idx
+        prefs
+        parents)]))
+
 (define (compiler-reg-arg-pref-seq!
   [instrs : CompilerIrInstrSeq]
   [prefs : (Array i64)]
@@ -13573,7 +14177,19 @@
         [(CompilerRegAbiLinux)
           (match func
             [(IrFunction _ _ _ _ blocks)
-              (compiler-reg-arg-pref-blocks! blocks prefs parents)])]
+              (begin
+                (compiler-reg-arg-pref-blocks! blocks prefs parents)
+                ;; M-C (part 2): call-result %rax bias fills roots the arg walk
+                ;; left unbiased. The pool index is looked up from the live pool
+                ;; definition so it tracks any pool reorder (SysV: index 0).
+                (compiler-reg-result-pref-blocks!
+                  blocks
+                  (compiler-reg-string-list-index-of
+                    (compiler-reg-greedy-integer-pool)
+                    "%rax"
+                    0)
+                  prefs
+                  parents))])]
         [(CompilerRegAbiWindows) unit])
       prefs)))
 
@@ -13663,7 +14279,13 @@
       ;; #3489 (PR3): phi back-edge moves NON-strict so loop-carried phi/copy
       ;; pairs coalesce (then merge into one root via PR2). SIMD already passed
       ;; false here; only the scalar-opt2 plan gains the loop coalescing.
-      (compiler-reg-function-moves func false)]
+      ;; M-C (part 1): the scalar-opt2 path additionally harvests width-64 int
+      ;; casts as copies (appended at the tail; see function-moves-with-casts),
+      ;; so the bounds-check index temps can coalesce with their sources. The
+      ;; SIMD/AVX path keeps the plain move list byte-identical.
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-moves-with-casts func false)
+        (compiler-reg-function-moves func false))]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
     ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
@@ -13686,9 +14308,21 @@
     ;; represented by normal interference and must not be bypassed by an overlap
     ;; waiver.
     [sv-parents : (Array i64)
-      (compiler-reg-function-same-value-parents-filtered
-        func
-        (compiler-reg-same-value-eligible-vars interval-index clobber-points))]
+      ;; M-C (part 1): the scalar-opt2 path uses the extended relation that also
+      ;; admits copies of mutable (multi-def / phi-def) sources under the
+      ;; def-inside-liveness safety check; other paths keep the single-def-only
+      ;; builder (their coalesce map is empty anyway).
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-same-value-parents-multi
+          func
+          (compiler-reg-same-value-eligible-vars interval-index clobber-points)
+          type-info
+          interval-index)
+        (compiler-reg-function-same-value-parents-filtered
+          func
+          (compiler-reg-same-value-eligible-vars
+            interval-index
+            clobber-points)))]
     ;; Edge-precise interference index (LLVM PHIElimination semantics) used ONLY to
     ;; gate coalescing: a loop-carried phi value and its back-edge / merge input do
     ;; not really interfere (the conservative index spuriously overlaps them via
@@ -18269,6 +18903,101 @@
                 IrInstrNil)))))
       IrBlockNil)))
 
+;; M-C (part 1) census shapes for the extended (mutable-source) same-value
+;; relation. `safe`: the source's second def lies OUTSIDE the copy's liveness
+;; -> merge. `reject`: the second def lands between the copy and its use ->
+;; refused. `chain`: a copy-of-copy must not smuggle a member past the def
+;; (the transitive hazard). `cast`: the width-64 int cast counts as a copy.
+(define (compiler-reg-sv-multi-safe-function) : CompilerIrFunction
+  (IrFunction
+    "sv_multi_safe"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))))))
+      IrBlockNil)))
+
+(define (compiler-reg-sv-multi-reject-function) : CompilerIrFunction
+  (IrFunction
+    "sv_multi_reject"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))))))
+      IrBlockNil)))
+
+(define (compiler-reg-sv-multi-chain-function) : CompilerIrFunction
+  (IrFunction
+    "sv_multi_chain"
+    IrParamNil
+    (AstTyI64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrMov 3 (IrValueVar 2) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "g" (IrValueVar 3) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                    IrInstrNil)))))))
+      IrBlockNil)))
+
+(define (compiler-reg-sv-multi-cast-function) : CompilerIrFunction
+  (IrFunction
+    "sv_multi_cast"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrCast 1 (IrValueVar 0) (AstTyI64) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrStore "g" (IrValueVar 1) (AstTyU64))
+              (compiler-ir-instr-cons
+                (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))))))
+      IrBlockNil)))
+
 (define (compiler-reg-interference-blocks-coalesce-function) : CompilerIrFunction
   (IrFunction
     "interference_blocks_coalesce"
@@ -21613,6 +22342,41 @@
                 (compiler-reg-clobber-kind-points func 0)))]
           (not (compiler-reg-same-value-class? parents 0 2)))])))
 
+;; M-C (part 1): build the extended relation the way plan-from does (precise
+;; selection index + kind-0 eligibility + var types).
+(define (compiler-reg-sv-multi-parents-for [func : CompilerIrFunction]) : (Array
+    i64)
+  (match (compiler-reg-live-interval-selection
+    func
+    (compiler-live-analyze-function func))
+    [(CompilerRegIntervalSelection _ interval-index)
+      (compiler-reg-function-same-value-parents-multi
+        func
+        (compiler-reg-same-value-eligible-vars
+          interval-index
+          (compiler-reg-clobber-kind-points func 0))
+        (compiler-reg-function-var-types func)
+        interval-index)]))
+
+(define (compiler-reg-sv-multi-ok?) : bool
+  (let
+    [safe : (Array i64)
+      (compiler-reg-sv-multi-parents-for (compiler-reg-sv-multi-safe-function))]
+    [reject : (Array i64)
+      (compiler-reg-sv-multi-parents-for
+        (compiler-reg-sv-multi-reject-function))]
+    [chain : (Array i64)
+      (compiler-reg-sv-multi-parents-for (compiler-reg-sv-multi-chain-function))]
+    [cast : (Array i64)
+      (compiler-reg-sv-multi-parents-for (compiler-reg-sv-multi-cast-function))]
+    (and
+      (compiler-reg-same-value-class? safe 0 1)
+      (not (compiler-reg-same-value-class? reject 0 1))
+      (compiler-reg-same-value-class? chain 2 3)
+      (not (compiler-reg-same-value-class? chain 0 2))
+      (not (compiler-reg-same-value-class? chain 0 3))
+      (compiler-reg-same-value-class? cast 0 1))))
+
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
     [(CompilerRegPlan chain-assignments _ _ _ _ _)
@@ -21644,7 +22408,8 @@
                         (compiler-reg-merged-root-overlap-segments-ok?)
                         (compiler-reg-same-value-multi-def-census-ok?)
                         (compiler-reg-same-value-phi-census-ok?)
-                        (compiler-reg-same-value-clobber-census-ok?))])])])])]))
+                        (compiler-reg-same-value-clobber-census-ok?)
+                        (compiler-reg-sv-multi-ok?))])])])])]))
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))

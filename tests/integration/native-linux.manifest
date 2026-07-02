@@ -46,6 +46,8 @@ param_csr_home|tests/integration/param_csr_home.tl|42|-|-|stdlib/io.tl
 handle_arg_csr|tests/integration/handle_arg_csr.tl|42|-|-|stdlib/io.tl
 dead_result_store|tests/integration/dead_result_store.tl|42|-|-|stdlib/io.tl
 group_mov_coalesce|tests/integration/group_mov_coalesce.tl|42|-|-|stdlib/io.tl
+idx_copy_coalesce|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl
+call_result_rax|tests/integration/call_result_rax.tl|42|-|-|stdlib/io.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-

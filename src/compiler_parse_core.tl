@@ -8956,7 +8956,7 @@
                 [(AstDeclList.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Begin exprs)
-                      (if (= (ast-expr-list-len (& exprs)) 2)
+                      (if (>= (ast-expr-list-len (& exprs)) 2)
                         (let
                           [first : AstExpr
                             (ast-node-get (ast-expr-list-get (& exprs) 0 0))]

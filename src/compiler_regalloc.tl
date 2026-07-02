@@ -2985,11 +2985,19 @@
 
 (define (compiler-reg-integer-param-type? [ty : AstType]) : bool
   (and
-    ;; Local handle values are register-eligible after lowering, but aggregate
-    ;; ABI params can be incoming by-reference values used by backend copy/allocation
-    ;; sequences. Only true scalar integer/pointer params can keep their incoming
-    ;; ABI home.
-    (compiler-reg-scalar-type? ty)
+    ;; GAP3b: pin-eligibility matches greedy-eligibility
+    ;; (compiler-reg-param-greedy-eligible?). An 8-byte handle (Array/String/
+    ;; enum/struct descriptor pointer) arriving in %rdi is pin-identical to a
+    ;; scalar: M-A2/M-C2 established handles as ordinary GP values the backend
+    ;; moves with a plain movq, and M-A already let handle params take greedy
+    ;; CSR homes in every function -- the pin path kept a stale scalar-only
+    ;; restriction from the pre-M-A era, paying an entry copy plus a
+    ;; callee-saved save for every handle param of a zero-clobber leaf
+    ;; (sum_array shape). Floats keep the XMM exclusion; two-word register
+    ;; groups occupy two ABI slots and keep the legacy stack home; genuinely
+    ;; by-reference/address-taken params are excluded upstream by
+    ;; base-ineligible (compiler-reg-param-pin-safe?).
+    (compiler-reg-register-eligible-type? ty)
     (not (compiler-reg-float-type? ty))
     (not (compiler-reg-type-register-group? ty))))
 
@@ -21238,11 +21246,11 @@
 
 (cfg
   test
-  ;; M-A (RC1): an aggregate-HANDLE param (8-byte struct descriptor) is still
-  ;; never PINNED to its incoming ABI register (integer-param-type? demands a
-  ;; true scalar), but it is register-eligible and now becomes a greedy
-  ;; candidate with a callee-saved home instead of being stack-homed.
-  (define (compiler-reg-scalar-aggregate-param-not-pinned-ok?) : bool
+  ;; GAP3b: an aggregate-HANDLE param (8-byte struct descriptor) is
+  ;; pin-eligible exactly like a scalar (integer-param-type? widened to
+  ;; register-eligible), so in this zero-clobber function it keeps its
+  ;; incoming %rdi instead of the M-A-era greedy callee-saved home.
+  (define (compiler-reg-scalar-aggregate-param-pinned-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-aggregate-function))
@@ -21251,7 +21259,7 @@
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r12"))])))
+            "%rdi"))])))
 
 ;; M-A (RC1): a used param's interval is force-extended to the function's first
 ;; point (the entry copy writes its home register in the prologue), so the
@@ -24628,7 +24636,7 @@
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
     (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
     (cfg test (compiler-reg-scalar-param-var-shift-no-pin-ok?) true)
-    (cfg test (compiler-reg-scalar-aggregate-param-not-pinned-ok?) true)
+    (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)

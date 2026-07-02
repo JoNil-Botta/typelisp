@@ -51,12 +51,20 @@
   (Ok AstParamList)
   (Err String))
 
+(defenum ResultAstParamListBuild
+  (Ok)
+  (Err String))
+
 (defenum ResultAstMacroParam
   (Ok AstMacroParam)
   (Err String))
 
 (defenum ResultAstMacroParamList
   (Ok AstMacroParamList)
+  (Err String))
+
+(defenum ResultAstMacroParamListBuild
+  (Ok)
   (Err String))
 
 (defenum ResultAstFieldDef
@@ -1915,16 +1923,18 @@
     [_ (ResultAstParam.Err "parse: malformed parameter")]))
 
 (define (ast-param-list-has-comptime? [params : AstParamList]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ _ is-comptime)
-            (if is-comptime
-              true
-              (ast-param-list-has-comptime? rest))]))]))
+  (ast-param-list-has-comptime-at? (& params) 0))
+
+(define (ast-param-list-has-comptime-at?
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ _ is-comptime)
+        (if is-comptime
+          true
+          (ast-param-list-has-comptime-at? params (+ index 1)))])))
 
 (define (ast-macro-param-variadic? [param : AstMacroParam]) : bool
   (match param
@@ -1991,44 +2001,68 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstMacroParamList
+  (let
+    [out : AstMacroParamList (ast-macro-param-list-new)]
+    (match (parse-ast-macro-param-list-into dispatch pools s (&mut out))
+      [(ResultAstMacroParamListBuild.Ok) (ResultAstMacroParamList.Ok out)]
+      [(ResultAstMacroParamListBuild.Err message)
+        (ResultAstMacroParamList.Err message)])))
+
+(define (parse-ast-macro-param-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [out : (&mut out AstMacroParamList)]) : ResultAstMacroParamListBuild
   (match s
-    [(Sexpr.Nil) (ResultAstMacroParamList.Ok AstMacroParamList.Nil)]
+    [(Sexpr.Nil) ResultAstMacroParamListBuild.Ok]
     [(Sexpr.Cons head tail)
       (match (parse-ast-macro-param dispatch pools (box-get head))
         [(ResultAstMacroParam.Ok parsed-head)
           (if (ast-macro-param-variadic? parsed-head)
             (match (box-get tail)
               [(Sexpr.Nil)
-                (ResultAstMacroParamList.Ok
-                  (ast-macro-param-cons parsed-head AstMacroParamList.Nil))]
+                (begin
+                  (ast-macro-param-list-push out parsed-head)
+                  ResultAstMacroParamListBuild.Ok)]
               [_
-                (ResultAstMacroParamList.Err
+                (ResultAstMacroParamListBuild.Err
                   "parse: variadic macro operand must be final")])
-            (match (parse-ast-macro-param-list dispatch pools (box-get tail))
-              [(ResultAstMacroParamList.Ok parsed-tail)
-                (ResultAstMacroParamList.Ok
-                  (ast-macro-param-cons parsed-head parsed-tail))]
-              [(ResultAstMacroParamList.Err message)
-                (ResultAstMacroParamList.Err message)]))]
+            (begin
+              (ast-macro-param-list-push out parsed-head)
+              (parse-ast-macro-param-list-into
+                dispatch
+                pools
+                (box-get tail)
+                out)))]
         [(ResultAstMacroParam.Err message)
-          (ResultAstMacroParamList.Err message)])]
-    [_ (ResultAstMacroParamList.Err "parse: malformed macro operand list")]))
+          (ResultAstMacroParamListBuild.Err message)])]
+    [_ (ResultAstMacroParamListBuild.Err "parse: malformed macro operand list")]))
 
 (define (parse-ast-param-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstParamList
+  (let
+    [out : AstParamList (ast-param-list-new)]
+    (match (parse-ast-param-list-into dispatch pools s (&mut out))
+      [(ResultAstParamListBuild.Ok) (ResultAstParamList.Ok out)]
+      [(ResultAstParamListBuild.Err message) (ResultAstParamList.Err message)])))
+
+(define (parse-ast-param-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [out : (&mut out AstParamList)]) : ResultAstParamListBuild
   (match s
-    [(Sexpr.Nil) (ResultAstParamList.Ok AstParamList.Nil)]
+    [(Sexpr.Nil) ResultAstParamListBuild.Ok]
     [(Sexpr.Cons head tail)
       (match (parse-ast-param dispatch pools (box-get head))
         [(ResultAstParam.Ok parsed-head)
-          (match (parse-ast-param-list dispatch pools (box-get tail))
-            [(ResultAstParamList.Ok parsed-tail)
-              (ResultAstParamList.Ok (ast-param-cons parsed-head parsed-tail))]
-            [(ResultAstParamList.Err message) (ResultAstParamList.Err message)])]
-        [(ResultAstParam.Err message) (ResultAstParamList.Err message)])]
-    [_ (ResultAstParamList.Err "parse: malformed parameter list")]))
+          (begin
+            (ast-param-list-push out parsed-head)
+            (parse-ast-param-list-into dispatch pools (box-get tail) out))]
+        [(ResultAstParam.Err message) (ResultAstParamListBuild.Err message)])]
+    [_ (ResultAstParamListBuild.Err "parse: malformed parameter list")]))
 
 (define (parse-ast-field-cleanup [s : Sexpr]) : ResultAstFieldCleanup
   (match s
@@ -8560,10 +8594,7 @@
   0)")
 
 (define (compiler-parse-param-list-count [params : AstParamList]) : i64
-  (match params
-    [(AstParamList.Nil) 0]
-    [(AstParamList.Cons _ rest)
-      (+ 1 (compiler-parse-param-list-count (box-get rest)))]))
+  (ast-param-list-len (& params)))
 
 (define (compiler-parse-type-list-count [types : AstTypeList]) : i64
   (ast-type-list-len (& types)))
@@ -8878,35 +8909,31 @@
               [rest : AstDeclList (box-get rest)]
               (match rest
                 [(AstDeclList.Nil)
-                  (match params
-                    [(AstParamList.Cons (AstParam.Param _ first-ty false) rest0)
-                      (let
-                        [rest0 : AstParamList (box-get rest0)]
-                        (and
-                          (compiler-parse-type-ref-string? first-ty "r")
-                          (match rest0
-                            [(AstParamList.Cons
-                                (AstParam.Param _ second-ty false)
-                                rest1)
-                              (let
-                                [rest1 : AstParamList (box-get rest1)]
-                                (and
-                                  (compiler-parse-type-ref-str? second-ty "r")
-                                  (match rest1
-                                    [(AstParamList.Cons
-                                        (AstParam.Param _ third-ty false)
-                                        rest2)
-                                      (let
-                                        [rest2 : AstParamList (box-get rest2)]
-                                        (match rest2
-                                          [(AstParamList.Nil)
-                                            (compiler-parse-type-mut-ref-dyn-array-i64?
-                                              third-ty
-                                              "phase")]
-                                          [_ false]))]
-                                    [_ false])))]
-                            [_ false])))]
-                    [_ false])]
+                  (and
+                    (= (ast-param-list-len (& params)) 3)
+                    (match (ast-param-list-get
+                      (& params)
+                      0
+                      (ast-param-fallback))
+                      [(AstParam.Param _ first-ty false)
+                        (compiler-parse-type-ref-string? first-ty "r")]
+                      [_ false])
+                    (match (ast-param-list-get
+                      (& params)
+                      1
+                      (ast-param-fallback))
+                      [(AstParam.Param _ second-ty false)
+                        (compiler-parse-type-ref-str? second-ty "r")]
+                      [_ false])
+                    (match (ast-param-list-get
+                      (& params)
+                      2
+                      (ast-param-fallback))
+                      [(AstParam.Param _ third-ty false)
+                        (compiler-parse-type-mut-ref-dyn-array-i64?
+                          third-ty
+                          "phase")]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -10734,20 +10761,20 @@
                 [(AstDeclList.Nil)
                   (and
                     (= name (intern "all"))
-                    (match params
-                      [(AstMacroParamList.Cons
-                          (AstMacroParam.Param first (AstType.Bool) false)
-                          tail)
-                        (let
-                          [tail : AstMacroParamList (box-get tail)]
-                          (match tail
-                            [(AstMacroParamList.Cons
-                                (AstMacroParam.Param rest (AstType.Bool) true)
-                                AstMacroParamList.Nil)
-                              (and
-                                (= first (intern "first"))
-                                (= rest (intern "rest")))]
-                            [_ false]))]
+                    (= (ast-macro-param-list-len (& params)) 2)
+                    (match (ast-macro-param-list-get
+                      (& params)
+                      0
+                      (ast-macro-param-fallback))
+                      [(AstMacroParam.Param first (AstType.Bool) false)
+                        (= first (intern "first"))]
+                      [_ false])
+                    (match (ast-macro-param-list-get
+                      (& params)
+                      1
+                      (ast-macro-param-fallback))
+                      [(AstMacroParam.Param rest (AstType.Bool) true)
+                        (= rest (intern "rest"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]

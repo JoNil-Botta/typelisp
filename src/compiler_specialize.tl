@@ -230,14 +230,17 @@
     [_ false]))
 
 (define (spec-param-list-has-comptime? [params : AstParamList]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (if (spec-param-comptime? param)
-          true
-          (spec-param-list-has-comptime? rest)))]))
+  (spec-param-list-has-comptime-at? (& params) 0))
+
+(define (spec-param-list-has-comptime-at?
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (if (spec-param-comptime?
+      (ast-param-list-get params index (ast-param-fallback)))
+      true
+      (spec-param-list-has-comptime-at? params (+ index 1)))))
 
 (define (spec-template-shadow-contains?
   [shadowed : SpecTemplateShadowList]
@@ -320,14 +323,20 @@
 (define (spec-template-env-shadow-params
   [templates : SpecTemplateEnv]
   [params : AstParamList]) : SpecTemplateEnv
-  (match params
-    [(AstParamList.Nil) templates]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (spec-template-env-shadow-params
-          (spec-template-env-shadow-name templates (spec-param-name param))
-          rest))]))
+  (spec-template-env-shadow-params-at templates (& params) 0))
+
+(define (spec-template-env-shadow-params-at
+  [templates : SpecTemplateEnv]
+  [params : (& params AstParamList)]
+  [index : i64]) : SpecTemplateEnv
+  (if (>= index (ast-param-list-len params))
+    templates
+    (spec-template-env-shadow-params-at
+      (spec-template-env-shadow-name
+        templates
+        (spec-param-name (ast-param-list-get params index (ast-param-fallback))))
+      params
+      (+ index 1))))
 
 (define (spec-template-env-shadow-let-binding-names
   [templates : SpecTemplateEnv]
@@ -727,22 +736,24 @@
             (= a-comptime b-comptime))])]))
 
 (define (gen-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
-  (match a
-    [(AstParamList.Nil)
-      (match b
-        [(AstParamList.Nil) true]
-        [_ false])]
-    [(AstParamList.Cons a-head a-rest)
-      (let
-        [a-rest : AstParamList (box-get a-rest)]
-        (match b
-          [(AstParamList.Cons b-head b-rest)
-            (let
-              [b-rest : AstParamList (box-get b-rest)]
-              (and
-                (gen-param-eq? a-head b-head)
-                (gen-param-list-eq? a-rest b-rest)))]
-          [_ false]))]))
+  (let
+    [len : i64 (ast-param-list-len (& a))]
+    (and
+      (= len (ast-param-list-len (& b)))
+      (gen-param-list-eq-at? (& a) (& b) len 0))))
+
+(define (gen-param-list-eq-at?
+  [a : (& a AstParamList)]
+  [b : (& b AstParamList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (gen-param-eq?
+        (ast-param-list-get a index (ast-param-fallback))
+        (ast-param-list-get b index (ast-param-fallback)))
+      (gen-param-list-eq-at? a b len (+ index 1)))))
 
 (define (gen-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
   (match a
@@ -757,22 +768,24 @@
 (define (gen-macro-param-list-eq?
   [a : AstMacroParamList]
   [b : AstMacroParamList]) : bool
-  (match a
-    [(AstMacroParamList.Nil)
-      (match b
-        [(AstMacroParamList.Nil) true]
-        [_ false])]
-    [(AstMacroParamList.Cons a-head a-rest)
-      (let
-        [a-rest : AstMacroParamList (box-get a-rest)]
-        (match b
-          [(AstMacroParamList.Cons b-head b-rest)
-            (let
-              [b-rest : AstMacroParamList (box-get b-rest)]
-              (and
-                (gen-macro-param-eq? a-head b-head)
-                (gen-macro-param-list-eq? a-rest b-rest)))]
-          [_ false]))]))
+  (let
+    [len : i64 (ast-macro-param-list-len (& a))]
+    (and
+      (= len (ast-macro-param-list-len (& b)))
+      (gen-macro-param-list-eq-at? (& a) (& b) len 0))))
+
+(define (gen-macro-param-list-eq-at?
+  [a : (& a AstMacroParamList)]
+  [b : (& b AstMacroParamList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (gen-macro-param-eq?
+        (ast-macro-param-list-get a index (ast-macro-param-fallback))
+        (ast-macro-param-list-get b index (ast-macro-param-fallback)))
+      (gen-macro-param-list-eq-at? a b len (+ index 1)))))
 
 (define (gen-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
   (match a
@@ -1646,14 +1659,20 @@
 (define (spec-value-subst-remove-params
   [subs : SpecValueSubst]
   [params : AstParamList]) : SpecValueSubst
-  (match params
-    [(AstParamList.Nil) subs]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (spec-value-subst-remove-params
-          (spec-value-subst-remove-name subs (spec-param-name param))
-          rest))]))
+  (spec-value-subst-remove-params-at subs (& params) 0))
+
+(define (spec-value-subst-remove-params-at
+  [subs : SpecValueSubst]
+  [params : (& params AstParamList)]
+  [index : i64]) : SpecValueSubst
+  (if (>= index (ast-param-list-len params))
+    subs
+    (spec-value-subst-remove-params-at
+      (spec-value-subst-remove-name
+        subs
+        (spec-param-name (ast-param-list-get params index (ast-param-fallback))))
+      params
+      (+ index 1))))
 
 (define (spec-value-subst-remove-let-binding-names
   [subs : SpecValueSubst]
@@ -1720,14 +1739,20 @@
 (define (spec-type-subst-remove-params
   [subs : SpecTypeSubst]
   [params : AstParamList]) : SpecTypeSubst
-  (match params
-    [(AstParamList.Nil) subs]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (spec-type-subst-remove-params
-          (spec-type-subst-remove-name subs (spec-param-name param))
-          rest))]))
+  (spec-type-subst-remove-params-at subs (& params) 0))
+
+(define (spec-type-subst-remove-params-at
+  [subs : SpecTypeSubst]
+  [params : (& params AstParamList)]
+  [index : i64]) : SpecTypeSubst
+  (if (>= index (ast-param-list-len params))
+    subs
+    (spec-type-subst-remove-params-at
+      (spec-type-subst-remove-name
+        subs
+        (spec-param-name (ast-param-list-get params index (ast-param-fallback))))
+      params
+      (+ index 1))))
 
 (define (spec-type-subst-remove-let-binding-names
   [subs : SpecTypeSubst]
@@ -1851,16 +1876,27 @@
 (define (spec-substitute-param-types
   [params : AstParamList]
   [subs : SpecTypeSubst]) : AstParamList
-  (match params
-    [(AstParamList.Nil) AstParamList.Nil]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty _)
-            (ast-param-cons
-              (AstParam.Param name (spec-substitute-type ty subs) false)
-              (spec-substitute-param-types rest subs))]))]))
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (spec-substitute-param-types-into (& params) subs 0 (&mut out))
+      out)))
+
+(define (spec-substitute-param-types-into
+  [params : (& params AstParamList)]
+  [subs : SpecTypeSubst]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name ty _)
+          (ast-param-list-push
+            out
+            (AstParam.Param name (spec-substitute-type ty subs) false))])
+      (spec-substitute-param-types-into params subs (+ index 1) out))))
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
@@ -2155,175 +2191,183 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [fn-name : String]) : ResultSpecArgs
-  (match params
-    [(AstParamList.Nil)
-      (if (= (struct-get (& args) len) 0)
+  (spec-rewrite-specialized-args-at
+    (& params)
+    (& args)
+    0
+    templates
+    state
+    fn-name))
+
+(define (spec-rewrite-specialized-args-at
+  [params : (& params AstParamList)]
+  [args : (& args AstExprList)]
+  [index : i64]
+  [templates : SpecTemplateEnv]
+  [state : SpecState]
+  [fn-name : String]) : ResultSpecArgs
+  (cond
+    [(>= index (ast-param-list-len params))
+      (if (>= index (struct-get args len))
         (ResultSpecArgs.Ok SpecValueList.Nil (ast-expr-list-new) state)
         (ResultSpecArgs.Err
           (box (compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
-    [(AstParamList.Cons param rest-params)
+    [(>= index (struct-get args len))
+      (ResultSpecArgs.Err
+        (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))]
+    [else
       (let
-        [rest-params : AstParamList (box-get rest-params)]
-        (if (> (struct-get (& args) len) 0)
-          (let
-            [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-            [rest-args : AstExprList (ast-expr-list-tail args)]
-            (match param
-              [(AstParam.Param param-name param-ty is-comptime)
-                (if is-comptime
-                  (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
-                    [(ResultCtfe.Ok value _)
-                      (if (spec-type-kind? param-ty)
-                        (match value
-                          [(CompilerCtfeValue.Type _)
-                            (match (spec-rewrite-specialized-args
-                              rest-params
-                              rest-args
-                              templates
-                              state
-                              fn-name)
-                              [(ResultSpecArgs.Ok
-                                  rest-values
-                                  rest-runtime
-                                  rest-state)
-                                (ResultSpecArgs.Ok
-                                  (spec-value-cons value rest-values)
-                                  rest-runtime
-                                  rest-state)]
-                              [(ResultSpecArgs.Err diag)
-                                (ResultSpecArgs.Err diag)])]
-                          [_
-                            (ResultSpecArgs.Err
-                              (box
-                                (spec-diagnostic-at-expr
-                                  arg
-                                  (string.append
-                                    "comptime argument '"
-                                    (string.append
-                                      (intern-str param-name)
-                                      (string.append
-                                        "' for function '"
-                                        (string.append
-                                          fn-name
-                                          "' must be a type value such as `(type i64)`")))))))])
-                        (if (spec-value-runtime-type-matches? value param-ty)
-                          (match (spec-rewrite-specialized-args
-                            rest-params
-                            rest-args
-                            templates
-                            state
-                            fn-name)
-                            [(ResultSpecArgs.Ok
-                                rest-values
-                                rest-runtime
-                                rest-state)
-                              (ResultSpecArgs.Ok
-                                (spec-value-cons value rest-values)
-                                rest-runtime
-                                rest-state)]
-                            [(ResultSpecArgs.Err diag)
-                              (ResultSpecArgs.Err diag)])
-                          (ResultSpecArgs.Err
-                            (box
-                              (spec-diagnostic-at-expr
-                                arg
+        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        (match (ast-param-list-get params index (ast-param-fallback))
+          [(AstParam.Param param-name param-ty is-comptime)
+            (if is-comptime
+              (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
+                [(ResultCtfe.Ok value _)
+                  (if (spec-type-kind? param-ty)
+                    (match value
+                      [(CompilerCtfeValue.Type _)
+                        (match (spec-rewrite-specialized-args-at
+                          params
+                          args
+                          (+ index 1)
+                          templates
+                          state
+                          fn-name)
+                          [(ResultSpecArgs.Ok
+                              rest-values
+                              rest-runtime
+                              rest-state)
+                            (ResultSpecArgs.Ok
+                              (spec-value-cons value rest-values)
+                              rest-runtime
+                              rest-state)]
+                          [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
+                      [_
+                        (ResultSpecArgs.Err
+                          (box
+                            (spec-diagnostic-at-expr
+                              arg
+                              (string.append
+                                "comptime argument '"
                                 (string.append
-                                  "comptime argument '"
+                                  (intern-str param-name)
                                   (string.append
-                                    (intern-str param-name)
+                                    "' for function '"
                                     (string.append
-                                      "' for function '"
-                                      (string.append
-                                        fn-name
-                                        (string.append
-                                          "' has type "
-                                          (string.append
-                                            (spec-value-type-label value)
-                                            (string.append
-                                              ", expected "
-                                              (spec-type-key param-ty)))))))))))))]
-                    [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
-                  (match (spec-rewrite-expr arg templates state)
-                    [(ResultSpecExpr.Ok rewritten-arg arg-state)
-                      (match (spec-rewrite-specialized-args
-                        rest-params
-                        rest-args
+                                      fn-name
+                                      "' must be a type value such as `(type i64)`")))))))])
+                    (if (spec-value-runtime-type-matches? value param-ty)
+                      (match (spec-rewrite-specialized-args-at
+                        params
+                        args
+                        (+ index 1)
                         templates
-                        arg-state
+                        state
                         fn-name)
-                        [(ResultSpecArgs.Ok values rest-runtime rest-state)
+                        [(ResultSpecArgs.Ok rest-values rest-runtime rest-state)
                           (ResultSpecArgs.Ok
-                            values
-                            (ast-expr-cons rewritten-arg rest-runtime)
+                            (spec-value-cons value rest-values)
+                            rest-runtime
                             rest-state)]
-                        [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
-                    [(ResultSpecExpr.Err diag) (ResultSpecArgs.Err diag)]))]))
-          (ResultSpecArgs.Err
-            (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))))]))
+                        [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])
+                      (ResultSpecArgs.Err
+                        (box
+                          (spec-diagnostic-at-expr
+                            arg
+                            (string.append
+                              "comptime argument '"
+                              (string.append
+                                (intern-str param-name)
+                                (string.append
+                                  "' for function '"
+                                  (string.append
+                                    fn-name
+                                    (string.append
+                                      "' has type "
+                                      (string.append
+                                        (spec-value-type-label value)
+                                        (string.append
+                                          ", expected "
+                                          (spec-type-key param-ty)))))))))))))]
+                [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
+              (match (spec-rewrite-expr arg templates state)
+                [(ResultSpecExpr.Ok rewritten-arg arg-state)
+                  (match (spec-rewrite-specialized-args-at
+                    params
+                    args
+                    (+ index 1)
+                    templates
+                    arg-state
+                    fn-name)
+                    [(ResultSpecArgs.Ok values rest-runtime rest-state)
+                      (ResultSpecArgs.Ok
+                        values
+                        (ast-expr-cons rewritten-arg rest-runtime)
+                        rest-state)]
+                    [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
+                [(ResultSpecExpr.Err diag) (ResultSpecArgs.Err diag)]))]))]))
 
 (define (spec-build-specialization
   [params : AstParamList]
   [values : SpecValueList]) : ResultSpecBuild
-  (match params
-    [(AstParamList.Nil)
-      (match values
-        [(SpecValueList.Nil)
-          (ResultSpecBuild.Ok
-            AstParamList.Nil
-            SpecValueSubst.Nil
-            SpecTypeSubst.Nil)]
-        [_
-          (ResultSpecBuild.Err
-            (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])]
-    [(AstParamList.Cons param rest-params)
-      (let
-        [rest-params : AstParamList (box-get rest-params)]
-        (match param
-          [(AstParam.Param name ty is-comptime)
-            (if is-comptime
-              (match values
-                [(SpecValueList.Cons value rest-values)
-                  (match (spec-build-specialization
-                    rest-params
-                    (box-get rest-values))
-                    [(ResultSpecBuild.Ok runtime value-subs type-subs)
-                      (if (spec-type-kind? ty)
-                        (match value
-                          [(CompilerCtfeValue.Type actual-ty)
-                            (ResultSpecBuild.Ok
-                              runtime
-                              value-subs
-                              (spec-type-subst-cons
-                                (intern-str name)
-                                actual-ty
-                                type-subs))]
-                          [_
-                            (ResultSpecBuild.Err
-                              (box
-                                (compiler-diagnostic-at-start
-                                  ""
-                                  "specialize: expected type value")))])
+  (spec-build-specialization-at (& params) 0 values))
+
+(define (spec-build-specialization-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [values : SpecValueList]) : ResultSpecBuild
+  (if (>= index (ast-param-list-len params))
+    (match values
+      [(SpecValueList.Nil)
+        (ResultSpecBuild.Ok
+          (ast-param-list-new)
+          SpecValueSubst.Nil
+          SpecTypeSubst.Nil)]
+      [_
+        (ResultSpecBuild.Err
+          (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty is-comptime)
+        (if is-comptime
+          (match values
+            [(SpecValueList.Cons value rest-values)
+              (match (spec-build-specialization-at
+                params
+                (+ index 1)
+                (box-get rest-values))
+                [(ResultSpecBuild.Ok runtime value-subs type-subs)
+                  (if (spec-type-kind? ty)
+                    (match value
+                      [(CompilerCtfeValue.Type actual-ty)
                         (ResultSpecBuild.Ok
                           runtime
-                          (spec-value-subst-cons
+                          value-subs
+                          (spec-type-subst-cons
                             (intern-str name)
-                            value
-                            value-subs)
-                          type-subs))]
-                    [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)])]
-                [_
-                  (ResultSpecBuild.Err
-                    (box
-                      (compiler-diagnostic-at-start
-                        ""
-                        "specialize: value mismatch")))])
-              (match (spec-build-specialization rest-params values)
-                [(ResultSpecBuild.Ok runtime value-subs type-subs)
-                  (ResultSpecBuild.Ok
-                    (ast-param-cons (AstParam.Param name ty false) runtime)
-                    value-subs
-                    type-subs)]
-                [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))]))]))
+                            actual-ty
+                            type-subs))]
+                      [_
+                        (ResultSpecBuild.Err
+                          (box
+                            (compiler-diagnostic-at-start
+                              ""
+                              "specialize: expected type value")))])
+                    (ResultSpecBuild.Ok
+                      runtime
+                      (spec-value-subst-cons (intern-str name) value value-subs)
+                      type-subs))]
+                [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)])]
+            [_
+              (ResultSpecBuild.Err
+                (box
+                  (compiler-diagnostic-at-start "" "specialize: value mismatch")))])
+          (match (spec-build-specialization-at params (+ index 1) values)
+            [(ResultSpecBuild.Ok runtime value-subs type-subs)
+              (ResultSpecBuild.Ok
+                (ast-param-cons (AstParam.Param name ty false) runtime)
+                value-subs
+                type-subs)]
+            [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))])))
 
 (define (spec-ensure-specialization
   [template : SpecTemplate]
@@ -5402,13 +5446,13 @@
       (spec-template-cons
         (SpecTemplate.Item
           "first"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (AstExpr.Literal (ast-lit-int 1)))
         (spec-template-cons
           (SpecTemplate.Item
             "second"
-            AstParamList.Nil
+            (ast-param-list-new)
             (AstType.Bool)
             (AstExpr.Literal (AstLiteral.Bool true)))
           SpecTemplateList.Nil))]

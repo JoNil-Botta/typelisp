@@ -271,16 +271,20 @@
 (defenum AstParam
   (Param i64 AstType bool))
 
-(defenum AstParamList
-  (Nil)
-  (Cons AstParam (Box AstParamList)))
+(comptime-decl
+  (:generated vector-family AstParamList "AstParam")
+  (defstruct AstParamList
+    (slots (Array AstParam))
+    (len i64)))
 
 (defenum AstMacroParam
   (Param i64 AstType bool))
 
-(defenum AstMacroParamList
-  (Nil)
-  (Cons AstMacroParam (Box AstMacroParamList)))
+(comptime-decl
+  (:generated vector-family AstMacroParamList "AstMacroParam")
+  (defstruct AstMacroParamList
+    (slots (Array AstMacroParam))
+    (len i64)))
 
 (defenum AstFieldCleanup
   (No)
@@ -2229,8 +2233,105 @@
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param name ty is-comptime))
 
+(define (ast-param-fallback) : AstParam
+  (AstParam.Param 0 (AstType.Unit) false))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-with-capacity "AstParam")
+  (define (ast-param-list-with-capacity [capacity : i64]) : AstParamList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstParamList (array.make-array AstParam cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-new "AstParam")
+  (define (ast-param-list-new) : AstParamList
+    (ast-param-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-len "AstParam")
+  (define (ast-param-list-len [v : (& v AstParamList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-empty? "AstParam")
+  (define (ast-param-list-empty? [v : (& v AstParamList)]) : bool
+    (= (ast-param-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-get "AstParam")
+  (define (ast-param-list-get
+    [v : (& v AstParamList)]
+    [index : i64]
+    [fallback : AstParam]) : AstParam
+    (if (and (>= index 0) (< index (ast-param-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-copy-range "AstParam")
+  (define (ast-param-list-copy-range
+    [dst : (&mut dst (Array AstParam))]
+    [src : (& src (Array AstParam))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-param-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-grow "AstParam")
+  (define (ast-param-list-grow [v : (&mut v AstParamList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstParam) (array.make-array AstParam new-cap)]
+      (begin
+        (ast-param-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-param-list-push "AstParam")
+  (define (ast-param-list-push [v : (&mut v AstParamList)] [value : AstParam]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-param-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-param-list-append-from
+  [out : (&mut out AstParamList)]
+  [items : (& items AstParamList)]
+  [index : i64]) : unit
+  (if (>= index (ast-param-list-len items))
+    unit
+    (begin
+      (ast-param-list-push
+        out
+        (ast-param-list-get items index (ast-param-fallback)))
+      (ast-param-list-append-from out items (+ index 1)))))
+
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
-  (AstParamList.Cons head (box rest)))
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (+ 1 (ast-param-list-len (& rest))))]
+    (begin
+      (ast-param-list-push (&mut out) head)
+      (ast-param-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
   (AstMacroParam.Param (ci.intern name) ty variadic))
@@ -2238,8 +2339,112 @@
 (define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
   (AstMacroParam.Param name ty variadic))
 
+(define (ast-macro-param-fallback) : AstMacroParam
+  (AstMacroParam.Param 0 (AstType.Unit) false))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-with-capacity "AstMacroParam")
+  (define (ast-macro-param-list-with-capacity [capacity : i64]) : AstMacroParamList
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (AstMacroParamList (array.make-array AstMacroParam cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-new "AstMacroParam")
+  (define (ast-macro-param-list-new) : AstMacroParamList
+    (ast-macro-param-list-with-capacity 0)))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-len "AstMacroParam")
+  (define (ast-macro-param-list-len [v : (& v AstMacroParamList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-empty? "AstMacroParam")
+  (define (ast-macro-param-list-empty? [v : (& v AstMacroParamList)]) : bool
+    (= (ast-macro-param-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-get "AstMacroParam")
+  (define (ast-macro-param-list-get
+    [v : (& v AstMacroParamList)]
+    [index : i64]
+    [fallback : AstMacroParam]) : AstMacroParam
+    (if (and (>= index 0) (< index (ast-macro-param-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-copy-range "AstMacroParam")
+  (define (ast-macro-param-list-copy-range
+    [dst : (&mut dst (Array AstMacroParam))]
+    [src : (& src (Array AstMacroParam))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-macro-param-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-grow "AstMacroParam")
+  (define (ast-macro-param-list-grow [v : (&mut v AstMacroParamList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstMacroParam) (array.make-array AstMacroParam new-cap)]
+      (begin
+        (ast-macro-param-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-macro-param-list-push "AstMacroParam")
+  (define (ast-macro-param-list-push
+    [v : (&mut v AstMacroParamList)]
+    [value : AstMacroParam]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-macro-param-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
+
+(define (ast-macro-param-list-append-from
+  [out : (&mut out AstMacroParamList)]
+  [items : (& items AstMacroParamList)]
+  [index : i64]) : unit
+  (if (>= index (ast-macro-param-list-len items))
+    unit
+    (begin
+      (ast-macro-param-list-push
+        out
+        (ast-macro-param-list-get items index (ast-macro-param-fallback)))
+      (ast-macro-param-list-append-from out items (+ index 1)))))
+
 (define (ast-macro-param-cons [head : AstMacroParam] [rest : AstMacroParamList]) : AstMacroParamList
-  (AstMacroParamList.Cons head (box rest)))
+  (let
+    [out : AstMacroParamList
+      (ast-macro-param-list-with-capacity
+        (+ 1 (ast-macro-param-list-len (& rest))))]
+    (begin
+      (ast-macro-param-list-push (&mut out) head)
+      (ast-macro-param-list-append-from (&mut out) (& rest) 0)
+      out)))
 
 (define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
   (AstFieldCleanup.Fn (ci.intern name)))
@@ -4589,12 +4794,27 @@
 (define (ast-compaction-remap-param-list
   [remap : AstProgramCompactionRemap]
   [params : AstParamList]) : AstParamList
-  (match params
-    [(AstParamList.Nil) AstParamList.Nil]
-    [(AstParamList.Cons param rest)
-      (AstParamList.Cons
-        (ast-compaction-remap-param remap param)
-        (box (ast-compaction-remap-param-list remap (box-get rest))))]))
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (ast-compaction-remap-param-list-into remap (& params) 0 (&mut out))
+      out)))
+
+(define (ast-compaction-remap-param-list-into
+  [remap : AstProgramCompactionRemap]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (ast-param-list-push
+        out
+        (ast-compaction-remap-param
+          remap
+          (ast-param-list-get params index (ast-param-fallback))))
+      (ast-compaction-remap-param-list-into remap params (+ index 1) out))))
 
 (define (ast-compaction-remap-macro-param
   [remap : AstProgramCompactionRemap]
@@ -4606,12 +4826,27 @@
 (define (ast-compaction-remap-macro-param-list
   [remap : AstProgramCompactionRemap]
   [params : AstMacroParamList]) : AstMacroParamList
-  (match params
-    [(AstMacroParamList.Nil) AstMacroParamList.Nil]
-    [(AstMacroParamList.Cons param rest)
-      (AstMacroParamList.Cons
-        (ast-compaction-remap-macro-param remap param)
-        (box (ast-compaction-remap-macro-param-list remap (box-get rest))))]))
+  (let
+    [out : AstMacroParamList
+      (ast-macro-param-list-with-capacity (ast-macro-param-list-len (& params)))]
+    (begin
+      (ast-compaction-remap-macro-param-list-into remap (& params) 0 (&mut out))
+      out)))
+
+(define (ast-compaction-remap-macro-param-list-into
+  [remap : AstProgramCompactionRemap]
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [out : (&mut out AstMacroParamList)]) : unit
+  (if (>= index (ast-macro-param-list-len params))
+    unit
+    (begin
+      (ast-macro-param-list-push
+        out
+        (ast-compaction-remap-macro-param
+          remap
+          (ast-macro-param-list-get params index (ast-macro-param-fallback))))
+      (ast-compaction-remap-macro-param-list-into remap params (+ index 1) out))))
 
 (define (ast-compaction-remap-field-def
   [remap : AstProgramCompactionRemap]
@@ -6222,7 +6457,7 @@
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
     [param : AstParam (ast-param "x" i64-ty false)]
-    [params : AstParamList (ast-param-cons param AstParamList.Nil)]
+    [params : AstParamList (ast-param-cons param (ast-param-list-new))]
     [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
     [program : AstProgram (ast-program (ast-decl-cons decl AstDeclList.Nil))]
     (match program

@@ -7162,16 +7162,27 @@
             [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExprList.Err diag)])]))))
 
 (define (ctfe-quote-param-list [params : AstParamList] [env : CtfeEnv]) : AstParamList
-  (match params
-    [(AstParamList.Nil) AstParamList.Nil]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty comptime?)
-            (ast-param-cons
-              (AstParam.Param (ctfe-quote-name-id env name) ty comptime?)
-              (ctfe-quote-param-list rest env))]))]))
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (ctfe-quote-param-list-into (& params) 0 env (&mut out))
+      out)))
+
+(define (ctfe-quote-param-list-into
+  [params : (& params AstParamList)]
+  [index : i64]
+  [env : CtfeEnv]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name ty comptime?)
+          (ast-param-list-push
+            out
+            (AstParam.Param (ctfe-quote-name-id env name) ty comptime?))])
+      (ctfe-quote-param-list-into params (+ index 1) env out))))
 
 (define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
   (let
@@ -8495,22 +8506,26 @@
   [env : CtfeEnv]
   [a : AstParamList]
   [b : AstParamList]) : bool
-  (match a
-    [(AstParamList.Nil)
-      (match b
-        [(AstParamList.Nil) true]
-        [_ false])]
-    [(AstParamList.Cons a-head a-rest)
-      (let
-        [a-rest : AstParamList (box-get a-rest)]
-        (match b
-          [(AstParamList.Cons b-head b-rest)
-            (let
-              [b-rest : AstParamList (box-get b-rest)]
-              (and
-                (ctfe-param-eq-in-env env a-head b-head)
-                (ctfe-param-list-eq-in-env env a-rest b-rest)))]
-          [_ false]))]))
+  (let
+    [len : i64 (ast-param-list-len (& a))]
+    (and
+      (= len (ast-param-list-len (& b)))
+      (ctfe-param-list-eq-in-env-at env (& a) (& b) len 0))))
+
+(define (ctfe-param-list-eq-in-env-at
+  [env : CtfeEnv]
+  [a : (& a AstParamList)]
+  [b : (& b AstParamList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (ctfe-param-eq-in-env
+        env
+        (ast-param-list-get a index (ast-param-fallback))
+        (ast-param-list-get b index (ast-param-fallback)))
+      (ctfe-param-list-eq-in-env-at env a b len (+ index 1)))))
 
 (define (ctfe-pattern-eq-in-env
   [env : CtfeEnv]

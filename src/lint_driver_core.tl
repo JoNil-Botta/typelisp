@@ -875,26 +875,38 @@
 (define (selfhost-lint-dead-param-list-refs
   [params : AstParamList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match params
-    [(AstParamList.Nil) refs]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param _ ty _)
-          (selfhost-lint-dead-param-list-refs
-            (box-get rest)
-            (selfhost-lint-dead-type-refs ty refs))])]))
+  (selfhost-lint-dead-param-list-refs-at (& params) refs 0))
+
+(define (selfhost-lint-dead-param-list-refs-at
+  [params : (& params AstParamList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-param-list-len params))
+    refs
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (selfhost-lint-dead-param-list-refs-at
+          params
+          (selfhost-lint-dead-type-refs ty refs)
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-macro-param-list-refs
   [params : AstMacroParamList]
   [refs : vector.StringVec]) : vector.StringVec
-  (match params
-    [(AstMacroParamList.Nil) refs]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (selfhost-lint-dead-macro-param-list-refs
-            (box-get rest)
-            (selfhost-lint-dead-type-refs ty refs))])]))
+  (selfhost-lint-dead-macro-param-list-refs-at (& params) refs 0))
+
+(define (selfhost-lint-dead-macro-param-list-refs-at
+  [params : (& params AstMacroParamList)]
+  [refs : vector.StringVec]
+  [index : i64]) : vector.StringVec
+  (if (>= index (ast-macro-param-list-len params))
+    refs
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (selfhost-lint-dead-macro-param-list-refs-at
+          params
+          (selfhost-lint-dead-type-refs ty refs)
+          (+ index 1))])))
 
 (define (selfhost-lint-dead-pattern-list-refs
   [patterns : AstPatternList]

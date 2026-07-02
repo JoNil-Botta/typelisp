@@ -5357,14 +5357,24 @@
         (compiler-load-package-module-key module source-name)))))
 
 (define (compiler-load-param-type-list [params : AstParamList]) : AstTypeList
-  (match params
-    [(AstParamList.Nil) (ast-type-list-new)]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (ast-type-cons ty (compiler-load-param-type-list rest))]))]))
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (compiler-load-param-type-list-into (& params) 0 (&mut out))
+      out)))
+
+(define (compiler-load-param-type-list-into
+  [params : (& params AstParamList)]
+  [index : i64]
+  [out : (&mut out AstTypeList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param _ ty _)
+          (ast-type-list-push out (ast-node-pool-reader-type-push ty))])
+      (compiler-load-param-type-list-into params (+ index 1) out))))
 
 (define (compiler-load-package-def-fn-extern
   [package-owner : String]
@@ -7805,7 +7815,7 @@
     [inner : AstDecl
       (ast-decl-def-fn
         "generated-fn"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
@@ -10124,19 +10134,19 @@
     [runtime-decl : AstDecl
       (ast-decl-def-fn
         "runtime-helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 0))))]
     [decls : AstDeclList
@@ -10200,7 +10210,7 @@
         "C:/dep/src/lib.tl"
         ""
         (intern "helper")
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64))]
     (match decl
       [(AstDecl.Extern _ _ metadata _)

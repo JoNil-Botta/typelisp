@@ -1658,31 +1658,43 @@
   [params : AstParamList]
   [alias : String]
   [module-name : String]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (if (lint-type-uses-import? ty alias module-name)
-              true
-              (lint-param-list-uses-import? rest alias module-name))]))]))
+  (lint-param-list-uses-import-at? (& params) alias module-name 0))
+
+(define (lint-param-list-uses-import-at?
+  [params : (& params AstParamList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (if (lint-type-uses-import? ty alias module-name)
+          true
+          (lint-param-list-uses-import-at? params alias module-name (+ index 1)))])))
 
 (define (lint-macro-param-list-uses-import?
   [params : AstMacroParamList]
   [alias : String]
   [module-name : String]) : bool
-  (match params
-    [(AstMacroParamList.Nil) false]
-    [(AstMacroParamList.Cons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        (match param
-          [(AstMacroParam.Param _ ty _)
-            (if (lint-type-uses-import? ty alias module-name)
-              true
-              (lint-macro-param-list-uses-import? rest alias module-name))]))]))
+  (lint-macro-param-list-uses-import-at? (& params) alias module-name 0))
+
+(define (lint-macro-param-list-uses-import-at?
+  [params : (& params AstMacroParamList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (if (>= index (ast-macro-param-list-len params))
+    false
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (if (lint-type-uses-import? ty alias module-name)
+          true
+          (lint-macro-param-list-uses-import-at?
+            params
+            alias
+            module-name
+            (+ index 1)))])))
 
 (define (lint-pattern-list-uses-import?
   [patterns : AstPatternList]
@@ -2572,26 +2584,38 @@
 (define (lint-param-list-add-locals
   [params : AstParamList]
   [locals : LintNameList]) : LintNameList
-  (match params
-    [(AstParamList.Nil) locals]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param name _ _)
-          (lint-param-list-add-locals
-            (box-get rest)
-            (lint-name-list-add locals (intern-str name)))])]))
+  (lint-param-list-add-locals-at (& params) locals 0))
+
+(define (lint-param-list-add-locals-at
+  [params : (& params AstParamList)]
+  [locals : LintNameList]
+  [index : i64]) : LintNameList
+  (if (>= index (ast-param-list-len params))
+    locals
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (lint-param-list-add-locals-at
+          params
+          (lint-name-list-add locals (intern-str name))
+          (+ index 1))])))
 
 (define (lint-macro-param-list-add-locals
   [params : AstMacroParamList]
   [locals : LintNameList]) : LintNameList
-  (match params
-    [(AstMacroParamList.Nil) locals]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param name _ _)
-          (lint-macro-param-list-add-locals
-            (box-get rest)
-            (lint-name-list-add locals (intern-str name)))])]))
+  (lint-macro-param-list-add-locals-at (& params) locals 0))
+
+(define (lint-macro-param-list-add-locals-at
+  [params : (& params AstMacroParamList)]
+  [locals : LintNameList]
+  [index : i64]) : LintNameList
+  (if (>= index (ast-macro-param-list-len params))
+    locals
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name _ _)
+        (lint-macro-param-list-add-locals-at
+          params
+          (lint-name-list-add locals (intern-str name))
+          (+ index 1))])))
 
 (define (lint-name-list-count [items : LintNameList]) : i64
   (match items
@@ -2710,35 +2734,49 @@
   [params : AstParamList]
   [shapes : LintCopyOnUpdateStructList]
   [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
-  (match params
-    [(AstParamList.Nil) locals]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param name ty _)
-          (lint-copy-on-update-param-locals
-            (box-get rest)
-            shapes
-            (lint-copy-on-update-local-add
-              locals
-              (intern-str name)
-              (lint-copy-on-update-struct-name-from-type shapes ty)))])]))
+  (lint-copy-on-update-param-locals-at (& params) shapes locals 0))
+
+(define (lint-copy-on-update-param-locals-at
+  [params : (& params AstParamList)]
+  [shapes : LintCopyOnUpdateStructList]
+  [locals : LintCopyOnUpdateLocalList]
+  [index : i64]) : LintCopyOnUpdateLocalList
+  (if (>= index (ast-param-list-len params))
+    locals
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _)
+        (lint-copy-on-update-param-locals-at
+          params
+          shapes
+          (lint-copy-on-update-local-add
+            locals
+            (intern-str name)
+            (lint-copy-on-update-struct-name-from-type shapes ty))
+          (+ index 1))])))
 
 (define (lint-copy-on-update-macro-param-locals
   [params : AstMacroParamList]
   [shapes : LintCopyOnUpdateStructList]
   [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
-  (match params
-    [(AstMacroParamList.Nil) locals]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param name ty _)
-          (lint-copy-on-update-macro-param-locals
-            (box-get rest)
-            shapes
-            (lint-copy-on-update-local-add
-              locals
-              (intern-str name)
-              (lint-copy-on-update-struct-name-from-type shapes ty)))])]))
+  (lint-copy-on-update-macro-param-locals-at (& params) shapes locals 0))
+
+(define (lint-copy-on-update-macro-param-locals-at
+  [params : (& params AstMacroParamList)]
+  [shapes : LintCopyOnUpdateStructList]
+  [locals : LintCopyOnUpdateLocalList]
+  [index : i64]) : LintCopyOnUpdateLocalList
+  (if (>= index (ast-macro-param-list-len params))
+    locals
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name ty _)
+        (lint-copy-on-update-macro-param-locals-at
+          params
+          shapes
+          (lint-copy-on-update-local-add
+            locals
+            (intern-str name)
+            (lint-copy-on-update-struct-name-from-type shapes ty))
+          (+ index 1))])))
 
 (define (lint-copy-on-update-expr-var-name [expr : AstExpr]) : String
   (match expr
@@ -3620,21 +3658,28 @@
   [params : AstParamList]
   [span : AstSourceSpan]
   [items : LintSingleElementArrayCandidateList]) : LintSingleElementArrayCandidateList
-  (match params
-    [(AstParamList.Nil) items]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param name ty _)
-          (let
-            [text : String (intern-str name)]
-            [with-param : LintSingleElementArrayCandidateList
-              (if (lint-single-element-array-fixed-type? ty)
-                (lint-single-element-array-candidate-add items text span)
-                items)]
-            (lint-single-element-array-param-candidates
-              (box-get rest)
-              span
-              with-param))])]))
+  (lint-single-element-array-param-candidates-at (& params) span items 0))
+
+(define (lint-single-element-array-param-candidates-at
+  [params : (& params AstParamList)]
+  [span : AstSourceSpan]
+  [items : LintSingleElementArrayCandidateList]
+  [index : i64]) : LintSingleElementArrayCandidateList
+  (if (>= index (ast-param-list-len params))
+    items
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _)
+        (let
+          [text : String (intern-str name)]
+          [with-param : LintSingleElementArrayCandidateList
+            (if (lint-single-element-array-fixed-type? ty)
+              (lint-single-element-array-candidate-add items text span)
+              items)]
+          (lint-single-element-array-param-candidates-at
+            params
+            span
+            with-param
+            (+ index 1)))])))
 
 (define (lint-single-element-array-finalize-candidates
   [items : LintSingleElementArrayCandidateList]
@@ -5348,31 +5393,45 @@
   [cursor : i64]
   [fallback : AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
-  (match params
-    [(AstParamList.Nil)
-      (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param name _ _)
-          (let
-            [text : String (intern-str name)]
-            [found : LintSourceNameSpan
-              (lint-source-name-span-from source text cursor fallback)]
-            [tail : LintUnusedVariableBindingBuild
-              (lint-unused-variable-param-bindings
-                (box-get rest)
-                source
-                (struct-get found next-index)
-                fallback
-                reportable)]
-            (LintUnusedVariableBindingBuild
-              (lint-unused-variable-binding-cons
-                (lint-unused-variable-binding
-                  text
-                  (struct-get found span)
-                  reportable)
-                (struct-get tail bindings))
-              (struct-get tail next-index)))])]))
+  (lint-unused-variable-param-bindings-at
+    (& params)
+    source
+    cursor
+    fallback
+    reportable
+    0))
+
+(define (lint-unused-variable-param-bindings-at
+  [params : (& params AstParamList)]
+  [source : String]
+  [cursor : i64]
+  [fallback : AstSourceSpan]
+  [reportable : bool]
+  [index : i64]) : LintUnusedVariableBindingBuild
+  (if (>= index (ast-param-list-len params))
+    (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (let
+          [text : String (intern-str name)]
+          [found : LintSourceNameSpan
+            (lint-source-name-span-from source text cursor fallback)]
+          [tail : LintUnusedVariableBindingBuild
+            (lint-unused-variable-param-bindings-at
+              params
+              source
+              (struct-get found next-index)
+              fallback
+              reportable
+              (+ index 1))]
+          (LintUnusedVariableBindingBuild
+            (lint-unused-variable-binding-cons
+              (lint-unused-variable-binding
+                text
+                (struct-get found span)
+                reportable)
+              (struct-get tail bindings))
+            (struct-get tail next-index)))])))
 
 (define (lint-unused-variable-macro-param-bindings
   [params : AstMacroParamList]
@@ -5380,31 +5439,45 @@
   [cursor : i64]
   [fallback : AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
-  (match params
-    [(AstMacroParamList.Nil)
-      (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param name _ _)
-          (let
-            [text : String (intern-str name)]
-            [found : LintSourceNameSpan
-              (lint-source-name-span-from source text cursor fallback)]
-            [tail : LintUnusedVariableBindingBuild
-              (lint-unused-variable-macro-param-bindings
-                (box-get rest)
-                source
-                (struct-get found next-index)
-                fallback
-                reportable)]
-            (LintUnusedVariableBindingBuild
-              (lint-unused-variable-binding-cons
-                (lint-unused-variable-binding
-                  text
-                  (struct-get found span)
-                  reportable)
-                (struct-get tail bindings))
-              (struct-get tail next-index)))])]))
+  (lint-unused-variable-macro-param-bindings-at
+    (& params)
+    source
+    cursor
+    fallback
+    reportable
+    0))
+
+(define (lint-unused-variable-macro-param-bindings-at
+  [params : (& params AstMacroParamList)]
+  [source : String]
+  [cursor : i64]
+  [fallback : AstSourceSpan]
+  [reportable : bool]
+  [index : i64]) : LintUnusedVariableBindingBuild
+  (if (>= index (ast-macro-param-list-len params))
+    (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name _ _)
+        (let
+          [text : String (intern-str name)]
+          [found : LintSourceNameSpan
+            (lint-source-name-span-from source text cursor fallback)]
+          [tail : LintUnusedVariableBindingBuild
+            (lint-unused-variable-macro-param-bindings-at
+              params
+              source
+              (struct-get found next-index)
+              fallback
+              reportable
+              (+ index 1))]
+          (LintUnusedVariableBindingBuild
+            (lint-unused-variable-binding-cons
+              (lint-unused-variable-binding
+                text
+                (struct-get found span)
+                reportable)
+              (struct-get tail bindings))
+            (struct-get tail next-index)))])))
 
 (define (lint-unused-variable-pattern-list-bindings
   [patterns : AstPatternList]
@@ -5512,26 +5585,38 @@
 (define (lint-unused-variable-param-types
   [params : AstParamList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match params
-    [(AstParamList.Nil) state]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param _ ty _)
-          (lint-unused-variable-param-types
-            (box-get rest)
-            (lint-unused-variable-type ty state))])]))
+  (lint-unused-variable-param-types-at (& params) state 0))
+
+(define (lint-unused-variable-param-types-at
+  [params : (& params AstParamList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-param-list-len params))
+    state
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (lint-unused-variable-param-types-at
+          params
+          (lint-unused-variable-type ty state)
+          (+ index 1))])))
 
 (define (lint-unused-variable-macro-param-types
   [params : AstMacroParamList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (match params
-    [(AstMacroParamList.Nil) state]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (lint-unused-variable-macro-param-types
-            (box-get rest)
-            (lint-unused-variable-type ty state))])]))
+  (lint-unused-variable-macro-param-types-at (& params) state 0))
+
+(define (lint-unused-variable-macro-param-types-at
+  [params : (& params AstMacroParamList)]
+  [state : LintUnusedVariableState]
+  [index : i64]) : LintUnusedVariableState
+  (if (>= index (ast-macro-param-list-len params))
+    state
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (lint-unused-variable-macro-param-types-at
+          params
+          (lint-unused-variable-type ty state)
+          (+ index 1))])))
 
 (define (lint-unused-variable-borrow-lifetime
   [lifetime : AstBorrowLifetime]

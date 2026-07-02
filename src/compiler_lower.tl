@@ -3195,42 +3195,37 @@
   [args : AstExprList]
   [subst : LowerSpmdInlineSubst]
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
-  (lower-spmd-inline-build-subst-at ctx params (& args) 0 subst origin))
+  (lower-spmd-inline-build-subst-at ctx (& params) (& args) 0 subst origin))
 
 (define (lower-spmd-inline-build-subst-at
   [ctx : TcContext]
-  [params : AstParamList]
+  [params : (& params AstParamList)]
   [args : (& args AstExprList)]
-  [arg-index : i64]
+  [index : i64]
   [subst : LowerSpmdInlineSubst]
   [origin : AstExpr]) : ResultLowerSpmdInlineSubst
-  (match params
-    [(AstParamList.Nil)
-      (if (= arg-index (struct-get args len))
+  (cond
+    [(>= index (ast-param-list-len params))
+      (if (= index (struct-get args len))
         (ResultLowerSpmdInlineSubst.Ok subst)
         (ResultLowerSpmdInlineSubst.Err
           (box (lower-diagnostic-at-expr origin "lower: arity mismatch"))))]
-    [(AstParamList.Cons param rest-params)
+    [(>= index (struct-get args len))
+      (ResultLowerSpmdInlineSubst.Err
+        (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))]
+    [else
       (let
-        [rest-params : AstParamList (box-get rest-params)]
-        (if (< arg-index (struct-get args len))
-          (let
-            [arg-id : i64 (ast-expr-list-get args arg-index 0)]
-            [arg : AstExpr (lower-context-expr-get ctx arg-id)]
-            (match param
-              [(AstParam.Param param-name _ _)
-                (lower-spmd-inline-build-subst-at
-                  ctx
-                  rest-params
-                  args
-                  (+ arg-index 1)
-                  (lower-spmd-inline-subst-cons
-                    (intern-str param-name)
-                    arg
-                    subst)
-                  origin)]))
-          (ResultLowerSpmdInlineSubst.Err
-            (box (lower-diagnostic-at-expr origin "lower: arity mismatch")))))]))
+        [arg-id : i64 (ast-expr-list-get args index 0)]
+        [arg : AstExpr (lower-context-expr-get ctx arg-id)]
+        (match (ast-param-list-get params index (ast-param-fallback))
+          [(AstParam.Param param-name _ _)
+            (lower-spmd-inline-build-subst-at
+              ctx
+              params
+              args
+              (+ index 1)
+              (lower-spmd-inline-subst-cons (intern-str param-name) arg subst)
+              origin)]))]))
 
 (define (lower-spmd-inline-arg-subst
   [ctx : TcContext]
@@ -6864,32 +6859,48 @@
   [used : hashmap.I64I64Map]
   [module : String]
   [params : AstParamList]) : hashmap.I64I64Map
-  (match params
-    [(AstParamList.Nil) used]
-    [(AstParamList.Cons param rest)
-      (match param
-        [(AstParam.Param _ ty _)
-          (lower-used-types-add-param-list
-            pools
-            (lower-used-types-add-type pools used module ty)
-            module
-            (box-get rest))])]))
+  (lower-used-types-add-param-list-at pools used module (& params) 0))
+
+(define (lower-used-types-add-param-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [params : (& params AstParamList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-param-list-len params))
+    used
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (lower-used-types-add-param-list-at
+          pools
+          (lower-used-types-add-type pools used module ty)
+          module
+          params
+          (+ index 1))])))
 
 (define (lower-used-types-add-macro-param-list
   [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [params : AstMacroParamList]) : hashmap.I64I64Map
-  (match params
-    [(AstMacroParamList.Nil) used]
-    [(AstMacroParamList.Cons param rest)
-      (match param
-        [(AstMacroParam.Param _ ty _)
-          (lower-used-types-add-macro-param-list
-            pools
-            (lower-used-types-add-type pools used module ty)
-            module
-            (box-get rest))])]))
+  (lower-used-types-add-macro-param-list-at pools used module (& params) 0))
+
+(define (lower-used-types-add-macro-param-list-at
+  [pools : AstNodePoolContext]
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [params : (& params AstMacroParamList)]
+  [index : i64]) : hashmap.I64I64Map
+  (if (>= index (ast-macro-param-list-len params))
+    used
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (lower-used-types-add-macro-param-list-at
+          pools
+          (lower-used-types-add-type pools used module ty)
+          module
+          params
+          (+ index 1))])))
 
 (define (lower-used-types-add-expr-id
   [pools : AstNodePoolContext]
@@ -41382,45 +41393,49 @@
     (lower-return-expr ctx state env type-env expr ret-ty sret-var)))
 
 (define (lower-param-count [params : AstParamList]) : i64
-  (match params
-    [(AstParamList.Nil) 0]
-    [(AstParamList.Cons _ rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (+ 1 (lower-param-count rest)))]))
+  (ast-param-list-len (& params)))
 
 (define (lower-bind-params
   [params : AstParamList]
   [idx : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match params
-    [(AstParamList.Nil) env]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name _ _)
-            (lower-bind-params
-              rest
-              (+ idx 1)
-              (sym_i64_env.sym-i64-bind-id env name idx))]))]))
+  (lower-bind-params-at (& params) 0 idx env))
+
+(define (lower-bind-params-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [idx : i64]
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-param-list-len params))
+    env
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (lower-bind-params-at
+          params
+          (+ index 1)
+          (+ idx 1)
+          (sym_i64_env.sym-i64-bind-id env name idx))])))
 
 (define (lower-param-list [ctx : TcContext] [params : AstParamList] [idx : i64]) : CompilerIrParamList
-  (match params
-    [(AstParamList.Nil) CompilerIrParamList.Nil]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param name ty _)
-            (compiler-ir-param-cons
-              (CompilerIrParam.Param
-                (intern-str name)
-                (lower-one-word-register-storage-type
-                  ctx
-                  (tc-type-without-regions (tc-resolve-type ctx ty)))
-                idx)
-              (lower-param-list ctx rest (+ idx 1)))]))]))
+  (lower-param-list-at ctx (& params) 0 idx))
+
+(define (lower-param-list-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [idx : i64]) : CompilerIrParamList
+  (if (>= index (ast-param-list-len params))
+    CompilerIrParamList.Nil
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param
+            (intern-str name)
+            (lower-one-word-register-storage-type
+              ctx
+              (tc-type-without-regions (tc-resolve-type ctx ty)))
+            idx)
+          (lower-param-list-at ctx params (+ index 1) (+ idx 1)))])))
 
 ;; #1867 sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
@@ -41491,30 +41506,42 @@
 (define (lower-param-list-contains-inline-aggregate?
   [ctx : TcContext]
   [params : AstParamList]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (or
-              (lower-type-contains-inline-aggregate? ctx ty)
-              (lower-param-list-contains-inline-aggregate? ctx rest))]))]))
+  (lower-param-list-contains-inline-aggregate-at? ctx (& params) 0))
+
+(define (lower-param-list-contains-inline-aggregate-at?
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (or
+          (lower-type-contains-inline-aggregate? ctx ty)
+          (lower-param-list-contains-inline-aggregate-at?
+            ctx
+            params
+            (+ index 1)))])))
 
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : TcContext]
   [params : AstParamList]) : bool
-  (match params
-    [(AstParamList.Nil) false]
-    [(AstParamList.Cons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam.Param _ ty _)
-            (or
-              (not (lower-supported-function-param-type? ctx ty))
-              (lower-param-list-contains-unsupported-reference? ctx rest))]))]))
+  (lower-param-list-contains-unsupported-reference-at? ctx (& params) 0))
+
+(define (lower-param-list-contains-unsupported-reference-at?
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (or
+          (not (lower-supported-function-param-type? ctx ty))
+          (lower-param-list-contains-unsupported-reference-at?
+            ctx
+            params
+            (+ index 1)))])))
 
 (define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-resolve-type ctx ty)
@@ -42043,7 +42070,7 @@
           [params : AstParamList
             (ast-param-cons
               (ast-param value-name struct-ty false)
-              AstParamList.Nil)]
+              (ast-param-list-new))]
           [body : AstExpr
             (if (= (struct-get (& exprs) len) 0)
               (AstExpr.Literal AstLiteral.Unit)
@@ -43046,7 +43073,7 @@
                                 cur-local-top-env
                                 cur-type-cache
                                 (lower-global-init-function-name global-name)
-                                AstParamList.Nil
+                                (ast-param-list-new)
                                 global-ty
                                 expr
                                 cur-spans
@@ -49437,7 +49464,7 @@
     [fn : AstDecl
       (ast-decl-def-fn
         "generated"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     (and
@@ -54289,7 +54316,7 @@
       (ast-decl-cons
         (ast-decl-def-fn
           "main"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (ast-expr-call
             (ast-node-push (AstExpr.Var (intern "helper")))
@@ -54297,19 +54324,19 @@
         (ast-decl-cons
           (ast-decl-def-fn
             "helper"
-            AstParamList.Nil
+            (ast-param-list-new)
             (AstType.I64)
             (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
           (ast-decl-cons
             (ast-decl-def-fn
               "callback-target"
-              AstParamList.Nil
+              (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 11))))
             (ast-decl-cons
               (ast-decl-def-fn
                 "dead"
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
               AstDeclList.Nil)))))))
@@ -54319,13 +54346,13 @@
     (ast-decl-cons
       (ast-decl-def-fn
         "helper"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
       (ast-decl-cons
         (ast-decl-def-fn
           "dead"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
         AstDeclList.Nil))))
@@ -54335,19 +54362,19 @@
     (ast-decl-cons
       (ast-decl-def-fn
         "main"
-        AstParamList.Nil
+        (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
       (ast-decl-cons
         (ast-decl-def-fn
           "macro-only-helper"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
           (ast-decl-def-macro
             "macro-uses-helper"
-            AstMacroParamList.Nil
+            (ast-macro-param-list-new)
             (AstType.Expr)
             (ast-expr-call
               (ast-node-push (AstExpr.Var (intern "macro-only-helper")))
@@ -54361,7 +54388,7 @@
       (ast-decl-cons
         (ast-decl-def-fn
           "ctfe-runtime-helper"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
@@ -54369,7 +54396,7 @@
           (ast-decl-cons
             (ast-decl-def-fn
               "main"
-              AstParamList.Nil
+              (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
             AstDeclList.Nil))))))
@@ -54380,7 +54407,7 @@
       (ast-decl-cons
         (ast-decl-def-fn
           "ctfe-runtime-helper"
-          AstParamList.Nil
+          (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
@@ -54395,7 +54422,7 @@
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               AstDeclList.Nil))))]
@@ -54415,7 +54442,7 @@
           (ast-decl-cons
             (ast-decl-def-fn
               "ctfe-runtime-helper"
-              AstParamList.Nil
+              (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
             (ast-decl-cons
@@ -54430,7 +54457,7 @@
                 (ast-decl-cons
                   (ast-decl-def-fn
                     "main"
-                    AstParamList.Nil
+                    (ast-param-list-new)
                     (AstType.I64)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                   AstDeclList.Nil))))))]
@@ -54525,7 +54552,7 @@
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.Struct (intern "UsedBox"))
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               AstDeclList.Nil)))))))
@@ -54566,7 +54593,7 @@
         (ast-decl-cons
           (ast-decl-def-fn
             "main"
-            AstParamList.Nil
+            (ast-param-list-new)
             (AstType.Enum (intern "ResultIoString"))
             (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
           AstDeclList.Nil)))))
@@ -54622,7 +54649,7 @@
                 (ast-decl-cons
                   (ast-decl-def-fn
                     "main"
-                    AstParamList.Nil
+                    (ast-param-list-new)
                     (AstType.Struct (intern "ThreadBox"))
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                   AstDeclList.Nil)))))))))
@@ -54675,7 +54702,7 @@
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               AstDeclList.Nil)))))))
@@ -54716,7 +54743,7 @@
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"
-                AstParamList.Nil
+                (ast-param-list-new)
                 (AstType.I64)
                 (ast-expr-match
                   (ast-node-push (AstExpr.Literal (ast-lit-int 0)))

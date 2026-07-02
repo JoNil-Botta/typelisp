@@ -28258,7 +28258,8 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
       (let
-        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        [expr : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get exprs index 0))]
         (if (= (+ index 1) len)
           (lower-expr ctx state env type-env expr)
           (match (lower-expr ctx state env type-env expr)
@@ -28303,7 +28304,8 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
       (let
-        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        [expr : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get exprs index 0))]
         (if (= (+ index 1) len)
           (lower-expr-expected ctx state env type-env expr expected-ty expr)
           (match (lower-expr ctx state env type-env expr)
@@ -38846,7 +38848,7 @@
         (match arm
           [(AstMatchArm.Arm pat body-box)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (lower-context-expr-get ctx body-box)]
               (match pat
                 [(AstPattern.Literal lit)
                   (lower-match-literal-arm
@@ -39497,7 +39499,7 @@
   (match arm
     [(AstMatchArm.Arm pat body-box)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (lower-context-expr-get ctx body-box)]
         (match (lower-bind-match-catch-all-pattern
           ctx
           state
@@ -39588,22 +39590,25 @@
     true))
 
 (define (lower-tail-call-reference-capturing-lambda?
+  [ctx : TcContext]
   [type-env : TcTypeEnv]
   [callee : AstExpr]) : bool
   (match (ast-expr-unspan callee)
     [(AstExpr.Ann inner-box _)
       (lower-tail-call-reference-capturing-lambda?
+        ctx
         type-env
-        (ast-node-get inner-box))]
+        (lower-context-expr-get ctx inner-box))]
     [(AstExpr.Cast inner-box _)
       (lower-tail-call-reference-capturing-lambda?
+        ctx
         type-env
-        (ast-node-get inner-box))]
+        (lower-context-expr-get ctx inner-box))]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (tc-lambda-captures-reference? type-env params body))])]
     [_ false]))
 
@@ -39801,6 +39806,7 @@
           (+ binding-index 1))])))
 
 (define (lower-tail-begin-candidate?
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [exprs : AstExprList]) : bool
@@ -39809,17 +39815,20 @@
     (if (= len 0)
       false
       (lower-tail-expr-candidate?
+        ctx
         state
         env
-        (ast-node-get (ast-expr-list-get (& exprs) (- len 1) 0))))))
+        (lower-context-expr-get ctx (ast-expr-list-get (& exprs) (- len 1) 0))))))
 
 (define (lower-tail-match-arms-candidate?
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [arms : AstMatchArmList]) : bool
-  (lower-tail-match-arms-candidate-at? state env (& arms) 0))
+  (lower-tail-match-arms-candidate-at? ctx state env (& arms) 0))
 
 (define (lower-tail-match-arms-candidate-at?
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [arms : (& arms AstMatchArmList)]
@@ -39829,59 +39838,61 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pat body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (lower-context-expr-get ctx body-box)]
           [body-env : sym_i64_env.SymI64Env
             (match pat
               [(AstPattern.Binding name)
                 (sym_i64_env.sym-i64-bind-id env name 0)]
               [_ env])]
-          (if (lower-tail-expr-candidate? state body-env body)
+          (if (lower-tail-expr-candidate? ctx state body-env body)
             true
-            (lower-tail-match-arms-candidate-at? state env arms (+ index 1))))])))
+            (lower-tail-match-arms-candidate-at? ctx state env arms (+ index 1))))])))
 
 (define (lower-tail-expr-candidate?
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-tail-expr-candidate? state env inner))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-tail-expr-candidate? ctx state env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-tail-expr-candidate? state env inner))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-tail-expr-candidate? ctx state env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-tail-expr-candidate? state env inner))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-tail-expr-candidate? ctx state env inner))]
     [(AstExpr.Call callee-box _)
       (let
-        [callee : AstExpr (ast-node-get callee-box)]
+        [callee : AstExpr (lower-context-expr-get ctx callee-box)]
         (lower-tail-call-target? state env callee))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (lower-tail-expr-candidate?
+              ctx
               state
               (lower-tail-let-bindings-candidate-env env bindings)
               body))])]
-    [(AstExpr.Begin exprs) (lower-tail-begin-candidate? state env exprs)]
-    [(AstExpr.Unsafe exprs) (lower-tail-begin-candidate? state env exprs)]
+    [(AstExpr.Begin exprs) (lower-tail-begin-candidate? ctx state env exprs)]
+    [(AstExpr.Unsafe exprs) (lower-tail-begin-candidate? ctx state env exprs)]
     [(AstExpr.If _ then-branch-box else-branch-box)
       (let
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (if (lower-tail-expr-candidate? state env then-branch)
+        [then-branch : AstExpr (lower-context-expr-get ctx then-branch-box)]
+        [else-branch : AstExpr (lower-context-expr-get ctx else-branch-box)]
+        (if (lower-tail-expr-candidate? ctx state env then-branch)
           true
-          (lower-tail-expr-candidate? state env else-branch)))]
+          (lower-tail-expr-candidate? ctx state env else-branch)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match _ arms)
-          (lower-tail-match-arms-candidate? state env arms)])]
+          (lower-tail-match-arms-candidate? ctx state env arms)])]
     [_ false]))
 
 ;; #1867 sret return ABI (Phase 1): when `sret-var` >= 0 the caller passed a
@@ -39944,26 +39955,31 @@
       (CompilerIrInstr.Return
         (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty)))))
 
-(define (lower-rvo-node-has-early-return? [id : i64]) : bool
-  (lower-rvo-expr-has-early-return? (ast-node-get id)))
+(define (lower-rvo-node-has-early-return? [ctx : TcContext] [id : i64]) : bool
+  (lower-rvo-expr-has-early-return? ctx (lower-context-expr-get ctx id)))
 
-(define (lower-rvo-expr-list-has-early-return? [exprs : AstExprList]) : bool
-  (lower-rvo-expr-list-has-early-return-at? (& exprs) 0))
+(define (lower-rvo-expr-list-has-early-return?
+  [ctx : TcContext]
+  [exprs : AstExprList]) : bool
+  (lower-rvo-expr-list-has-early-return-at? ctx (& exprs) 0))
 
 (define (lower-rvo-expr-list-has-early-return-at?
+  [ctx : TcContext]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
   (if (>= index (struct-get exprs len))
     false
     (or
-      (lower-rvo-node-has-early-return? (ast-expr-list-get exprs index 0))
-      (lower-rvo-expr-list-has-early-return-at? exprs (+ index 1)))))
+      (lower-rvo-node-has-early-return? ctx (ast-expr-list-get exprs index 0))
+      (lower-rvo-expr-list-has-early-return-at? ctx exprs (+ index 1)))))
 
 (define (lower-rvo-let-bindings-have-early-return?
+  [ctx : TcContext]
   [bindings : AstLetBindingList]) : bool
-  (lower-rvo-let-bindings-have-early-return-at? (& bindings) 0))
+  (lower-rvo-let-bindings-have-early-return-at? ctx (& bindings) 0))
 
 (define (lower-rvo-let-bindings-have-early-return-at?
+  [ctx : TcContext]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -39974,15 +39990,19 @@
         binding-index
         (ast-let-binding-fallback))
         [(AstLetBinding.Binding _ _ init-box)
-          (lower-rvo-node-has-early-return? init-box)])
+          (lower-rvo-node-has-early-return? ctx init-box)])
       (lower-rvo-let-bindings-have-early-return-at?
+        ctx
         bindings
         (+ binding-index 1)))))
 
-(define (lower-rvo-match-arms-have-early-return? [arms : AstMatchArmList]) : bool
-  (lower-rvo-match-arms-have-early-return-at? (& arms) 0))
+(define (lower-rvo-match-arms-have-early-return?
+  [ctx : TcContext]
+  [arms : AstMatchArmList]) : bool
+  (lower-rvo-match-arms-have-early-return-at? ctx (& arms) 0))
 
 (define (lower-rvo-match-arms-have-early-return-at?
+  [ctx : TcContext]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
   (if (>= index (struct-get arms len))
@@ -39990,14 +40010,16 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (or
-          (lower-rvo-node-has-early-return? body-box)
-          (lower-rvo-match-arms-have-early-return-at? arms (+ index 1)))])))
+          (lower-rvo-node-has-early-return? ctx body-box)
+          (lower-rvo-match-arms-have-early-return-at? ctx arms (+ index 1)))])))
 
 (define (lower-rvo-resource-bindings-have-early-return?
+  [ctx : TcContext]
   [bindings : AstResourceBindingList]) : bool
-  (lower-rvo-resource-bindings-have-early-return-at? (& bindings) 0))
+  (lower-rvo-resource-bindings-have-early-return-at? ctx (& bindings) 0))
 
 (define (lower-rvo-resource-bindings-have-early-return-at?
+  [ctx : TcContext]
   [bindings : (& bindings AstResourceBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-resource-binding-list-len bindings))
@@ -40009,13 +40031,14 @@
         (ast-resource-binding-fallback))
         [(AstResourceBinding.Binding _ acquire-box cleanup-box)
           (or
-            (lower-rvo-node-has-early-return? acquire-box)
-            (lower-rvo-node-has-early-return? cleanup-box))])
+            (lower-rvo-node-has-early-return? ctx acquire-box)
+            (lower-rvo-node-has-early-return? ctx cleanup-box))])
       (lower-rvo-resource-bindings-have-early-return-at?
+        ctx
         bindings
         (+ binding-index 1)))))
 
-(define (lower-rvo-expr-has-early-return? [expr : AstExpr]) : bool
+(define (lower-rvo-expr-has-early-return? [ctx : TcContext] [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Return _) true]
     [(AstExpr.Try _) true]
@@ -40031,87 +40054,91 @@
     [(AstExpr.ProgramEnvp) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
-    [(AstExpr.Spanned inner-box _) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExpr.Spanned inner-box _)
+      (lower-rvo-node-has-early-return? ctx inner-box)]
     [(AstExpr.Binary _ left-box right-box)
       (or
-        (lower-rvo-node-has-early-return? left-box)
-        (lower-rvo-node-has-early-return? right-box))]
-    [(AstExpr.Unary _ inner-box) (lower-rvo-node-has-early-return? inner-box)]
-    [(AstExpr.Ann inner-box _) (lower-rvo-node-has-early-return? inner-box)]
-    [(AstExpr.Cast inner-box _) (lower-rvo-node-has-early-return? inner-box)]
+        (lower-rvo-node-has-early-return? ctx left-box)
+        (lower-rvo-node-has-early-return? ctx right-box))]
+    [(AstExpr.Unary _ inner-box)
+      (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.Ann inner-box _) (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.Cast inner-box _)
+      (lower-rvo-node-has-early-return? ctx inner-box)]
     [(AstExpr.Borrow _ _ inner-box)
-      (lower-rvo-node-has-early-return? inner-box)]
+      (lower-rvo-node-has-early-return? ctx inner-box)]
     [(AstExpr.Call func-box args)
       (or
-        (lower-rvo-node-has-early-return? func-box)
-        (lower-rvo-expr-list-has-early-return? args))]
+        (lower-rvo-node-has-early-return? ctx func-box)
+        (lower-rvo-expr-list-has-early-return? ctx args))]
     [(AstExpr.If cond-box then-box else-box)
       (or
-        (lower-rvo-node-has-early-return? cond-box)
-        (lower-rvo-node-has-early-return? then-box)
-        (lower-rvo-node-has-early-return? else-box))]
+        (lower-rvo-node-has-early-return? ctx cond-box)
+        (lower-rvo-node-has-early-return? ctx then-box)
+        (lower-rvo-node-has-early-return? ctx else-box))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (or
-            (lower-rvo-let-bindings-have-early-return? bindings)
-            (lower-rvo-node-has-early-return? body-box))])]
+            (lower-rvo-let-bindings-have-early-return? ctx bindings)
+            (lower-rvo-node-has-early-return? ctx body-box))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
-          (lower-rvo-node-has-early-return? body-box)])]
-    [(AstExpr.Tuple exprs) (lower-rvo-expr-list-has-early-return? exprs)]
+          (lower-rvo-node-has-early-return? ctx body-box)])]
+    [(AstExpr.Tuple exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(AstExpr.TupleRef tuple-box index-box)
       (or
-        (lower-rvo-node-has-early-return? tuple-box)
-        (lower-rvo-node-has-early-return? index-box))]
-    [(AstExpr.Array exprs) (lower-rvo-expr-list-has-early-return? exprs)]
-    [(AstExpr.MakeArray _ len-box) (lower-rvo-node-has-early-return? len-box)]
+        (lower-rvo-node-has-early-return? ctx tuple-box)
+        (lower-rvo-node-has-early-return? ctx index-box))]
+    [(AstExpr.Array exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(AstExpr.MakeArray _ len-box)
+      (lower-rvo-node-has-early-return? ctx len-box)]
     [(AstExpr.ArrayRef arr-box index-box)
       (or
-        (lower-rvo-node-has-early-return? arr-box)
-        (lower-rvo-node-has-early-return? index-box))]
+        (lower-rvo-node-has-early-return? ctx arr-box)
+        (lower-rvo-node-has-early-return? ctx index-box))]
     [(AstExpr.ArraySet arr-box index-box value-box)
       (or
-        (lower-rvo-node-has-early-return? arr-box)
-        (lower-rvo-node-has-early-return? index-box)
-        (lower-rvo-node-has-early-return? value-box))]
+        (lower-rvo-node-has-early-return? ctx arr-box)
+        (lower-rvo-node-has-early-return? ctx index-box)
+        (lower-rvo-node-has-early-return? ctx value-box))]
     [(AstExpr.ArrayPush arr-box value-box)
       (or
-        (lower-rvo-node-has-early-return? arr-box)
-        (lower-rvo-node-has-early-return? value-box))]
+        (lower-rvo-node-has-early-return? ctx arr-box)
+        (lower-rvo-node-has-early-return? ctx value-box))]
     [(AstExpr.StringRef str-box index-box)
       (or
-        (lower-rvo-node-has-early-return? str-box)
-        (lower-rvo-node-has-early-return? index-box))]
+        (lower-rvo-node-has-early-return? ctx str-box)
+        (lower-rvo-node-has-early-return? ctx index-box))]
     [(AstExpr.While cond-box body-box)
       (or
-        (lower-rvo-node-has-early-return? cond-box)
-        (lower-rvo-node-has-early-return? body-box))]
-    [(AstExpr.Begin exprs) (lower-rvo-expr-list-has-early-return? exprs)]
-    [(AstExpr.Unsafe exprs) (lower-rvo-expr-list-has-early-return? exprs)]
-    [(AstExpr.Set _ rhs-box) (lower-rvo-node-has-early-return? rhs-box)]
+        (lower-rvo-node-has-early-return? ctx cond-box)
+        (lower-rvo-node-has-early-return? ctx body-box))]
+    [(AstExpr.Begin exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(AstExpr.Unsafe exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(AstExpr.Set _ rhs-box) (lower-rvo-node-has-early-return? ctx rhs-box)]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (or
-            (lower-rvo-node-has-early-return? scrut-box)
-            (lower-rvo-match-arms-have-early-return? arms))])]
+            (lower-rvo-node-has-early-return? ctx scrut-box)
+            (lower-rvo-match-arms-have-early-return? ctx arms))])]
     [(AstExpr.Foreach foreach-box)
       (match (box-get foreach-box)
         [(AstForeach.Foreach _ _ start-box end-box body-box)
           (or
-            (lower-rvo-node-has-early-return? start-box)
-            (lower-rvo-node-has-early-return? end-box)
-            (lower-rvo-node-has-early-return? body-box))])]
+            (lower-rvo-node-has-early-return? ctx start-box)
+            (lower-rvo-node-has-early-return? ctx end-box)
+            (lower-rvo-node-has-early-return? ctx body-box))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (or
-            (lower-rvo-node-has-early-return? start-box)
-            (lower-rvo-node-has-early-return? end-box)
-            (lower-rvo-node-has-early-return? init-box)
-            (lower-rvo-node-has-early-return? value-box))])]
+            (lower-rvo-node-has-early-return? ctx start-box)
+            (lower-rvo-node-has-early-return? ctx end-box)
+            (lower-rvo-node-has-early-return? ctx init-box)
+            (lower-rvo-node-has-early-return? ctx value-box))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -40126,94 +40153,101 @@
             value-box
             body-box)
           (or
-            (lower-rvo-node-has-early-return? start-box)
-            (lower-rvo-node-has-early-return? end-box)
-            (lower-rvo-node-has-early-return? init-box)
-            (lower-rvo-node-has-early-return? value-box)
-            (lower-rvo-node-has-early-return? body-box))])]
+            (lower-rvo-node-has-early-return? ctx start-box)
+            (lower-rvo-node-has-early-return? ctx end-box)
+            (lower-rvo-node-has-early-return? ctx init-box)
+            (lower-rvo-node-has-early-return? ctx value-box)
+            (lower-rvo-node-has-early-return? ctx body-box))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (or
-        (lower-rvo-node-has-early-return? value-box)
-        (lower-rvo-node-has-early-return? lane-box))]
+        (lower-rvo-node-has-early-return? ctx value-box)
+        (lower-rvo-node-has-early-return? ctx lane-box))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (or
-        (lower-rvo-node-has-early-return? value-box)
-        (lower-rvo-node-has-early-return? lane-box))]
+        (lower-rvo-node-has-early-return? ctx value-box)
+        (lower-rvo-node-has-early-return? ctx lane-box))]
     [(AstExpr.StructGet receiver-box _)
-      (lower-rvo-node-has-early-return? receiver-box)]
+      (lower-rvo-node-has-early-return? ctx receiver-box)]
     [(AstExpr.StructSet receiver-box _ value-box)
       (or
-        (lower-rvo-node-has-early-return? receiver-box)
-        (lower-rvo-node-has-early-return? value-box))]
-    [(AstExpr.WithRegion _ body) (lower-rvo-expr-list-has-early-return? body)]
+        (lower-rvo-node-has-early-return? ctx receiver-box)
+        (lower-rvo-node-has-early-return? ctx value-box))]
+    [(AstExpr.WithRegion _ body)
+      (lower-rvo-expr-list-has-early-return? ctx body)]
     [(AstExpr.WithEscape scratch-box body)
       (or
-        (lower-rvo-node-has-early-return? scratch-box)
-        (lower-rvo-expr-list-has-early-return? body))]
-    [(AstExpr.WithScratch body) (lower-rvo-expr-list-has-early-return? body)]
+        (lower-rvo-node-has-early-return? ctx scratch-box)
+        (lower-rvo-expr-list-has-early-return? ctx body))]
+    [(AstExpr.WithScratch body)
+      (lower-rvo-expr-list-has-early-return? ctx body)]
     [(AstExpr.InArena arena-box body)
       (or
-        (lower-rvo-node-has-early-return? arena-box)
-        (lower-rvo-expr-list-has-early-return? body))]
+        (lower-rvo-node-has-early-return? ctx arena-box)
+        (lower-rvo-expr-list-has-early-return? ctx body))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (or
-            (lower-rvo-resource-bindings-have-early-return? bindings)
-            (lower-rvo-expr-list-has-early-return? body))])]
-    [(AstExpr.Box inner-box) (lower-rvo-node-has-early-return? inner-box)]
-    [(AstExpr.BoxGet inner-box) (lower-rvo-node-has-early-return? inner-box)]
-    [(AstExpr.BoxTake inner-box) (lower-rvo-node-has-early-return? inner-box)]
+            (lower-rvo-resource-bindings-have-early-return? ctx bindings)
+            (lower-rvo-expr-list-has-early-return? ctx body))])]
+    [(AstExpr.Box inner-box) (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.BoxGet inner-box)
+      (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.BoxTake inner-box)
+      (lower-rvo-node-has-early-return? ctx inner-box)]
     [(AstExpr.BoxSet inner-box value-box)
       (or
-        (lower-rvo-node-has-early-return? inner-box)
-        (lower-rvo-node-has-early-return? value-box))]
+        (lower-rvo-node-has-early-return? ctx inner-box)
+        (lower-rvo-node-has-early-return? ctx value-box))]
     [(AstExpr.Comptime _) false]
     [(AstExpr.Quote _) false]
     [(AstExpr.Quasiquote _) false]
     [(AstExpr.Unquote _) false]
     [(AstExpr.UnquoteSplicing _) false]
     [(AstExpr.BracketClause items)
-      (lower-rvo-expr-list-has-early-return? items)]
+      (lower-rvo-expr-list-has-early-return? ctx items)]
     [(AstExpr.PtrNullCheck inner-box)
-      (lower-rvo-node-has-early-return? inner-box)]
-    [(AstExpr.PtrRead ptr-box) (lower-rvo-node-has-early-return? ptr-box)]
+      (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.PtrRead ptr-box) (lower-rvo-node-has-early-return? ctx ptr-box)]
     [(AstExpr.PtrWrite ptr-box value-box)
       (or
-        (lower-rvo-node-has-early-return? ptr-box)
-        (lower-rvo-node-has-early-return? value-box))]
+        (lower-rvo-node-has-early-return? ctx ptr-box)
+        (lower-rvo-node-has-early-return? ctx value-box))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (or
-        (lower-rvo-node-has-early-return? ptr-box)
-        (lower-rvo-node-has-early-return? offset-box))]
-    [(AstExpr.PtrCast ptr-box _) (lower-rvo-node-has-early-return? ptr-box)]
-    [(AstExpr.PtrToInt ptr-box) (lower-rvo-node-has-early-return? ptr-box)]
+        (lower-rvo-node-has-early-return? ctx ptr-box)
+        (lower-rvo-node-has-early-return? ctx offset-box))]
+    [(AstExpr.PtrCast ptr-box _) (lower-rvo-node-has-early-return? ctx ptr-box)]
+    [(AstExpr.PtrToInt ptr-box) (lower-rvo-node-has-early-return? ctx ptr-box)]
     [(AstExpr.IntToPtr value-box _)
-      (lower-rvo-node-has-early-return? value-box)]
-    [(AstExpr.StringData str-box) (lower-rvo-node-has-early-return? str-box)]
+      (lower-rvo-node-has-early-return? ctx value-box)]
+    [(AstExpr.StringData str-box)
+      (lower-rvo-node-has-early-return? ctx str-box)]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (or
-        (lower-rvo-node-has-early-return? ptr-box)
-        (lower-rvo-node-has-early-return? len-box))]
-    [(AstExpr.ArrayData array-box) (lower-rvo-node-has-early-return? array-box)]
+        (lower-rvo-node-has-early-return? ctx ptr-box)
+        (lower-rvo-node-has-early-return? ctx len-box))]
+    [(AstExpr.ArrayData array-box)
+      (lower-rvo-node-has-early-return? ctx array-box)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (or
-        (lower-rvo-node-has-early-return? leaf-box)
-        (lower-rvo-node-has-early-return? subleaf-box))]
+        (lower-rvo-node-has-early-return? ctx leaf-box)
+        (lower-rvo-node-has-early-return? ctx subleaf-box))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (or
-        (lower-rvo-node-has-early-return? leaf-box)
-        (lower-rvo-node-has-early-return? subleaf-box))]
+        (lower-rvo-node-has-early-return? ctx leaf-box)
+        (lower-rvo-node-has-early-return? ctx subleaf-box))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (or
-        (lower-rvo-node-has-early-return? leaf-box)
-        (lower-rvo-node-has-early-return? subleaf-box))]
+        (lower-rvo-node-has-early-return? ctx leaf-box)
+        (lower-rvo-node-has-early-return? ctx subleaf-box))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (or
-        (lower-rvo-node-has-early-return? leaf-box)
-        (lower-rvo-node-has-early-return? subleaf-box))]
-    [(AstExpr.Xgetbv index-box) (lower-rvo-node-has-early-return? index-box)]
-    [(AstExpr.Syscall args) (lower-rvo-expr-list-has-early-return? args)]
+        (lower-rvo-node-has-early-return? ctx leaf-box)
+        (lower-rvo-node-has-early-return? ctx subleaf-box))]
+    [(AstExpr.Xgetbv index-box)
+      (lower-rvo-node-has-early-return? ctx index-box)]
+    [(AstExpr.Syscall args) (lower-rvo-expr-list-has-early-return? ctx args)]
     [_ true]))
 
 ;; #3792 aliasing guard for sret-forwarding RVO. The forwarded sret is the
@@ -40262,7 +40296,7 @@
       (lower-rvo-arg-cannot-alias-sret?
         ctx
         type-env
-        (ast-node-get (ast-expr-list-get args index 0)))
+        (lower-context-expr-get ctx (ast-expr-list-get args index 0)))
       (lower-rvo-args-cannot-alias-sret-at? ctx type-env args (+ index 1)))))
 
 (define (lower-rvo-callee-has-early-return?
@@ -40577,11 +40611,11 @@
     (match expr
       [(AstExpr.Spanned inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-return-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExpr.Call func-box args)
         (let
-          [func : AstExpr (ast-node-get func-box)]
+          [func : AstExpr (lower-context-expr-get ctx func-box)]
           (lower-return-call-to-sret
             ctx
             state
@@ -40597,20 +40631,23 @@
     (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)))
 
 (define (lower-tail-call-safe-param-aggregate-arg?
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-tail-call-safe-param-aggregate-arg?
+        ctx
         state
         env
-        (ast-node-get inner-box))]
+        (lower-context-expr-get ctx inner-box))]
     [(AstExpr.Ann inner-box _)
       (lower-tail-call-safe-param-aggregate-arg?
+        ctx
         state
         env
-        (ast-node-get inner-box))]
+        (lower-context-expr-get ctx inner-box))]
     [(AstExpr.Var name)
       (let
         [var-id : i64
@@ -40647,13 +40684,15 @@
   (if (>= index (struct-get exprs len))
     false
     (let
-      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      [expr : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get exprs index 0))]
       (match (tc-expr ctx type-env expr)
         [(ResultTcType.Ok ty)
           (or
             (and
               (lower-type-contains-inline-aggregate? ctx ty)
-              (not (lower-tail-call-safe-param-aggregate-arg? state env expr)))
+              (not
+                (lower-tail-call-safe-param-aggregate-arg? ctx state env expr)))
             (lower-expr-list-contains-unsafe-inline-aggregate-at?
               ctx
               state
@@ -40789,7 +40828,7 @@
           [else
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]))]
     [_
-      (if (lower-tail-call-reference-capturing-lambda? type-env callee)
+      (if (lower-tail-call-reference-capturing-lambda? ctx type-env callee)
         (lower-return-expr ctx state env type-env origin ret-ty sret-var)
         (lower-tail-call-indirect-expr
           ctx
@@ -40830,7 +40869,8 @@
           (CompilerIrInstr.Return
             (lower-return-maybe CompilerIrValue.Unit ret-ty))))
       (let
-        [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        [expr : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get exprs index 0))]
         (if (= (+ index 1) len)
           (lower-tail-expr ctx state env type-env expr ret-ty sret-var)
           (match (lower-expr ctx state env type-env expr)
@@ -40927,7 +40967,7 @@
         (match arm
           [(AstMatchArm.Arm pat body-box)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (lower-context-expr-get ctx body-box)]
               (match pat
                 [(AstPattern.Literal lit)
                   (lower-tail-match-literal-arm
@@ -41070,7 +41110,7 @@
   (match arm
     [(AstMatchArm.Arm pat body-box)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (lower-context-expr-get ctx body-box)]
         (match (lower-bind-match-catch-all-pattern
           ctx
           state
@@ -41320,7 +41360,7 @@
       (match arm
         [(AstMatchArm.Arm pat body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (if (ast-match-arm-list-empty? (& rest))
               (lower-tail-match-enum-final-pattern
                 ctx
@@ -41705,19 +41745,19 @@
   [expr : AstExpr]
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
-  (if (lower-tail-expr-candidate? state env expr)
+  (if (lower-tail-expr-candidate? ctx state env expr)
     (match expr
       [(AstExpr.Spanned inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExpr.Ann inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExpr.Cast inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (match (tc-expr ctx type-env inner)
             [(ResultTcType.Ok inner-ty)
               (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
@@ -41728,7 +41768,7 @@
                 (box (lower-diagnostic-at-expr inner message)))]))]
       [(AstExpr.Call callee-box args)
         (let
-          [callee : AstExpr (ast-node-get callee-box)]
+          [callee : AstExpr (lower-context-expr-get ctx callee-box)]
           (lower-tail-call
             ctx
             state
@@ -41743,7 +41783,7 @@
         (match (box-get let-box)
           [(AstLet.Let bindings body-box)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (lower-context-expr-get ctx body-box)]
               (match (lower-let-bindings ctx state env type-env bindings)
                 [(ResultLowerEnv.Ok binding-state body-env body-type-env)
                   (lower-tail-expr
@@ -41768,9 +41808,9 @@
           sret-var)]
       [(AstExpr.If cond-box then-branch-box else-branch-box)
         (let
-          [cond : AstExpr (ast-node-get cond-box)]
-          [then-branch : AstExpr (ast-node-get then-branch-box)]
-          [else-branch : AstExpr (ast-node-get else-branch-box)]
+          [cond : AstExpr (lower-context-expr-get ctx cond-box)]
+          [then-branch : AstExpr (lower-context-expr-get ctx then-branch-box)]
+          [else-branch : AstExpr (lower-context-expr-get ctx else-branch-box)]
           (lower-tail-if
             ctx
             state
@@ -41785,7 +41825,7 @@
         (match (box-get match-box)
           [(AstMatch.Match scrutinee-box arms)
             (let
-              [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+              [scrutinee : AstExpr (lower-context-expr-get ctx scrutinee-box)]
               (lower-tail-match
                 ctx
                 state
@@ -43256,6 +43296,7 @@
         (ResultLowerDispatchDecl.Err (box (lower-diagnostic message)))])))
 
 (define (lower-rvo-early-return-functions-from-decls-in-module
+  [ctx : TcContext]
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [module : String]
@@ -43277,7 +43318,7 @@
               [(AstDecl.Module next-module)
                 (set! cur-module (intern-str next-module))]
               [(AstDecl.DefFn name _ _ body-box _)
-                (if (lower-rvo-node-has-early-return? body-box)
+                (if (lower-rvo-node-has-early-return? ctx body-box)
                   (set!
                     cur-out
                     (hashmap.string-i64-map-put
@@ -43293,9 +43334,11 @@
       cur-out)))
 
 (define (lower-rvo-early-return-functions-from-decls
+  [ctx : TcContext]
   [decls : AstDeclList]
   [names : LowerNameEnv]) : hashmap.StringI64Map
   (lower-rvo-early-return-functions-from-decls-in-module
+    ctx
     decls
     names
     ""
@@ -43328,7 +43371,7 @@
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
       (set!
         lower-rvo-early-return-functions
-        (lower-rvo-early-return-functions-from-decls decls names))
+        (lower-rvo-early-return-functions-from-decls ctx decls names))
       (lower-decls-in-module
         ctx
         top-env

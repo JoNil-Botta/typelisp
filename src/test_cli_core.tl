@@ -720,7 +720,7 @@
     (AstExternMetadata.Metadata
       (AstExternAbi.C)
       "GetStdHandle"
-      AstExternLinkInputList.Nil
+      (ast-extern-link-input-list-new)
       true)
     (ast-ty-func (ast-type-cons (AstType.I32) AstTypeList.Nil) (AstType.I64))))
 
@@ -731,7 +731,7 @@
     (AstExternMetadata.Metadata
       (AstExternAbi.C)
       "WriteFile"
-      AstExternLinkInputList.Nil
+      (ast-extern-link-input-list-new)
       true)
     (ast-ty-func
       (ast-type-cons

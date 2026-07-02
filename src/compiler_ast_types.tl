@@ -310,9 +310,11 @@
   (Search String)
   (Arg String))
 
-(defenum AstExternLinkInputList
-  (Nil)
-  (Cons AstExternLinkInput (Box AstExternLinkInputList)))
+(comptime-decl
+  (:generated vector-family AstExternLinkInputList "AstExternLinkInput")
+  (defstruct AstExternLinkInputList
+    (slots (Array AstExternLinkInput))
+    (len i64)))
 
 (defenum AstFnExport
   (No)
@@ -2069,10 +2071,98 @@
       (ast-field-def-list-append-from (&mut out) (& rest) 0)
       out)))
 
-(define (ast-extern-link-input-cons
-  [head : AstExternLinkInput]
-  [rest : AstExternLinkInputList]) : AstExternLinkInputList
-  (AstExternLinkInputList.Cons head (box rest)))
+(define (ast-extern-link-input-fallback) : AstExternLinkInput
+  (AstExternLinkInput.Arg ""))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-with-capacity "AstExternLinkInput")
+  (define (ast-extern-link-input-list-with-capacity [capacity : i64]) : AstExternLinkInputList
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (AstExternLinkInputList (array.make-array AstExternLinkInput cap) 0))))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-new "AstExternLinkInput")
+  (define (ast-extern-link-input-list-new) : AstExternLinkInputList
+    (ast-extern-link-input-list-with-capacity 4)))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-len "AstExternLinkInput")
+  (define (ast-extern-link-input-list-len [v : (& v AstExternLinkInputList)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-capacity "AstExternLinkInput")
+  (define (ast-extern-link-input-list-capacity
+    [v : (& v AstExternLinkInputList)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-empty? "AstExternLinkInput")
+  (define (ast-extern-link-input-list-empty? [v : (& v AstExternLinkInputList)]) : bool
+    (= (ast-extern-link-input-list-len v) 0)))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-get "AstExternLinkInput")
+  (define (ast-extern-link-input-list-get
+    [v : (& v AstExternLinkInputList)]
+    [index : i64]
+    [fallback : AstExternLinkInput]) : AstExternLinkInput
+    (if (and (>= index 0) (< index (ast-extern-link-input-list-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-copy-range "AstExternLinkInput")
+  (define (ast-extern-link-input-list-copy-range
+    [dst : (&mut dst (Array AstExternLinkInput))]
+    [src : (& src (Array AstExternLinkInput))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (ast-extern-link-input-list-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-grow "AstExternLinkInput")
+  (define (ast-extern-link-input-list-grow
+    [v : (&mut v AstExternLinkInputList)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstExternLinkInput)
+        (array.make-array AstExternLinkInput new-cap)]
+      (begin
+        (ast-extern-link-input-list-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family ast-extern-link-input-list-push "AstExternLinkInput")
+  (define (ast-extern-link-input-list-push
+    [v : (&mut v AstExternLinkInputList)]
+    [value : AstExternLinkInput]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (ast-extern-link-input-list-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
 
 (define (ast-fn-export [name : String]) : AstFnExport
   (AstFnExport.Export (ci.intern name)))
@@ -3895,14 +3985,31 @@
     [(AstExternLinkInput.Search dir) (AstExternLinkInput.Search dir)]
     [(AstExternLinkInput.Arg arg) (AstExternLinkInput.Arg arg)]))
 
+(define (ast-compaction-remap-extern-link-input-list-into
+  [inputs : (& inputs AstExternLinkInputList)]
+  [index : i64]
+  [out : (&mut out AstExternLinkInputList)]) : unit
+  (if (>= index (ast-extern-link-input-list-len inputs))
+    unit
+    (begin
+      (ast-extern-link-input-list-push
+        out
+        (ast-compaction-remap-extern-link-input
+          (ast-extern-link-input-list-get
+            inputs
+            index
+            (ast-extern-link-input-fallback))))
+      (ast-compaction-remap-extern-link-input-list-into inputs (+ index 1) out))))
+
 (define (ast-compaction-remap-extern-link-input-list
   [inputs : AstExternLinkInputList]) : AstExternLinkInputList
-  (match inputs
-    [(AstExternLinkInputList.Nil) AstExternLinkInputList.Nil]
-    [(AstExternLinkInputList.Cons input rest)
-      (AstExternLinkInputList.Cons
-        (ast-compaction-remap-extern-link-input input)
-        (box (ast-compaction-remap-extern-link-input-list (box-get rest))))]))
+  (let
+    [out : AstExternLinkInputList
+      (ast-extern-link-input-list-with-capacity
+        (ast-extern-link-input-list-len (& inputs)))]
+    (begin
+      (ast-compaction-remap-extern-link-input-list-into (& inputs) 0 (&mut out))
+      out)))
 
 (define (ast-compaction-remap-extern-metadata
   [remap : AstProgramCompactionRemap]
@@ -5047,41 +5154,35 @@
 (define (ast-extern-link-input-list-eq?
   [a : AstExternLinkInputList]
   [b : AstExternLinkInputList]) : bool
-  (match a
-    [(AstExternLinkInputList.Nil)
-      (match b
-        [(AstExternLinkInputList.Nil) true]
-        [_ false])]
-    [(AstExternLinkInputList.Cons ahead arest)
-      (let
-        [arest : AstExternLinkInputList (box-get arest)]
-        (match b
-          [(AstExternLinkInputList.Cons bhead brest)
-            (let
-              [brest : AstExternLinkInputList (box-get brest)]
-              (and
-                (ast-extern-link-input-eq? ahead bhead)
-                (ast-extern-link-input-list-eq? arest brest)))]
-          [_ false]))]))
+  (let
+    [alen : i64 (ast-extern-link-input-list-len (& a))]
+    [blen : i64 (ast-extern-link-input-list-len (& b))]
+    (and (= alen blen) (ast-extern-link-input-list-eq-at? (& a) (& b) 0 alen))))
 
-(define (ast-extern-link-input-list-append
-  [items : AstExternLinkInputList]
-  [item : AstExternLinkInput]) : AstExternLinkInputList
-  (match items
-    [(AstExternLinkInputList.Nil)
-      (ast-extern-link-input-cons item AstExternLinkInputList.Nil)]
-    [(AstExternLinkInputList.Cons head rest)
-      (let
-        [rest : AstExternLinkInputList (box-get rest)]
-        (ast-extern-link-input-cons
-          head
-          (ast-extern-link-input-list-append rest item)))]))
+(define (ast-extern-link-input-list-eq-at?
+  [a : (& a AstExternLinkInputList)]
+  [b : (& b AstExternLinkInputList)]
+  [index : i64]
+  [len : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (ast-extern-link-input-eq?
+        (ast-extern-link-input-list-get
+          a
+          index
+          (ast-extern-link-input-fallback))
+        (ast-extern-link-input-list-get
+          b
+          index
+          (ast-extern-link-input-fallback)))
+      (ast-extern-link-input-list-eq-at? a b (+ index 1) len))))
 
 (define (ast-extern-default-metadata [name : String]) : AstExternMetadata
   (AstExternMetadata.Metadata
     (AstExternAbi.C)
     name
-    AstExternLinkInputList.Nil
+    (ast-extern-link-input-list-new)
     false))
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String

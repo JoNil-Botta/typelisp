@@ -13111,28 +13111,36 @@
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$255"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    movzbq %al, %rax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$65535"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    movzwq %ax, %rax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$255"
-        (AstTyU32))
+        (AstTyU32)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    movzbl %al, %eax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$65535"
-        (AstTyU32))
+        (AstTyU32)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    movzwl %ax, %eax\n")]
         [(CompilerBackendNoAsm) false]))
@@ -13140,28 +13148,36 @@
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$254"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    andq $254, %rax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$256"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    andq $256, %rax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitAnd)
         "$65280"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    andq $65280, %rax\n")]
         [(CompilerBackendNoAsm) false])
       (match (compiler-backend-binop-immediate-asm
         (IrBinBitOr)
         "$255"
-        (AstTyI64))
+        (AstTyI64)
+        "%rax"
+        "%rax")
         [(CompilerBackendSomeAsm asm)
           (string.string-eq asm "    orq $255, %rax\n")]
         [(CompilerBackendNoAsm) false]))))

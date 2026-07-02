@@ -1371,6 +1371,91 @@
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 
+(define (compiler-driver-state-smoke-lower-avx512-masked-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [inner-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [inner-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [spanned-a : i64
+          (ast-expr-spanned-with-pools pools-a inner-a (AstSourceSpan 1 1 1 5))]
+        [spanned-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [exprs : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) spanned-a)
+              items))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "main"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Avx512)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [lowered : ResultLowerExpr
+                    (lower-avx512-masked-begin
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      LowerStringSet.Nil
+                      "i"
+                      0
+                      (CompilerIrValue.I64 255)
+                      8
+                      exprs)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= inner-a inner-b)
+                    (= spanned-a spanned-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (match lowered
+                      [(ResultLowerExpr.Ok result)
+                        (match result
+                          [(LowerExpr.Expr _ _ ty)
+                            (tc-type-eq ty (AstType.Bool))])]
+                      [(ResultLowerExpr.Err _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1800,6 +1885,9 @@
     (unless
       (compiler-driver-state-smoke-lower-vector-analysis-uses-context?)
       (return 23))
+    (unless
+      (compiler-driver-state-smoke-lower-avx512-masked-uses-context?)
+      (return 25))
     (unless
       (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
       (return 19))

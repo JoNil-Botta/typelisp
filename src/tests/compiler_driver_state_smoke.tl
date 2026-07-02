@@ -1421,6 +1421,37 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-scratch-batch-owned-pool?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/calc.tl"
+            roots))
+        (set! ok false))
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/lexer.tl"
+            roots))
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
 (define (compiler-driver-state-smoke-emit-ir-core-macro-source) : String
   "(define (main) : i64
   (if (and true true)
@@ -1484,8 +1515,12 @@
 
 (define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
   (let
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     [input-path : String
       (compiler-driver-state-smoke-double-lower-fixture-path)]
     (begin
@@ -1582,6 +1617,7 @@
     (unless
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
+    (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 22))
     (unless
       (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
       (return 17))

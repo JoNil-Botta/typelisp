@@ -171,6 +171,32 @@
     (compiler-load-runtime-prelude-cache-clear!)
     (tc-prefix-snapshot-cache-clear!)))
 
+(define (compiler-driver-state-new-owned-pool-context) : AstNodePoolContext
+  (let
+    [pool-arena : i64 (arena.tl_arena_make)]
+    (ast-node-pool-context-new-with-capacities-in-arena
+      2097152
+      262144
+      pool-arena)))
+
+(define (compiler-driver-state-install-owned-pool-context!
+  [state : CompilerDriverState]
+  [pools : AstNodePoolContext]) : unit
+  (begin
+    (array-set!
+      (struct-get state pool-arena)
+      0
+      (ast-node-pool-context-base-arena pools))
+    (array-set!
+      (struct-get state expr-pool)
+      0
+      (array-ref (struct-get pools expr-pool) 0))
+    (array-set!
+      (struct-get state type-pool)
+      0
+      (array-ref (struct-get pools type-pool) 0))
+    (compiler-driver-state-install-pools! state)))
+
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit
   (if (or
@@ -179,30 +205,27 @@
     unit
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
-      [new-arena : i64 (arena.tl_arena_make)]
-      [pools : AstNodePoolContext
-        (ast-node-pool-context-new-with-capacities-in-arena
-          2097152
-          262144
-          new-arena)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       (begin
         (compiler-driver-state-destroy-retired-pool-arena! state)
         (compiler-driver-state-clear-pool-backed-caches!)
-        (array-set!
-          (struct-get state pool-arena)
-          0
-          (ast-node-pool-context-base-arena pools))
-        (array-set!
-          (struct-get state expr-pool)
-          0
-          (array-ref (struct-get pools expr-pool) 0))
-        (array-set!
-          (struct-get state type-pool)
-          0
-          (array-ref (struct-get pools type-pool) 0))
-        (compiler-driver-state-install-pools! state)
-        (unsafe
-          (arena.tl_arena_destroy old-arena))))))
+        (if (= prev-arena old-arena)
+          (let
+            [pools : AstNodePoolContext
+              (compiler-driver-state-new-owned-pool-context)]
+            (begin
+              (compiler-driver-state-install-owned-pool-context! state pools)
+              (unsafe
+                (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
+              (unsafe
+                (arena.tl_arena_destroy old-arena))))
+          (begin
+            (unsafe
+              (arena.tl_arena_destroy old-arena))
+            (let
+              [pools : AstNodePoolContext
+                (compiler-driver-state-new-owned-pool-context)]
+              (compiler-driver-state-install-owned-pool-context! state pools))))))))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -243,22 +266,30 @@
     [new-arena : i64 (ast-node-pool-context-base-arena compact-pools)]
     (if (or (= old-arena 0) (= old-arena new-arena))
       unit
-      (begin
-        (compiler-driver-state-destroy-retired-pool-arena-cell! retired-cell)
-        (compiler-driver-state-clear-pool-backed-caches!)
-        (array-set! pool-arena-cell 0 new-arena)
-        (array-set!
-          expr-cell
-          0
-          (array-ref (struct-get compact-pools expr-pool) 0))
-        (array-set!
-          type-cell
-          0
-          (array-ref (struct-get compact-pools type-pool) 0))
-        (unsafe
-          (arena.tl_arena_set new-arena))
-        (unsafe
-          (arena.tl_arena_destroy old-arena))))))
+      (let
+        [prev-arena : i64 (arena.tl_arena_current)]
+        [restore-arena : i64
+          (if (= prev-arena old-arena)
+            new-arena
+            prev-arena)]
+        (begin
+          (compiler-driver-state-destroy-retired-pool-arena-cell! retired-cell)
+          (compiler-driver-state-clear-pool-backed-caches!)
+          (array-set! pool-arena-cell 0 new-arena)
+          (array-set!
+            expr-cell
+            0
+            (array-ref (struct-get compact-pools expr-pool) 0))
+          (array-set!
+            type-cell
+            0
+            (array-ref (struct-get compact-pools type-pool) 0))
+          (unsafe
+            (arena.tl_arena_set new-arena))
+          (unsafe
+            (arena.tl_arena_destroy old-arena))
+          (unsafe
+            (arena.tl_arena_set restore-arena)))))))
 
 (define compiler-driver-after-compact-active : bool
   false)
@@ -2111,7 +2142,7 @@
         (ast-program decls)
         paths
         (compiler-driver-lower-mode-for-target target mode)
-        (vector.string-vec-new)
+        (svec.new)
         (tc-prefix-default-cache-scope)
         pools)
         [(ResultCompilerLower.Ok program spans)

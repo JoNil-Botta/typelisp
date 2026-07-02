@@ -43953,39 +43953,33 @@
     out))
 
 (define (lower-compiler-copy-string-vec-from
-  [roots : vector.StringVec]
-  [out : vector.StringVec]
+  [roots : svec.StringVector]
+  [out : (&mut out svec.StringVector)]
   [index : i64]
-  [count : i64]) : vector.StringVec
+  [count : i64]) : unit
   (if (>= index count)
-    out
+    unit
     (let
-      [value : String (vector.string-vec-get roots index "")]
-      (lower-compiler-copy-string-vec-from
-        roots
-        (vector.string-vec-push out (string.copy (& value)))
-        (+ index 1)
-        count))))
+      [value : String (svec.get (& roots) index "")]
+      (begin
+        (svec.push out (string.copy (& value)))
+        (lower-compiler-copy-string-vec-from roots out (+ index 1) count)))))
 
 (define (lower-compiler-copy-string-vec-with-pools
   [pools : AstNodePoolContext]
-  [roots : vector.StringVec]) : vector.StringVec
+  [roots : svec.StringVector]) : svec.StringVector
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
-    [out : vector.StringVec
+    [out : svec.StringVector
       (begin
         (unsafe
           (arena.tl_arena_set dest-arena))
         (let
-          [count : i64 (vector.string-vec-len roots)]
-          [copied : vector.StringVec
-            (lower-compiler-copy-string-vec-from
-              roots
-              (vector.string-vec-with-capacity count)
-              0
-              count)]
+          [count : i64 (svec.len (& roots))]
+          [copied : svec.StringVector (svec.with-capacity count)]
           (begin
+            (lower-compiler-copy-string-vec-from roots (&mut copied) 0 count)
             (unsafe
               (arena.tl_arena_set prev-arena))
             copied)))]
@@ -44090,7 +44084,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]
   [compact-pools : AstNodePoolContext]
@@ -44192,7 +44186,7 @@
                                 (lower-compiler-copy-string-with-pools
                                   checked-pools
                                   cache-scope)]
-                              [checked-stdlib-roots : vector.StringVec
+                              [checked-stdlib-roots : svec.StringVector
                                 (lower-compiler-copy-string-vec-with-pools
                                   checked-pools
                                   stdlib-roots)]
@@ -44403,7 +44397,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]
   [compact-pools : AstNodePoolContext]
@@ -44486,7 +44480,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]
   [compact-pools : AstNodePoolContext]

@@ -17933,6 +17933,39 @@
             (compiler-backend-phi-source-is-var? source var)
             (compiler-backend-phi-copy-list-has-source-var? (box-get rest) var))])]))
 
+;; #orphan-push: drop copies whose source is homed at their OWN dst home. The
+;; build-time filter (leading-phi-copies' phi-same-home? check) guarantees no
+;; such copy enters a list, but replace-source-var (the fused Mov+Jump edge)
+;; substitutes a NEW source afterwards -- when the substituted source shares the
+;; dst's home (coalesced same-value class) the copy is a no-op that SELF-BLOCKS
+;; find-unblocked (its own source reads its dst home), mis-triggering the cycle
+;; break: the temp save (`pushq <dst home>`) is emitted, the copy itself elides
+;; as same-home, and replace-source-home finds no consumer in the remaining
+;; list -- an ORPHANED push that leaks %rsp until the epilogue. Re-applying the
+;; build-time invariant after substitution removes both the dead push and the
+;; spurious block. `phi-copy-source-uses-home?` is the exact predicate the
+;; blocked check uses, so everything it would self-block is dropped here.
+(define (compiler-backend-phi-copy-list-drop-same-home
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
+  (match copies
+    [(BackendPhiCopyNil) BackendPhiCopyNil]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy dst _ _)
+          (if (compiler-backend-phi-copy-source-uses-home?
+            assignments
+            copy
+            dst)
+            (compiler-backend-phi-copy-list-drop-same-home
+              assignments
+              (box-get rest))
+            (compiler-backend-phi-copy-cons
+              copy
+              (compiler-backend-phi-copy-list-drop-same-home
+                assignments
+                (box-get rest))))])]))
+
 (define (compiler-backend-phi-copy-list-replace-source-var
   [copies : CompilerBackendPhiCopyList]
   [var : i64]
@@ -18831,12 +18864,17 @@
                 (if (compiler-backend-phi-copy-list-has-source-var?
                   copies
                   moved-dst)
+                  ;; #orphan-push: the substituted source can share its dst's
+                  ;; home -- re-apply the build-time same-home filter or the
+                  ;; cycle break emits an orphaned push (see drop-same-home).
                   (compiler-backend-emit-phi-copy-list
                     assignments
-                    (compiler-backend-phi-copy-list-replace-source-var
-                      copies
-                      moved-dst
-                      moved-src)
+                    (compiler-backend-phi-copy-list-drop-same-home
+                      assignments
+                      (compiler-backend-phi-copy-list-replace-source-var
+                        copies
+                        moved-dst
+                        moved-src))
                     program-index
                     vars
                     false)

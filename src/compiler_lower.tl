@@ -25544,53 +25544,51 @@
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [elem-ty : AstType (lower-atomic-elem-type symbol)]
-    (let
-      [count : i64 (ast-expr-list-len (& args))]
-      (if (= count 0)
+    [count : i64 (ast-expr-list-len (& args))]
+    (if (= count 0)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: atomic helper expects arguments")))
+      (if (= count 1)
         (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: atomic helper expects arguments")))
-        (if (= count 1)
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic
-                "lower: atomic helper expects at least two arguments")))
-          (let
-            [array : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-            [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
-            (if (lower-atomic-load-symbol? symbol)
-              (if (= count 2)
-                (lower-atomic-call-load
-                  ctx
-                  state
-                  env
-                  type-env
-                  symbol
-                  array
-                  index
-                  elem-ty
-                  result-ty
-                  origin)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: atomic load expects two arguments"))))
-              (if (= count 3)
-                (lower-atomic-call-update
-                  ctx
-                  state
-                  env
-                  type-env
-                  symbol
-                  array
-                  index
-                  (ast-node-get (ast-expr-list-get (& args) 2 0))
-                  elem-ty
-                  result-ty
-                  origin)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      "lower: atomic update expects three arguments")))))))))))
+          (box
+            (lower-diagnostic
+              "lower: atomic helper expects at least two arguments")))
+        (let
+          [array : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+          (if (lower-atomic-load-symbol? symbol)
+            (if (= count 2)
+              (lower-atomic-call-load
+                ctx
+                state
+                env
+                type-env
+                symbol
+                array
+                index
+                elem-ty
+                result-ty
+                origin)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic "lower: atomic load expects two arguments"))))
+            (if (= count 3)
+              (lower-atomic-call-update
+                ctx
+                state
+                env
+                type-env
+                symbol
+                array
+                index
+                (ast-node-get (ast-expr-list-get (& args) 2 0))
+                elem-ty
+                result-ty
+                origin)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    "lower: atomic update expects three arguments"))))))))))
 
 ;; Fixed arrays are inline element storage. Bounds check against the static
 ;; length, then Gep directly from the array handle without loading dynamic-array

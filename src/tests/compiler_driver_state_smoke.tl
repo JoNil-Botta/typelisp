@@ -1074,6 +1074,192 @@
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 
+(define (compiler-driver-state-smoke-lower-vector-analysis-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [array-name : i64 (intern "xs")]
+        [index-name : i64 (intern "i")]
+        [arr-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var array-name))]
+        [arr-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [idx-var-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var index-name))]
+        [idx-var-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [idx-span-a : i64
+          (ast-expr-spanned-with-pools
+            pools-a
+            idx-var-a
+            (AstSourceSpan 1 1 1 2))]
+        [idx-span-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 72)))]
+        [idx-offset-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 3)))]
+        [_idx-offset-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 73)))]
+        [idx-a : i64
+          (ast-expr-binary-with-pools
+            pools-a
+            (AstBinOp.Add)
+            idx-span-a
+            idx-offset-a)]
+        [idx-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 74)))]
+        [array-ref-a : i64 (ast-expr-array-ref-with-pools pools-a arr-a idx-a)]
+        [array-ref-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 75)))]
+        [cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [_cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 76)))]
+        [else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 0)))]
+        [_else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 77)))]
+        [array-body-a : i64
+          (ast-expr-if-with-pools pools-a cond-a array-ref-a else-a)]
+        [array-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 78)))]
+        [shuffle-a : i64 (ast-expr-spmd-shuffle-with-pools pools-a arr-a idx-a)]
+        [_shuffle-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 79)))]
+        [shuffle-body-a : i64
+          (ast-expr-if-with-pools pools-a cond-a shuffle-a else-a)]
+        [shuffle-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 80)))]
+        [mul-left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 2)))]
+        [_mul-left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 81)))]
+        [mul-right-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 4)))]
+        [_mul-right-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 82)))]
+        [mul-a : i64
+          (ast-expr-binary-with-pools
+            pools-a
+            (AstBinOp.Mul)
+            mul-left-a
+            mul-right-a)]
+        [_mul-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 83)))]
+        [add-left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 1)))]
+        [_add-left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 84)))]
+        [mul-body-a : i64
+          (ast-expr-binary-with-pools pools-a (AstBinOp.Add) add-left-a mul-a)]
+        [mul-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 85)))]
+        [array-ty : AstType (ast-ty-dyn-array-with-pools pools-a (AstType.I32))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [env : sym_i64_env.SymI64Env
+                    (sym_i64_env.sym-i64-bind-id
+                      (sym_i64_env.sym-i64-empty)
+                      array-name
+                      99)]
+                  [type-env : TcTypeEnv
+                    (tc-bind-id TcTypeEnv.Nil array-name array-ty)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [array-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a array-body-a)]
+                  [shuffle-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a shuffle-body-a)]
+                  [mul-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a mul-body-a)]
+                  [array-ref : AstExpr (AstExpr.ArrayRef arr-a idx-span-a)]
+                  [idx-expr : AstExpr
+                    (ast-node-pool-context-expr-get pools-a idx-a)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= arr-a arr-b)
+                    (= idx-var-a idx-var-b)
+                    (= idx-span-a idx-span-b)
+                    (= idx-a idx-b)
+                    (= array-ref-a array-ref-b)
+                    (= array-body-a array-body-b)
+                    (= shuffle-body-a shuffle-body-b)
+                    (= mul-body-a mul-body-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (lower-vector-body-has-array-read? ctx array-body)
+                    (lower-vector-body-has-spmd-shuffle? ctx shuffle-body)
+                    (lower-spmd-expr-has-mul? ctx mul-body)
+                    (= (lower-masked-vector-index-offset ctx "i" idx-expr) 3)
+                    (match (lower-array-ref-var-for-index
+                      ctx
+                      env
+                      type-env
+                      array-ref
+                      "i")
+                      [(LowerMaybeArrayVar.Some var-id elem-ty)
+                        (and (= var-id 99) (tc-type-eq elem-ty (AstType.I32)))]
+                      [(LowerMaybeArrayVar.No) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1497,6 +1683,9 @@
     (unless
       (compiler-driver-state-smoke-lower-expr-reads-use-context?)
       (return 22))
+    (unless
+      (compiler-driver-state-smoke-lower-vector-analysis-uses-context?)
+      (return 23))
     (unless
       (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
       (return 19))

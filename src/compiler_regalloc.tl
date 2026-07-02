@@ -3156,7 +3156,6 @@
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
-  [_switch-points : CompilerLiveI64Set]
   [var : i64]
   [reg : String]) : bool
   ;; GAP2b-v2: the kind-3 (any-switch-refuses-all-pins) clause is REMOVED. The
@@ -3164,8 +3163,7 @@
   ;; borrowed occupant BEFORE the indirect jmp via a slot-indirect transfer --
   ;; compiler-backend-emit-switch-dispatch-emergency), so an ABI pin that
   ;; perturbs occupancy at a dispatch no longer risks the restore-after-jmp
-  ;; miscompile. switch-points stays plumbed (harmless) for a possible future
-  ;; per-interval switch model; the pin gate ignores it.
+  ;; miscompile.
   (and
     (not (compiler-reg-param-pin-spans-clobber? interval-index call-points var))
     (not (compiler-reg-param-pin-spans-clobber? interval-index div-points var))
@@ -3209,8 +3207,7 @@
   [pins-ok? : bool]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]
-  [switch-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
+  [shift-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
   (match params
     [(IrParamNil) (CompilerRegParamAssignPlan assignments ineligible blocked)]
     [(IrParamCons param rest)
@@ -3252,7 +3249,6 @@
                     call-points
                     div-points
                     shift-points
-                    switch-points
                     var-id
                     home)
                   (compiler-reg-param-pin-safe?
@@ -3276,8 +3272,7 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points
-                    switch-points)
+                    shift-points)
                   ;; Pin-unsafe param: reached only for integer-param types,
                   ;; which are always greedy-eligible -- leave it out of
                   ;; ineligible/blocked so the greedy may home it callee-saved.
@@ -3293,8 +3288,7 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points
-                    switch-points))]
+                    shift-points))]
               [(CompilerRegNoString)
                 ;; No ABI pin available (skipped arg register, stack-passed
                 ;; position, post-group position, or non-pinnable type). A
@@ -3315,8 +3309,7 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points
-                    switch-points)
+                    shift-points)
                   (compiler-reg-param-assign-walk
                     abi
                     (box-get rest)
@@ -3329,8 +3322,7 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points
-                    switch-points))]))])]))
+                    shift-points))]))])]))
 
 (define (compiler-reg-param-assign-plan
   [abi : CompilerRegTargetAbi]
@@ -3376,8 +3368,7 @@
               true
               (compiler-reg-clobber-kind-points func 0)
               (compiler-reg-clobber-kind-points func 1)
-              (compiler-reg-clobber-kind-points func 2)
-              (compiler-reg-clobber-kind-points func 3)))])]))
+              (compiler-reg-clobber-kind-points func 2)))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -15902,8 +15893,7 @@
   [eff-index : CompilerRegIntervalIndex]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]
-  [switch-points : CompilerLiveI64Set]) : unit
+  [shift-points : CompilerLiveI64Set]) : unit
   (match params
     [(IrParamNil) unit]
     [(IrParamCons param rest)
@@ -15928,7 +15918,6 @@
                           call-points
                           div-points
                           shift-points
-                          switch-points
                           var-id
                           home))
                         unit
@@ -15946,8 +15935,7 @@
           eff-index
           call-points
           div-points
-          shift-points
-          switch-points))]))
+          shift-points))]))
 
 (define (compiler-reg-param-pins-demote!
   [func : CompilerIrFunction]
@@ -15956,8 +15944,7 @@
   [eff-index : CompilerRegIntervalIndex]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]
-  [switch-points : CompilerLiveI64Set]) : unit
+  [shift-points : CompilerLiveI64Set]) : unit
   (match func
     [(IrFunction _ params _ _ _)
       (compiler-reg-param-pins-demote-walk!
@@ -15967,8 +15954,7 @@
         eff-index
         call-points
         div-points
-        shift-points
-        switch-points)]))
+        shift-points)]))
 
 (define (compiler-reg-plan-from
   [func : CompilerIrFunction]
@@ -16092,8 +16078,7 @@
           eff-index
           clobber-points
           div-points
-          shift-points
-          (compiler-reg-clobber-kind-points func 3))
+          shift-points)
         unit)]
     ;; move census (cfg regalloc-census only; no-op otherwise): categorise the
     ;; harvested moves against the final coalesce result + per-var and per-root

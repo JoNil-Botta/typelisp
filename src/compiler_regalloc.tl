@@ -3815,20 +3815,43 @@
   [intervals : CompilerRegIntervalList]) : CompilerLiveI64Set
   (match func
     [(IrFunction _ params _ _ blocks)
-      (compiler-reg-mark-float-spanning
-        intervals
-        type-info
-        (compiler-reg-call-points func)
-        (compiler-reg-ineligible-memory
-          blocks
-          (compiler-reg-ineligible-params
-            params
-            (compiler-reg-call-arg-vars-blocks
-              blocks
-              (compiler-reg-ineligible-non-scalars
-                types
-                (compiler-live-set-empty)
-                false)))))]))
+      ;; #107 (case c): besides call-spanning floats, call-spanning VECTOR and
+      ;; MASK vars must also stay ineligible -- their register classes
+      ;; (%ymm/%zmm, %k) are caller-saved-only with no SIMD save/restore rewrite,
+      ;; so a value kept across a call would be clobbered. b97814cac replaced the
+      ;; old blanket call-live exclusion with float-only mark-float-spanning to
+      ;; re-admit call-spanning INTEGERS (which win the callee-saved GP pool --
+      ;; sound) but as a side effect also re-admitted vectors/masks (unsound: they
+      ;; won a caller-saved vector reg across a call). This re-excludes them
+      ;; without reverting the integer win. Both marks are no-ops in call-free
+      ;; vectorised leaf loops (the only shape the auto-vectorizer emits), so real
+      ;; AVX codegen is unchanged.
+      (match (compiler-reg-function-vector-mask-defs func)
+        [(CompilerLiveUseDef vector-set mask-set)
+          (let
+            [call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
+            (compiler-reg-mark-spanning-in-set
+              intervals
+              mask-set
+              call-points
+              (compiler-reg-mark-spanning-in-set
+                intervals
+                vector-set
+                call-points
+                (compiler-reg-mark-float-spanning
+                  intervals
+                  type-info
+                  call-points
+                  (compiler-reg-ineligible-memory
+                    blocks
+                    (compiler-reg-ineligible-params
+                      params
+                      (compiler-reg-call-arg-vars-blocks
+                        blocks
+                        (compiler-reg-ineligible-non-scalars
+                          types
+                          (compiler-live-set-empty)
+                          false))))))))])]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -12504,6 +12527,32 @@
             type-info
             call-points
             (if (if (compiler-reg-var-float? type-info var)
+              (compiler-reg-call-set-in-range? call-points start end)
+              false)
+              (compiler-live-set-insert ineligible var)
+              ineligible))])]))
+
+;; #107: mark every var that is a member of `member-set` AND whose live interval
+;; spans a call point as ineligible. Used by the SIMD planner to keep
+;; call-spanning VECTOR and MASK values out of registers: those classes
+;; (%ymm/%zmm, %k) are caller-saved-only and have no save/restore rewrite, so a
+;; value kept in one across a call would be clobbered by the callee (unsound).
+;; Mirrors compiler-reg-mark-float-spanning for the vector/mask def sets.
+(define (compiler-reg-mark-spanning-in-set
+  [intervals : CompilerRegIntervalList]
+  [member-set : CompilerLiveI64Set]
+  [call-points : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match intervals
+    [(CompilerRegIntervalNil) ineligible]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var start end)
+          (compiler-reg-mark-spanning-in-set
+            (box-get rest)
+            member-set
+            call-points
+            (if (if (compiler-live-set-contains? member-set var)
               (compiler-reg-call-set-in-range? call-points start end)
               false)
               (compiler-live-set-insert ineligible var)

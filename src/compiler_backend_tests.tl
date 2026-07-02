@@ -3533,9 +3533,12 @@
         (or
           (compiler-backend-string-contains? asm "_tl_calc")
           (compiler-backend-string-contains? asm "_tl_f"))
-        (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movq -32(%rbp), %rax\n")
+        ;; #107: FPO (M-G3 stage 2) makes frame refs rsp-relative; params spill
+        ;; to rsp slots and the spilled sum is reloaded into a scratch (%r8),
+        ;; leaving the product in %rax.
+        (compiler-backend-string-contains? asm "    movq %rdi, 56(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq %rsi, 48(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq 32(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    imulq %r8, %rax\n")
         (not (compiler-backend-string-contains? asm "    movq %r12, -"))
         true
@@ -3546,14 +3549,15 @@
   (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
     [(OkCompilerBackend asm)
       (backend-and8
+        ;; #107: FPO (M-G3 stage 2) rsp-relative frame slots (a=32, b=16, sum=8).
         (compiler-backend-string-contains? asm "main:\n")
-        (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    addsd -32(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    movsd %xmm2, -40(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movsd -40(%rbp), %xmm0\n")
+        (compiler-backend-string-contains? asm "    movsd 32(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    addsd 16(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd %xmm2, 8(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movsd 8(%rsp), %xmm0\n")
         (not (compiler-backend-string-contains? asm "    addsd %xmm1, %xmm0\n"))
         (not
-          (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm0\n"))
+          (compiler-backend-string-contains? asm "    movsd 32(%rsp), %xmm0\n"))
         (not (compiler-backend-string-contains? asm "%xmm3")))]
     [(ErrCompilerBackend _) false]))
 
@@ -3743,7 +3747,11 @@
               (compiler-backend-string-contains?
                 asm
                 "    movq %r12, _tl_g5b(%rip)\n")
-              (compiler-backend-string-contains? asm "    movl $4, %r9d\n")
+              ;; #107: %rbp is now the 6th callee-saved register (M-G3 stage 2),
+              ;; so the call-spanning var 4 is homed in %rbp instead of being
+              ;; rematerialised into caller-saved %r9d after the call; var 6
+              ;; (the 7th, coldest) is still the rematerialised one in %r9d.
+              (compiler-backend-string-contains? asm "    movl $4, %ebp\n")
               (compiler-backend-string-contains? asm "    movl $6, %r9d\n"))]
           (begin
             (compiler-backend-set-scalar-registers! false)
@@ -5880,10 +5888,13 @@
           (compiler-backend-string-contains? asm ".globl main\n")
           (not (compiler-backend-string-contains? asm "\n_start:\n"))
           (not (compiler-backend-string-contains? asm "syscall\n"))
-          (compiler-backend-string-contains? asm "    movq %rcx, -8(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movq %rdx, -16(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movq %r8, -24(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movq %r9, -32(%rbp)\n")
+          ;; #107: Win64 keeps %rbp for the frame, but M-G3 stage-1 rsp-rebase
+          ;; makes local param slots rsp-relative; the positive incoming
+          ;; stack-arg 48(%rbp) stays on %rbp.
+          (compiler-backend-string-contains? asm "    movq %rcx, 88(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movq %rdx, 80(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, 72(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movq %r9, 64(%rsp)\n")
           (compiler-backend-string-contains? asm "    movq 48(%rbp), %r8\n"))
         (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
         (not
@@ -6223,7 +6234,8 @@
     (compiler-backend-switch-test-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq -8(%rbp), %r8\n")
+        ;; #107: FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        (compiler-backend-string-contains? asm "    movq 8(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $2, %r8\n")
         (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
         (compiler-backend-string-contains?
@@ -6290,7 +6302,8 @@
     (compiler-backend-switch-base-test-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq -8(%rbp), %r8\n")
+        ;; #107: FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        (compiler-backend-string-contains? asm "    movq 8(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    subq $4, %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $1, %r8\n")
         (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
@@ -6723,7 +6736,7 @@
             (backend-and8
               (compiler-backend-string-contains?
                 asm
-                "    vpbroadcastq -48(%rbp), ")
+                "    vpbroadcastq 48(%rsp), ")
               (compiler-backend-string-contains? asm "    vpmuludq ")
               (compiler-backend-string-contains? asm "    vpsllq $32, ")
               (compiler-backend-string-contains? asm "    vpaddq ")
@@ -6738,48 +6751,52 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
+;; #107: FPO (M-G3) is applied at backend emission for ALL modes (incl. AVX2/512),
+;; so the spilled uniform-scalar broadcast source is rsp-relative now: the map
+;; fixture's INTEGER scalar spills to 40(%rsp), its FLOAT scalar (f64/f32, passed
+;; in xmm) to 48(%rsp), and the zip fixture's scalar to 48(%rsp).
 (define (compiler-backend-avx2-uniform-vector-map-ok?) : bool
   (and
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i64"
       "    vmovdqu "
       "    vpaddq "
-      "    vpbroadcastq -40(%rbp), ")
+      "    vpbroadcastq 40(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i32"
       "    vmovdqu "
       "    vpaddd "
-      "    vpbroadcastd -40(%rbp), ")
+      "    vpbroadcastd 40(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw -40(%rbp), ")
+      "    vpbroadcastw 40(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw -40(%rbp), ")
+      "    vpbroadcastw 40(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd -40(%rbp), ")
+      "    vbroadcastsd 48(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss -40(%rbp), ")
+      "    vbroadcastss 48(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb -40(%rbp), ")
+      "    vpbroadcastb 40(%rsp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb -40(%rbp), ")
+      "    vpbroadcastb 40(%rsp), ")
     (compiler-backend-avx2-uniform-zip-ok?)))
 
 (define (compiler-backend-stack-splat-dst-only-assignments) : CompilerRegAssignmentList
@@ -7530,7 +7547,7 @@
             (backend-and8
               (compiler-backend-string-contains?
                 asm
-                "    vpbroadcastq -48(%rbp), ")
+                "    vpbroadcastq 48(%rsp), ")
               (compiler-backend-string-contains? asm "    vpmullq ")
               (compiler-backend-string-contains? asm "    vpaddq ")
               (compiler-backend-string-contains? asm "    vmovdqu64 ")
@@ -7551,42 +7568,42 @@
       "i64"
       "    vmovdqu64 "
       "    vpaddq "
-      "    vpbroadcastq -40(%rbp), ")
+      "    vpbroadcastq 40(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i32"
       "    vmovdqu32 "
       "    vpaddd "
-      "    vpbroadcastd -40(%rbp), ")
+      "    vpbroadcastd 40(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw -40(%rbp), ")
+      "    vpbroadcastw 40(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw -40(%rbp), ")
+      "    vpbroadcastw 40(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd -40(%rbp), ")
+      "    vbroadcastsd 48(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss -40(%rbp), ")
+      "    vbroadcastss 48(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb -40(%rbp), ")
+      "    vpbroadcastb 40(%rsp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb -40(%rbp), ")
+      "    vpbroadcastb 40(%rsp), ")
     (compiler-backend-avx512-uniform-zip-ok?)))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
@@ -9703,7 +9720,10 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
-        (compiler-backend-string-contains? asm "    addq $8, %r10\n")
+        ;; #107: GAP2a folds the const gep displacement (+8) directly into every
+        ;; CopyBytes chunk DST address, so the `addq $8, %r10` staging disappears
+        ;; and the chunks store to 8(%r10)/24(%r10).
+        (compiler-backend-string-contains? asm "    movups %xmm2, 8(%r10)\n")
         (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n")
         (compiler-backend-string-contains? asm "    movups (%r9), %xmm2\n")
         (compiler-backend-string-contains? asm "    movq 16(%r9), %r8\n")
@@ -10010,6 +10030,16 @@
             asm
             "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
         [(ErrCompilerBackend _) false])]
+    ;; #107: the pair case leaves var 1 UNASSIGNED (spilled), so its store source
+    ;; is loaded through a SCAVENGED scratch. emit-test-instrs is not hermetic
+    ;; w.r.t. the shared scavenge state (it saves/restores by reference while
+    ;; emit-instrs mutates in place), so that scratch is %r9 in isolation but %rcx
+    ;; after other emit-test-instrs predicates run -- a pre-existing test-harness
+    ;; artifact, not a codegen difference. The exact-match pinned %r9; assert the
+    ;; scratch-agnostic INTENT instead: the base is loaded once into %r10, the
+    ;; spilled source is reloaded from its home (-16), and -- the load-bearing
+    ;; property this test is named for -- the second source's home %r8 is PRESERVED
+    ;; (used directly at the +8 store, never clobbered by the base load).
     [pair-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
@@ -10022,13 +10052,12 @@
         pair-assignments
         4)
         [(OkCompilerBackend asm)
-          (string.string-eq
-            asm
-            (str_cat.str-cat
-              "    movq -8(%rbp), %r10\n"
-              "    movq -16(%rbp), %r9\n"
-              "    movq %r9, (%r10)\n"
-              "    movq %r8, 8(%r10)\n"))]
+          (and
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+            (compiler-backend-string-contains? asm "    movq -16(%rbp), ")
+            (compiler-backend-string-contains? asm "    movq %r8, 8(%r10)\n")
+            (not
+              (compiler-backend-string-contains? asm "    movq -8(%rbp), %r8\n")))]
         [(ErrCompilerBackend _) false])]
     (backend-and4 plain-ok gep-ok pair-ok true)))
 
@@ -10913,9 +10942,12 @@
     (backend-and8
       (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
       (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
-      (compiler-backend-instr-contains? instr "    pushq %rbx\n")
+      ;; #107: cpuid clobbers %rbx; the campaign preserves the caller's %rbx in a
+      ;; scavenged free reg (%r8 here, none of r8-r15 touched by cpuid) instead
+      ;; of pushq/popq %rbx (the no-stack-staging goal).
+      (compiler-backend-instr-contains? instr "    movq %rbx, %r8\n")
       (compiler-backend-instr-contains? instr "    cpuid\n")
-      (compiler-backend-instr-contains? instr "    popq %rbx\n")
+      (compiler-backend-instr-contains? instr "    movq %r8, %rbx\n")
       (not (compiler-backend-instr-contains? instr "    movl %eax, %eax\n"))
       (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
       (not (compiler-backend-instr-contains? instr "%r11")))))
@@ -11566,7 +11598,9 @@
           (or
             (compiler-backend-string-contains? asm "_tl_use_fixed")
             (compiler-backend-string-contains? asm "_tl_f"))
-          (compiler-backend-string-contains? asm "    cmpq $3, %rax\n")
+          ;; #107: the fixed-array bounds check now materialises the index in
+          ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
+          (compiler-backend-string-contains? asm "    cmpq $3, %r10\n")
           (not (compiler-backend-string-contains? asm "    movl $3, %r11d\n"))
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
           (compiler-backend-string-contains? asm "    movq %r9, (%r10,%r8,8)\n")
@@ -12252,9 +12286,10 @@
         (not (compiler-backend-string-contains? asm "    .double "))
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (compiler-backend-string-contains? asm "    movsd %xmm1, ")
-        (compiler-backend-string-contains? asm "    addsd -16(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    subsd -16(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    ucomisd -16(%rbp), %xmm2\n")
+        ;; #107: FPO rsp-relative frame slot (the y param spills to 16(%rsp)).
+        (compiler-backend-string-contains? asm "    addsd 16(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    subsd 16(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    ucomisd 16(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    setb %r8b\n")
         (not (compiler-backend-string-contains? asm "    setb %al\n")))]
     [(ErrCompilerBackend _) false]))
@@ -12431,8 +12466,9 @@
             (AstTyF32)
             (compiler-backend-test-f32-bits "11.0")))
         (not (compiler-backend-string-contains? asm "    .float "))
-        (compiler-backend-string-contains? asm "    ucomiss -16(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    addss -16(%rbp), %xmm2\n")
+        ;; #107: FPO rsp-relative frame slot (the b:f32 local spills to 176(%rsp)).
+        (compiler-backend-string-contains? asm "    ucomiss 176(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    addss 176(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    setb %r8b\n")
         (not
           (compiler-backend-string-contains? asm "    ucomiss %xmm1, %xmm0\n"))
@@ -13556,9 +13592,11 @@
         (compiler-backend-string-contains?
           asm
           "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
+        ;; #107: M-F folds the power-of-2 modulo mask into an immediate `andq`
+        ;; (was `movabsq $7, %r8; andq %r8, %rax`).
         (compiler-backend-string-contains?
           asm
-          "    movabsq $7, %r8\n    andq %r8, %rax\n")
+          "    andq $7, %rax\n")
         (not (compiler-backend-string-contains? asm "    idivq %r8\n"))
         (not (compiler-backend-string-contains? asm "    divq %r8\n"))
         (not (compiler-backend-string-contains? asm "    call tl_div_abort\n"))
@@ -13945,7 +13983,9 @@
     (AstTyBool))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    cmpq %r8, %rax\n")
+        ;; #107: the 64-bit global compare now materialises in %r9 (scratch reg
+        ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
+        (compiler-backend-string-contains? asm "    cmpq %r8, %r9\n")
         (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -13996,7 +14036,9 @@
     (compiler-backend-global-compare-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    cmpq %r8, %rax\n")
+        ;; #107: the 64-bit global compare now materialises in %r9 (scratch reg
+        ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
+        (compiler-backend-string-contains? asm "    cmpq %r8, %r9\n")
         (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -14043,11 +14085,13 @@
   (match (compiler-backend-emit-source (compiler-backend-f64-abi-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movsd %xmm0, -16(%rbp)\n")
+        ;; #107: FPO rsp-relative frame slots (second's n at 8(%rsp); half's x
+        ;; f64 param spills from %xmm0 to 24(%rsp), divisor 2.0 at 16(%rsp)).
+        (compiler-backend-string-contains? asm "    movq %rdi, 8(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movsd %xmm0, 24(%rsp)\n")
         (not
-          (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n"))
-        (compiler-backend-string-contains? asm "    divsd -16(%rbp), %xmm2\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm1, 24(%rsp)\n"))
+        (compiler-backend-string-contains? asm "    divsd 16(%rsp), %xmm2\n")
         (or
           (compiler-backend-call-or-jmp-ok? asm "_tl_half")
           (compiler-backend-call-or-jmp-ok? asm "_tl_callhalf")
@@ -14083,19 +14127,24 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "    movsd %xmm0, -8(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movsd %xmm2, -24(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movsd %xmm3, -32(%rbp)\n")
+          ;; #107: Win64 keeps %rbp for the prologue/SEH frame, but the M-G3
+          ;; stage-1 rsp-rebase makes local frame slots rsp-relative (negative
+          ;; -N(%rbp) -> M(%rsp)); the positive incoming stack-arg offset
+          ;; 48(%rbp) stays on %rbp (caller memory, still valid).
+          (compiler-backend-string-contains? asm "    movsd %xmm0, 72(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm1, 64(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, 56(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm3, 48(%rsp)\n")
           (compiler-backend-string-contains? asm "    subq $112, %rsp\n")
-          (compiler-backend-string-contains? asm "    movq -48(%rbp), %r10\n")
+          (compiler-backend-string-contains? asm "    movq 64(%rsp), %r10\n")
           (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm2\n"))
         (or
           (compiler-backend-string-contains? asm "    call _tl_f")
           (compiler-backend-string-contains? asm "    call _tl_sum5")
           (compiler-backend-string-contains? asm "    call _tl_call5"))
-        (compiler-backend-string-contains? asm "    movsd %xmm0, -16(%rbp)\n")
+        ;; #107: the f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
+        (compiler-backend-string-contains? asm "    movsd %xmm0, 56(%rsp)\n")
         (not (compiler-backend-string-contains? asm "too many call args"))
         (not (compiler-backend-string-contains? asm "    syscall"))
         (not
@@ -14218,18 +14267,26 @@
 (define (compiler-backend-stack-int-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-int-args-source))
     [(OkCompilerBackend asm)
-      (and
-        (not (compiler-backend-string-contains? asm "too many call args"))
-        (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
-        (compiler-backend-string-contains? asm "    movq %r10, 0(%rsp)\n")
-        (compiler-backend-string-contains? asm "    addq $16, %rsp\n")
-        (compiler-backend-stack-add-call-ok? asm)
-        (compiler-backend-string-contains? asm "    movq 16(%rbp), %r8\n")
-        (compiler-backend-string-contains? asm "    movq 24(%rbp), %r8\n")
-        (not
-          (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
-        (not
-          (compiler-backend-string-contains? asm "    movq 24(%rbp), %rax\n")))]
+      ;; #107: under FPO the outgoing stack-arg area is reserved once in the
+      ;; prologue (no per-call `subq $16`/`addq $16`); both stack args are
+      ;; stored to 0(%rsp)/8(%rsp), and the callee reads the incoming stack args
+      ;; rsp-relative (96/104(%rsp)) instead of positive 16/24(%rbp). The
+      ;; incoming-arg checks are scoped to the _tl_add8 body: with everything now
+      ;; positive-rsp, `main` also uses those same numeric slots for its own
+      ;; locals (e.g. `movq 104(%rsp), %rax`), so a whole-program `not` check
+      ;; would spuriously trip.
+      (let [callee : String (compiler-backend-asm-function-body asm "_tl_add8")]
+        (and
+          (not (compiler-backend-string-contains? asm "too many call args"))
+          (compiler-backend-string-contains? asm "    movq %r10, 0(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movq %r10, 8(%rsp)\n")
+          (compiler-backend-stack-add-call-ok? asm)
+          (compiler-backend-string-contains? callee "    movq 96(%rsp), %r8\n")
+          (compiler-backend-string-contains? callee "    movq 104(%rsp), %r8\n")
+          (not
+            (compiler-backend-string-contains? callee "    movq 96(%rsp), %rax\n"))
+          (not
+            (compiler-backend-string-contains? callee "    movq 104(%rsp), %rax\n"))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
@@ -14240,15 +14297,18 @@
     [(OkCompilerBackend asm)
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
-        (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
+        ;; #107: FPO reserves the outgoing stack-arg area in the prologue (no
+        ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
+        ;; bit-copies and the callee reads incoming f64 stack args rsp-relative
+        ;; (112/120(%rsp)) instead of positive 16/24(%rbp).
         (compiler-backend-string-contains? asm "    movq %r10, 0(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq %r10, 8(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm2\n")
-        (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd 112(%rsp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd 120(%rsp), %xmm2\n")
         (not
-          (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n"))
+          (compiler-backend-string-contains? asm "    movsd 112(%rsp), %xmm0\n"))
         (not
-          (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n")))]
+          (compiler-backend-string-contains? asm "    movsd 120(%rsp), %xmm0\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a mixed call spilling one int and one f64 keeps the integer and float
@@ -14532,9 +14592,16 @@
         (compiler-backend-direct-tail-call-identity-elided? target asm))]
     [(ErrCompilerBackend _) false]))
 
+;; #107: under FPO the source params spill to rsp-relative slots whose offsets
+;; depend on each fixture's frame size (and target), so slot0/slot1 are passed
+;; per call site instead of the old fixed -8/-16(%rbp). A "" slot1 means the
+;; second param is not spilled (correctly optimised away — e.g. the `finish x x`
+;; duplicated fixture, where the dead y param is never stored).
 (define (compiler-backend-direct-tail-call-i64-keeps-spills?
   [source : String]
-  [target : CompilerBackendTarget]) : bool
+  [target : CompilerBackendTarget]
+  [slot0 : String]
+  [slot1 : String]) : bool
   (match (compiler-backend-emit-source-for-target source target)
     [(OkCompilerBackend asm)
       (let
@@ -14545,14 +14612,20 @@
           (compiler-backend-string-contains? body "    jmp _tl_finish\n")
           (compiler-backend-string-contains?
             body
-            (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)"))
-          (compiler-backend-string-contains?
-            body
-            (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)"))))]
+            (compiler-backend-direct-tail-call-param-store reg0 slot0))
+          (if (string.string-eq slot1 "")
+            true
+            (compiler-backend-string-contains?
+              body
+              (compiler-backend-direct-tail-call-param-store reg1 slot1)))))]
     [(ErrCompilerBackend _) false]))
 
+;; #107: under FPO the f64 params spill to rsp-relative slots (offsets differ by
+;; target), passed per call site instead of the old fixed -8/-16(%rbp).
 (define (compiler-backend-direct-tail-call-f64-keeps-spills?
-  [target : CompilerBackendTarget]) : bool
+  [target : CompilerBackendTarget]
+  [slot0 : String]
+  [slot1 : String]) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-direct-tail-call-f64-source)
     target)
@@ -14561,17 +14634,21 @@
         [body : String (compiler-backend-asm-function-body asm "_tl_stepf")]
         (and
           (compiler-backend-string-contains? body "    jmp _tl_finishf\n")
-          (compiler-backend-string-contains? body "    movsd %xmm0, -8(%rbp)\n")
           (compiler-backend-string-contains?
             body
-            "    movsd %xmm1, -16(%rbp)\n")))]
+            (str_cat.str-cat "    movsd %xmm0, " (str_cat.str-cat slot0 "\n")))
+          (compiler-backend-string-contains?
+            body
+            (str_cat.str-cat "    movsd %xmm1, " (str_cat.str-cat slot1 "\n")))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
+    ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 72(%rbp).
     "    movq %r10, 72(%rbp)\n"
-    "    movq %r10, 24(%rbp)\n"))
+    ;; #107: FPO makes the Linux outgoing tail stack-arg store rsp-relative.
+    "    movq %r10, 104(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-stack-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -14612,8 +14689,10 @@
 (define (compiler-backend-direct-tail-call-mixed-slot
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
+    ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 136(%rbp).
     "    movq %r10, 136(%rbp)\n"
-    "    movq %r10, 24(%rbp)\n"))
+    ;; #107: FPO makes the Linux outgoing tail stack-arg store rsp-relative.
+    "    movq %r10, 168(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-mixed-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -14649,25 +14728,42 @@
     (backend-and8
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-reordered-source)
-        (BackendTargetLinux))
+        (BackendTargetLinux)
+        "8(%rsp)"
+        "0(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-reordered-source)
-        (BackendTargetWindows))
+        (BackendTargetWindows)
+        "40(%rsp)"
+        "32(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
-        (BackendTargetLinux))
+        (BackendTargetLinux)
+        "8(%rsp)"
+        "")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
-        (BackendTargetWindows))
+        (BackendTargetWindows)
+        "40(%rsp)"
+        "")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
-        (BackendTargetLinux))
+        (BackendTargetLinux)
+        "40(%rsp)"
+        "32(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
-        (BackendTargetWindows))
-      (compiler-backend-direct-tail-call-f64-keeps-spills? (BackendTargetLinux))
+        (BackendTargetWindows)
+        "72(%rsp)"
+        "64(%rsp)")
       (compiler-backend-direct-tail-call-f64-keeps-spills?
-        (BackendTargetWindows)))))
+        (BackendTargetLinux)
+        "8(%rsp)"
+        "0(%rsp)")
+      (compiler-backend-direct-tail-call-f64-keeps-spills?
+        (BackendTargetWindows)
+        "40(%rsp)"
+        "32(%rsp)"))))
 
 (define (compiler-backend-indirect-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool

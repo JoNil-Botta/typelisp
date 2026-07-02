@@ -13628,13 +13628,19 @@
     (not (= (% size 16) 0))
     (> size 0)))
 
+;; GAP2a: `dst-bias` is a constant displacement added to every DST chunk
+;; address (src addresses stay at `offset`). A fused Gep+CopyBytes folds its
+;; gep displacement here instead of `addq $disp` on a staged base copy, so a
+;; register-homed base serves as the store base directly. Callers guarantee
+;; dst-bias + remaining fits imm32; plain copies pass 0 (byte-identical).
 (define (compiler-backend-emit-copy-bytes-chunks
   [dst-reg : String]
   [src-reg : String]
   [gp-scratch : String]
   [xmm-scratch : String]
   [offset : i64]
-  [remaining : i64]) : String
+  [remaining : i64]
+  [dst-bias : i64]) : String
   (if (<= remaining 0)
     ""
     (if (and (>= remaining 16) (> (string-length xmm-scratch) 0))
@@ -13651,7 +13657,7 @@
             "    movups "
             xmm-scratch
             ", "
-            (compiler-backend-copy-address offset dst-reg)
+            (compiler-backend-copy-address (+ dst-bias offset) dst-reg)
             "\n"
             "")
           (compiler-backend-emit-copy-bytes-chunks
@@ -13660,7 +13666,8 @@
             gp-scratch
             xmm-scratch
             (+ offset 16)
-            (- remaining 16))))
+            (- remaining 16)
+            dst-bias)))
       (let
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
         [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
@@ -13684,7 +13691,7 @@
                   reg
                   ", ")
                 (string.string-append
-                  (compiler-backend-copy-address offset dst-reg)
+                  (compiler-backend-copy-address (+ dst-bias offset) dst-reg)
                   (string.string-append
                     "\n"
                     (compiler-backend-emit-copy-bytes-chunks
@@ -13693,7 +13700,8 @@
                       gp-scratch
                       xmm-scratch
                       (+ offset chunk)
-                      (- remaining chunk))))))))))))
+                      (- remaining chunk)
+                      dst-bias)))))))))))
 
 (define (compiler-backend-c-memory-stack-dst-address
   [base-offset : i64]
@@ -13839,7 +13847,8 @@
                         copy-gp
                         copy-xmm
                         0
-                        size))))]
+                        size
+                        0))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
@@ -13974,6 +13983,14 @@
       (compiler-backend-copy-run-protect-fill assignments instrs out 0)
       out)))
 
+;; GAP2a (M-C2/B2 for the aggregate/group copy path): fused Gep+CopyBytes.
+;; CopyBytes writes only MEMORY (it defines no register), so reading the
+;; base/src/index HOMES directly is unconditionally safe -- the pre-GAP2a
+;; emitter staged every operand through scavenged scratches
+;; (`movq %rHOME, %rSCAV; movups (%rSCAV), ...`), the dominant remaining
+;; staging-pair population (~5.5k pairs self-host). #rbp-base homes are
+;; filtered to the staged path (frame-spelling invariant, GAP7 later);
+;; spilled/remat/non-var operands load into scavenged scratches as before.
 (define (compiler-backend-emit-copy-bytes-from-gep-avoid
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
@@ -13985,157 +14002,296 @@
   [protect-n : i64]) : ResultCompilerBackend
   (if (<= size 0)
     (OkCompilerBackend "")
-    ;; 3-scratch GEP-addressed copy:
-    ;;   scav-base : the address being computed (live through the copy)
-    ;;   scav-idx  : the scaled index, folded into scav-base then dead (NoI64 only)
-    ;;   scav-src  : the source pointer (live through the copy)
-    ;; The copy chunks use a scavenged GP/XMM scratch when needed.
-    (let
-      ;; Base excludes only src + offset homes (both still live when base loads)
-      ;; plus future homes protected by the fused-copy run. Base's own home need
-      ;; not be excluded: base is moved into scav-base and then consumed.
-      [scav-base : String
-        (let
-          [base-exclude : (Array String)
-            (compiler-backend-two-exclude
-              (compiler-backend-value-scalar-register assignments src)
-              (compiler-backend-value-scalar-register assignments offset))]
-          [merged : (Array String)
-            (compiler-backend-scavenge-exclude-merge
-              base-exclude
-              2
-              protect
-              protect-n)]
-          (compiler-backend-scavenge-reg-here merged (+ 2 protect-n) "%r10"))]
+    (match (compiler-backend-value-as-i64 offset)
+      [(CompilerBackendSomeI64 n)
+        (compiler-backend-emit-copy-bytes-from-gep-const
+          assignments
+          base
+          src
+          size
+          (* n (compiler-backend-type-size elem-ty))
+          protect
+          protect-n)]
+      [(CompilerBackendNoI64)
+        (compiler-backend-emit-copy-bytes-from-gep-dyn
+          assignments
+          base
+          offset
+          elem-ty
+          src
+          size
+          protect
+          protect-n)])))
+
+;; Constant-offset fused Gep+CopyBytes. When every chunk address (disp ..
+;; disp+size) fits imm32 the gep displacement folds into the chunk DST
+;; addresses (dst-bias), so a register-homed base is addressed directly (no
+;; staging copy, no addq fold, no scavenge pick) and even a scavenge-loaded
+;; base skips the addq. The source pointer home is likewise the chunk load
+;; base directly. Out-of-imm32 displacements keep the staged addq fold.
+(define (compiler-backend-emit-copy-bytes-from-gep-const
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [src : CompilerIrValue]
+  [size : i64]
+  [disp : i64]
+  [protect : (Array String)]
+  [protect-n : i64]) : ResultCompilerBackend
+  (let
+    [near? : bool
+      (and
+        (compiler-backend-imm32? disp)
+        (compiler-backend-imm32? (+ disp size)))]
+    [base-home : String
+      (if near?
+        (compiler-backend-address-base-filter
+          (compiler-backend-value-scalar-register assignments base))
+        "")]
+    [src-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register assignments src))]
+    [dst-reg : String
+      (if (string-eq base-home "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-one-exclude src-home)
+            1
+            protect
+            protect-n)
+          (+ 1 protect-n)
+          "%r10")
+        base-home)]
+    (match (if (string-eq base-home "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         base
-        scav-base)
-        [(OkCompilerBackend base-asm)
+        dst-reg)
+        [(OkCompilerBackend load-asm)
+          (if near?
+            (OkCompilerBackend load-asm)
+            (match (compiler-backend-gep-immediate-base-asm dst-reg disp)
+              [(CompilerBackendSomeAsm fold-asm)
+                (OkCompilerBackend (string-append load-asm fold-asm))]
+              [(CompilerBackendNoAsm)
+                (ErrCompilerBackend
+                  (box
+                    (compiler-diagnostic-at-start
+                      ""
+                      "backend: fused gep copy displacement out of range")))]))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (OkCompilerBackend ""))
+      [(OkCompilerBackend dst-asm)
+        (let
+          [src-reg : String
+            (if (string-eq src-home "")
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-one-exclude dst-reg)
+                  1
+                  protect
+                  protect-n)
+                (+ 1 protect-n)
+                "%r9")
+              src-home)]
+          [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+          [copy-gp : String
+            (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude dst-reg src-reg)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8")
+              "")]
+          (match (if (string-eq src-home "")
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              src
+              src-reg)
+            (OkCompilerBackend ""))
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
+                (string-append
+                  dst-asm
+                  (string-append
+                    src-asm
+                    (compiler-backend-emit-copy-bytes-chunks
+                      dst-reg
+                      src-reg
+                      copy-gp
+                      copy-xmm
+                      0
+                      size
+                      (if near? disp 0)))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+;; Dynamic-index fused Gep+CopyBytes. The element address still composes into
+;; a scavenged scratch (the chunk copies need one persistent base register),
+;; but register-homed operands feed it directly: base+index homes with a SIB
+;; scale compose in ONE leaq off the homes; a register-homed index folds
+;; without an index scratch (SIB folds only READ the index register -- the
+;; non-SIB imulq form MUTATES it and keeps the staged index); and the source
+;; pointer home is the chunk load base directly.
+(define (compiler-backend-emit-copy-bytes-from-gep-dyn
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [src : CompilerIrValue]
+  [size : i64]
+  [protect : (Array String)]
+  [protect-n : i64]) : ResultCompilerBackend
+  (let
+    [scale : i64 (compiler-backend-type-size elem-ty)]
+    [base-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register assignments base))]
+    [offset-home : String
+      (compiler-backend-value-scalar-register assignments offset)]
+    [src-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register assignments src))]
+    [scav-base : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-scavenge-exclude-merge
+          (compiler-backend-two-exclude src-home offset-home)
+          2
+          protect
+          protect-n)
+        (+ 2 protect-n)
+        "%r10")]
+    (match (compiler-backend-emit-copy-gep-dyn-address
+      assignments
+      base
+      offset
+      scale
+      scav-base
+      base-home
+      offset-home
+      src-home
+      protect
+      protect-n)
+      [(OkCompilerBackend addr-asm)
+        (let
+          [src-reg : String
+            (if (string-eq src-home "")
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-one-exclude scav-base)
+                  1
+                  protect
+                  protect-n)
+                (+ 1 protect-n)
+                "%r9")
+              src-home)]
+          [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+          [copy-gp : String
+            (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude scav-base src-reg)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8")
+              "")]
+          (match (if (string-eq src-home "")
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              src
+              src-reg)
+            (OkCompilerBackend ""))
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
+                (string-append
+                  addr-asm
+                  (string-append
+                    src-asm
+                    (compiler-backend-emit-copy-bytes-chunks
+                      scav-base
+                      src-reg
+                      copy-gp
+                      copy-xmm
+                      0
+                      size
+                      0))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+;; Compose the dynamic gep element address into scav-base for the fused copy.
+;; Direct forms read the operand homes only (leaq/addq never write them); the
+;; staged index scratch is scavenged only on the path that needs it, so no
+;; dead pick can trigger an emergency spill.
+(define (compiler-backend-emit-copy-gep-dyn-address
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [scale : i64]
+  [scav-base : String]
+  [base-home : String]
+  [offset-home : String]
+  [src-home : String]
+  [protect : (Array String)]
+  [protect-n : i64]) : ResultCompilerBackend
+  (if (and
+    (not (string-eq base-home ""))
+    (not (string-eq offset-home ""))
+    (compiler-backend-gep-sib-scale? scale))
+    (OkCompilerBackend
+      (str-cat
+        "    leaq "
+        (compiler-backend-gep-index-address base-home scale offset-home)
+        ", "
+        scav-base
+        "\n"))
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      base
+      scav-base)
+      [(OkCompilerBackend base-asm)
+        (if (and
+          (not (string-eq offset-home ""))
+          (compiler-backend-gep-sib-scale? scale))
+          (OkCompilerBackend
+            (string-append
+              base-asm
+              (compiler-backend-gep-index-base-asm
+                scav-base
+                scale
+                offset-home)))
+          ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
+          ;; the active set. Scavenged only on this path so a dead pick never
+          ;; triggers an emergency spill.
           (let
-            [scale : i64 (compiler-backend-type-size elem-ty)]
-            ;; src pointer: avoid scav-base (live base addr) + the active set. scav-idx
-            ;; is dead before src loads (folded into scav-base), so no exclude vs it.
-            [scav-src : String
-              (let
-                [src-exclude : (Array String)
-                  (compiler-backend-one-exclude scav-base)]
-                [merged : (Array String)
-                  (compiler-backend-scavenge-exclude-merge
-                    src-exclude
-                    1
-                    protect
-                    protect-n)]
-                (compiler-backend-scavenge-reg-here
-                  merged
-                  (+ 1 protect-n)
-                  "%r10"))]
-            [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
-            [copy-gp : String
-              (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-                (let
-                  [gp-exclude : (Array String)
-                    (compiler-backend-two-exclude scav-base scav-src)]
-                  [merged : (Array String)
-                    (compiler-backend-scavenge-exclude-merge
-                      gp-exclude
-                      2
-                      protect
-                      protect-n)]
-                  (compiler-backend-scavenge-reg-here
-                    merged
-                    (+ 2 protect-n)
-                    "%r8"))
-                "")]
-            (match (compiler-backend-value-as-i64 offset)
-              [(CompilerBackendSomeI64 n)
-                (match (compiler-backend-gep-immediate-base-asm
-                  scav-base
-                  (* n scale))
-                  [(CompilerBackendSomeAsm offset-asm)
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      src
-                      scav-src)
-                      [(OkCompilerBackend src-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            base-asm
-                            (string-append
-                              offset-asm
-                              (string-append
-                                src-asm
-                                (compiler-backend-emit-copy-bytes-chunks
-                                  scav-base
-                                  scav-src
-                                  copy-gp
-                                  copy-xmm
-                                  0
-                                  size)))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(CompilerBackendNoAsm)
-                    (ErrCompilerBackend
-                      (box
-                        (compiler-diagnostic-at-start
-                          ""
-                          "backend: fused gep copy displacement out of range")))])]
-              [(CompilerBackendNoI64)
-                ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
-                ;; the active set. Scavenged only here (unused in SomeI64) so an
-                ;; emergency-spill is never triggered for a dead scratch.
-                (let
-                  [scav-idx : String
-                    (let
-                      [idx-exclude : (Array String)
-                        (compiler-backend-two-exclude
-                          scav-base
-                          (compiler-backend-value-scalar-register
-                            assignments
-                            src))]
-                      [merged : (Array String)
-                        (compiler-backend-scavenge-exclude-merge
-                          idx-exclude
-                          2
-                          protect
-                          protect-n)]
-                      (compiler-backend-scavenge-reg-here
-                        merged
-                        (+ 2 protect-n)
-                        "%r8"))]
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    offset
-                    scav-idx)
-                    [(OkCompilerBackend offset-asm)
-                      (match (compiler-backend-emit-load-value-with-plan
-                        assignments
-                        src
-                        scav-src)
-                        [(OkCompilerBackend src-asm)
-                          (OkCompilerBackend
-                            (string-append
-                              base-asm
-                              (string-append
-                                offset-asm
-                                (string-append
-                                  (compiler-backend-gep-index-base-asm
-                                    scav-base
-                                    scale
-                                    scav-idx)
-                                  (string-append
-                                    src-asm
-                                    (compiler-backend-emit-copy-bytes-chunks
-                                      scav-base
-                                      scav-src
-                                      copy-gp
-                                      copy-xmm
-                                      0
-                                      size))))))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+            [scav-idx : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude scav-base src-home)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8")]
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              offset
+              scav-idx)
+              [(OkCompilerBackend offset-asm)
+                (OkCompilerBackend
+                  (string-append
+                    base-asm
+                    (string-append
+                      offset-asm
+                      (compiler-backend-gep-index-base-asm
+                        scav-base
+                        scale
+                        scav-idx))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-copy-bytes-from-gep
   [assignments : CompilerRegAssignmentList]

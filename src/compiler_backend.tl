@@ -6880,31 +6880,38 @@
       (let
         [src1-home : String
           (compiler-backend-pack-word-source-home assignments w1 sse1?)]
+        ;; GAP2b: REGISTER-form dsts (a pair-homed group) must be excluded from
+        ;; the scratch scavenges -- under full occupancy an EMERGENCY pick of a
+        ;; dst register would wrap it in save/restore and the restore would
+        ;; clobber the just-packed word. Memory-form dsts contribute "" (no-op),
+        ;; keeping the historical stack-dst behavior byte-identical.
+        [dst0-reg : String
+          (if (compiler-backend-pack-word-dst-register? dst0)
+            dst0
+            "")]
+        [dst1-reg : String
+          (if (compiler-backend-pack-word-dst-register? dst1)
+            dst1
+            "")]
         [scratch0-exclude : (Array String)
-          (if (string-eq src1-home "")
-            (make-array String 0)
-            (compiler-backend-one-exclude src1-home))]
-        [scratch0-exclude-n : i64
-          (if (string-eq src1-home "")
-            0
-            1)]
+          (compiler-backend-three-exclude src1-home dst0-reg dst1-reg)]
         [scratch0 : String
           (if sse0?
             (compiler-backend-scavenge-xmm-reg
               -1
               scratch0-exclude
-              scratch0-exclude-n
+              3
               "%xmm2")
             (compiler-backend-scavenge-reg-here
               scratch0-exclude
-              scratch0-exclude-n
+              3
               "%r8"))]
         [scratch1-exclude : (Array String)
-          (compiler-backend-one-exclude scratch0)]
+          (compiler-backend-three-exclude scratch0 dst0-reg dst1-reg)]
         [scratch1 : String
           (if sse1?
-            (compiler-backend-scavenge-xmm-reg -1 scratch1-exclude 1 "%xmm3")
-            (compiler-backend-scavenge-reg-here scratch1-exclude 1 "%r9"))]
+            (compiler-backend-scavenge-xmm-reg -1 scratch1-exclude 3 "%xmm3")
+            (compiler-backend-scavenge-reg-here scratch1-exclude 3 "%r9"))]
         [store0 : CompilerBackendMaybeAsm
           (compiler-backend-emit-pack-word-immediate-store w0 dst0 sse0?)]
         [store1 : CompilerBackendMaybeAsm
@@ -19578,14 +19585,24 @@
               [(CompilerRegSomeLocation src-location)
                 (match src-location
                   [(CompilerRegRegisterPair src-lo src-hi)
-                    (CompilerBackendSomeAsm
-                      (string-append
-                        (if (string-eq src-lo dst-lo)
-                          ""
-                          (str-cat "    movq " src-lo ", " dst-lo "\n"))
-                        (if (string-eq src-hi dst-hi)
-                          ""
-                          (str-cat "    movq " src-hi ", " dst-hi "\n"))))]
+                    ;; GAP2b overlap guard: lo is copied FIRST, so an emitted
+                    ;; lo copy whose dst is the src pair's HI half would
+                    ;; clobber it before the hi copy reads it -- fall back to
+                    ;; the rax:rdx staging path (both reads before both
+                    ;; writes, swap-safe). dst-hi == src-lo is fine: src-lo
+                    ;; is read by the first copy before the second writes.
+                    (if (and
+                      (not (string-eq src-lo dst-lo))
+                      (string-eq dst-lo src-hi))
+                      (CompilerBackendNoAsm)
+                      (CompilerBackendSomeAsm
+                        (string-append
+                          (if (string-eq src-lo dst-lo)
+                            ""
+                            (str-cat "    movq " src-lo ", " dst-lo "\n"))
+                          (if (string-eq src-hi dst-hi)
+                            ""
+                            (str-cat "    movq " src-hi ", " dst-hi "\n")))))]
                   [_ (CompilerBackendNoAsm)])]
               [(CompilerRegNoLocation) (CompilerBackendNoAsm)])]
           [(CompilerRegRemat _) (CompilerBackendNoAsm)]

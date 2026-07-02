@@ -55,6 +55,7 @@ callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.
 divmagic_hoist|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
+group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-

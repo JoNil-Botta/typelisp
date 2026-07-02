@@ -9733,6 +9733,9 @@
 (define (ctfe-expr-clause-list-empty? [lst : AstExprClauseList]) : bool
   (ast-expr-clause-list-empty? (& lst)))
 
+;; Vector `get` fallbacks are eager. Avoid node-creating fallbacks on valid
+;; accesses: a no-pool `ast-node-push` can overwrite a captured CTFE pool slot
+;; that shares the active pool storage but has an independent node count.
 (define (ctfe-expr-clause-list-head [lst : AstExprClauseList]) : AstExprClause
   (if (ast-expr-clause-list-empty? (& lst))
     (ast-expr-clause
@@ -9744,12 +9747,11 @@
   (ast-expr-clause-list-tail lst))
 
 (define (ctfe-expr-clause-list-nth [lst : AstExprClauseList] [index : i64]) : AstExprClause
-  (ast-expr-clause-list-get
-    (& lst)
-    index
+  (if (or (< index 0) (>= index (ast-expr-clause-list-len (& lst))))
     (ast-expr-clause
       (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
-      (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))))
+      (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))
+    (ast-expr-clause-list-get (& lst) index (ast-expr-clause-fallback))))
 
 (define (ctfe-expr-clause-as-bracket-expr-in-env
   [env : CtfeEnv]
@@ -9820,10 +9822,12 @@
       (AstSourceSpan 0 0 0 0))))
 
 (define (ctfe-expr-binding-clause-list-head [lst : AstExprBindingClauseList]) : AstExprBindingClause
-  (ast-expr-binding-clause-list-get
-    (& lst)
-    0
-    (ctfe-expr-binding-clause-empty-default)))
+  (if (ast-expr-binding-clause-list-empty? (& lst))
+    (ctfe-expr-binding-clause-empty-default)
+    (ast-expr-binding-clause-list-get
+      (& lst)
+      0
+      (ast-expr-binding-clause-fallback))))
 
 (define (ctfe-expr-binding-clause-list-tail [lst : AstExprBindingClauseList]) : AstExprBindingClauseList
   (ast-expr-binding-clause-list-tail lst))
@@ -9831,10 +9835,12 @@
 (define (ctfe-expr-binding-clause-list-nth
   [lst : AstExprBindingClauseList]
   [index : i64]) : AstExprBindingClause
-  (ast-expr-binding-clause-list-get
-    (& lst)
-    index
-    (ctfe-expr-binding-clause-empty-default)))
+  (if (or (< index 0) (>= index (ast-expr-binding-clause-list-len (& lst))))
+    (ctfe-expr-binding-clause-empty-default)
+    (ast-expr-binding-clause-list-get
+      (& lst)
+      index
+      (ast-expr-binding-clause-fallback))))
 
 (define (ctfe-expr-binding-clause-as-bracket-expr-in-env
   [env : CtfeEnv]
@@ -9891,7 +9897,7 @@
           (ast-expr-binding-clause-list-get
             lst
             index
-            (ctfe-expr-binding-clause-empty-default))))
+            (ast-expr-binding-clause-fallback))))
       (ctfe-expr-binding-clause-list->expr-list-into env lst (+ index 1) out))))
 
 (define (ctfe-expr-binding-clause-list->expr-list
@@ -10011,19 +10017,17 @@
   (ctfe-expr-call-args-in-env (ctfe-env-empty) e))
 
 (define (ctfe-expr-list-head [lst : AstExprList]) : i64
-  (ast-expr-list-get
-    (& lst)
-    0
-    (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))
+  (if (ast-expr-list-empty? (& lst))
+    (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+    (ast-expr-list-get (& lst) 0 0)))
 
 (define (ctfe-expr-list-tail [lst : AstExprList]) : AstExprList
   (ast-expr-list-tail lst))
 
 (define (ctfe-expr-list-nth [lst : AstExprList] [index : i64]) : i64
-  (ast-expr-list-get
-    (& lst)
-    index
-    (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))
+  (if (or (< index 0) (>= index (ast-expr-list-len (& lst))))
+    (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+    (ast-expr-list-get (& lst) index 0)))
 
 ;; --- folding ----------------------------------------------------------------
 ;; Convert a folded compile-time value into the AST literal that lowering then

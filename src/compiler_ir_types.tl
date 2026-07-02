@@ -728,7 +728,7 @@
     ty
     (AstExternAbi.C)
     name
-    AstExternLinkInputList.Nil
+    (ast-extern-link-input-list-new)
     false))
 
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
@@ -956,14 +956,28 @@
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [_ (clone ty)]))
 
-(define (compiler-ir-clone-type-list [tys : AstTypeList]) : AstTypeList
-  (match tys
-    [(AstTypeList.Nil) (AstTypeList.Nil)]
-    [(AstTypeList.Cons head tail)
-      (AstTypeList.Cons
+(define (compiler-ir-clone-type-list-into
+  [tys : (& tys AstTypeList)]
+  [out : (&mut out AstTypeList)]
+  [index : i64]) : unit
+  (if (>= index (ast-type-list-len tys))
+    unit
+    (begin
+      (ast-type-list-push
+        out
         (ast-node-pool-reader-type-push
-          (compiler-ir-clone-type (ast-node-pool-reader-type-get head)))
-        (box (compiler-ir-clone-type-list (box-get tail))))]))
+          (compiler-ir-clone-type
+            (ast-node-pool-reader-type-get
+              (ast-type-list-get tys index (ast-type-id-fallback))))))
+      (compiler-ir-clone-type-list-into tys out (+ index 1)))))
+
+(define (compiler-ir-clone-type-list [tys : AstTypeList]) : AstTypeList
+  (let
+    [out : AstTypeList
+      (ast-type-list-with-capacity (ast-type-list-len (& tys)))]
+    (begin
+      (compiler-ir-clone-type-list-into (& tys) (&mut out) 0)
+      out)))
 
 (define (compiler-ir-clone-instr [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
@@ -1491,30 +1505,39 @@
         (compiler-ir-clone-function-list functions)
         (compiler-ir-clone-extern-list externs))]))
 
-(define (compiler-ir-type-list-render [types : AstTypeList]) : String
-  (match types
-    [(AstTypeList.Nil) ""]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ast-node-pool-reader-type-get head)]
-        [rest : AstTypeList (box-get rest)]
+(define (compiler-ir-type-list-render-at
+  [types : (& types AstTypeList)]
+  [index : i64]) : String
+  (if (>= index (ast-type-list-len types))
+    ""
+    (str_cat.str-cat
+      (compiler-ir-type-render
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (if (>= (+ index 1) (ast-type-list-len types))
+        ""
         (str_cat.str-cat
-          (compiler-ir-type-render head)
-          (match rest
-            [(AstTypeList.Nil) ""]
-            [_ (str_cat.str-cat " " (compiler-ir-type-list-render rest))])))]))
+          " "
+          (compiler-ir-type-list-render-at types (+ index 1)))))))
+
+(define (compiler-ir-type-list-render [types : AstTypeList]) : String
+  (compiler-ir-type-list-render-at (& types) 0))
+
+(define (compiler-ir-lifetime-list-render-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [index : i64]) : String
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    ""
+    (str_cat.str-cat
+      (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+      (if (>= (+ index 1) (ast-lifetime-list-len lifetimes))
+        ""
+        (str_cat.str-cat
+          " "
+          (compiler-ir-lifetime-list-render-at lifetimes (+ index 1)))))))
 
 (define (compiler-ir-lifetime-list-render [lifetimes : AstLifetimeList]) : String
-  (match lifetimes
-    [(AstLifetimeList.Nil) ""]
-    [(AstLifetimeList.Cons head rest)
-      (let
-        [rest : AstLifetimeList (box-get rest)]
-        (str_cat.str-cat
-          head
-          (match rest
-            [(AstLifetimeList.Nil) ""]
-            [_ (str_cat.str-cat " " (compiler-ir-lifetime-list-render rest))])))]))
+  (compiler-ir-lifetime-list-render-at (& lifetimes) 0))
 
 (define (compiler-ir-nominal-lifetime-render
   [name : String]
@@ -3096,17 +3119,20 @@
         (compiler-ir-function-list-call-arg-count functions)
         (compiler-ir-function-list-phi-input-count functions))]))
 
+(define (compiler-ir-type-list-name-at
+  [types : (& types AstTypeList)]
+  [index : i64]) : String
+  (if (>= index (ast-type-list-len types))
+    ""
+    (str_cat.str-cat
+      " "
+      (compiler-ir-type-name
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (compiler-ir-type-list-name-at types (+ index 1)))))
+
 (define (compiler-ir-type-list-name [types : AstTypeList]) : String
-  (match types
-    [(AstTypeList.Nil) ""]
-    [(AstTypeList.Cons head tail)
-      (let
-        [head : AstType (ast-node-pool-reader-type-get head)]
-        [tail : AstTypeList (box-get tail)]
-        (str_cat.str-cat
-          " "
-          (compiler-ir-type-name head)
-          (compiler-ir-type-list-name tail)))]))
+  (compiler-ir-type-list-name-at (& types) 0))
 
 (define (compiler-ir-type-name [ty : AstType]) : String
   (match ty

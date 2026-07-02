@@ -3379,7 +3379,7 @@
         (ast-variant-def-cons
           (ast-variant-def
             "A"
-            (ast-type-cons (AstType.I64) AstTypeList.Nil)
+            (ast-type-cons (AstType.I64) (ast-type-list-new))
             (ast-variant-payload-cleanup-cons
               (ast-variant-payload-cleanup-fn "close-fd")
               (ast-variant-payload-cleanup-list-new)))
@@ -3455,7 +3455,7 @@
     (tc-type-copyable? (AstType.Char))
     (tc-type-copyable? (AstType.Unit))
     (tc-type-copyable? (AstType.Never))
-    (tc-type-copyable? (ast-ty-func AstTypeList.Nil (AstType.I64)))
+    (tc-type-copyable? (ast-ty-func (ast-type-list-new) (AstType.I64)))
     (tc-type-copyable? (ast-ty-ptr (ast-ty-region "inner" (AstType.String))))
     (tc-type-copyable? (ast-ty-mut-ptr (ast-ty-dyn-array (AstType.I64))))
     (tc-type-copyable? (ast-ty-ref "r" (AstType.String)))))
@@ -3469,7 +3469,7 @@
       (ast-ty-tuple
         (ast-type-cons
           (AstType.I64)
-          (ast-type-cons (AstType.Bool) AstTypeList.Nil))))
+          (ast-type-cons (AstType.Bool) (ast-type-list-new)))))
     (tc-type-move-only? (AstType.Struct (intern "Box")))
     (tc-type-move-only? (ast-ty-box (AstType.I64)))
     (tc-type-move-only? (AstType.Enum (intern "MoveOnlyEnum")))
@@ -3478,7 +3478,7 @@
       (ast-ty-tuple
         (ast-type-cons
           (AstType.Struct (intern "Box"))
-          (ast-type-cons (ast-ty-dyn-array (AstType.I64)) AstTypeList.Nil))))))
+          (ast-type-cons (ast-ty-dyn-array (AstType.I64)) (ast-type-list-new)))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
@@ -3489,7 +3489,7 @@
     (tc-type-move-only?
       (ast-ty-region
         "r"
-        (ast-ty-tuple (ast-type-cons (AstType.I64) AstTypeList.Nil))))
+        (ast-ty-tuple (ast-type-cons (AstType.I64) (ast-type-list-new)))))
     (tc-type-move-only?
       (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstType.I64))))))
 
@@ -4250,7 +4250,7 @@
         (tc-type-render
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" AstLifetimeList.Nil)))
+            (ast-lifetime-cons "n" (ast-lifetime-list-new))))
         "(RefBox n)")]
     [str-eq-ok : bool (tc-type-eq (AstType.Str) (AstType.Str))]
     [str-distinct-ok : bool (not (tc-type-eq (AstType.Str) (AstType.String)))]
@@ -4261,10 +4261,10 @@
         (tc-type-eq
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" AstLifetimeList.Nil))
+            (ast-lifetime-cons "n" (ast-lifetime-list-new)))
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "m" AstLifetimeList.Nil))))]
+            (ast-lifetime-cons "m" (ast-lifetime-list-new)))))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstType.Str))]
     [bytes-move-kind-ok : bool (tc-type-move-only? (AstType.Bytes))]
     [str-ref-move-kind-ok : bool

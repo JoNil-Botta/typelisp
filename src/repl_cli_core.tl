@@ -159,28 +159,34 @@
         (ReplTypeCommand.No)))
     (ReplTypeCommand.No)))
 
+(define (repl-type-list-render-spaced-at
+  [types : (& types AstTypeList)]
+  [index : i64]) : String
+  (if (>= index (ast-type-list-len types))
+    ""
+    (string.append
+      " "
+      (string.append
+        (repl-type-render
+          (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
+        (repl-type-list-render-spaced-at types (+ index 1))))))
+
 (define (repl-type-list-render-spaced [types : AstTypeList]) : String
-  (match types
-    [(AstTypeList.Nil) ""]
-    [(AstTypeList.Cons head rest)
-      (let
-        [head : AstType (ty-node-get head)]
-        [rest : AstTypeList (box-get rest)]
-        (string.append
-          " "
-          (string.append
-            (repl-type-render head)
-            (repl-type-list-render-spaced rest))))]))
+  (repl-type-list-render-spaced-at (& types) 0))
+
+(define (repl-lifetime-list-render-spaced-at
+  [lifetimes : (& lifetimes AstLifetimeList)]
+  [index : i64]) : String
+  (if (>= index (ast-lifetime-list-len lifetimes))
+    ""
+    (string.append
+      " "
+      (string.append
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+        (repl-lifetime-list-render-spaced-at lifetimes (+ index 1))))))
 
 (define (repl-lifetime-list-render-spaced [lifetimes : AstLifetimeList]) : String
-  (match lifetimes
-    [(AstLifetimeList.Nil) ""]
-    [(AstLifetimeList.Cons head rest)
-      (let
-        [rest : AstLifetimeList (box-get rest)]
-        (string.append
-          " "
-          (string.append head (repl-lifetime-list-render-spaced rest))))]))
+  (repl-lifetime-list-render-spaced-at (& lifetimes) 0))
 
 (define (repl-type-render [ty : AstType]) : String
   (match ty

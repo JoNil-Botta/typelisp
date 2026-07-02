@@ -3060,7 +3060,7 @@
             (intern-str name)
             module-id
             (CompilerLoadSurfaceStructSignature
-              AstLifetimeList.Nil
+              (ast-lifetime-list-new)
               repr
               cleanup
               fields)
@@ -3110,7 +3110,7 @@
             (intern-str name)
             module-id
             (CompilerLoadSurfaceEnumSignature
-              AstLifetimeList.Nil
+              (ast-lifetime-list-new)
               cleanup
               variants)
             (CompilerLoadSurfaceMacroOther)
@@ -5358,7 +5358,7 @@
 
 (define (compiler-load-param-type-list [params : AstParamList]) : AstTypeList
   (match params
-    [(AstParamList.Nil) AstTypeList.Nil]
+    [(AstParamList.Nil) (ast-type-list-new)]
     [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
@@ -5391,7 +5391,7 @@
       (AstExternMetadata.Metadata
         (AstExternAbi.C)
         (compiler-load-package-user-symbol logical)
-        AstExternLinkInputList.Nil
+        (ast-extern-link-input-list-new)
         false)
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 

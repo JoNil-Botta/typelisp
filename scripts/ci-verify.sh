@@ -289,6 +289,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-cod
 run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
+run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
 run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness

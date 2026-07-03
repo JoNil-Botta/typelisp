@@ -2622,6 +2622,12 @@
       (array.push! items 41)
       (+ (array.ref items 0) (array.length items)))))")
 
+(define (compiler-typecheck-smoke-lazy-import-stdlib-result-source) : String
+  "(module main)
+(import stdlib.result)
+(import (result i64 String) as result_i64_string)
+(define (main) : i64 42)")
+
 (define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String
   "(module main)
 (import stdlib.str_cat)
@@ -2788,6 +2794,42 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?) : bool
+  (let
+    [ok : bool
+      (begin
+        (compiler-load-test-mkdir "target/tc_lazy_stdlib_result")
+        (io.write-file
+          "target/tc_lazy_stdlib_result/result.tl"
+          (compiler-typecheck-smoke-lazy-import-stdlib-result-source))
+        (match (compiler-load-file-with-paths
+          "target/tc_lazy_stdlib_result/result.tl"
+          (sym_i64_env.sym-i64-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (let
+              [skip-count : i64 (compiler-load-lazy-import-skip-count)]
+              [result-materialized : bool
+                (compiler-typecheck-smoke-paths-contain?
+                  paths
+                  "stdlib/result.tl")]
+              (match (typecheck-compiler-program-with-paths-checked
+                (ast-program decls)
+                paths)
+                [(ResultCompilerTypecheckChecked.Ok _ _ _)
+                  (and (> skip-count 0) (not result-materialized))]
+                [(ResultCompilerTypecheckChecked.Err diag)
+                  (let
+                    [message : String
+                      (compiler-diagnostic-message (box-get diag))]
+                    (begin
+                      (io.stderr-write (& message))
+                      false))]))]
+          [(ResultCompilerLoadWithPaths.Err _) false]))]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?) : bool
   (let
     [ok : bool
@@ -2904,6 +2946,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-array-macro-ok?)
       (io.panic "typecheck: lazy import stdlib.array macro smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?)
+      (io.panic "typecheck: lazy import stdlib.result macro smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?)
       (io.panic "typecheck: lazy import stdlib.array alias smoke failed"))

@@ -13043,21 +13043,27 @@
       (tc-env-with-cache (tc-bind (tc-empty-env) "global" (AstType.String)))]
     [marked : TcTypeEnv
       (tc-bind
-        (tc-bind
-          (tc-bind-arena-phase-token
-            (tc-bind-atomic-arena-owner
-              (tc-bind-ordinary-arena-owner
-                (tc-bind-cleanup-owner
-                  (tc-bind-return-type
-                    (tc-enter-unsafe (tc-push-region base "arena"))
+        (tc-bind-cleanup-owner
+          (tc-bind
+            (tc-bind-arena-phase-token
+              (tc-bind
+                (tc-bind-atomic-arena-owner
+                  (tc-bind
+                    (tc-bind-ordinary-arena-owner
+                      (tc-bind-return-type
+                        (tc-enter-unsafe (tc-push-region base "arena"))
+                        (AstType.I64))
+                      "arena")
+                    "arena"
                     (AstType.I64))
-                  "resource")
-                "arena")
-              "atomic-arena")
+                  "atomic-arena")
+                "atomic-arena"
+                (AstType.I64))
+              "phase"
+              "arena")
             "phase"
-            "arena")
-          "phase"
-          (AstType.I64))
+            (AstType.I64))
+          "resource")
         "resource"
         (AstType.String))]
     [deep : TcTypeEnv

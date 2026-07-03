@@ -173,6 +173,18 @@
     (compiler-ast-state-owned-type-dedup-isolated-smoke?)
     (compiler-ast-state-owned-type-dedup-reset-smoke?)))
 
+(define (compiler-ast-context-type-i64? [pools : AstNodePoolContext] [id : i64]) : bool
+  (match (ast-node-pool-context-type-get pools id)
+    [(AstType.I64) true]
+    [_ false]))
+
+(define (compiler-ast-context-type-char?
+  [pools : AstNodePoolContext]
+  [id : i64]) : bool
+  (match (ast-node-pool-context-type-get pools id)
+    [(AstType.Char) true]
+    [_ false]))
+
 (define (compiler-ast-context-expr-int-lit?
   [pools : AstNodePoolContext]
   [id : i64]
@@ -183,6 +195,57 @@
         [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
+
+(define (compiler-ast-context-base-arenas-match? [pools : AstNodePoolContext]) : bool
+  (let
+    [expr-pool : AstExprNodePoolState
+      (array-ref (struct-get pools expr-pool) 0)]
+    [type-pool : AstTypeNodePoolState
+      (array-ref (struct-get pools type-pool) 0)]
+    (= (struct-get expr-pool base-arena) (struct-get type-pool base-arena))))
+
+(define (compiler-ast-active-context-sync-smoke?) : bool
+  (let
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : AstNodePoolContext (ast-node-pool-context-new-with-capacities 1 1)]
+    [ok : bool true]
+    (begin
+      (ast-node-pool-context-install! pools)
+      (let
+        [expr-a : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 31)))]
+        [expr-b : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 32)))]
+        [type-a : i64 (ty-node-push (AstType.I64))]
+        [type-b : i64 (ty-node-push (AstType.Char))]
+        (begin
+          (unless (= expr-a 0) (set! ok false))
+          (unless (= expr-b 1) (set! ok false))
+          (unless (= type-a 0) (set! ok false))
+          (unless (= type-b 1) (set! ok false))
+          (unless (= (ast-node-pool-context-expr-len pools) 2) (set! ok false))
+          (unless (= (ast-node-pool-context-type-len pools) 2) (set! ok false))
+          (unless
+            (compiler-ast-context-expr-int-lit? pools expr-a 31)
+            (set! ok false))
+          (unless
+            (compiler-ast-context-expr-int-lit? pools expr-b 32)
+            (set! ok false))
+          (unless (compiler-ast-context-type-i64? pools type-a) (set! ok false))
+          (unless
+            (compiler-ast-context-type-char? pools type-b)
+            (set! ok false))
+          (unless
+            (compiler-ast-context-base-arenas-match? pools)
+            (set! ok false))
+          (ast-node-pool-truncate! 1)
+          (ty-node-pool-truncate! 1)
+          (unless (= (ast-node-pool-context-expr-len pools) 1) (set! ok false))
+          (unless (= (ast-node-pool-context-type-len pools) 1) (set! ok false))
+          (unless
+            (compiler-ast-context-expr-int-lit? pools expr-a 31)
+            (set! ok false))
+          (unless (compiler-ast-context-type-i64? pools type-a) (set! ok false))
+          (ast-node-pool-context-install! active-before)
+          ok)))))
 
 (define (compiler-ast-context-shared-binary?
   [pools : AstNodePoolContext]
@@ -422,11 +485,11 @@
       (compiler-ast-decl-list-module-name? right 1 "tail"))))
 
 (define (main) : i64
-  (if (and
-    (= (compiler-ast-smoke) 23)
-    (compiler-ast-state-owned-node-pools-smoke?)
-    (compiler-ast-program-compaction-smoke?)
-    (compiler-ast-decl-cons-growth-smoke?)
-    (compiler-ast-decl-cons-pure-smoke?))
-    42
-    1))
+  (begin
+    (unless (= (compiler-ast-smoke) 23) (return 2))
+    (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
+    (unless (compiler-ast-active-context-sync-smoke?) (return 4))
+    (unless (compiler-ast-program-compaction-smoke?) (return 5))
+    (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))
+    (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
+    42))

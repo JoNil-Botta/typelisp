@@ -79,14 +79,24 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
+(define compiler-driver-compile-expr-pool-initial-capacity : i64
+  2097152)
+(define compiler-driver-compile-type-pool-initial-capacity : i64
+  262144)
+
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        compiler-driver-compile-expr-pool-initial-capacity
+        compiler-driver-compile-type-pool-initial-capacity
+        pool-arena)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
-        (ast-expr-node-pool-state-init 2097152 pool-arena)
-        (ast-type-node-pool-state-init 262144 pool-arena)
-        pool-arena)]
+        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref (struct-get pools type-pool) 0)
+        (ast-node-pool-context-base-arena pools))]
     (begin
       (cbi.state-capture-from-globals!
         (array-ref (struct-get state builtin-ids) 0))
@@ -125,9 +135,7 @@
   (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
-  (ast-node-pools-state-install!
-    (array-ref (struct-get state expr-pool) 0)
-    (array-ref (struct-get state type-pool) 0)))
+  (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -141,6 +149,13 @@
   [state : CompilerDriverState]) : bool
   (not (= (compiler-driver-state-owned-pool-arena state) 0)))
 
+(define (compiler-driver-state-clear-pool-backed-caches!) : unit
+  (begin
+    (compiler-load-session-floors-set! 0 0 0)
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)))
+
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit
   (if (or
@@ -150,22 +165,25 @@
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
       [new-arena : i64 (arena.tl_arena_make)]
+      [pools : AstNodePoolContext
+        (ast-node-pool-context-new-with-capacities-in-arena
+          compiler-driver-compile-expr-pool-initial-capacity
+          compiler-driver-compile-type-pool-initial-capacity
+          new-arena)]
       (begin
-        (compiler-load-session-floors-set! 0 0 0)
-        (compiler-load-program-cache-clear!)
-        (compiler-load-runtime-prelude-cache-clear!)
-        (if (tc-prefix-snapshot-cache-active?)
-          unit
-          (tc-prefix-snapshot-cache-clear!))
-        (array-set! (struct-get state pool-arena) 0 new-arena)
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (array-set!
+          (struct-get state pool-arena)
+          0
+          (ast-node-pool-context-base-arena pools))
         (array-set!
           (struct-get state expr-pool)
           0
-          (ast-expr-node-pool-state-init 2097152 new-arena))
+          (array-ref (struct-get pools expr-pool) 0))
         (array-set!
           (struct-get state type-pool)
           0
-          (ast-type-node-pool-state-init 262144 new-arena))
+          (array-ref (struct-get pools type-pool) 0))
         (compiler-driver-state-install-pools! state)
         (unsafe
           (arena.tl_arena_destroy old-arena))))))

@@ -6649,65 +6649,96 @@
       (tc-arena-phase-token-region-marker-name token)
       (AstType.Var (intern region)))))
 
-(define (tc-arena-phase-token-region-head [env : TcTypeEnv] [token : String]) : TcMaybeString
+(define (tc-arena-phase-token-region-head
+  [env : TcTypeEnv]
+  [region-marker-id : i64]) : TcMaybeString
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Bind key ty _)
-      (if (= key (tc-name-id (tc-arena-phase-token-region-marker-name token)))
+      (if (= key region-marker-id)
         (match ty
           [(AstType.Var region) (TcMaybeString.Some (intern-str region))]
           [_ (TcMaybeString.No)])
         (TcMaybeString.No))]
     [_ (TcMaybeString.No)]))
 
-(define (tc-arena-phase-token-owner-head [env : TcTypeEnv] [token : String]) : TcMaybeString
+(define (tc-arena-phase-token-owner-head
+  [env : TcTypeEnv]
+  [owner-marker-id : i64]
+  [region-marker-id : i64]) : TcMaybeString
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (if (= key (tc-name-id (tc-arena-phase-token-owner-marker-name token)))
+      (if (= key owner-marker-id)
         (match ty
           [(AstType.Var owner) (TcMaybeString.Some (intern-str owner))]
           [_ (TcMaybeString.No)])
-        (if (= key (tc-name-id (tc-arena-phase-token-region-marker-name token)))
-          (tc-arena-phase-token-owner-head rest-env token)
+        (if (= key region-marker-id)
+          (tc-arena-phase-token-owner-head
+            rest-env
+            owner-marker-id
+            region-marker-id)
           (TcMaybeString.No)))]
     [_ (TcMaybeString.No)]))
 
 (define (tc-arena-phase-token-region-active-scan
   [env : TcTypeEnv]
-  [token : String]) : TcMaybeString
+  [token-id : i64]
+  [region-marker-id : i64]) : TcMaybeString
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) (TcMaybeString.No)]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-arena-phase-token-region-active-scan rest-env token)]
+      (tc-arena-phase-token-region-active-scan
+        rest-env
+        token-id
+        region-marker-id)]
     [(TcTypeEnvMarkerStep.Bind key _ rest-env)
-      (if (= key (tc-name-id token))
-        (tc-arena-phase-token-region-head rest-env token)
-        (tc-arena-phase-token-region-active-scan rest-env token))]))
+      (if (= key token-id)
+        (tc-arena-phase-token-region-head rest-env region-marker-id)
+        (tc-arena-phase-token-region-active-scan
+          rest-env
+          token-id
+          region-marker-id))]))
 
 (define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token : String]) : TcMaybeString
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (tc-arena-phase-token-region-active-scan
       (tc-type-env-marker-start env)
-      token)))
+      (tc-name-id token)
+      (tc-name-id (tc-arena-phase-token-region-marker-name token)))))
 
 (define (tc-arena-phase-token-owner-active-scan
   [env : TcTypeEnv]
-  [token : String]) : TcMaybeString
+  [token-id : i64]
+  [owner-marker-id : i64]
+  [region-marker-id : i64]) : TcMaybeString
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) (TcMaybeString.No)]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-arena-phase-token-owner-active-scan rest-env token)]
+      (tc-arena-phase-token-owner-active-scan
+        rest-env
+        token-id
+        owner-marker-id
+        region-marker-id)]
     [(TcTypeEnvMarkerStep.Bind key _ rest-env)
-      (if (= key (tc-name-id token))
-        (tc-arena-phase-token-owner-head rest-env token)
-        (tc-arena-phase-token-owner-active-scan rest-env token))]))
+      (if (= key token-id)
+        (tc-arena-phase-token-owner-head
+          rest-env
+          owner-marker-id
+          region-marker-id)
+        (tc-arena-phase-token-owner-active-scan
+          rest-env
+          token-id
+          owner-marker-id
+          region-marker-id))]))
 
 (define (tc-arena-phase-token-owner-active [env : TcTypeEnv] [token : String]) : TcMaybeString
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (tc-arena-phase-token-owner-active-scan
       (tc-type-env-marker-start env)
-      token)))
+      (tc-name-id token)
+      (tc-name-id (tc-arena-phase-token-owner-marker-name token))
+      (tc-name-id (tc-arena-phase-token-region-marker-name token)))))
 
 (define (tc-current-arena-owner-region [env : TcTypeEnv] [owner : String]) : String
   (begin
@@ -6783,14 +6814,20 @@
     [_ false]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
+  (tc-cleanup-owner-active-scan-id? env name (tc-name-id name)))
+
+(define (tc-cleanup-owner-active-scan-id?
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : bool
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) false]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-cleanup-owner-active-scan? rest-env name)]
+      (tc-cleanup-owner-active-scan-id? rest-env name name-id)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (if (= key (tc-name-id name))
+      (if (= key name-id)
         (tc-cleanup-owner-marker-head? rest-env name)
-        (tc-cleanup-owner-active-scan? rest-env name))]))
+        (tc-cleanup-owner-active-scan-id? rest-env name name-id))]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (begin
@@ -6801,14 +6838,21 @@
   [env : TcTypeEnv]
   [name : String]
   [marker-id : i64]) : bool
+  (tc-arena-owner-active-scan-id? env name (tc-name-id name) marker-id))
+
+(define (tc-arena-owner-active-scan-id?
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]
+  [marker-id : i64]) : bool
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) false]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-arena-owner-active-scan? rest-env name marker-id)]
+      (tc-arena-owner-active-scan-id? rest-env name name-id marker-id)]
     [(TcTypeEnvMarkerStep.Bind key _ rest-env)
-      (if (= key (tc-name-id name))
+      (if (= key name-id)
         (tc-arena-owner-marker-head? rest-env name marker-id)
-        (tc-arena-owner-active-scan? rest-env name marker-id))]))
+        (tc-arena-owner-active-scan-id? rest-env name name-id marker-id))]))
 
 (define (tc-arena-owner-active?
   [env : TcTypeEnv]

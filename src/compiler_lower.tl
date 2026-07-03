@@ -45162,11 +45162,20 @@
 
 (define (compiler-lower-macro-expr-clause-variadic-source) : String
   "(defmacro (pick-first [arms : ExprClause ...]) : i64
-  (if (expr-clause-list-empty? arms)
-    (expr-int 0)
-    `(if ,(expr-clause-first (expr-clause-list-head arms))
-       ,(expr-clause-second (expr-clause-list-head arms))
-       (pick-first ,@(expr-clause-list->expr-list (expr-clause-list-tail arms))))))
+  `(pick-first-from 0 ,@(expr-clause-list->expr-list arms)))
+(defmacro (pick-first-from [idx : Expr] [arms : ExprClause ...]) : i64
+  (match idx
+    [(ExprInt i)
+      (if (>= i (expr-clause-list-length arms))
+        (expr-int 0)
+        (let
+          [arm : ExprClause (expr-clause-list-nth arms i)]
+          `(if ,(expr-clause-first arm)
+             ,(expr-clause-second arm)
+             (pick-first-from
+               ,(expr-int (+ i 1))
+               ,@(expr-clause-list->expr-list arms)))))]
+    [_ (expr-int 0)]))
 (define (main) : i64 (pick-first [false 1] [true 9] [true 3]))")
 
 (define (compiler-lower-macro-expr-clause-to-expr-error-source) : String
@@ -54447,20 +54456,36 @@
 ;; old `CompilerIrBinOp.And`/`CompilerIrBinOp.Or` path would have produced one binop and no branch).
 (define (compiler-lower-and-short-circuit-source) : String
   "(defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (define (f [a : bool] [b : bool]) : bool (and a b))")
 
 (define (compiler-lower-or-short-circuit-source) : String
   "(defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (define (f [a : bool] [b : bool]) : bool (or a b))")
 
 (define (compiler-lower-short-circuit-branch? [src : String]) : bool

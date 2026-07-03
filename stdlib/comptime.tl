@@ -500,25 +500,9 @@
     [(ExprIf _ _ else-expr) else-expr]
     [_ value]))
 
-;: Return true when an expression list has no items.
-(define (expr-list-empty? [items : ExprList]) : bool
-  (= (struct-get items len) 0))
-
 ;: Return the number of items in an expression list.
 (define (expr-list-length [items : ExprList]) : i64
   (struct-get items len))
-
-;: Return the first item in a non-empty expression list.
-(define (expr-list-head [items : ExprList]) : Expr
-  (if (> (struct-get items len) 0)
-    (__tl_array-ref (struct-get items items) 0)
-    (comptime-error "expr-list-head expects non-empty ExprList")))
-
-;: Return all but the first item from a non-empty expression list.
-;: This remains intrinsic until CTFE has public dense slicing that preserves
-;: syntax provenance.
-(define (expr-list-tail [items : ExprList]) : ExprList
-  (expr-list-tail items))
 
 ;: Return an expression list item by index.
 (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
@@ -538,25 +522,9 @@
   (match clause
     [(ExprClause _ second) second]))
 
-;: Return true when a clause list has no items.
-(define (expr-clause-list-empty? [items : ExprClauseList]) : bool
-  (= (struct-get items len) 0))
-
 ;: Return the number of clauses in a clause list.
 (define (expr-clause-list-length [items : ExprClauseList]) : i64
   (struct-get items len))
-
-;: Return the first item in a non-empty clause list.
-(define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
-  (if (> (struct-get items len) 0)
-    (__tl_array-ref (struct-get items items) 0)
-    (comptime-error "expr-clause-list-head expects non-empty ExprClauseList")))
-
-;: Return all but the first item from a non-empty clause list.
-;: This remains intrinsic until CTFE has public dense slicing that preserves
-;: syntax provenance.
-(define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
-  (expr-clause-list-tail items))
 
 ;: Return a clause list item by index.
 (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
@@ -588,26 +556,9 @@
 (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
   (struct-get clause init))
 
-;: Return true when a binding-clause list has no items.
-(define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
-  (= (struct-get items len) 0))
-
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
   (struct-get items len))
-
-;: Return the first item in a non-empty binding-clause list.
-(define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
-  (if (> (struct-get items len) 0)
-    (__tl_array-ref (struct-get items items) 0)
-    (comptime-error
-      "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")))
-
-;: Return all but the first item from a non-empty binding-clause list.
-;: This remains intrinsic until CTFE has public dense slicing that preserves
-;: syntax provenance.
-(define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
-  (expr-binding-clause-list-tail items))
 
 ;: Return a binding-clause list item by index.
 (define (expr-binding-clause-list-nth

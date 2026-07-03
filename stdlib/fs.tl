@@ -1173,19 +1173,33 @@
 ;: two-argument borrowed function. With no segments it expands to `""`; with one
 ;: segment it expands to that segment unchanged.
 (defmacro (path-join-many [segments : String ...]) : String
-  (if (comptime.expr-list-empty? segments)
+  (if (= (comptime.expr-list-length segments) 0)
     `""
-    (let
-      [first : comptime.Expr (comptime.expr-list-head segments)]
-      [rest : comptime.ExprList (comptime.expr-list-tail segments)]
-      (if (comptime.expr-list-empty? rest)
-        first
-        (let
-          [second : comptime.Expr (comptime.expr-list-head rest)]
-          [tail : comptime.ExprList (comptime.expr-list-tail rest)]
-          (if (comptime.expr-list-empty? tail)
-            `(path-join-owned-pair ,first ,second)
-            `(path-join-many (path-join-owned-pair ,first ,second) ,@tail)))))))
+    `(path-join-fold
+      (__path-join-segments ,@segments)
+      ,(comptime.expr-list-nth segments 0)
+      1)))
+
+;: Internal left-fold step for `path-join-many`: read segments by index
+;: (`expr-list-nth`) from the carrier and thread the joined accumulator, instead
+;: of peeling a shrinking tail. `acc` is the path built so far and `idx` is the
+;: next segment position.
+(defmacro (path-join-fold
+  [carrier : comptime.Expr]
+  [acc : String]
+  [idx : comptime.Expr]) : String
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            acc
+            `(path-join-fold
+              ,carrier
+              (path-join-owned-pair ,acc ,(comptime.expr-list-nth elems i))
+              ,(comptime.expr-int (+ i 1))))]
+        [_ acc])]
+    [_ acc]))
 
 ;: Index of the last path separator in `path`, or `-1` when there is none.
 (define (last-separator-index [path : (& path str)]) : i64

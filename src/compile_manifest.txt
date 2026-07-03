@@ -549,6 +549,17 @@ contains|;: EOF unattached
 contains|Module title\nsecond module line\nlater module
 end
 
+case|selfhost_doc_expand|src/doc_expand.tl|assembly|skip|direct
+contains|_tl_doc_expanded_generated_modules_from_loaded_decls:
+contains|_tl_doc_expanded_generated_modules_from_source_docs:
+contains|_tl_doc_generated_modules_from_expanded_decls:
+contains|_tl_doc_ast_type_source:
+contains|_tl_doc_expand_smoke:
+contains|Generated module API.
+contains|Concrete generated-module import that produced this API.
+contains|doc-expand: generated module docs smoke mismatch
+end
+
 case|selfhost_doc_html|src/doc_html.tl|assembly|skip|direct
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:

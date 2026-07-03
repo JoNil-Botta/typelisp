@@ -5373,6 +5373,13 @@
   [program : AstProgram]
   [_paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
+  (lower-reachable-clone-roots-impl pools program _paths names))
+
+(define (lower-reachable-clone-roots-impl
+  [pools : AstNodePoolContext]
+  [program : AstProgram]
+  [_paths : AstDeclPathList]
+  [names : LowerNameEnv]) : ResultLowerCloneRoots
   ;; #3792: clone-root discovery rebuilds the whole-program symbols, registries
   ;; and top-env plus the clone-ability fixpoint -- ~132MB of the opt1 lower
   ;; peak that adds only a couple dozen AST/type pool nodes, i.e. almost pure
@@ -5388,7 +5395,16 @@
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [prev-pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [prev-reader-active : bool (ast-node-pool-reader-active?)]
+    [prev-reader : AstNodePoolContext
+      (if prev-reader-active
+        (ast-node-pool-reader-current)
+        pools)]
+    [prev-compat-active : bool (ast-node-pool-compat-context-active?)]
+    [prev-compat : AstNodePoolContext
+      (if prev-compat-active
+        (ast-node-pool-compat-context-current)
+        pools)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
       (tc-nominal-owner-cache-reset!)
@@ -5399,11 +5415,11 @@
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
           (begin
-            ;; Clone-root discovery still calls typecheck helpers that use the
-            ;; compatibility AST/type readers internally. Keep this scoped to
-            ;; the clone-root subphase; the lowerer entrypoints pass explicit
-            ;; pools and do not install active pools themselves.
-            (ast-node-pool-context-install! pools)
+            ;; Clone-root discovery still calls compatibility AST/type helpers;
+            ;; route both explicit reader helpers and raw legacy reads through
+            ;; the state-owned pools instead of mutating active pool state.
+            (ast-node-pool-reader-use! pools)
+            (ast-node-pool-compat-context-use! pools)
             (let
               [result : ResultLowerCloneRoots
                 (match (build-compiler-symbols program)
@@ -5417,16 +5433,14 @@
                             (TcContext program symbols registries "" pools)]
                           (match (tc-build-top-env ctx program)
                             [(ResultTcEnv.Ok top-env)
-                              (begin
-                                (tc-context-capture-active-pools! ctx)
-                                (let
-                                  [roots : CloneNameList
-                                    (lower-clone-roots-program
-                                      ctx
-                                      top-env
-                                      names
-                                      program)]
-                                  (ResultLowerCloneRoots.Ok roots)))]
+                              (let
+                                [roots : CloneNameList
+                                  (lower-clone-roots-program
+                                    ctx
+                                    top-env
+                                    names
+                                    program)]
+                                (ResultLowerCloneRoots.Ok roots))]
                             [(ResultTcEnv.Err message)
                               (ResultLowerCloneRoots.Err
                                 (box (lower-diagnostic message)))]))]
@@ -5436,8 +5450,12 @@
                   [(ResultCompilerSymbols.Err message)
                     (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
               (begin
-                (ast-node-pool-context-capture-active! pools)
-                (ast-node-pool-context-install! prev-pools)
+                (if prev-reader-active
+                  (ast-node-pool-reader-use! prev-reader)
+                  (ast-node-pool-reader-clear!))
+                (if prev-compat-active
+                  (ast-node-pool-compat-context-use! prev-compat)
+                  (ast-node-pool-compat-context-clear!))
                 result)))]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin

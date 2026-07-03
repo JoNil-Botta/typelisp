@@ -639,8 +639,8 @@
       (set! node-pool-base-arena head-arena)
       (set! ast-node-pool-slots new-slots))))
 
-;: Append `node` to the pool and return its AstNodeId.
-(define (ast-node-push [node : AstExpr]) : i64
+;: Append `node` to the active pool and return its AstNodeId.
+(define (ast-node-push-active [node : AstExpr]) : i64
   (begin
     (if (>= ast-node-pool-count (array-length ast-node-pool-slots))
       (ast-node-pool-grow!)
@@ -653,6 +653,12 @@
         (ast-node-pool-active-context-capture-expr!)
         id))))
 
+;: Append `node` to the selected AST pool and return its AstNodeId.
+(define (ast-node-push [node : AstExpr]) : i64
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-expr-push ast-node-pool-compat-context node)
+    (ast-node-push-active node)))
+
 ;: Read the node at `id`.
 ;;
 ;; #2357: this MUST stay `array-ref`, not a raw `(ptr-read (ptr-offset (ptr-cast
@@ -660,8 +666,14 @@
 ;; `AstExpr` is a multi-word value; `array-ref` lowers with the correct element
 ;; stride/size, whereas the raw ptr-offset path scales by a fixed word and adds a
 ;; spurious load, reading garbage and corrupting the pool read.
-(define (ast-node-get [id : i64]) : AstExpr
+(define (ast-node-get-active [id : i64]) : AstExpr
   (array-ref ast-node-pool-slots id))
+
+;: Read the node at `id` from the selected AST pool.
+(define (ast-node-get [id : i64]) : AstExpr
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-expr-get ast-node-pool-compat-context id)
+    (ast-node-get-active id)))
 
 ;: Overwrite the node at `id` in place (used when a node is rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
@@ -1573,10 +1585,10 @@
   [b : AstType]) : bool
   (ty-node-shallow-value-eq? (ast-type-node-pool-state-get pool a-id) b))
 
-;: Append `node` to the pool, returning an existing id when an identical node
+;: Append `node` to the active pool, returning an existing id when an identical node
 ;: was already pushed. The table is probed before appending so the common
 ;: duplicate path does not churn the pool count or temporarily force growth.
-(define (ty-node-push [node : AstType]) : i64
+(define (ty-node-push-active [node : AstType]) : i64
   (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
     (ty-node-push-raw node)
     (let
@@ -1599,13 +1611,25 @@
                 (set! idx (bit-and (+ idx 1) mask))))))
         result))))
 
+;: Append `node` to the selected type pool.
+(define (ty-node-push [node : AstType]) : i64
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-type-push ast-node-pool-compat-context node)
+    (ty-node-push-active node)))
+
 ;: Read the type node at `id`.
 ;;
 ;; #2357: MUST stay `array-ref` (see `ast-node-get`): with #1867 inline-by-value
 ;; `AstType` is a multi-word value, and the raw ptr-offset/ptr-read path mis-scales
 ;; the element stride and reads garbage. `array-ref` lowers with the right size.
-(define (ty-node-get [id : i64]) : AstType
+(define (ty-node-get-active [id : i64]) : AstType
   (array-ref ty-node-pool-slots id))
+
+;: Read the type node at `id` from the selected type pool.
+(define (ty-node-get [id : i64]) : AstType
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-type-get ast-node-pool-compat-context id)
+    (ty-node-get-active id)))
 
 ;: Overwrite the type node at `id` in place.
 (define (ty-node-set! [id : i64] [node : AstType]) : unit
@@ -1679,10 +1703,22 @@
       (array-set! type-cell 0 type-pool)
       (AstNodePoolContext expr-cell type-cell))))
 
-(define (ast-node-pool-context-capture-active) : AstNodePoolContext
+(define (ast-node-pool-context-capture-active-raw) : AstNodePoolContext
   (ast-node-pool-context-new
     (ast-node-pool-state-capture)
     (ty-node-pool-state-capture)))
+
+(define ast-node-pool-compat-context-explicit? : bool
+  false)
+(define ast-node-pool-compat-context : AstNodePoolContext
+  (ast-node-pool-context-capture-active-raw))
+
+(define (ast-node-pool-context-capture-active) : AstNodePoolContext
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-new
+      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))
+    (ast-node-pool-context-capture-active-raw)))
 
 (define ast-node-pool-active-context-installed? : bool
   false)
@@ -1718,26 +1754,50 @@
 (define (ast-node-pool-reader-clear!) : unit
   (set! ast-node-pool-reader-explicit? false))
 
+(define (ast-node-pool-reader-active?) : bool
+  ast-node-pool-reader-explicit?)
+
+(define (ast-node-pool-reader-current) : AstNodePoolContext
+  ast-node-pool-reader-context)
+
+(define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
+  (begin
+    (set! ast-node-pool-compat-context pools)
+    (set! ast-node-pool-compat-context-explicit? true)))
+
+(define (ast-node-pool-compat-context-clear!) : unit
+  (set! ast-node-pool-compat-context-explicit? false))
+
+(define (ast-node-pool-compat-context-active?) : bool
+  ast-node-pool-compat-context-explicit?)
+
+(define (ast-node-pool-compat-context-current) : AstNodePoolContext
+  ast-node-pool-compat-context)
+
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
   (ast-node-pool-context-new
     (array-ref (struct-get pools expr-pool) 0)
     (array-ref (struct-get pools type-pool) 0)))
 
 (define (ast-node-pool-context-capture-active! [pools : AstNodePoolContext]) : unit
-  (begin
-    (array-set! (struct-get pools expr-pool) 0 (ast-node-pool-state-capture))
-    (array-set! (struct-get pools type-pool) 0 (ty-node-pool-state-capture))))
+  (if ast-node-pool-compat-context-explicit?
+    unit
+    (begin
+      (array-set! (struct-get pools expr-pool) 0 (ast-node-pool-state-capture))
+      (array-set! (struct-get pools type-pool) 0 (ty-node-pool-state-capture)))))
 
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
 
 (define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
-  (begin
-    (ast-node-pools-state-install!
-      (array-ref (struct-get pools expr-pool) 0)
-      (array-ref (struct-get pools type-pool) 0))
-    (set! ast-node-pool-active-context pools)
-    (set! ast-node-pool-active-context-installed? true)))
+  (if ast-node-pool-compat-context-explicit?
+    unit
+    (begin
+      (ast-node-pools-state-install!
+        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref (struct-get pools type-pool) 0))
+      (set! ast-node-pool-active-context pools)
+      (set! ast-node-pool-active-context-installed? true))))
 
 (define (ast-node-pool-context-expr-len [pools : AstNodePoolContext]) : i64
   (ast-expr-node-pool-state-len (array-ref (struct-get pools expr-pool) 0)))

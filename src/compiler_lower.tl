@@ -774,10 +774,12 @@
 (define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
   (lower-extern-list-reverse-onto externs CompilerIrExternList.Nil))
 
-(define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
+(define (lower-name-env-lookup-with-id
+  [names : LowerNameEnv]
+  [source-name : String]
+  [source-id : i64]) : TcMaybeString
   (let
     [cur : LowerNameEnv names]
-    [source-id : i64 (lower-name-cache-source-id-value source-name)]
     [result : TcMaybeString (TcMaybeString.No)]
     [done : bool false]
     (begin
@@ -808,6 +810,15 @@
                 (set! cur (box-get rest)))
               (set! cur (box-get rest)))]))
       result)))
+
+;; Convenience wrapper: derive the canonical source id from the string. Hot
+;; callers that already hold the interned source id call lower-name-env-lookup-with-id
+;; directly to skip this per-call re-hash.
+(define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
+  (lower-name-env-lookup-with-id
+    names
+    source-name
+    (lower-name-cache-source-id-value source-name)))
 
 (define (lower-name-env-resolve [names : LowerNameEnv] [source-name : String]) : String
   (match (lower-name-env-lookup names source-name)
@@ -1360,7 +1371,7 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
-  (match (lower-name-env-lookup names source-name)
+  (match (lower-name-env-lookup-with-id names source-name source-id)
     [(TcMaybeString.Some _) names]
     [(TcMaybeString.No)
       (lower-name-env-bind-id source-name source-id logical-name names)]))

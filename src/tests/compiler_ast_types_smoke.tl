@@ -297,7 +297,8 @@
   [program : AstProgram]
   [source-body : i64]
   [source-lit : i64]
-  [source-span : i64]) : bool
+  [source-span : i64]
+  [source-make : i64]) : bool
   (match program
     [(AstProgram.Program decls-box)
       (match (ast-decl-list-step (box-get decls-box))
@@ -311,7 +312,7 @@
                       (and
                         (= first-body second-body)
                         (not (= first-body source-body))
-                        (= (ast-node-pool-context-expr-len pools) 3)
+                        (= (ast-node-pool-context-expr-len pools) 4)
                         (= (ast-node-pool-context-type-len pools) 2)
                         (compiler-ast-context-shared-binary?
                           pools
@@ -337,7 +338,21 @@
                               [_ false])]
                           [_ false])
                         (match (ast-decl-list-step tail-box)
-                          [(AstDeclListStep.Nil) true]
+                          [(AstDeclListStep.Cons third final-box)
+                            (match third
+                              [(AstDecl.Def _ _ make-body)
+                                (and
+                                  (not (= make-body source-make))
+                                  (match (ast-node-pool-context-expr-get
+                                    pools
+                                    make-body)
+                                    [(AstExpr.MakeArray _ size-body)
+                                      (= size-body first-body)]
+                                    [_ false])
+                                  (match (ast-decl-list-step final-box)
+                                    [(AstDeclListStep.Nil) true]
+                                    [_ false]))]
+                              [_ false])]
                           [_ false]))]
                     [_ false])]
                 [_ false])]
@@ -378,13 +393,19 @@
       (ast-node-pool-context-expr-push
         source-pools
         (AstExpr.Binary (AstBinOp.Add) source-span source-span))]
+    [source-make : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExpr.MakeArray (AstType.Ptr source-i64-ty) source-body))]
     [program : AstProgram
       (ast-program
         (ast-decl-cons
           (ast-decl-def "value" (AstMaybeType.Some array-ty) source-body)
           (ast-decl-cons
             (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
-            (ast-decl-list-new))))]
+            (ast-decl-cons
+              (ast-decl-def "array" AstMaybeType.No source-make)
+              (ast-decl-list-new)))))]
     [dest-decoy-expr : i64
       (ast-node-pool-context-expr-push
         dest-pools
@@ -407,7 +428,8 @@
                 out-program
                 source-body
                 source-lit
-                source-span))]
+                source-span
+                source-make))]
           [installed-ok : bool
             (match out-program
               [(AstProgram.Program decls-box)

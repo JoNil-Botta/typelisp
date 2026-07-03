@@ -6205,7 +6205,9 @@
     [(AstExpr.Array items)
       (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
     [(AstExpr.MakeArray elem size)
-      (AstExpr.MakeArray (ast-compaction-remap-type remap elem) size)]
+      (AstExpr.MakeArray
+        (ast-compaction-remap-type remap elem)
+        (ast-compaction-remap-expr-id remap size))]
     [(AstExpr.ArrayRef target index)
       (AstExpr.ArrayRef
         (ast-compaction-remap-expr-id remap target)

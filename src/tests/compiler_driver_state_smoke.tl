@@ -1749,6 +1749,21 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?) : bool
+  (begin
+    (compiler-driver-reset-file-state!)
+    (with-scratch
+      (let
+        [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [temp : AstNodePoolContext
+          (ast-node-pool-context-new-with-capacities 1 1)]
+        (begin
+          (ast-node-pool-context-install! temp)
+          (ast-node-pool-context-install! prev)
+          unit)))
+    (compiler-driver-reset-file-state!)
+    true))
+
 (define (compiler-driver-state-smoke-emit-ir-core-macro-source) : String
   "(define (main) : i64
   (if (and true true)
@@ -1934,6 +1949,9 @@
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
     (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 25))
+    (unless
+      (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
+      (return 26))
     (unless
       (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
       (return 17))

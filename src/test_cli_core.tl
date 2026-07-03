@@ -3068,6 +3068,82 @@
     unit
     (io.panic "test CLI nested module macro vector import mismatch")))
 
+(define (tltest-nested-generated-result-helper-source) : String
+  "(module test.nested_result_user)
+
+(import stdlib.comptime)
+(import stdlib.result)
+(import stdlib.test)
+
+(cfg
+  test
+  (defmacro (result-user [T : type] [E : type]) : Module
+    (let
+      [module-name : comptime.Expr
+        (comptime.expr-var \"generated.result_user\")]
+      `(begin
+        (module ,module-name)
+        (import (result ,T ,E) as local_result)
+        (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
+          (local_result.value-or value fallback))))))
+
+(cfg test (import (result i64 String) as result_i64_string))
+(cfg test (import (result-user i64 String) as user))
+
+(cfg
+  test
+  (test
+    nested-generated-result-helper-value-or
+    (test.assert-i64-eq
+      (user.value-or (result_i64_string.ok 21) 0)
+      21
+      \"nested generated result helper should stay rooted\")))")
+
+(define (tltest-nested-generated-result-helper-loaded-ok?
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : svec.StringVector]
+  [target : CompilerBackendTarget]) : bool
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness.Harness program harness-paths count)
+      (begin
+        (unless (= count 1) (return false))
+        (tltest-nested-module-macro-vector-typecheck-ok?
+          program
+          harness-paths
+          roots
+          target))]))
+
+(define (tltest-nested-generated-result-helper-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-nested-generated-result-helper")
+    [(ResultSourceToolString.Err _) false]
+    [(ResultSourceToolString.Ok dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "nested_result.tl")]
+        [roots : svec.StringVector (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
+        (begin
+          (io.write-file source (tltest-nested-generated-result-helper-source))
+          (match (compiler-driver-load-file-with-runtime
+            source
+            roots
+            (tltest-cfgs target))
+            [(ResultCompilerLoadWithPaths.Err _) false]
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+              (tltest-nested-generated-result-helper-loaded-ok?
+                source
+                decls
+                paths
+                roots
+                target)])))]))
+
+(test
+  test-cli-inline-harness-nested-generated-result-helper
+  (if (tltest-nested-generated-result-helper-self-test?)
+    unit
+    (io.panic "test CLI nested generated result helper import mismatch")))
+
 (test
   test-cli-enables-test-cfg
   (cfg test unit (io.panic "test CLI did not enable test cfg")))

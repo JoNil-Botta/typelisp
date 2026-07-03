@@ -30,17 +30,23 @@
 (import "inspect_cli_core.tl")
 (import "repl_cli_core.tl")
 (import "scaffold_cli_core.tl")
-(import "lsp_vector_families.tl")
 (import "lsp_frame_core.tl")
 (import stdlib.string)
 
 (cfg
   stage0-build-version
   (include-str cli-build-git-hash "../target/build-stage0/git-hash.txt"))
+(cfg
+  stage0-build-version
+  (include-str cli-build-date "../target/build-stage0/build-date.txt"))
 
 (cfg
   (not stage0-build-version)
   (define cli-build-git-hash : String
+    "unknown"))
+(cfg
+  (not stage0-build-version)
+  (define cli-build-date : String
     "unknown"))
 
 (define (cli-argc) : i64
@@ -53,10 +59,10 @@
   (io.print-error text))
 
 (define (cli-eq? [left : String] [right : String]) : bool
-  (string.string-eq left right))
+  (string.eq left right))
 
 (define (cli-cat [left : String] [right : String]) : String
-  (string.string-append left right))
+  (string.append left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same
@@ -87,7 +93,7 @@ Commands:
 
 Global Options:
     --help, -h                     Show root or command help
-    --version                      Show the compiler build git hash
+    --version                      Show the compiler build git hash and date
 
 Common Command Options:
     --target <target>              linux-x86_64 or windows-x86_64
@@ -184,7 +190,7 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -193,6 +199,7 @@ Options:
     --check                        Exit non-zero when lint findings are present
     --deprecated-string-concat     Enable staged string concat deprecation lint
     --redundant-function-name      Enable staged redundant module-prefix lint
+    --prefer-dotted-field          Enable staged simple struct-get dotted field lint
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
@@ -322,7 +329,12 @@ Options:
 
 (define (cli-print-version) : i64
   (begin
-    (io.print-string (cli-cat "typelisp " (cli-cat cli-build-git-hash "\n")))
+    (io.print-string
+      (cli-cat
+        "typelisp "
+        (cli-cat
+          cli-build-git-hash
+          (cli-cat " built " (cli-cat cli-build-date "\n")))))
     0))
 
 ;; A stage0 command listed in the help but not yet wired into the selfhost CLI.

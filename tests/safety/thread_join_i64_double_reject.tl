@@ -1,5 +1,5 @@
-(import "stdlib/thread.tl")
-(import (thread-handle i64) as thread_i64)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 
 (define (main) : i64
   (match (thread_i64.spawn

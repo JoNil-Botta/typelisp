@@ -93,10 +93,10 @@
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
     [prefix : String (string.substring s 0 index)]
-    [prefix-new : String (string.string-append (& prefix) new)]
+    [prefix-new : String (string.append (& prefix) new)]
     [suffix : String
       (string.substring s (+ index olen) (- (- hlen index) olen))]
-    (string.string-append prefix-new suffix)))
+    (string.append prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.
@@ -124,7 +124,7 @@
 
 ;: Inline test assertion for owned string equality.
 (define (test-string-eq [actual : String] [expected : String]) : unit
-  (if (string.string-eq actual expected)
+  (if (string.eq actual expected)
     unit
     (test-fail)))
 

@@ -154,6 +154,8 @@
   (make-array i64 262144))
 (define intern-pool-first-dot-slots : (Array i64)
   (make-array i64 262144))
+(define intern-pool-leading-dot-id-slots : (Array i64)
+  (make-array i64 262144))
 (define intern-pool-module-id-slots : (Array i64)
   (make-array i64 262144))
 (define intern-pool-base-id-slots : (Array i64)
@@ -435,6 +437,12 @@
             (set! i (+ i 1)))))
       (array-set! intern-pool-last-slash-slots id slash)
       (array-set! intern-pool-first-dot-slots id dot)
+      (array-set!
+        intern-pool-leading-dot-id-slots
+        id
+        (if (< dot 0)
+          -1
+          (intern-slice name 0 dot)))
       (if (< slash 0)
         (begin
           (array-set! intern-pool-qualified-slots id false)
@@ -725,6 +733,9 @@
 
 (define (intern-first-dot [id : i64]) : i64
   (array-ref intern-pool-first-dot-slots id))
+
+(define (intern-leading-dot-id [id : i64]) : i64
+  (array-ref intern-pool-leading-dot-id-slots id))
 
 (define (intern-dotted? [id : i64]) : bool
   (>= (intern-first-dot id) 0))

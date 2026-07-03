@@ -10,7 +10,7 @@
   [expected-stderr : String]
   [message : String]) : unit
   (test.assert-true
-    (process.process-result-output-eq?
+    (process.result-output-eq?
       result
       expected-status
       expected-stdout
@@ -18,27 +18,26 @@
     message))
 
 (define (process-runtime-stderr-linux-command) : process.ProcessCommand
-  (process.process-command
+  (process.command
     "/bin/sh"
-    (process.process-args-cons
+    (process.args-cons
       "-c"
-      (process.process-args-single
-        "printf typelisp-process-stderr 1>&2; exit 7"))))
+      (process.args-single "printf typelisp-process-stderr 1>&2; exit 7"))))
 
 (define (process-runtime-stderr-windows-command) : process.ProcessCommand
-  (process.process-command
+  (process.command
     "C:\\Windows\\System32\\cmd.exe"
-    (process.process-args-cons
+    (process.args-cons
       "/C"
-      (process.process-args-cons
+      (process.args-cons
         "1>&2 echo typelisp-process-stderr&& exit /b 7"
-        (process.process-args-empty)))))
+        (process.args-empty)))))
 
 (define (main) : i64
-  (if (string.string-eq (env.env-path-list-separator) ";")
+  (if (string.eq (env.path-list-separator) ";")
     (begin
       (assert-process-output-eq
-        (process.process-output (process-runtime-stderr-windows-command))
+        (process.output (process-runtime-stderr-windows-command))
         7
         ""
         "typelisp-process-stderr\r\n"
@@ -46,7 +45,7 @@
       42)
     (begin
       (assert-process-output-eq
-        (process.process-output (process-runtime-stderr-linux-command))
+        (process.output (process-runtime-stderr-linux-command))
         7
         ""
         "typelisp-process-stderr"

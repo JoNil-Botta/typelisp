@@ -18,8 +18,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! a i (dispatch_seed_a i))
-        (array.array-set! b i (dispatch_seed_b i))
+        (array-set! a i (dispatch_seed_a i))
+        (array-set! b i (dispatch_seed_b i))
         (set! i (+ i 1))))))
 
 (define (dispatch_checksum [out : (Array i64)] [n : i64]) : i64
@@ -29,7 +29,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref out i)))
+          (set! acc (+ acc (array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 
@@ -43,7 +43,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
+        (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         42
@@ -59,7 +59,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
+        (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         106
@@ -75,7 +75,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
+        (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         170

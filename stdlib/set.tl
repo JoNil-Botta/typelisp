@@ -4,7 +4,7 @@
 ;# alias when more than one set type is used:
 ;#
 ;# ```typelisp
-;# (import "stdlib/set.tl")
+;# (import stdlib.set)
 ;# (import (set i64) as iset)
 ;#
 ;# (define (main) : i64
@@ -22,6 +22,10 @@
 ;# insertion order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
+(module stdlib.set)
+
+(import stdlib.comptime)
+
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -29,12 +33,15 @@
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
-    [module-name : Expr
-      (expr-var (string-append "stdlib.set.generated." type-key-name))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.set.generated." type-key-name))]
     (match type-key-name
       ["String"
         `(begin
           (module ,module-name)
+          (import stdlib.array)
+          (import stdlib.string)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -51,9 +58,9 @@
             (None)
             (Some String))
           (define (key-length [key : (& key str)]) : i64
-            (string-length key))
+            (__tl_string_length key))
           (define (key-ref [key : (& key str)] [index : i64]) : char
-            (string-ref key index))
+            (__tl_string_ref key index))
           (define (hash-normalize [value : i64]) : i64
             (let
               [m : i64 2147483647]
@@ -305,6 +312,7 @@
       ["i64"
         `(begin
           (module ,module-name)
+          (import stdlib.array)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -541,7 +549,6 @@
 ;; Inline coverage migrated from stdlib/tests/set_api.tl (#3083) and from the
 ;; removed compiler-side set generator path (#3199).
 (cfg test (import "test.tl"))
-(cfg test (import "string.tl"))
 (cfg test (import (set String) as strset))
 (cfg test (import (set i64) as i64set))
 (cfg test (import (set i64) as i64set_again))
@@ -551,9 +558,9 @@
   (define (set-test-string-entry-len-or [entry : strset.Entry] [fallback : i64]) : i64
     (let
       [value : String (strset.entry-key-or entry "")]
-      (if (string-eq value "")
+      (if (__tl_string_eq value "")
         fallback
-        (string-length (& value))))))
+        (__tl_string_length (& value))))))
 
 (cfg
   test

@@ -9,7 +9,7 @@
 ; reads the clone after later scratch cycles. RSS/peak-memory assertion is left
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/string.tl")
 
 (extern (tl_alloc [arg0 : u64]) : u64)
@@ -27,9 +27,9 @@
     unit))
 
 (define (payload [seed : i64] [idx : i64]) : String
-  (string-append
-    (string-append "arena-stress:" (int->string seed))
-    (string-append ":" (int->string idx))))
+  (append
+    (append "arena-stress:" (int->string seed))
+    (append ":" (int->string idx))))
 
 (define (make-list [count : i64] [seed : i64]) : StressList
   (if (= count 0)
@@ -42,79 +42,79 @@
     [(StressCons head rest)
       (and
         (> count 0)
-        (string-eq head (payload seed count))
+        (eq head (payload seed count))
         (list-ok? (box-get rest) (- count 1) seed))]))
 
 (define (escape-string [seed : i64]) : String
   (let
-    [enclosing : Arena (arena-current)]
-    [scratch : Arena (arena-make)]
+    [enclosing : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (arena.set! scratch))
       (let
         [raw : String (payload seed 999)]
         (begin
           (force-overflow)
           (let
-            [scratch-head : Arena (arena-current)]
+            [scratch-head : arena.Arena (arena.current)]
             (begin
               (unsafe
-                (arena-set! enclosing))
+                (arena.set! enclosing))
               (let
                 [escaped : String (clone raw)]
                 (begin
                   (unsafe
-                    (arena-destroy scratch-head))
+                    (arena.destroy scratch-head))
                   escaped)))))))))
 
 (define (escape-list [count : i64] [seed : i64]) : StressList
   (let
-    [enclosing : Arena (arena-current)]
-    [scratch : Arena (arena-make)]
+    [enclosing : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (arena.set! scratch))
       (let
         [raw : StressList (make-list count seed)]
         (begin
           (force-overflow)
           (let
-            [scratch-head : Arena (arena-current)]
+            [scratch-head : arena.Arena (arena.current)]
             (begin
               (unsafe
-                (arena-set! enclosing))
+                (arena.set! enclosing))
               (let
                 [escaped : StressList (clone raw)]
                 (begin
                   (unsafe
-                    (arena-destroy scratch-head))
+                    (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-list-rewind [scratch : Arena] [count : i64] [seed : i64]) : StressList
+(define (escape-list-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : StressList
   (let
-    [enclosing : Arena (arena-current)]
+    [enclosing : arena.Arena (arena.current)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (arena.set! scratch))
       (let
-        [mark : ArenaMark (arena-mark)]
+        [mark : arena.ArenaMark (arena.mark)]
         [raw : StressList (make-list count seed)]
         (begin
           (force-overflow)
           (let
-            [scratch-head : Arena (arena-current)]
+            [scratch-head : arena.Arena (arena.current)]
             (begin
               (unsafe
-                (arena-set! enclosing))
+                (arena.set! enclosing))
               (let
                 [escaped : StressList (clone raw)]
-                [new-enclosing : Arena (arena-current)]
+                [new-enclosing : arena.Arena (arena.current)]
                 (begin
                   (unsafe
-                    (arena-set! scratch-head)
-                    (arena-rewind mark)
-                    (arena-set! new-enclosing))
+                    (arena.set! scratch-head)
+                    (arena.rewind mark)
+                    (arena.set! new-enclosing))
                   escaped)))))))))
 
 (define (string-cycles [n : i64] [acc : i64]) : i64
@@ -123,9 +123,7 @@
     (let
       [escaped : String (escape-string n)]
       [noise : StressList (escape-list 8 (+ n 1000))]
-      (if (and
-        (string-eq escaped (payload n 999))
-        (list-ok? noise 8 (+ n 1000)))
+      (if (and (eq escaped (payload n 999)) (list-ok? noise 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
         0))))
 
@@ -135,11 +133,11 @@
     (let
       [items : StressList (escape-list 96 n)]
       [after : String (escape-string (+ n 2000))]
-      (if (and (list-ok? items 96 n) (string-eq after (payload (+ n 2000) 999)))
+      (if (and (list-ok? items 96 n) (eq after (payload (+ n 2000) 999)))
         (list-cycles (- n 1) (+ acc 1))
         0))))
 
-(define (rewind-list-cycles-inner [scratch : Arena] [n : i64] [acc : i64]) : i64
+(define (rewind-list-cycles-inner [scratch : arena.Arena] [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc
     (let
@@ -151,11 +149,11 @@
 
 (define (rewind-list-cycles [n : i64]) : i64
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     [score : i64 (rewind-list-cycles-inner scratch n 0)]
     (begin
       (unsafe
-        (arena-destroy scratch))
+        (arena.destroy scratch))
       score)))
 
 (define (main) : i64

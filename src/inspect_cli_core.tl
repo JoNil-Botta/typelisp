@@ -1,7 +1,7 @@
 ;; inspect_cli_core.tl - Public tlci inspection command (#2655).
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (import "tlci_core.tl")
 
 (define (tlci-inspect-help-text) : String
@@ -122,7 +122,7 @@ Summary:
         [(io.ErrIoString error)
           (begin
             (io.print-error
-              (str_cat.str-cat "inspect: " (io.io-error-message error) "\n"))
+              (str_cat.str-cat "inspect: " (io.error-message error) "\n"))
             1)]
         [(io.OkIoString contents)
           (let

@@ -14,12 +14,15 @@
 ;; diagnostic when one is available.
 (import stdlib.io)
 (import stdlib.process)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
+(import stdlib.option)
+(import (option i64) as option_i64)
+(import sym_i64_env)
 
 (defenum DocTestExpectation
   (Pass)
@@ -71,10 +74,6 @@
 
 (defenum DocTestCodeCollect
   (Collect i64 String DocTestLineList bool))
-
-(defenum DocTestMaybeI64
-  (No String)
-  (Some i64))
 
 (defenum DocTestMaybeOutput
   (No String)
@@ -330,12 +329,12 @@
       (- code 48)
       -1)))
 
-(define (doc-test-parse-i64 [text : String]) : DocTestMaybeI64
+(define (doc-test-parse-i64 [text : String]) : option_i64.Option
   (let
     [trimmed : String (doc-test-trim text)]
     [n : i64 (string.string-length trimmed)]
     (if (= n 0)
-      (DocTestMaybeI64.No "expected integer")
+      option_i64.None
       (let
         [i : i64 0]
         [sign : i64 1]
@@ -360,8 +359,8 @@
                   (set! value (+ (* value 10) digit))
                   (set! i (+ i 1))))))
           (if ok
-            (DocTestMaybeI64.Some (* sign value))
-            (DocTestMaybeI64.No "expected integer")))))))
+            (option_i64.Some (* sign value))
+            option_i64.None))))))
 
 (define (doc-test-decode-output-literal [text : String]) : DocTestMaybeOutput
   (let
@@ -381,19 +380,19 @@
                 (cond
                   [(= esc 'n')
                     (begin
-                      (set! out (string.string-concat3 out "\n" ""))
+                      (set! out (string.concat3 out "\n" ""))
                       (set! i (+ i 2)))]
                   [(= esc 't')
                     (begin
-                      (set! out (string.string-concat3 out "\t" ""))
+                      (set! out (string.concat3 out "\t" ""))
                       (set! i (+ i 2)))]
                   [(= esc 'r')
                     (begin
-                      (set! out (string.string-concat3 out "\r" ""))
+                      (set! out (string.concat3 out "\r" ""))
                       (set! i (+ i 2)))]
                   [(= esc '\\')
                     (begin
-                      (set! out (string.string-concat3 out "\\" ""))
+                      (set! out (string.concat3 out "\\" ""))
                       (set! i (+ i 2)))]
                   [else
                     (set!
@@ -403,9 +402,7 @@
                         (string.substring text (+ i 1) 1)
                         "`"))])))
             (begin
-              (set!
-                out
-                (string.string-concat3 out (string.substring text i 1) ""))
+              (set! out (string.concat3 out (string.substring text i 1) ""))
               (set! i (+ i 1))))))
       (if (= (string.string-length message) 0)
         (DocTestMaybeOutput.Some out)
@@ -414,7 +411,7 @@
 (define (doc-test-parse-output-spec [text : String]) : DocTestMaybeOutput
   (let
     [trimmed : String (doc-test-trim text)]
-    (if (string.string-eq trimmed "-")
+    (if (string.eq trimmed "-")
       (DocTestMaybeOutput.Some "")
       (if (doc-test-string-prefix? trimmed "literal:")
         (doc-test-decode-output-literal
@@ -544,7 +541,7 @@
         [option : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
-        (if (string.string-eq option "expect-error")
+        (if (string.eq option "expect-error")
           (match mode
             [(DocTestFenceMode.Run)
               (DocTestFenceInfo.Malformed
@@ -556,7 +553,7 @@
                 rest
                 line-number
                 (DocTestFenceMode.Check (DocTestExpectation.Error)))])
-          (if (string.string-eq option "run")
+          (if (string.eq option "run")
             (match mode
               [(DocTestFenceMode.Run)
                 (doc-test-parse-fence-options rest line-number mode)]
@@ -588,9 +585,7 @@
         [language : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
-        (if (or
-          (string.string-eq language "typelisp")
-          (string.string-eq language "tl"))
+        (if (or (string.eq language "typelisp") (string.eq language "tl"))
           (doc-test-parse-fence-options
             rest
             line-number
@@ -630,9 +625,7 @@
         (doc-test-collect-code-inner
           lines
           (+ index 1)
-          (string.string-append
-            code
-            (string.string-append (doc-test-line-text line) "\n"))
+          (string.append code (string.append (doc-test-line-text line) "\n"))
           (doc-test-line-list-push collected line))))))
 
 (define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
@@ -696,7 +689,7 @@
             (doc-test-line-number line)
             "duplicate doctest-exit metadata"))
         (match (doc-test-parse-i64 text)
-          [(DocTestMaybeI64.Some parsed)
+          [(option_i64.Some parsed)
             (DocTestRunMetadata.Metadata
               true
               parsed
@@ -705,7 +698,7 @@
               has-stderr
               expected-stderr
               errors)]
-          [(DocTestMaybeI64.No _)
+          [option_i64.None
             (doc-test-run-metadata-append-error
               (DocTestRunMetadata.Metadata
                 true
@@ -1119,30 +1112,28 @@
     [(DocTestRunFailure.Failure path line index message)
       (let
         [location : String
-          (string.string-append
+          (string.append
             path
-            (string.string-append
-              ":"
-              (string.string-append (string.int->string line) ": ")))]
-        (string.string-append location message))]))
+            (string.append ":" (string.append (string.int->string line) ": ")))]
+        (string.append location message))]))
 
 (define (doc-test-unexpected-pass-message [index : i64]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
       " was expected to fail but passed")))
 
 (define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
   (match (compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
-      (string.string-append
+      (string.append
         "error["
-        (string.string-append
+        (string.append
           code
-          (string.string-append "]: " (compiler-diagnostic-render diag))))]
+          (string.append "]: " (compiler-diagnostic-render diag))))]
     [CompilerDiagnosticNoString
-      (string.string-append "error: " (compiler-diagnostic-render diag))]))
+      (string.append "error: " (compiler-diagnostic-render diag))]))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
@@ -1173,11 +1164,11 @@
 (define (doc-test-unexpected-error-message
   [index : i64]
   [diag : CompilerDiagnostic]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append
+      (string.append
         " was expected to pass\n"
         (doc-test-public-diagnostic-render diag)))))
 
@@ -1186,8 +1177,8 @@
 ;; runnable doctests can hide target-specific compiler/runtime bugs.
 (define (doc-test-runnable-target-supported? [target : CompilerBackendTarget]) : bool
   (match target
-    [(BackendTargetLinux) true]
-    [(BackendTargetWindows) true]))
+    [(CompilerBackendTarget.Linux) true]
+    [(CompilerBackendTarget.Windows) true]))
 
 (define (doc-test-runnable-supported?) : bool
   (doc-test-runnable-target-supported? (source-tool-default-target)))
@@ -1195,50 +1186,50 @@
 (define (doc-test-runnable-unsupported-message
   [index : i64]
   [target : CompilerBackendTarget]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append
+      (string.append
         " is a runnable doctest, but runnable doctests are unsupported on target "
         (source-tool-target-name target)))))
 
 (define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable compile failed\n" message))))
+      (string.append " runnable compile failed\n" message))))
 
 (define (doc-test-runnable-build-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable build failed\n" message))))
+      (string.append " runnable build failed\n" message))))
 
 (define (doc-test-runnable-exec-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable execution failed: " message))))
+      (string.append " runnable execution failed: " message))))
 
 (define (doc-test-output-comparison-message
   [name : String]
   [expected : String]
   [actual : String]) : String
-  (string.string-append
+  (string.append
     "expected "
-    (string.string-append
+    (string.append
       name
-      (string.string-append
+      (string.append
         ":\n"
-        (string.string-append
+        (string.append
           expected
-          (string.string-append
+          (string.append
             "\nactual "
-            (string.string-append name (string.string-append ":\n" actual))))))))
+            (string.append name (string.append ":\n" actual))))))))
 
 (define (doc-test-normalize-windows-crlf [text : String]) : String
   (let
@@ -1252,12 +1243,10 @@
           (< (+ i 1) n)
           (= (string.string-ref text (+ i 1)) '\n'))
           (begin
-            (set! out (string.string-concat3 out "\n" ""))
+            (set! out (string.concat3 out "\n" ""))
             (set! i (+ i 2)))
           (begin
-            (set!
-              out
-              (string.string-concat3 out (string.substring text i 1) ""))
+            (set! out (string.concat3 out (string.substring text i 1) ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -1265,8 +1254,8 @@
   [target : CompilerBackendTarget]
   [text : String]) : String
   (match target
-    [(BackendTargetLinux) text]
-    [(BackendTargetWindows) (doc-test-normalize-windows-crlf text)]))
+    [(CompilerBackendTarget.Linux) text]
+    [(CompilerBackendTarget.Windows) (doc-test-normalize-windows-crlf text)]))
 
 (define (doc-test-runnable-mismatch-message
   [index : i64]
@@ -1277,35 +1266,35 @@
     [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
     [expected-stdout : String (doc-test-expectation-run-stdout expectation)]
     [expected-stderr : String (doc-test-expectation-run-stderr expectation)]
-    [actual-exit : i64 (process.process-output-status output)]
+    [actual-exit : i64 (process.output-status output)]
     [actual-stdout : String
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stdout output))]
+        (process.output-stdout output))]
     [actual-stderr : String
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stderr output))]
-    (string.string-append
+        (process.output-stderr output))]
+    (string.append
       "doctest example "
-      (string.string-append
+      (string.append
         (string.int->string index)
-        (string.string-append
+        (string.append
           " runnable output mismatch\nexpected exit: "
-          (string.string-append
+          (string.append
             (string.int->string expected-exit)
-            (string.string-append
+            (string.append
               "\nactual exit: "
-              (string.string-append
+              (string.append
                 (string.int->string actual-exit)
-                (string.string-append
+                (string.append
                   "\n"
-                  (string.string-append
+                  (string.append
                     (doc-test-output-comparison-message
                       "stdout"
                       expected-stdout
                       actual-stdout)
-                    (string.string-append
+                    (string.append
                       "\n"
                       (doc-test-output-comparison-message
                         "stderr"
@@ -1318,17 +1307,17 @@
   [output : process.ProcessOutput]) : bool
   (if (=
     (doc-test-expectation-run-exit expectation)
-    (process.process-output-status output))
-    (if (string.string-eq
+    (process.output-status output))
+    (if (string.eq
       (doc-test-expectation-run-stdout expectation)
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stdout output)))
-      (string.string-eq
+        (process.output-stdout output)))
+      (string.eq
         (doc-test-expectation-run-stderr expectation)
         (doc-test-normalize-output-for-target
           target
-          (process.process-output-stderr output)))
+          (process.output-stderr output)))
       false)
     false))
 
@@ -1337,57 +1326,55 @@
   [target : CompilerBackendTarget]
   [command : process.ProcessCommand]
   [output : process.ProcessOutput]) : String
-  (string.string-append
+  (string.append
     "Error: "
-    (string.string-append
+    (string.append
       role
-      (string.string-append
+      (string.append
         " '"
-        (string.string-append
-          (process.process-command-executable command)
-          (string.string-append
+        (string.append
+          (process.command-executable command)
+          (string.append
             "' failed for target "
-            (string.string-append
+            (string.append
               (source-tool-target-name target)
-              (string.string-append
+              (string.append
                 " with status "
-                (string.string-append
-                  (string.int->string (process.process-output-status output))
-                  (string.string-append
+                (string.append
+                  (string.int->string (process.output-status output))
+                  (string.append
                     "\nstdout:\n"
-                    (string.string-append
-                      (process.process-output-stdout output)
-                      (string.string-append
+                    (string.append
+                      (process.output-stdout output)
+                      (string.append
                         "\nstderr:\n"
-                        (process.process-output-stderr output)))))))))))))
+                        (process.output-stderr output)))))))))))))
 
 (define (doc-test-run-command-captured
   [role : String]
   [target : CompilerBackendTarget]
   [command : process.ProcessCommand]) : SourceToolCommandStatus
-  (match (process.process-output command)
+  (match (process.output command)
     [(process.OkProcessOutput output)
-      (if (process.process-success? output)
+      (if (process.success? output)
         SourceToolCommandStatus.Ok
         (SourceToolCommandStatus.Err
           (doc-test-command-output-message role target command output)))]
     [(process.ErrProcessOutput error)
       (SourceToolCommandStatus.Err
-        (string.string-append
+        (string.append
           "Error: failed to run "
-          (string.string-append
+          (string.append
             role
-            (string.string-append
+            (string.append
               " '"
-              (string.string-append
-                (process.process-command-executable command)
-                (string.string-append
+              (string.append
+                (process.command-executable command)
+                (string.append
                   "' for target "
-                  (string.string-append
+                  (string.append
                     (source-tool-target-name target)
-                    (string.string-append
-                      ": "
-                      (process.process-error-message error)))))))))]))
+                    (string.append ": " (process.error-message error)))))))))]))
 
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
@@ -1404,42 +1391,58 @@
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [target : CompilerBackendTarget]) : ResultSourceToolString
-  (let
-    [index : i64 (doc-test-example-index example)]
-    [virtual-path : String (doc-test-example-virtual-path path index)]
-    [code : String (doc-test-example-code example)]
-    [cfgs : SymI64Env (compiler-driver-target-cfgs target (compiler-cfg-empty))]
-    (match (compiler-driver-load-source-with-runtime
-      virtual-path
-      code
-      stdlib-roots
-      cfgs)
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-        (match (lower-compiler-program-with-decl-paths
+  (begin
+    (compiler-driver-reset-file-state!)
+    (compiler-driver-state-clear-pool-backed-caches!)
+    (let
+      [index : i64 (doc-test-example-index example)]
+      [virtual-path : String (doc-test-example-virtual-path path index)]
+      [code : String (doc-test-example-code example)]
+      [cfgs : sym_i64_env.SymI64Env
+        (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      [result : ResultSourceToolString
+        (match (compiler-driver-load-source-with-runtime-with-pools
           virtual-path
-          (ast-program decls)
-          paths)
-          [(OkCompilerLower program spans)
-            (match (compiler-driver-emit-lowered-with-level
+          code
+          stdlib-roots
+          cfgs
+          pools)
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
               virtual-path
-              program
-              spans
-              target
-              true
-              (compiler-optimize-default-level))
-              [(ResultCompilerDriver.Ok asm)
-                (ResultSourceToolString.Ok
-                  (source-tool-augment-assembly-for-target asm target))]
-              [(ResultCompilerDriver.Err diag)
+              (ast-program decls)
+              paths
+              (CompilerLowerMode.Scalar)
+              stdlib-roots
+              (tc-prefix-default-cache-scope)
+              pools)
+              [(ResultCompilerLower.Ok program spans)
+                (match (compiler-driver-emit-lowered-with-level
+                  virtual-path
+                  program
+                  spans
+                  target
+                  true
+                  (compiler-optimize-default-level))
+                  [(ResultCompilerDriver.Ok asm)
+                    (ResultSourceToolString.Ok
+                      (source-tool-augment-assembly-for-target asm target))]
+                  [(ResultCompilerDriver.Err diag)
+                    (ResultSourceToolString.Err
+                      (compiler-diagnostic-render (box-get diag)))])]
+              [(ResultCompilerLower.Err diag)
                 (ResultSourceToolString.Err
                   (compiler-diagnostic-render (box-get diag)))])]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLoadWithPaths.Err diag)
             (ResultSourceToolString.Err
               (compiler-diagnostic-render (box-get diag)))])]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])))
+      (begin
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (compiler-driver-reset-file-state!)
+        result))))
 
 (define (doc-test-runnable-failure
   [path : String]
@@ -1459,10 +1462,7 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
-  (match (source-tool-run-executable
-    bin-path
-    target
-    (process.process-args-empty))
+  (match (source-tool-run-executable bin-path target (process.args-empty))
     [(process.OkProcessOutput output)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
@@ -1480,9 +1480,7 @@
           path
           source-line
           index
-          (doc-test-runnable-exec-message
-            index
-            (process.process-error-message error))))]))
+          (doc-test-runnable-exec-message index (process.error-message error))))]))
 
 (define (doc-test-link-and-run-runnable
   [path : String]
@@ -1553,7 +1551,7 @@
 (define (doc-test-run-runnable-output
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [target : CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
@@ -1589,7 +1587,7 @@
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : svec.StringVector]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1611,9 +1609,7 @@
               index
               (doc-test-runnable-build-message
                 index
-                (string.string-append
-                  "doctest: failed to create temp dir: "
-                  message))))])
+                (string.append "doctest: failed to create temp dir: " message))))])
       (DocTestMaybeFailure.Some
         (DocTestRunFailure.Failure
           path
@@ -1626,17 +1622,15 @@
 ;; relative to a sibling of `path` (the doc'd source file), so examples may
 ;; import the doc'd file without colliding with the virtual source root.
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
-  (string.string-append
-    path
-    (string.string-append ".doctest." (string.int->string index))))
+  (string.append path (string.append ".doctest." (string.int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-check-example-with-roots path example (vector.string-vec-new)))
+  (doc-test-check-example-with-roots path example (svec.new)))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : svec.StringVector]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1669,7 +1663,7 @@
 (define (doc-test-typecheck-package-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestMaybeFailure
   (let
@@ -1704,12 +1698,12 @@
               (doc-test-unexpected-error-message index (box-get diag)))))])))
 
 (define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-typecheck-example-with-roots path example (vector.string-vec-new)))
+  (doc-test-typecheck-example-with-roots path example (svec.new)))
 
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : vector.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : svec.StringVector]) : DocTestMaybeFailure
   (if (doc-test-expectation-run? (doc-test-example-expectation example))
     (doc-test-run-runnable-example-with-roots path example stdlib-roots)
     (doc-test-typecheck-example-with-roots path example stdlib-roots)))
@@ -1718,18 +1712,14 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
-  (doc-test-run-examples-with-roots
-    path
-    examples
-    failures
-    (vector.string-vec-new)))
+  (doc-test-run-examples-with-roots path examples failures (svec.new)))
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : svec.StringVector]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1754,7 +1744,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : svec.StringVector]) : DocTestRunFailureList
   (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
 
 (define (doc-test-typecheck-examples-with-roots-from
@@ -1762,7 +1752,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : svec.StringVector]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1787,7 +1777,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : svec.StringVector]) : DocTestRunFailureList
   (doc-test-typecheck-examples-with-roots-from
     path
     examples
@@ -1800,7 +1790,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
@@ -1836,7 +1826,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (doc-test-typecheck-package-examples-with-roots-from
@@ -1881,12 +1871,12 @@
 ;; errors are folded in as failures first, then each example is checked. A source
 ;; with no examples and no errors reports success with a zero count.
 (define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-run-source-with-roots path source (vector.string-vec-new)))
+  (doc-test-run-source-with-roots path source (svec.new)))
 
 (define (doc-test-run-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]) : DocTestRunReport
+  [stdlib-roots : svec.StringVector]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
@@ -1905,16 +1895,16 @@
 
 (define (doc-test-run-file-with-roots
   [path : String]
-  [stdlib-roots : vector.StringVec]) : DocTestRunReport
+  [stdlib-roots : svec.StringVector]) : DocTestRunReport
   (doc-test-run-source-with-roots path (io.read-file path) stdlib-roots))
 
 (define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path source (vector.string-vec-new)))
+  (doc-test-typecheck-source-with-roots path source (svec.new)))
 
 (define (doc-test-typecheck-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]) : DocTestRunReport
+  [stdlib-roots : svec.StringVector]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
@@ -1931,7 +1921,7 @@
 (define (doc-test-typecheck-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (doc-test-extract-source source)
@@ -1954,12 +1944,12 @@
 
 (define (doc-test-typecheck-file-with-roots
   [path : String]
-  [stdlib-roots : vector.StringVec]) : DocTestRunReport
+  [stdlib-roots : svec.StringVector]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots path (io.read-file path) stdlib-roots))
 
 (define (doc-test-typecheck-package-file-with-roots
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-source-with-roots
@@ -1975,7 +1965,7 @@
     [normalized-root : String (compiler-load-normalize-path root)]
     (and
       (> (string.string-length normalized-root) 0)
-      (if (string.string-eq normalized-root ".")
+      (if (string.eq normalized-root ".")
         (not (compiler-load-path-escapes? normalized-path))
         (compiler-load-path-under-root? normalized-path normalized-root)))))
 
@@ -2002,17 +1992,17 @@
 
 (define (doc-test-typecheck-package-path-list-with-roots-from
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [last-path : String]
   [count : i64]) : DocTestRunReport
-  (match paths
-    [(AstDeclPathNil)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil)
       (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList (box-get rest)]
+        [rest : AstDeclPathList rest]
         [normalized : String (compiler-load-normalize-path path)]
         [rooted : String
           (if (or
@@ -2030,7 +2020,7 @@
             (compiler-load-join-root-path manifest-dir "stdlib"))]
         [manifest-root : String (compiler-load-normalize-path manifest-dir)]
         [manifest-local : bool
-          (if (string.string-eq manifest-root ".")
+          (if (string.eq manifest-root ".")
             (and
               (not (compiler-load-absolute-path? rooted))
               (doc-test-path-under-root? rooted manifest-dir))
@@ -2046,7 +2036,7 @@
                 manifest-dir
                 (compiler-pkg-deps-list deps)))
             manifest-local)]
-        (if (and package-local (not (string.string-eq rooted last-path)))
+        (if (and package-local (not (string.eq rooted last-path)))
           (let
             [report : DocTestRunReport
               (doc-test-typecheck-package-file-text-with-roots
@@ -2073,7 +2063,7 @@
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (io.try-read-file (& path))
@@ -2089,7 +2079,7 @@
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : AstDeclPathList]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-path-list-with-roots-from
@@ -2113,8 +2103,8 @@
   [index : i64]) : String
   (if (>= index (doc-test-run-failure-list-count failures))
     ""
-    (string.string-append
-      (string.string-append
+    (string.append
+      (string.append
         (doc-test-run-failure-render
           (doc-test-run-failure-list-ref failures index))
         "\n")
@@ -2131,10 +2121,10 @@
   (match report
     [(DocTestRunReport.Report count failures)
       (if (= (doc-test-run-failure-list-count failures) 0)
-        (string.string-append
+        (string.append
           "Doc tests passed: "
-          (string.string-append (string.int->string count) " example(s)"))
-        (string.string-append
+          (string.append (string.int->string count) " example(s)"))
+        (string.append
           (str_cat.str-cat
             "doc tests failed: "
             (string.int->string (doc-test-run-failure-list-count failures))
@@ -2184,35 +2174,35 @@
 ")
 
 (define (doc-test-runnable-source) : String
-  (string.string-append
+  (string.append
     ";# Runnable docs\n"
-    (string.string-append
+    (string.append
       ";# ```typelisp run\n"
-      (string.string-append
+      (string.append
         ";# ;; doctest-exit: 0\n"
-        (string.string-append
+        (string.append
           ";# ;; doctest-stdout: literal:hello\\n\n"
-          (string.string-append
+          (string.append
             ";# ;; doctest-stderr: literal:error\\tline\\r\n"
-            (string.string-append
+            (string.append
               ";# (import stdlib.io)\n"
-              (string.string-append
+              (string.append
                 ";# (define (main) : i64\n"
-                (string.string-append
+                (string.append
                   ";#   (begin\n"
-                  (string.string-append
+                  (string.append
                     ";#     (let [text : String \"hello\\n\"] (io.stdout-write (& text)))\n"
-                    (string.string-append
+                    (string.append
                       ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (& text)))\n"
-                      (string.string-append
+                      (string.append
                         ";#     0))\n"
-                        (string.string-append
+                        (string.append
                           ";# ```\n"
-                          (string.string-append
+                          (string.append
                             ";# ```tl run\n"
-                            (string.string-append
+                            (string.append
                               ";# ;; doctest-exit: 42\n"
-                              (string.string-append
+                              (string.append
                                 ";# (define (main) : i64 42)\n"
                                 ";# ```\n"))))))))))))))))
 
@@ -2270,12 +2260,8 @@
       [(DocTestExpectation.Run actual-exit actual-stdout actual-stderr)
         (begin
           (unless (= actual-exit expected-exit) (return false))
-          (unless
-            (string.string-eq actual-stdout expected-stdout)
-            (return false))
-          (unless
-            (string.string-eq actual-stderr expected-stderr)
-            (return false))
+          (unless (string.eq actual-stdout expected-stdout) (return false))
+          (unless (string.eq actual-stderr expected-stderr) (return false))
           (doc-test-string-contains?
             (doc-test-example-code example)
             code-fragment))]
@@ -2478,8 +2464,12 @@
 (define answer : i64 1)
 ")
 
-(define (doc-test-run-smoke-stdlib-roots) : vector.StringVec
-  (vector.string-vec-push (vector.string-vec-new) "stdlib"))
+(define (doc-test-run-smoke-stdlib-roots) : svec.StringVector
+  (let
+    [roots : svec.StringVector (svec.new)]
+    (begin
+      (svec.push (&mut roots) "stdlib")
+      roots)))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
   ";# ```typelisp run
@@ -2550,7 +2540,7 @@
           (unless (= (doc-test-run-failure-index failure) 1) (return false))
           (unless (= (doc-test-run-failure-line failure) 1) (return false))
           (unless
-            (string.string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+            (string.eq (doc-test-run-failure-path failure) "docs/bad.tl")
             (return false))
           (doc-test-string-contains?
             (doc-test-run-failure-message failure)
@@ -2769,7 +2759,7 @@ typecheck: return type mismatch"))]
     (begin
       (unless (= (doc-test-run-report-status pass-report) 0) (return false))
       (unless
-        (string.string-eq
+        (string.eq
           (doc-test-run-report-render pass-report)
           "Doc tests passed: 2 example(s)")
         (return false))
@@ -2799,10 +2789,12 @@ typecheck: return type mismatch"))]
     [root : String "target/doc_test_session_cache"]
     [dep-file : String "target/doc_test_session_cache/dep.tl"]
     [doc-file : String "target/doc_test_session_cache/docs.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push
-        (vector.string-vec-new)
-        "target/doc_test_session_cache")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "target/doc_test_session_cache")
+          items))]
     (begin
       (compiler-load-test-mkdir "target")
       (compiler-load-test-mkdir root)
@@ -2821,10 +2813,10 @@ typecheck: return type mismatch"))]
           (and (doc-test-run-report-ok? report) (> hits 0)))))))
 
 (define (doc-test-package-walk-example-source [value : i64]) : String
-  (string.string-append
+  (string.append
     ";# ```typelisp
 ;# (define (main) : i64 "
-    (string.string-append (string.int->string value) ")
+    (string.append (string.int->string value) ")
 ;# ```
 ")))
 
@@ -2832,13 +2824,11 @@ typecheck: return type mismatch"))]
   [root : String]
   [prefix : String]
   [index : i64]) : String
-  (string.string-append
+  (string.append
     root
-    (string.string-append
+    (string.append
       "/"
-      (string.string-append
-        prefix
-        (string.string-append (string.int->string index) ".tl")))))
+      (string.append prefix (string.append (string.int->string index) ".tl")))))
 
 (define (doc-test-package-walk-write-empty-paths
   [root : String]
@@ -2854,7 +2844,7 @@ typecheck: return type mismatch"))]
           (begin
             (io.write-file path ";; no doctest fence
 ")
-            (set! out (ast-decl-path-cons path out))
+            (set! out (ast-decl-path-list-prepend-builder path out))
             (set! i (+ i 1)))))
       out)))
 
@@ -2881,7 +2871,7 @@ typecheck: return type mismatch"))]
                 example-a
                 (ast-decl-path-cons
                   example-b
-                  (ast-decl-path-cons example-c AstDeclPathNil)))))]
+                  (ast-decl-path-cons example-c (ast-decl-path-list-new))))))]
         [report : DocTestRunReport
           (doc-test-typecheck-package-paths-with-roots
             paths

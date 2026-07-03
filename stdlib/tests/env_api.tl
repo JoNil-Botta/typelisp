@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (env-api-assert-true [condition : bool] [message : String]) : unit
   (if condition
@@ -18,7 +19,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (env-api-assert-true (string.string-eq actual expected) message))
+  (env-api-assert-true (string.eq actual expected) message))
 
 (define (env-api-assert-none [value : env.EnvMaybeString] [message : String]) : unit
   (match value
@@ -63,7 +64,7 @@
   [message : String]) : unit
   (match value
     [(env.EnvSomeStringVec items)
-      (env-api-assert-i64-eq (vector.string-vec-len items) 0 message)]
+      (env-api-assert-i64-eq (svec.len (& items)) 0 message)]
     [(env.EnvNoStringVec) (io.panic message)]))
 
 (define (env-api-assert-list3
@@ -123,28 +124,19 @@
     [_ (io.panic message)]))
 
 (define (env-api-assert-vec3
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (begin
-    (env-api-assert-i64-eq (vector.string-vec-len items) 3 message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 1 "missing")
-      second
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)))
+    (env-api-assert-i64-eq (svec.len (& items)) 3 message)
+    (env-api-assert-string-eq (svec.get (& items) 0 "missing") first message)
+    (env-api-assert-string-eq (svec.get (& items) 1 "missing") second message)
+    (env-api-assert-string-eq (svec.get (& items) 2 "missing") third message)))
 
 (define (env-api-assert-vec5
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
@@ -152,27 +144,12 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (env-api-assert-i64-eq (vector.string-vec-len items) 5 message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 1 "missing")
-      second
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 3 "missing")
-      fourth
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 4 "missing")
-      fifth
-      message)))
+    (env-api-assert-i64-eq (svec.len (& items)) 5 message)
+    (env-api-assert-string-eq (svec.get (& items) 0 "missing") first message)
+    (env-api-assert-string-eq (svec.get (& items) 1 "missing") second message)
+    (env-api-assert-string-eq (svec.get (& items) 2 "missing") third message)
+    (env-api-assert-string-eq (svec.get (& items) 3 "missing") fourth message)
+    (env-api-assert-string-eq (svec.get (& items) 4 "missing") fifth message)))
 
 (define (env-api-assert-path3
   [value : env.EnvMaybeStringList]
@@ -201,35 +178,35 @@
   (begin
     (let
       [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
-      (env-api-assert-none (env.env-get (& name)) "env missing"))
+      (env-api-assert-none (env.get (& name)) "env missing"))
     (let
       [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
-      (match (env.env-get (& name))
+      (match (env.get (& name))
         [(env.EnvSomeString actual)
           (begin
             (env-api-assert-string-eq actual "" "env empty")
             (env-api-assert-path-empty
-              (env.env-path-list (& name))
+              (env.path-list (& name))
               "env path empty")
             (env-api-assert-path-vec-empty
-              (env.env-path-list-vec (& name))
+              (env.path-list-vec (& name))
               "env path vec empty"))]
         [(env.EnvNoString) unit]))
     (let
       [name : String "TYPELISP_STDLIB_TEST_VALUE"]
-      (env-api-assert-some (env.env-get (& name)) "env-value-854" "env value"))
+      (env-api-assert-some (env.get (& name)) "env-value-854" "env value"))
     (let
       [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
-      (env-api-assert-path-none (env.env-path-list (& name)) "env path missing"))
+      (env-api-assert-path-none (env.path-list (& name)) "env path missing"))
     (let
       [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
       (env-api-assert-path-vec-none
-        (env.env-path-list-vec (& name))
+        (env.path-list-vec (& name))
         "env path vec missing"))
     (let
       [name : String "TYPELISP_STDLIB_TEST_PATH"]
       (env-api-assert-path3
-        (env.env-path-list (& name))
+        (env.path-list (& name))
         "one"
         "two"
         "three"
@@ -237,28 +214,28 @@
     (let
       [name : String "TYPELISP_STDLIB_TEST_PATH"]
       (env-api-assert-path-vec3
-        (env.env-path-list-vec (& name))
+        (env.path-list-vec (& name))
         "one"
         "two"
         "three"
         "env path vec"))
     (let
-      [value : String (env.env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      [value : String (env.var-value "TYPELISP_STDLIB_TEST_PATH")]
       (env-api-assert-string-eq
-        (env.env-path-join (env.env-path-split (& value)))
+        (env.path-join (env.path-split (& value)))
         value
         "env path join"))
     (let
-      [value : String (env.env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      [value : String (env.var-value "TYPELISP_STDLIB_TEST_PATH")]
       (env-api-assert-string-eq
-        (env.env-path-join-vec (env.env-path-split-vec (& value)))
+        (env.path-join-vec (env.path-split-vec (& value)))
         value
         "env path vec join"))
     (let
       [value : String "a;b;;c;"]
       [separator : String ";"]
       (env-api-assert-list5
-        (env.env-path-split-with-separator (& value) (& separator))
+        (env.path-split-with-separator (& value) (& separator))
         "a"
         "b"
         ""
@@ -269,7 +246,7 @@
       [value : String "a;b;;c;"]
       [separator : String ";"]
       (env-api-assert-vec5
-        (env.env-path-split-with-separator-vec (& value) (& separator))
+        (env.path-split-with-separator-vec (& value) (& separator))
         "a"
         "b"
         ""
@@ -280,8 +257,8 @@
       [value : String "a;b;;c;"]
       [separator : String ";"]
       (env-api-assert-string-eq
-        (env.env-path-join-with-separator
-          (env.env-path-split-with-separator (& value) (& separator))
+        (env.path-join-with-separator
+          (env.path-split-with-separator (& value) (& separator))
           (& separator))
         value
         "env semicolon join"))
@@ -289,8 +266,8 @@
       [value : String "a;b;;c;"]
       [separator : String ";"]
       (env-api-assert-string-eq
-        (env.env-path-join-vec-with-separator
-          (env.env-path-split-with-separator-vec (& value) (& separator))
+        (env.path-join-vec-with-separator
+          (env.path-split-with-separator-vec (& value) (& separator))
           (& separator))
         value
         "env semicolon join vec"))

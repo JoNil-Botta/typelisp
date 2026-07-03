@@ -24,11 +24,11 @@
   (let
     [a : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set! a 0 42)
+      (array-set! a 0 42)
       (let
         [b : Bag (Bag a)]
         (lambda () : i64
-          (array.array-ref (struct-get b items) 0))))))
+          (array-ref (struct-get b items) 0))))))
 
 (define (case-struct-dynarray) : bool
   (= ((make-bag-reader)) 42))

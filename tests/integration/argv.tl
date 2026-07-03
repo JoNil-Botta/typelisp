@@ -9,6 +9,6 @@
     (if (and
       (= (arg-count) 3)
       (> (string-length (arg 0)) 0)
-      (string-eq (arg 2) "beta"))
+      (eq (arg 2) "beta"))
       7
       1)))

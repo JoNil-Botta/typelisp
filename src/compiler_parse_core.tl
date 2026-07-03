@@ -9,381 +9,516 @@
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
 (import "read.tl")
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.string)
+(import stdlib.option)
+(import token)
+(import (option i64) as option_i64)
 
 (defenum ResultAstType
-  (OkAstType AstType)
-  (ErrAstType String))
+  (Ok AstType)
+  (Err String))
 
 (defenum ResultAstReduceOp
-  (OkAstReduceOp AstReduceOp)
-  (ErrAstReduceOp String))
+  (Ok AstReduceOp)
+  (Err String))
 
 (defenum ResultAstFuncTypeParts
-  (OkAstFuncTypeParts AstTypeList AstType)
-  (ErrAstFuncTypeParts String))
+  (Ok AstTypeList AstType)
+  (Err String))
 
 (defenum ResultAstTypeList
-  (OkAstTypeList AstTypeList)
-  (ErrAstTypeList String))
+  (Ok AstTypeList)
+  (Err String))
+
+(defenum ResultAstTypeListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstLifetimeList
-  (OkAstLifetimeList AstLifetimeList)
-  (ErrAstLifetimeList String))
+  (Ok AstLifetimeList)
+  (Err String))
+
+(defenum ResultAstLifetimeListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstParam
-  (OkAstParam AstParam)
-  (ErrAstParam String))
+  (Ok AstParam)
+  (Err String))
 
 (defenum ResultAstParamList
-  (OkAstParamList AstParamList)
-  (ErrAstParamList String))
+  (Ok AstParamList)
+  (Err String))
+
+(defenum ResultAstParamListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstMacroParam
-  (OkAstMacroParam AstMacroParam)
-  (ErrAstMacroParam String))
+  (Ok AstMacroParam)
+  (Err String))
 
 (defenum ResultAstMacroParamList
-  (OkAstMacroParamList AstMacroParamList)
-  (ErrAstMacroParamList String))
+  (Ok AstMacroParamList)
+  (Err String))
+
+(defenum ResultAstMacroParamListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstFieldDef
-  (OkAstFieldDef AstFieldDef)
-  (ErrAstFieldDef String))
+  (Ok AstFieldDef)
+  (Err String))
 
 (defenum ResultAstFieldDefList
-  (OkAstFieldDefList AstFieldDefList)
-  (ErrAstFieldDefList String))
+  (Ok AstFieldDefList)
+  (Err String))
+
+(defenum ResultAstFieldDefListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstFieldCleanup
-  (OkAstFieldCleanup AstFieldCleanup)
-  (ErrAstFieldCleanup String))
+  (Ok AstFieldCleanup)
+  (Err String))
 
 (defenum ResultAstStructRepr
-  (OkAstStructRepr AstStructRepr)
-  (ErrAstStructRepr String))
+  (Ok AstStructRepr)
+  (Err String))
 
 (defenum ResultAstStructCleanup
-  (OkAstStructCleanup AstStructCleanup)
-  (ErrAstStructCleanup String))
+  (Ok AstStructCleanup)
+  (Err String))
 
 (defenum ResultAstEnumCleanup
-  (OkAstEnumCleanup AstEnumCleanup)
-  (ErrAstEnumCleanup String))
+  (Ok AstEnumCleanup)
+  (Err String))
 
 (defenum ResultAstVariantPayloadCleanup
-  (OkAstVariantPayloadCleanup AstVariantPayloadCleanup)
-  (ErrAstVariantPayloadCleanup String))
+  (Ok AstVariantPayloadCleanup)
+  (Err String))
 
 (defenum ResultAstVariantPayloadParts
-  (OkAstVariantPayloadParts AstTypeList AstVariantPayloadCleanupList)
-  (ErrAstVariantPayloadParts String))
+  (Ok AstTypeList AstVariantPayloadCleanupList)
+  (Err String))
 
 (defenum ResultAstStructDefParts
-  (OkAstStructDefParts
-    AstLifetimeList
-    AstStructRepr
-    AstStructCleanup
-    AstFieldDefList)
-  (ErrAstStructDefParts String))
+  (Ok AstLifetimeList AstStructRepr AstStructCleanup AstFieldDefList)
+  (Err String))
 
 (defenum ResultAstEnumDefParts
-  (OkAstEnumDefParts AstLifetimeList AstEnumCleanup AstVariantDefList)
-  (ErrAstEnumDefParts String))
+  (Ok AstLifetimeList AstEnumCleanup AstVariantDefList)
+  (Err String))
 
 (defenum ResultAstExternAbi
-  (OkAstExternAbi AstExternAbi)
-  (ErrAstExternAbi String))
+  (Ok AstExternAbi)
+  (Err String))
 
 (defenum ResultAstExternSymbol
-  (OkAstExternSymbol String)
-  (ErrAstExternSymbol String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultAstFnExport
-  (OkAstFnExport AstFnExport)
-  (ErrAstFnExport String))
+  (Ok AstFnExport)
+  (Err String))
 
 (defenum ResultAstExternParts
-  (OkAstExternParts AstExternMetadata AstType)
-  (ErrAstExternParts String))
+  (Ok AstExternAbi String bool AstType)
+  (Err String))
 
 (defenum AstExternHeadItem
-  (AstExternHeadParam AstType)
-  (AstExternHeadVarargsOpen)
-  (AstExternHeadVarargsTyped AstType))
+  (Param AstType)
+  (VarargsOpen)
+  (VarargsTyped AstType))
 
 (defenum ResultAstExternHeadItem
-  (OkAstExternHeadItem AstExternHeadItem)
-  (ErrAstExternHeadItem String))
+  (Ok AstExternHeadItem)
+  (Err String))
 
 (defenum ResultAstExternHeader
-  (OkAstExternHeader String AstTypeList AstExternAbi)
-  (ErrAstExternHeader String))
+  (Ok String AstTypeList AstExternAbi)
+  (Err String))
 
 (defenum ResultAstVariantDef
-  (OkAstVariantDef AstVariantDef)
-  (ErrAstVariantDef String))
+  (Ok AstVariantDef)
+  (Err String))
 
 (defenum ResultAstVariantDefList
-  (OkAstVariantDefList AstVariantDefList)
-  (ErrAstVariantDefList String))
+  (Ok AstVariantDefList)
+  (Err String))
+
+(defenum ResultAstVariantDefListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstDispatchIsa
-  (OkAstDispatchIsa AstDispatchIsa)
-  (ErrAstDispatchIsa String))
+  (Ok AstDispatchIsa)
+  (Err String))
 
 (defenum ResultAstDispatchVariant
-  (OkAstDispatchVariant AstDispatchVariant)
-  (ErrAstDispatchVariant String))
+  (Ok AstDispatchVariant)
+  (Err String))
 
 (defenum ResultAstDispatchVariantList
-  (OkAstDispatchVariantList AstDispatchVariantList)
-  (ErrAstDispatchVariantList String))
+  (Ok AstDispatchVariantList)
+  (Err String))
+
+(defenum ResultAstDispatchVariantListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstPattern
-  (OkAstPattern AstPattern)
-  (ErrAstPattern String))
+  (Ok AstPattern)
+  (Err String))
 
 (defenum ResultAstPatternList
-  (OkAstPatternList AstPatternList)
-  (ErrAstPatternList String))
+  (Ok AstPatternList)
+  (Err String))
+
+(defenum ResultAstPatternListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstLetBinding
-  (OkAstLetBinding AstLetBinding)
-  (ErrAstLetBinding String))
+  (Ok AstLetBinding)
+  (Err String))
 
 (defenum ResultAstLetBindingList
-  (OkAstLetBindingList AstLetBindingList)
-  (ErrAstLetBindingList String))
+  (Ok AstLetBindingList)
+  (Err String))
+
+(defenum ResultAstLetBindingListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstResourceBinding
-  (OkAstResourceBinding AstResourceBinding)
-  (ErrAstResourceBinding String))
+  (Ok AstResourceBinding)
+  (Err String))
 
 (defenum ResultAstResourceBindingList
-  (OkAstResourceBindingList AstResourceBindingList)
-  (ErrAstResourceBindingList String))
+  (Ok AstResourceBindingList)
+  (Err String))
+
+(defenum ResultAstResourceBindingListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstLetParts
-  (OkAstLetParts AstLetBindingList i64)
-  (ErrAstLetParts String))
+  (Ok AstLetBindingList i64)
+  (Err String))
 
 (defenum ResultAstMatchArm
-  (OkAstMatchArm AstMatchArm)
-  (ErrAstMatchArm String))
+  (Ok AstMatchArm)
+  (Err String))
 
 (defenum ResultAstMatchArmList
-  (OkAstMatchArmList AstMatchArmList)
-  (ErrAstMatchArmList String))
+  (Ok AstMatchArmList)
+  (Err String))
+
+(defenum ResultAstMatchArmListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstExpr
-  (OkAstExpr i64)
-  (ErrAstExpr String))
+  (Ok i64)
+  (Err String))
 
 (defstruct AstExprPair
   (first i64)
   (second i64))
 
 (defenum ResultAstExprPair
-  (OkAstExprPair AstExprPair)
-  (ErrAstExprPair String))
+  (Ok AstExprPair)
+  (Err String))
 
 (defenum ResultAstExprList
-  (OkAstExprList AstExprList)
-  (ErrAstExprList String))
+  (Ok AstExprList)
+  (Err String))
+
+(defenum ResultAstExprListBuild
+  (Ok)
+  (Err String))
 
 (defenum ResultAstGeneratedDeclMeta
-  (OkAstGeneratedDeclMeta AstGeneratedDeclMeta)
-  (ErrAstGeneratedDeclMeta String))
+  (Ok AstGeneratedDeclMeta)
+  (Err String))
 
 (defenum ResultAstDecl
-  (OkAstDecl AstDecl)
-  (ErrAstDecl String))
+  (Ok AstDecl)
+  (Err String))
 
 (defenum ResultAstMaybeDecl
-  (OkAstNoDecl)
-  (OkAstSomeDecl AstDecl)
-  (OkAstDecls AstDeclList)
-  (ErrAstMaybeDecl String))
+  (NoDecl)
+  (SomeDecl AstDecl)
+  (Decls AstDeclList)
+  (Err String))
 
 (defenum ResultAstDeclList
-  (OkAstDeclList AstDeclList)
-  (ErrAstDeclList String))
+  (Ok AstDeclList)
+  (Err String))
 
 (defenum ResultParseAstDeclVec
-  (OkParseAstDeclVec)
-  (ErrParseAstDeclVec String))
+  (Ok)
+  (Err String))
 
 (defenum ResultParseAstDeclVecDiagnostic
-  (OkParseAstDeclVecDiagnostic)
-  (ErrParseAstDeclVecDiagnostic (Box CompilerDiagnostic)))
+  (Ok)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultAstMaybeExpr
-  (OkAstNoExpr)
-  (OkAstSomeExpr i64)
-  (ErrAstMaybeExpr String))
+  (NoExpr)
+  (SomeExpr i64)
+  (Err String))
 
 (defenum ResultCompilerCfg
-  (OkCompilerCfg bool)
-  (ErrCompilerCfg String))
+  (Ok bool)
+  (Err String))
 
 (defenum ResultAstProgram
-  (OkAstProgram AstProgram)
-  (ErrAstProgram String))
+  (Ok AstProgram)
+  (Err String))
 
 (defenum AstReplItem
   (AstReplDecl AstDecl)
   (AstReplExpr i64))
 
 (defenum ResultAstReplItem
-  (OkAstReplItem AstReplItem)
-  (ErrAstReplItem String))
+  (Ok AstReplItem)
+  (Err String))
 
 (defenum ResultAstDeclListDiagnostic
-  (OkAstDeclListDiagnostic AstDeclList)
-  (ErrAstDeclListDiagnostic (Box CompilerDiagnostic)))
+  (Ok AstDeclList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultAstProgramDiagnostic
-  (OkAstProgramDiagnostic AstProgram)
-  (ErrAstProgramDiagnostic (Box CompilerDiagnostic)))
+  (Ok AstProgram)
+  (Err (Box CompilerDiagnostic)))
 
 (define (sexpr-colon? [s : Sexpr]) : bool
   (match s
-    [(Sexpr.Sym text) (string.string-eq text ":")]
+    [(Sexpr.Sym text) (string.eq text ":")]
     [_ false]))
 
 (define (compiler-cfg-key [name : String]) : String
-  (string.string-append "cfg:" name))
+  (string.append "cfg:" name))
 
 (define (compiler-cfg-private-dynamic-buffer-key) : String
   "cfg:feature-compiler-private-dynamic-buffer")
 
-(define (compiler-cfg-empty) : SymI64Env
-  (sym-i64-empty))
+(define (compiler-cfg-empty) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
 
-(define (compiler-cfg-enable [cfgs : SymI64Env] [name : String]) : SymI64Env
-  (sym-i64-bind cfgs (compiler-cfg-key name) 1))
+(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-key name) 1))
 
-(define (compiler-cfg-enable-private-dynamic-buffer [cfgs : SymI64Env]) : SymI64Env
-  (sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))
+(define (compiler-cfg-enable-private-dynamic-buffer
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))
 
-(define (compiler-cfg-merge [base : SymI64Env] [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-cfg-merge
+  [base : sym_i64_env.SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match cfgs
-    [(SymI64Nil) base]
-    [(SymI64Bind name-id value rest)
-      (sym-i64-bind
+    [(sym_i64_env.SymI64Nil) base]
+    [(sym_i64_env.SymI64Bind name-id value rest)
+      (sym_i64_env.sym-i64-bind
         (compiler-cfg-merge base (box-get rest))
         (intern-str name-id)
         value)]))
 
-(define (compiler-cfg-enabled? [dispatch : SymI64Env] [name : String]) : bool
-  (sym-i64-contains dispatch (compiler-cfg-key name)))
+(define (compiler-cfg-enabled?
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : bool
+  (sym_i64_env.sym-i64-contains dispatch (compiler-cfg-key name)))
 
-(define (compiler-cfg-private-dynamic-buffer-enabled? [cfgs : SymI64Env]) : bool
-  (sym-i64-contains cfgs (compiler-cfg-private-dynamic-buffer-key)))
+(define (compiler-cfg-private-dynamic-buffer-enabled?
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (sym_i64_env.sym-i64-contains cfgs (compiler-cfg-private-dynamic-buffer-key)))
 
 (define (compiler-cfg-eval-list-all
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
-    [(SpannedSexpr.Nil _) (OkCompilerCfg true)]
+    [(SpannedSexpr.Nil _) (ResultCompilerCfg.Ok true)]
     [(SpannedSexpr.Cons head tail _)
       (match (compiler-cfg-eval dispatch (sp-node-get head))
-        [(OkCompilerCfg enabled)
+        [(ResultCompilerCfg.Ok enabled)
           (if enabled
             (compiler-cfg-eval-list-all dispatch (sp-node-get tail))
-            (OkCompilerCfg false))]
-        [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
-    [_ (ErrCompilerCfg "parse: cfg all expects predicates")]))
+            (ResultCompilerCfg.Ok false))]
+        [(ResultCompilerCfg.Err message) (ResultCompilerCfg.Err message)])]
+    [_ (ResultCompilerCfg.Err "parse: cfg all expects predicates")]))
 
 (define (compiler-cfg-eval-list-any
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
-    [(SpannedSexpr.Nil _) (OkCompilerCfg false)]
+    [(SpannedSexpr.Nil _) (ResultCompilerCfg.Ok false)]
     [(SpannedSexpr.Cons head tail _)
       (match (compiler-cfg-eval dispatch (sp-node-get head))
-        [(OkCompilerCfg enabled)
+        [(ResultCompilerCfg.Ok enabled)
           (if enabled
-            (OkCompilerCfg true)
+            (ResultCompilerCfg.Ok true)
             (compiler-cfg-eval-list-any dispatch (sp-node-get tail)))]
-        [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
-    [_ (ErrCompilerCfg "parse: cfg any expects predicates")]))
+        [(ResultCompilerCfg.Err message) (ResultCompilerCfg.Err message)])]
+    [_ (ResultCompilerCfg.Err "parse: cfg any expects predicates")]))
 
 (define (compiler-cfg-eval-not
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
     [(SpannedSexpr.Cons pred tail _)
       (match (sp-node-get tail)
         [(SpannedSexpr.Nil _)
           (match (compiler-cfg-eval dispatch (sp-node-get pred))
-            [(OkCompilerCfg enabled) (OkCompilerCfg (not enabled))]
-            [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
-        [_ (ErrCompilerCfg "parse: cfg not expects exactly one predicate")])]
-    [_ (ErrCompilerCfg "parse: cfg not expects exactly one predicate")]))
+            [(ResultCompilerCfg.Ok enabled)
+              (ResultCompilerCfg.Ok (not enabled))]
+            [(ResultCompilerCfg.Err message) (ResultCompilerCfg.Err message)])]
+        [_
+          (ResultCompilerCfg.Err "parse: cfg not expects exactly one predicate")])]
+    [_ (ResultCompilerCfg.Err "parse: cfg not expects exactly one predicate")]))
 
-(define (compiler-cfg-eval [dispatch : SymI64Env] [predicate : SpannedSexpr]) : ResultCompilerCfg
+(define (compiler-cfg-eval
+  [dispatch : sym_i64_env.SymI64Env]
+  [predicate : SpannedSexpr]) : ResultCompilerCfg
   (match predicate
     [(SpannedSexpr.Sym name _)
-      (OkCompilerCfg (compiler-cfg-enabled? dispatch name))]
+      (ResultCompilerCfg.Ok (compiler-cfg-enabled? dispatch name))]
     [(SpannedSexpr.Cons head predicates _)
       (match (sp-node-get head)
         [(SpannedSexpr.Sym op _)
           (cond
-            [(string.string-eq op "all")
+            [(string.eq op "all")
               (compiler-cfg-eval-list-all dispatch (sp-node-get predicates))]
-            [(string.string-eq op "any")
+            [(string.eq op "any")
               (compiler-cfg-eval-list-any dispatch (sp-node-get predicates))]
-            [(string.string-eq op "not")
+            [(string.eq op "not")
               (compiler-cfg-eval-not dispatch (sp-node-get predicates))]
             [else
-              (ErrCompilerCfg
+              (ResultCompilerCfg.Err
                 "parse: cfg predicate expects a name, all, any, or not")])]
-        [_ (ErrCompilerCfg "parse: malformed cfg predicate")])]
-    [_ (ErrCompilerCfg "parse: malformed cfg predicate")]))
+        [_ (ResultCompilerCfg.Err "parse: malformed cfg predicate")])]
+    [_ (ResultCompilerCfg.Err "parse: malformed cfg predicate")]))
 
 (define (compiler-parse-abstraction-policy-message) : String
   "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (cond
-    [(string.string-eq name "varying")
+    [(string.eq name "varying")
       "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
-    [(string.string-eq name "Varying")
+    [(string.eq name "Varying")
       "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
-    [(string.string-eq name "Vector")
+    [(string.eq name "Vector")
       "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
-    [(string.string-eq name "vector")
+    [(string.eq name "vector")
       "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
-    [(string.string-eq name "Mask")
+    [(string.eq name "Mask")
       "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
-    [(string.string-eq name "mask")
+    [(string.eq name "mask")
       "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
     [else
-      (string.string-append
+      (string.append
         "parse: unknown type constructor "
-        (string.string-append
+        (string.append
           name
           "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))]))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (cond
-    [(string.string-eq name "defgeneric") true]
-    [(string.string-eq name "generic") true]
-    [(string.string-eq name "deftrait") true]
-    [(string.string-eq name "trait") true]
-    [(string.string-eq name "interface") true]
-    [(string.string-eq name "impl") true]
-    [else (string.string-eq name "where")]))
+    [(string.eq name "defgeneric") true]
+    [(string.eq name "generic") true]
+    [(string.eq name "deftrait") true]
+    [(string.eq name "trait") true]
+    [(string.eq name "interface") true]
+    [(string.eq name "impl") true]
+    [else (string.eq name "where")]))
 
-(define (ast-source-span-from-source-span [span : SourceSpan]) : AstSourceSpan
+(define (ast-source-span-from-source-span [span : token.SourceSpan]) : AstSourceSpan
   (AstSourceSpan
-    (span-start-line span)
-    (span-start-col span)
-    (span-end-line span)
-    (span-end-col span)))
+    (token.span-start-line span)
+    (token.span-start-col span)
+    (token.span-end-line span)
+    (token.span-end-col span)))
+
+;; Parser result enums still carry message strings; diagnostic parsing records
+;; the first failing spanned subform here while that message bubbles outward.
+(define parse-ast-error-span-active : bool
+  false)
+(define parse-ast-error-span-start-line : i64
+  0)
+(define parse-ast-error-span-start-col : i64
+  0)
+(define parse-ast-error-span-end-line : i64
+  0)
+(define parse-ast-error-span-end-col : i64
+  0)
+
+(define (parse-ast-error-span-clear!) : unit
+  (begin
+    (set! parse-ast-error-span-active false)
+    unit))
+
+(define (parse-ast-error-span-note! [span : token.SourceSpan]) : unit
+  (if parse-ast-error-span-active
+    unit
+    (begin
+      (set! parse-ast-error-span-active true)
+      (set! parse-ast-error-span-start-line (token.span-start-line span))
+      (set! parse-ast-error-span-start-col (token.span-start-col span))
+      (set! parse-ast-error-span-end-line (token.span-end-line span))
+      (set! parse-ast-error-span-end-col (token.span-end-col span))
+      unit)))
+
+(define (parse-ast-error-span-current [fallback : token.SourceSpan]) : token.SourceSpan
+  (if parse-ast-error-span-active
+    (token.SourceSpan
+      parse-ast-error-span-start-line
+      parse-ast-error-span-start-col
+      parse-ast-error-span-end-line
+      parse-ast-error-span-end-col)
+    fallback))
+
+(define (parse-ast-error-span-note-expr
+  [s : SpannedSexpr]
+  [result : ResultAstExpr]) : ResultAstExpr
+  (match result
+    [(ResultAstExpr.Err _)
+      (begin
+        (parse-ast-error-span-note! (spanned-sexpr-span s))
+        result)]
+    [_ result]))
+
+(define (parse-ast-error-span-note-let-binding
+  [s : SpannedSexpr]
+  [result : ResultAstLetBinding]) : ResultAstLetBinding
+  (match result
+    [(ResultAstLetBinding.Err _)
+      (begin
+        (parse-ast-error-span-note! (spanned-sexpr-span s))
+        result)]
+    [_ result]))
+
+(define (parse-ast-error-span-note-decl
+  [s : SpannedSexpr]
+  [result : ResultAstDecl]) : ResultAstDecl
+  (match result
+    [(ResultAstDecl.Err _)
+      (begin
+        (parse-ast-error-span-note! (spanned-sexpr-span s))
+        result)]
+    [_ result]))
+
+(define (parse-ast-error-span-note-maybe-decl
+  [s : SpannedSexpr]
+  [result : ResultAstMaybeDecl]) : ResultAstMaybeDecl
+  (match result
+    [(ResultAstMaybeDecl.Err _)
+      (begin
+        (parse-ast-error-span-note! (spanned-sexpr-span s))
+        result)]
+    [_ result]))
 
 (define (ast-expr-wrap-span
   [pools : AstNodePoolContext]
@@ -637,6 +772,12 @@
 (define (compiler-parse-tag-expr-return) : i64
   270)
 
+(define (compiler-parse-tag-expr-break) : i64
+  298)
+
+(define (compiler-parse-tag-expr-continue) : i64
+  299)
+
 (define (compiler-parse-tag-expr-ptr-null) : i64
   252)
 
@@ -781,301 +922,568 @@
 (define (compiler-parse-tag-decl-defdispatch) : i64
   411)
 
-(define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
-    [e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
-    [e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
-    [e4 : SymI64Env (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
-    [e5 : SymI64Env (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
-    [e6 : SymI64Env (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
-    [e7 : SymI64Env (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
-    [e8 : SymI64Env (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
-    [e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
-    [e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
-    [e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
-    [e12 : SymI64Env
-      (sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
-    [e13 : SymI64Env
-      (sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
-    [e14 : SymI64Env
-      (sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
-    [e15 : SymI64Env (sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
-    (sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
+    [e3 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
+    [e4 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
+    [e5 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
+    [e6 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
+    [e7 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
+    [e8 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
+    [e9 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
+    [e10 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
+    [e11 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
+    [e12 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
+    [e13 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
+    [e14 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
+    [e15 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
+    (sym_i64_env.sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
 
-(define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-unops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "not" (compiler-parse-tag-un-not))]
-    [e2 : SymI64Env (sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
-    (sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "not" (compiler-parse-tag-un-not))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
+    (sym_i64_env.sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not))))
 
-(define (compiler-parse-dispatch-types [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [out : SymI64Env e]
+    [out : sym_i64_env.SymI64Env e]
     (begin
-      (set! out (sym-i64-bind out "i64" (compiler-parse-tag-ty-i64)))
-      (set! out (sym-i64-bind out "i32" (compiler-parse-tag-ty-i32)))
-      (set! out (sym-i64-bind out "i16" (compiler-parse-tag-ty-i16)))
-      (set! out (sym-i64-bind out "i8" (compiler-parse-tag-ty-i8)))
-      (set! out (sym-i64-bind out "u64" (compiler-parse-tag-ty-u64)))
-      (set! out (sym-i64-bind out "u32" (compiler-parse-tag-ty-u32)))
-      (set! out (sym-i64-bind out "u16" (compiler-parse-tag-ty-u16)))
-      (set! out (sym-i64-bind out "u8" (compiler-parse-tag-ty-u8)))
-      (set! out (sym-i64-bind out "f64" (compiler-parse-tag-ty-f64)))
-      (set! out (sym-i64-bind out "f32" (compiler-parse-tag-ty-f32)))
-      (set! out (sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
-      (set! out (sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
-      (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
-      (set! out (sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
-      (set! out (sym-i64-bind out "bytes" (compiler-parse-tag-ty-bytes)))
-      (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
-      (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
-      (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
-      (set! out (sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
-      (set! out (sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
-      (set! out (sym-i64-bind out "in" (compiler-parse-tag-ty-region)))
-      (set! out (sym-i64-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
-      (set! out (sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
-      (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
-      (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
-      (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
       (set!
         out
-        (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
+        (sym_i64_env.sym-i64-bind out "i64" (compiler-parse-tag-ty-i64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "i32" (compiler-parse-tag-ty-i32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "i16" (compiler-parse-tag-ty-i16)))
+      (set! out (sym_i64_env.sym-i64-bind out "i8" (compiler-parse-tag-ty-i8)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u64" (compiler-parse-tag-ty-u64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u32" (compiler-parse-tag-ty-u32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u16" (compiler-parse-tag-ty-u16)))
+      (set! out (sym_i64_env.sym-i64-bind out "u8" (compiler-parse-tag-ty-u8)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "f64" (compiler-parse-tag-ty-f64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "f32" (compiler-parse-tag-ty-f32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "bytes" (compiler-parse-tag-ty-bytes)))
+      (set! out (sym_i64_env.sym-i64-bind out "unit" (compiler-parse-tag-unit)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "in" (compiler-parse-tag-ty-region)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
+      (set! out (sym_i64_env.sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_dyn-array"
+          (compiler-parse-tag-ty-dyn-array)))
       out)))
 
-(define (compiler-parse-dispatch-private-types [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-private-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable-private-dynamic-buffer e))
 
-(define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [out : SymI64Env e]
+    [out : sym_i64_env.SymI64Env e]
     (begin
-      (set! out (sym-i64-bind out "if" (compiler-parse-tag-expr-if)))
-      (set! out (sym-i64-bind out "let" (compiler-parse-tag-expr-let)))
-      (set! out (sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
-      (set! out (sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
-      (set! out (sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
-      (set! out (sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
-      (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
-      (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
-      (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
-      (set! out (sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
       (set!
         out
-        (sym-i64-bind out "tuple-ref" (compiler-parse-tag-expr-tuple-ref)))
-      (set! out (sym-i64-bind out "array" (compiler-parse-tag-expr-array)))
+        (sym_i64_env.sym-i64-bind out "if" (compiler-parse-tag-expr-if)))
       (set!
         out
-        (sym-i64-bind out "make-array" (compiler-parse-tag-expr-make-array)))
+        (sym_i64_env.sym-i64-bind out "let" (compiler-parse-tag-expr-let)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "tuple-ref"
+          (compiler-parse-tag-expr-tuple-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "array" (compiler-parse-tag-expr-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "make-array"
+          (compiler-parse-tag-expr-make-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "__tl_make-array"
           (compiler-parse-tag-expr-make-array)))
       (set!
         out
-        (sym-i64-bind out "array-ref" (compiler-parse-tag-expr-array-ref)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-ref"
+          (compiler-parse-tag-expr-array-ref)))
       (set!
         out
-        (sym-i64-bind out "__tl_array-ref" (compiler-parse-tag-expr-array-ref)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_array-ref"
+          (compiler-parse-tag-expr-array-ref)))
       (set!
         out
-        (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-set!"
+          (compiler-parse-tag-expr-array-set)))
       (set!
         out
-        (sym-i64-bind out "__tl_array-set!" (compiler-parse-tag-expr-array-set)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_array-set!"
+          (compiler-parse-tag-expr-array-set)))
       (set!
         out
-        (sym-i64-bind out "array-push!" (compiler-parse-tag-expr-array-push)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-push!"
+          (compiler-parse-tag-expr-array-push)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "__tl_array-push!"
           (compiler-parse-tag-expr-array-push)))
-      (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
-      (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
       (set!
         out
-        (sym-i64-bind out "spmd-reduce" (compiler-parse-tag-expr-spmd-reduce)))
+        (sym_i64_env.sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
       (set!
         out
-        (sym-i64-bind out "spmd-scan" (compiler-parse-tag-expr-spmd-scan)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "foreach"
+          (compiler-parse-tag-expr-foreach)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-reduce"
+          (compiler-parse-tag-expr-spmd-reduce)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-scan"
+          (compiler-parse-tag-expr-spmd-scan)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "spmd-broadcast"
           (compiler-parse-tag-expr-spmd-broadcast)))
       (set!
         out
-        (sym-i64-bind out "spmd-shuffle" (compiler-parse-tag-expr-spmd-shuffle)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-shuffle"
+          (compiler-parse-tag-expr-spmd-shuffle)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "program-index"
           (compiler-parse-tag-expr-spmd-program-index)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "program-count"
           (compiler-parse-tag-expr-spmd-program-count)))
       (set!
         out
-        (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "struct-get"
+          (compiler-parse-tag-expr-struct-get)))
       (set!
         out
-        (sym-i64-bind out "comptime" (compiler-parse-tag-expr-comptime)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "comptime"
+          (compiler-parse-tag-expr-comptime)))
       ;; `with-arena` is the canonical scoped-arena spelling (#801, #1118).
       (set!
         out
-        (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-arena"
+          (compiler-parse-tag-expr-with-region)))
       (set!
         out
-        (sym-i64-bind out "with-escape" (compiler-parse-tag-expr-with-escape)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-escape"
+          (compiler-parse-tag-expr-with-escape)))
       (set!
         out
-        (sym-i64-bind out "with-scratch" (compiler-parse-tag-expr-with-scratch)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-scratch"
+          (compiler-parse-tag-expr-with-scratch)))
       (set!
         out
-        (sym-i64-bind out "in-arena" (compiler-parse-tag-expr-in-arena)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "in-arena"
+          (compiler-parse-tag-expr-in-arena)))
       (set!
         out
-        (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
-      (set! out (sym-i64-bind out "init" (compiler-parse-tag-expr-init)))
-      (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
-      (set! out (sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "type"
+          (compiler-parse-tag-expr-type-literal)))
       (set!
         out
-        (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
+        (sym_i64_env.sym-i64-bind out "init" (compiler-parse-tag-expr-init)))
       (set!
         out
-        (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
+        (sym_i64_env.sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
       (set!
         out
-        (sym-i64-bind out "ptr-read" (compiler-parse-tag-expr-ptr-read)))
+        (sym_i64_env.sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
       (set!
         out
-        (sym-i64-bind out "ptr-write!" (compiler-parse-tag-expr-ptr-write)))
+        (sym_i64_env.sym-i64-bind out "break" (compiler-parse-tag-expr-break)))
       (set!
         out
-        (sym-i64-bind out "ptr-offset" (compiler-parse-tag-expr-ptr-offset)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "continue"
+          (compiler-parse-tag-expr-continue)))
       (set!
         out
-        (sym-i64-bind out "ptr-cast" (compiler-parse-tag-expr-ptr-cast)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-null"
+          (compiler-parse-tag-expr-ptr-null)))
       (set!
         out
-        (sym-i64-bind out "ptr->int" (compiler-parse-tag-expr-ptr-to-int)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-null?"
+          (compiler-parse-tag-expr-ptr-null-check)))
       (set!
         out
-        (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-read"
+          (compiler-parse-tag-expr-ptr-read)))
       (set!
         out
-        (sym-i64-bind out "ptr-addr-of" (compiler-parse-tag-expr-ptr-addr-of)))
-      (set! out (sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
-      (set! out (sym-i64-bind out "box-get" (compiler-parse-tag-expr-box-get)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-write!"
+          (compiler-parse-tag-expr-ptr-write)))
       (set!
         out
-        (sym-i64-bind out "box-take" (compiler-parse-tag-expr-box-take)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-offset"
+          (compiler-parse-tag-expr-ptr-offset)))
       (set!
         out
-        (sym-i64-bind out "string-data" (compiler-parse-tag-expr-string-data)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-cast"
+          (compiler-parse-tag-expr-ptr-cast)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr->int"
+          (compiler-parse-tag-expr-ptr-to-int)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "int->ptr"
+          (compiler-parse-tag-expr-int-to-ptr)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-addr-of"
+          (compiler-parse-tag-expr-ptr-addr-of)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "box-get"
+          (compiler-parse-tag-expr-box-get)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "box-take"
+          (compiler-parse-tag-expr-box-take)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "string-data"
+          (compiler-parse-tag-expr-string-data)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "string-from-bytes"
           (compiler-parse-tag-expr-string-from-bytes)))
       (set!
         out
-        (sym-i64-bind out "array-data" (compiler-parse-tag-expr-array-data)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-data"
+          (compiler-parse-tag-expr-array-data)))
       (set!
         out
-        (sym-i64-bind out "program-argc" (compiler-parse-tag-expr-program-argc)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-argc"
+          (compiler-parse-tag-expr-program-argc)))
       (set!
         out
-        (sym-i64-bind out "program-argv" (compiler-parse-tag-expr-program-argv)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-argv"
+          (compiler-parse-tag-expr-program-argv)))
       (set!
         out
-        (sym-i64-bind out "program-envp" (compiler-parse-tag-expr-program-envp)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-envp"
+          (compiler-parse-tag-expr-program-envp)))
       (set!
         out
-        (sym-i64-bind out "cpuid-eax" (compiler-parse-tag-expr-cpuid-eax)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-eax"
+          (compiler-parse-tag-expr-cpuid-eax)))
       (set!
         out
-        (sym-i64-bind out "cpuid-ebx" (compiler-parse-tag-expr-cpuid-ebx)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-ebx"
+          (compiler-parse-tag-expr-cpuid-ebx)))
       (set!
         out
-        (sym-i64-bind out "cpuid-ecx" (compiler-parse-tag-expr-cpuid-ecx)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-ecx"
+          (compiler-parse-tag-expr-cpuid-ecx)))
       (set!
         out
-        (sym-i64-bind out "cpuid-edx" (compiler-parse-tag-expr-cpuid-edx)))
-      (set! out (sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
-      (set! out (sym-i64-bind out "syscall" (compiler-parse-tag-expr-syscall)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-edx"
+          (compiler-parse-tag-expr-cpuid-edx)))
       (set!
         out
-        (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
-      (set! out (sym-i64-bind out "quote" (compiler-parse-tag-expr-quote)))
+        (sym_i64_env.sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
       (set!
         out
-        (sym-i64-bind out "quasiquote" (compiler-parse-tag-expr-quasiquote)))
-      (set! out (sym-i64-bind out "unquote" (compiler-parse-tag-expr-unquote)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "syscall"
+          (compiler-parse-tag-expr-syscall)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "with"
+          (compiler-parse-tag-expr-with-resource)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "quote" (compiler-parse-tag-expr-quote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "quasiquote"
+          (compiler-parse-tag-expr-quasiquote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "unquote"
+          (compiler-parse-tag-expr-unquote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "unquote-splicing"
           (compiler-parse-tag-expr-unquote-splicing)))
       out)))
 
-(define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-patterns [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))]
-    [e2 : SymI64Env (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
-    (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "true" (compiler-parse-tag-lit-true))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
+    (sym_i64_env.sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard))))
 
-(define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-decls [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "define" (compiler-parse-tag-decl-define))]
-    [e2 : SymI64Env (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
-    [e3 : SymI64Env
-      (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
-    [e4 : SymI64Env
-      (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))]
-    [e5 : SymI64Env (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
-    [e6 : SymI64Env
-      (sym-i64-bind e5 "comptime-decl" (compiler-parse-tag-decl-comptime-decl))]
-    [e7 : SymI64Env
-      (sym-i64-bind
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "define" (compiler-parse-tag-decl-define))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
+    [e3 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
+    [e4 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e3
+        "defstruct"
+        (compiler-parse-tag-decl-defstruct))]
+    [e5 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
+    [e6 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e5
+        "comptime-decl"
+        (compiler-parse-tag-decl-comptime-decl))]
+    [e7 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
         e6
         "comptime-decls"
         (compiler-parse-tag-decl-comptime-decls))]
-    [e8 : SymI64Env (sym-i64-bind e7 "module" (compiler-parse-tag-decl-module))]
-    [e9 : SymI64Env (sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
-    [e10 : SymI64Env
-      (sym-i64-bind e9 "defmacro" (compiler-parse-tag-decl-defmacro))]
-    [e12 : SymI64Env
-      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
-    [e13 : SymI64Env
-      (sym-i64-bind e12 "include-bin" (compiler-parse-tag-decl-include-bin))]
-    (sym-i64-bind e13 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
+    [e8 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e7 "module" (compiler-parse-tag-decl-module))]
+    [e9 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
+    [e10 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e9
+        "defmacro"
+        (compiler-parse-tag-decl-defmacro))]
+    [e12 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e10
+        "include-str"
+        (compiler-parse-tag-decl-include-str))]
+    [e13 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e12
+        "include-bin"
+        (compiler-parse-tag-decl-include-bin))]
+    (sym_i64_env.sym-i64-bind
+      e13
+      "defdispatch"
+      (compiler-parse-tag-decl-defdispatch))))
 
-(define (compiler-parse-dispatch-env) : SymI64Env
+(define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-decls
     (compiler-parse-dispatch-patterns
       (compiler-parse-dispatch-exprs
         (compiler-parse-dispatch-types
           (compiler-parse-dispatch-unops
-            (compiler-parse-dispatch-binops (sym-i64-empty))))))))
+            (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))))))))
 
-(define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
-  (match (sym-i64-lookup dispatch name)
-    [(SomeI64 tag) tag]
-    [(NoneI64) (compiler-parse-tag-unknown)]))
+(define (compiler-parse-dispatch-tag
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : i64
+  (match (sym_i64_env.sym-i64-lookup dispatch name)
+    [(option_i64.Some tag) tag]
+    [(option_i64.None) (compiler-parse-tag-unknown)]))
 
 (define (ast-binop-tag? [tag : i64]) : bool
   (or
@@ -1096,29 +1504,37 @@
     (= tag (compiler-parse-tag-bin-shl))
     (= tag (compiler-parse-tag-bin-shr))))
 
-(define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
+(define (ast-binop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
+
+(define (ast-left-fold-binop-tag? [tag : i64]) : bool
+  (or
+    (= tag (compiler-parse-tag-bin-add))
+    (= tag (compiler-parse-tag-bin-mul))
+    (= tag (compiler-parse-tag-bin-bit-and))
+    (= tag (compiler-parse-tag-bin-bit-or))
+    (= tag (compiler-parse-tag-bin-bit-xor))))
 
 (define (ast-binop-from-tag [tag : i64]) : AstBinOp
   (cond
-    [(= tag (compiler-parse-tag-bin-add)) (AstBinAdd)]
-    [(= tag (compiler-parse-tag-bin-sub)) (AstBinSub)]
-    [(= tag (compiler-parse-tag-bin-mul)) (AstBinMul)]
-    [(= tag (compiler-parse-tag-bin-div)) (AstBinDiv)]
-    [(= tag (compiler-parse-tag-bin-mod)) (AstBinMod)]
-    [(= tag (compiler-parse-tag-bin-eq)) (AstBinEq)]
-    [(= tag (compiler-parse-tag-bin-ne)) (AstBinNe)]
-    [(= tag (compiler-parse-tag-bin-lt)) (AstBinLt)]
-    [(= tag (compiler-parse-tag-bin-le)) (AstBinLe)]
-    [(= tag (compiler-parse-tag-bin-gt)) (AstBinGt)]
-    [(= tag (compiler-parse-tag-bin-ge)) (AstBinGe)]
-    [(= tag (compiler-parse-tag-bin-bit-and)) (AstBinBitAnd)]
-    [(= tag (compiler-parse-tag-bin-bit-or)) (AstBinBitOr)]
-    [(= tag (compiler-parse-tag-bin-bit-xor)) (AstBinBitXor)]
-    [(= tag (compiler-parse-tag-bin-shl)) (AstBinShl)]
-    [else (AstBinShr)]))
+    [(= tag (compiler-parse-tag-bin-add)) (AstBinOp.Add)]
+    [(= tag (compiler-parse-tag-bin-sub)) (AstBinOp.Sub)]
+    [(= tag (compiler-parse-tag-bin-mul)) (AstBinOp.Mul)]
+    [(= tag (compiler-parse-tag-bin-div)) (AstBinOp.Div)]
+    [(= tag (compiler-parse-tag-bin-mod)) (AstBinOp.Mod)]
+    [(= tag (compiler-parse-tag-bin-eq)) (AstBinOp.Eq)]
+    [(= tag (compiler-parse-tag-bin-ne)) (AstBinOp.Ne)]
+    [(= tag (compiler-parse-tag-bin-lt)) (AstBinOp.Lt)]
+    [(= tag (compiler-parse-tag-bin-le)) (AstBinOp.Le)]
+    [(= tag (compiler-parse-tag-bin-gt)) (AstBinOp.Gt)]
+    [(= tag (compiler-parse-tag-bin-ge)) (AstBinOp.Ge)]
+    [(= tag (compiler-parse-tag-bin-bit-and)) (AstBinOp.BitAnd)]
+    [(= tag (compiler-parse-tag-bin-bit-or)) (AstBinOp.BitOr)]
+    [(= tag (compiler-parse-tag-bin-bit-xor)) (AstBinOp.BitXor)]
+    [(= tag (compiler-parse-tag-bin-shl)) (AstBinOp.Shl)]
+    [else (AstBinOp.Shr)]))
 
-(define (ast-binop-from-name [dispatch : SymI64Env] [name : String]) : AstBinOp
+(define (ast-binop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstBinOp
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-tag? [tag : i64]) : bool
@@ -1128,37 +1544,50 @@
       true
       (= tag (compiler-parse-tag-un-bit-not)))))
 
-(define (ast-unop? [dispatch : SymI64Env] [name : String]) : bool
+(define (ast-unop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
   (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
   (if (= tag (compiler-parse-tag-un-not))
-    (AstUnNot)
+    (AstUnOp.Not)
     (if (= tag (compiler-parse-tag-un-neg))
-      (AstUnNeg)
-      (AstUnBitNot))))
+      (AstUnOp.Neg)
+      (AstUnOp.BitNot))))
 
-(define (ast-unop-from-name [dispatch : SymI64Env] [name : String]) : AstUnOp
+(define (ast-unop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstUnOp
   (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (parse-ast-type-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : Sexpr]) : ResultAstTypeList
+  [s : Sexpr]
+  [out : (&mut out AstTypeList)]) : ResultAstTypeListBuild
   (match s
-    [(Sexpr.Nil) (OkAstTypeList AstTypeNil)]
+    [(Sexpr.Nil) (ResultAstTypeListBuild.Ok)]
     [(Sexpr.Cons head tail)
       (match (parse-ast-type dispatch pools (box-get head))
-        [(OkAstType parsed-head)
-          (match (parse-ast-type-list dispatch pools (box-get tail))
-            [(OkAstTypeList parsed-tail)
-              (OkAstTypeList
-                (ast-type-cons-with-pools pools parsed-head parsed-tail))]
-            [(ErrAstTypeList message) (ErrAstTypeList message)])]
-        [(ErrAstType message) (ErrAstTypeList message)])]
-    [_ (ErrAstTypeList "parse: malformed type list")]))
+        [(ResultAstType.Ok parsed-head)
+          (begin
+            (ast-type-list-push
+              out
+              (ast-node-pool-context-type-push pools parsed-head))
+            (parse-ast-type-list dispatch pools (box-get tail) out))]
+        [(ResultAstType.Err message) (ResultAstTypeListBuild.Err message)])]
+    [_ (ResultAstTypeListBuild.Err "parse: malformed type list")]))
 
-(define (parse-ast-lifetime-name? [dispatch : SymI64Env] [name : String]) : bool
+(define (parse-ast-type-list-result
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]) : ResultAstTypeList
+  (let
+    [out : AstTypeList (ast-type-list-new)]
+    (match (parse-ast-type-list dispatch pools s (&mut out))
+      [(ResultAstTypeListBuild.Ok) (ResultAstTypeList.Ok out)]
+      [(ResultAstTypeListBuild.Err message) (ResultAstTypeList.Err message)])))
+
+(define (parse-ast-lifetime-name?
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : bool
   (let
     [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
     (not
@@ -1171,41 +1600,53 @@
           (<= tag (compiler-parse-tag-ty-dyn-array)))))))
 
 (define (parse-ast-lifetime-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
-  [message : String]) : ResultAstLifetimeList
+  [message : String]
+  [out : (&mut out AstLifetimeList)]) : ResultAstLifetimeListBuild
   (match s
-    [(Sexpr.Nil) (OkAstLifetimeList AstLifetimeNil)]
+    [(Sexpr.Nil) (ResultAstLifetimeListBuild.Ok)]
     [(Sexpr.Cons head tail)
       (match (box-get head)
         [(Sexpr.Sym name)
           (if (parse-ast-lifetime-name? dispatch name)
-            (match (parse-ast-lifetime-list
-              dispatch
-              pools
-              (box-get tail)
-              message)
-              [(OkAstLifetimeList parsed-tail)
-                (OkAstLifetimeList (ast-lifetime-cons name parsed-tail))]
-              [(ErrAstLifetimeList parse-message)
-                (ErrAstLifetimeList parse-message)])
-            (ErrAstLifetimeList message))]
-        [_ (ErrAstLifetimeList message)])]
-    [(Sexpr.Cons _ _) (ErrAstLifetimeList message)]
-    [_ (ErrAstLifetimeList message)]))
+            (begin
+              (ast-lifetime-list-push out name)
+              (parse-ast-lifetime-list
+                dispatch
+                pools
+                (box-get tail)
+                message
+                out))
+            (ResultAstLifetimeListBuild.Err message))]
+        [_ (ResultAstLifetimeListBuild.Err message)])]
+    [(Sexpr.Cons _ _) (ResultAstLifetimeListBuild.Err message)]
+    [_ (ResultAstLifetimeListBuild.Err message)]))
+
+(define (parse-ast-lifetime-list-result
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [message : String]) : ResultAstLifetimeList
+  (let
+    [out : AstLifetimeList (ast-lifetime-list-new)]
+    (match (parse-ast-lifetime-list dispatch pools s message (&mut out))
+      [(ResultAstLifetimeListBuild.Ok) (ResultAstLifetimeList.Ok out)]
+      [(ResultAstLifetimeListBuild.Err parse-message)
+        (ResultAstLifetimeList.Err parse-message)])))
 
 (define (parse-ast-lifetime-list-nonempty
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [message : String]) : ResultAstLifetimeList
   (match s
-    [(Sexpr.Nil) (ErrAstLifetimeList message)]
-    [_ (parse-ast-lifetime-list dispatch pools s message)]))
+    [(Sexpr.Nil) (ResultAstLifetimeList.Err message)]
+    [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
 
 (define (parse-ast-func-type-parts
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstFuncTypeParts
   (match s
@@ -1213,19 +1654,23 @@
       (match (box-get rest)
         [(Sexpr.Nil)
           (match (parse-ast-type dispatch pools (box-get arg))
-            [(OkAstType parsed-ret) (OkAstFuncTypeParts AstTypeNil parsed-ret)]
-            [(ErrAstType message) (ErrAstFuncTypeParts message)])]
+            [(ResultAstType.Ok parsed-ret)
+              (ResultAstFuncTypeParts.Ok (ast-type-list-new) parsed-ret)]
+            [(ResultAstType.Err message) (ResultAstFuncTypeParts.Err message)])]
         [_
           (match (parse-ast-type dispatch pools (box-get arg))
-            [(OkAstType parsed-arg)
+            [(ResultAstType.Ok parsed-arg)
               (match (parse-ast-func-type-parts dispatch pools (box-get rest))
-                [(OkAstFuncTypeParts parsed-args parsed-ret)
-                  (OkAstFuncTypeParts
+                [(ResultAstFuncTypeParts.Ok parsed-args parsed-ret)
+                  (ResultAstFuncTypeParts.Ok
                     (ast-type-cons-with-pools pools parsed-arg parsed-args)
                     parsed-ret)]
-                [(ErrAstFuncTypeParts message) (ErrAstFuncTypeParts message)])]
-            [(ErrAstType message) (ErrAstFuncTypeParts message)])])]
-    [_ (ErrAstFuncTypeParts "parse: function type needs at least return type")]))
+                [(ResultAstFuncTypeParts.Err message)
+                  (ResultAstFuncTypeParts.Err message)])]
+            [(ResultAstType.Err message) (ResultAstFuncTypeParts.Err message)])])]
+    [_
+      (ResultAstFuncTypeParts.Err
+        "parse: function type needs at least return type")]))
 
 ;; Macro output uses these non-lexer-spellable symbols to carry already-resolved
 ;; aggregate type operands through declaration-shaped quasiquote output.
@@ -1236,7 +1681,7 @@
   "__typelisp internal resolved enum type")
 
 (define (parse-ast-resolved-nominal-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : Sexpr]
   [is-struct : bool]) : ResultAstType
@@ -1244,26 +1689,26 @@
     [(Sexpr.Cons name-node lifetimes-box)
       (match (box-get name-node)
         [(Sexpr.Str name)
-          (match (parse-ast-lifetime-list
+          (match (parse-ast-lifetime-list-result
             dispatch
             pools
             (box-get lifetimes-box)
             "parse: malformed internal resolved type")
-            [(OkAstLifetimeList lifetimes)
-              (OkAstType
+            [(ResultAstLifetimeList.Ok lifetimes)
+              (ResultAstType.Ok
                 (if is-struct
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyStruct (intern name))]
-                    [_ (ast-ty-struct-args (intern name) lifetimes)])
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyEnum (intern name))]
-                    [_ (ast-ty-enum-args (intern name) lifetimes)])))]
-            [(ErrAstLifetimeList message) (ErrAstType message)])]
-        [_ (ErrAstType "parse: malformed internal resolved type")])]
-    [_ (ErrAstType "parse: malformed internal resolved type")]))
+                  (if (ast-lifetime-list-empty? (& lifetimes))
+                    (AstType.Struct (intern name))
+                    (ast-ty-struct-args (intern name) lifetimes))
+                  (if (ast-lifetime-list-empty? (& lifetimes))
+                    (AstType.Enum (intern name))
+                    (ast-ty-enum-args (intern name) lifetimes))))]
+            [(ResultAstLifetimeList.Err message) (ResultAstType.Err message)])]
+        [_ (ResultAstType.Err "parse: malformed internal resolved type")])]
+    [_ (ResultAstType.Err "parse: malformed internal resolved type")]))
 
 (define (parse-ast-reference-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : Sexpr]
   [mutable : bool]) : ResultAstType
@@ -1276,33 +1721,34 @@
               (match (box-get region-node)
                 [(Sexpr.Sym region)
                   (match (parse-ast-type dispatch pools (box-get inner))
-                    [(OkAstType inner-ty)
+                    [(ResultAstType.Ok inner-ty)
                       (if mutable
-                        (OkAstType
+                        (ResultAstType.Ok
                           (ast-ty-mut-ref-with-pools pools region inner-ty))
-                        (OkAstType
+                        (ResultAstType.Ok
                           (ast-ty-ref-with-pools pools region inner-ty)))]
-                    [(ErrAstType message) (ErrAstType message)])]
+                    [(ResultAstType.Err message) (ResultAstType.Err message)])]
                 [_
-                  (ErrAstType "parse: reference lifetime must be an identifier")])]
+                  (ResultAstType.Err
+                    "parse: reference lifetime must be an identifier")])]
             [_
-              (ErrAstType
+              (ResultAstType.Err
                 (if mutable
                   "parse: &mut expects lifetime and exactly one type"
                   "parse: & expects lifetime and exactly one type"))])]
         [_
-          (ErrAstType
+          (ResultAstType.Err
             (if mutable
               "parse: &mut expects lifetime and exactly one type"
               "parse: & expects lifetime and exactly one type"))])]
     [_
-      (ErrAstType
+      (ResultAstType.Err
         (if mutable
           "parse: &mut expects lifetime and exactly one type"
           "parse: & expects lifetime and exactly one type"))]))
 
 (define (parse-ast-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstType
   (match s
@@ -1310,25 +1756,31 @@
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
         (cond
-          [(= tag (compiler-parse-tag-ty-i64)) (OkAstType (AstTyI64))]
-          [(= tag (compiler-parse-tag-ty-i32)) (OkAstType (AstTyI32))]
-          [(= tag (compiler-parse-tag-ty-i16)) (OkAstType (AstTyI16))]
-          [(= tag (compiler-parse-tag-ty-i8)) (OkAstType (AstTyI8))]
-          [(= tag (compiler-parse-tag-ty-u64)) (OkAstType (AstTyU64))]
-          [(= tag (compiler-parse-tag-ty-u32)) (OkAstType (AstTyU32))]
-          [(= tag (compiler-parse-tag-ty-u16)) (OkAstType (AstTyU16))]
-          [(= tag (compiler-parse-tag-ty-u8)) (OkAstType (AstTyU8))]
-          [(= tag (compiler-parse-tag-ty-f64)) (OkAstType (AstTyF64))]
-          [(= tag (compiler-parse-tag-ty-f32)) (OkAstType (AstTyF32))]
-          [(= tag (compiler-parse-tag-ty-bool)) (OkAstType (AstTyBool))]
-          [(= tag (compiler-parse-tag-ty-char)) (OkAstType (AstTyChar))]
-          [(= tag (compiler-parse-tag-ty-string)) (OkAstType (AstTyString))]
-          [(= tag (compiler-parse-tag-ty-str)) (OkAstType (AstTyStr))]
-          [(= tag (compiler-parse-tag-ty-bytes)) (OkAstType (AstTyBytes))]
-          [(= tag (compiler-parse-tag-unit)) (OkAstType (AstTyUnit))]
-          [(= tag (compiler-parse-tag-ty-never)) (OkAstType (AstTyNever))]
-          [(= tag (compiler-parse-tag-ty-expr)) (OkAstType (AstTyExpr))]
-          [else (OkAstType (AstTyVar (intern name)))]))]
+          [(= tag (compiler-parse-tag-ty-i64)) (ResultAstType.Ok (AstType.I64))]
+          [(= tag (compiler-parse-tag-ty-i32)) (ResultAstType.Ok (AstType.I32))]
+          [(= tag (compiler-parse-tag-ty-i16)) (ResultAstType.Ok (AstType.I16))]
+          [(= tag (compiler-parse-tag-ty-i8)) (ResultAstType.Ok (AstType.I8))]
+          [(= tag (compiler-parse-tag-ty-u64)) (ResultAstType.Ok (AstType.U64))]
+          [(= tag (compiler-parse-tag-ty-u32)) (ResultAstType.Ok (AstType.U32))]
+          [(= tag (compiler-parse-tag-ty-u16)) (ResultAstType.Ok (AstType.U16))]
+          [(= tag (compiler-parse-tag-ty-u8)) (ResultAstType.Ok (AstType.U8))]
+          [(= tag (compiler-parse-tag-ty-f64)) (ResultAstType.Ok (AstType.F64))]
+          [(= tag (compiler-parse-tag-ty-f32)) (ResultAstType.Ok (AstType.F32))]
+          [(= tag (compiler-parse-tag-ty-bool))
+            (ResultAstType.Ok (AstType.Bool))]
+          [(= tag (compiler-parse-tag-ty-char))
+            (ResultAstType.Ok (AstType.Char))]
+          [(= tag (compiler-parse-tag-ty-string))
+            (ResultAstType.Ok (AstType.String))]
+          [(= tag (compiler-parse-tag-ty-str)) (ResultAstType.Ok (AstType.Str))]
+          [(= tag (compiler-parse-tag-ty-bytes))
+            (ResultAstType.Ok (AstType.Bytes))]
+          [(= tag (compiler-parse-tag-unit)) (ResultAstType.Ok (AstType.Unit))]
+          [(= tag (compiler-parse-tag-ty-never))
+            (ResultAstType.Ok (AstType.Never))]
+          [(= tag (compiler-parse-tag-ty-expr))
+            (ResultAstType.Ok (AstType.Expr))]
+          [else (ResultAstType.Ok (AstType.Var (intern name)))]))]
     [(Sexpr.Cons head-node rest-box)
       (match (box-get head-node)
         [(Sexpr.Sym head)
@@ -1336,33 +1788,32 @@
             [rest : Sexpr (box-get rest-box)]
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
             (cond
-              [(string.string-eq
-                  head
-                  (parse-internal-resolved-struct-type-marker))
+              [(string.eq head (parse-internal-resolved-struct-type-marker))
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
-              [(string.string-eq
-                  head
-                  (parse-internal-resolved-enum-type-marker))
+              [(string.eq head (parse-internal-resolved-enum-type-marker))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts dispatch pools rest)
-                  [(OkAstFuncTypeParts args ret)
-                    (OkAstType (ast-ty-func-with-pools pools args ret))]
-                  [(ErrAstFuncTypeParts message) (ErrAstType message)])]
+                  [(ResultAstFuncTypeParts.Ok args ret)
+                    (ResultAstType.Ok (ast-ty-func-with-pools pools args ret))]
+                  [(ResultAstFuncTypeParts.Err message)
+                    (ResultAstType.Err message)])]
               [(= tag (compiler-parse-tag-ty-tuple))
-                (match (parse-ast-type-list dispatch pools rest)
-                  [(OkAstTypeList elems) (OkAstType (ast-ty-tuple elems))]
-                  [(ErrAstTypeList message) (ErrAstType message)])]
+                (match (parse-ast-type-list-result dispatch pools rest)
+                  [(ResultAstTypeList.Ok elems)
+                    (ResultAstType.Ok (ast-ty-tuple elems))]
+                  [(ResultAstTypeList.Err message) (ResultAstType.Err message)])]
               [(= tag (compiler-parse-tag-ty-array))
                 (match rest
                   [(Sexpr.Cons elem tail)
                     (match (box-get tail)
                       [(Sexpr.Nil)
                         (match (parse-ast-type dispatch pools (box-get elem))
-                          [(OkAstType elem-ty)
-                            (OkAstType
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
                               (ast-ty-dyn-array-with-pools pools elem-ty))]
-                          [(ErrAstType message) (ErrAstType message)])]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
                       [(Sexpr.Cons size-node end)
                         (match (box-get end)
                           [(Sexpr.Nil)
@@ -1372,22 +1823,24 @@
                                   dispatch
                                   pools
                                   (box-get elem))
-                                  [(OkAstType elem-ty)
-                                    (OkAstType
+                                  [(ResultAstType.Ok elem-ty)
+                                    (ResultAstType.Ok
                                       (ast-ty-array-with-pools
                                         pools
                                         elem-ty
                                         size))]
-                                  [(ErrAstType message) (ErrAstType message)])]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstType.Err message)])]
                               [_
-                                (ErrAstType "parse: array size must be integer")])]
-                          [_ (ErrAstType "parse: malformed array type")])]
-                      [_ (ErrAstType "parse: malformed array type")])]
-                  [_ (ErrAstType "parse: malformed array type")])]
+                                (ResultAstType.Err
+                                  "parse: array size must be integer")])]
+                          [_ (ResultAstType.Err "parse: malformed array type")])]
+                      [_ (ResultAstType.Err "parse: malformed array type")])]
+                  [_ (ResultAstType.Err "parse: malformed array type")])]
               [(= tag (compiler-parse-tag-ty-dyn-array))
                 (if (not
                   (compiler-cfg-private-dynamic-buffer-enabled? dispatch))
-                  (ErrAstType
+                  (ResultAstType.Err
                     (compiler-parse-generic-type-policy-message
                       "__tl_dyn-array"))
                   (match rest
@@ -1395,15 +1848,16 @@
                       (match (box-get tail)
                         [(Sexpr.Nil)
                           (match (parse-ast-type dispatch pools (box-get elem))
-                            [(OkAstType elem-ty)
-                              (OkAstType
+                            [(ResultAstType.Ok elem-ty)
+                              (ResultAstType.Ok
                                 (ast-ty-dyn-array-with-pools pools elem-ty))]
-                            [(ErrAstType message) (ErrAstType message)])]
+                            [(ResultAstType.Err message)
+                              (ResultAstType.Err message)])]
                         [_
-                          (ErrAstType
+                          (ResultAstType.Err
                             "parse: __tl_dyn-array expects exactly one type")])]
                     [_
-                      (ErrAstType
+                      (ResultAstType.Err
                         "parse: __tl_dyn-array expects exactly one type")]))]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match rest
@@ -1411,34 +1865,46 @@
                     (match (box-get tail)
                       [(Sexpr.Nil)
                         (match (parse-ast-type dispatch pools (box-get elem))
-                          [(OkAstType elem-ty)
-                            (OkAstType (ast-ty-ptr-with-pools pools elem-ty))]
-                          [(ErrAstType message) (ErrAstType message)])]
-                      [_ (ErrAstType "parse: Ptr expects exactly one type")])]
-                  [_ (ErrAstType "parse: Ptr expects exactly one type")])]
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
+                              (ast-ty-ptr-with-pools pools elem-ty))]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
+                      [_
+                        (ResultAstType.Err
+                          "parse: Ptr expects exactly one type")])]
+                  [_ (ResultAstType.Err "parse: Ptr expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-mut-ptr))
                 (match rest
                   [(Sexpr.Cons elem tail)
                     (match (box-get tail)
                       [(Sexpr.Nil)
                         (match (parse-ast-type dispatch pools (box-get elem))
-                          [(OkAstType elem-ty)
-                            (OkAstType
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
                               (ast-ty-mut-ptr-with-pools pools elem-ty))]
-                          [(ErrAstType message) (ErrAstType message)])]
-                      [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
-                  [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
+                      [_
+                        (ResultAstType.Err
+                          "parse: MutPtr expects exactly one type")])]
+                  [_
+                    (ResultAstType.Err "parse: MutPtr expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-box))
                 (match rest
                   [(Sexpr.Cons elem tail)
                     (match (box-get tail)
                       [(Sexpr.Nil)
                         (match (parse-ast-type dispatch pools (box-get elem))
-                          [(OkAstType elem-ty)
-                            (OkAstType (ast-ty-box-with-pools pools elem-ty))]
-                          [(ErrAstType message) (ErrAstType message)])]
-                      [_ (ErrAstType "parse: Box expects exactly one type")])]
-                  [_ (ErrAstType "parse: Box expects exactly one type")])]
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
+                              (ast-ty-box-with-pools pools elem-ty))]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
+                      [_
+                        (ResultAstType.Err
+                          "parse: Box expects exactly one type")])]
+                  [_ (ResultAstType.Err "parse: Box expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-ref))
                 (parse-ast-reference-type dispatch pools rest false)]
               [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -1456,40 +1922,56 @@
                                   dispatch
                                   pools
                                   (box-get inner))
-                                  [(OkAstType inner-ty)
-                                    (OkAstType
+                                  [(ResultAstType.Ok inner-ty)
+                                    (ResultAstType.Ok
                                       (ast-ty-region-with-pools
                                         pools
                                         region
                                         inner-ty))]
-                                  [(ErrAstType message) (ErrAstType message)])]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstType.Err message)])]
                               [_
-                                (ErrAstType
+                                (ResultAstType.Err
                                   "parse: region name must be an identifier")])]
-                          [_ (ErrAstType "parse: malformed region type")])]
-                      [_ (ErrAstType "parse: malformed region type")])]
-                  [_ (ErrAstType "parse: malformed region type")])]
+                          [_ (ResultAstType.Err "parse: malformed region type")])]
+                      [_ (ResultAstType.Err "parse: malformed region type")])]
+                  [_ (ResultAstType.Err "parse: malformed region type")])]
               [else
                 (match (parse-ast-lifetime-list-nonempty
                   dispatch
                   pools
                   rest
                   (compiler-parse-generic-type-policy-message head))
-                  [(OkAstLifetimeList lifetimes)
-                    (OkAstType (ast-ty-var-args (intern head) lifetimes))]
-                  [(ErrAstLifetimeList message) (ErrAstType message)])]))]
-        [_ (ErrAstType "parse: expected type")])]
-    [_ (ErrAstType "parse: expected type")]))
+                  [(ResultAstLifetimeList.Ok lifetimes)
+                    (ResultAstType.Ok (ast-ty-var-args (intern head) lifetimes))]
+                  [(ResultAstLifetimeList.Err message)
+                    (ResultAstType.Err message)])]))]
+        [_ (ResultAstType.Err "parse: expected type")])]
+    [_ (ResultAstType.Err "parse: expected type")]))
+
+(define (parse-ast-type-spanned
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]) : ResultAstType
+  (let
+    [result : ResultAstType
+      (parse-ast-type dispatch pools (spanned-sexpr-form s))]
+    (match result
+      [(ResultAstType.Err _)
+        (begin
+          (parse-ast-error-span-note! (spanned-sexpr-span s))
+          result)]
+      [_ result])))
 
 (define (parse-ast-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstParam
   (match s
     [(Sexpr.Cons first rest)
       (match (box-get first)
         [(Sexpr.Sym first-name)
-          (if (string.string-eq first-name "comptime")
+          (if (string.eq first-name "comptime")
             (match (box-get rest)
               [(Sexpr.Cons name-node after-name)
                 (match (box-get name-node)
@@ -1505,17 +1987,20 @@
                                     dispatch
                                     pools
                                     (box-get ty))
-                                    [(OkAstType parsed-ty)
-                                      (OkAstParam
+                                    [(ResultAstType.Ok parsed-ty)
+                                      (ResultAstParam.Ok
                                         (ast-param name parsed-ty true))]
-                                    [(ErrAstType message) (ErrAstParam message)])
-                                  (ErrAstParam
+                                    [(ResultAstType.Err message)
+                                      (ResultAstParam.Err message)])
+                                  (ResultAstParam.Err
                                     "parse: expected ':' in parameter"))]
-                              [_ (ErrAstParam "parse: malformed parameter")])]
-                          [_ (ErrAstParam "parse: malformed parameter")])]
-                      [_ (ErrAstParam "parse: malformed parameter")])]
-                  [_ (ErrAstParam "parse: malformed parameter")])]
-              [_ (ErrAstParam "parse: malformed parameter")])
+                              [_
+                                (ResultAstParam.Err
+                                  "parse: malformed parameter")])]
+                          [_ (ResultAstParam.Err "parse: malformed parameter")])]
+                      [_ (ResultAstParam.Err "parse: malformed parameter")])]
+                  [_ (ResultAstParam.Err "parse: malformed parameter")])]
+              [_ (ResultAstParam.Err "parse: malformed parameter")])
             (match (box-get rest)
               [(Sexpr.Cons colon rest2)
                 (match (box-get rest2)
@@ -1524,43 +2009,47 @@
                       [(Sexpr.Nil)
                         (if (sexpr-colon? (box-get colon))
                           (match (parse-ast-type dispatch pools (box-get ty))
-                            [(OkAstType parsed-ty)
-                              (OkAstParam
+                            [(ResultAstType.Ok parsed-ty)
+                              (ResultAstParam.Ok
                                 (ast-param first-name parsed-ty false))]
-                            [(ErrAstType message) (ErrAstParam message)])
-                          (ErrAstParam "parse: expected ':' in parameter"))]
-                      [_ (ErrAstParam "parse: malformed parameter")])]
-                  [_ (ErrAstParam "parse: malformed parameter")])]
-              [_ (ErrAstParam "parse: malformed parameter")]))]
-        [_ (ErrAstParam "parse: malformed parameter")])]
-    [_ (ErrAstParam "parse: malformed parameter")]))
+                            [(ResultAstType.Err message)
+                              (ResultAstParam.Err message)])
+                          (ResultAstParam.Err
+                            "parse: expected ':' in parameter"))]
+                      [_ (ResultAstParam.Err "parse: malformed parameter")])]
+                  [_ (ResultAstParam.Err "parse: malformed parameter")])]
+              [_ (ResultAstParam.Err "parse: malformed parameter")]))]
+        [_ (ResultAstParam.Err "parse: malformed parameter")])]
+    [_ (ResultAstParam.Err "parse: malformed parameter")]))
 
 (define (ast-param-list-has-comptime? [params : AstParamList]) : bool
-  (match params
-    [(AstParamNil) false]
-    [(AstParamCons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam _ _ is-comptime)
-            (if is-comptime
-              true
-              (ast-param-list-has-comptime? rest))]))]))
+  (ast-param-list-has-comptime-at? (& params) 0))
+
+(define (ast-param-list-has-comptime-at?
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ _ is-comptime)
+        (if is-comptime
+          true
+          (ast-param-list-has-comptime-at? params (+ index 1)))])))
 
 (define (ast-macro-param-variadic? [param : AstMacroParam]) : bool
   (match param
-    [(AstMacroParam _ _ variadic) variadic]))
+    [(AstMacroParam.Param _ _ variadic) variadic]))
 
 (define (parse-ast-macro-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstMacroParam
   (match s
     [(Sexpr.Cons name-node rest)
       (match (box-get name-node)
         [(Sexpr.Sym name)
-          (if (string.string-eq name "comptime")
-            (ErrAstMacroParam
+          (if (string.eq name "comptime")
+            (ResultAstMacroParam.Err
               "parse: defmacro operands are already compile-time")
             (match (box-get rest)
               [(Sexpr.Cons colon rest2)
@@ -1570,80 +2059,110 @@
                       (match (box-get rest3)
                         [(Sexpr.Nil)
                           (match (parse-ast-type dispatch pools (box-get ty))
-                            [(OkAstType parsed-ty)
-                              (OkAstMacroParam
+                            [(ResultAstType.Ok parsed-ty)
+                              (ResultAstMacroParam.Ok
                                 (ast-macro-param name parsed-ty false))]
-                            [(ErrAstType message) (ErrAstMacroParam message)])]
+                            [(ResultAstType.Err message)
+                              (ResultAstMacroParam.Err message)])]
                         [(Sexpr.Cons dots end)
                           (match (box-get end)
                             [(Sexpr.Nil)
                               (match (box-get dots)
                                 [(Sexpr.Sym dots-name)
-                                  (if (string.string-eq dots-name "...")
+                                  (if (string.eq dots-name "...")
                                     (match (parse-ast-type
                                       dispatch
                                       pools
                                       (box-get ty))
-                                      [(OkAstType parsed-ty)
-                                        (OkAstMacroParam
+                                      [(ResultAstType.Ok parsed-ty)
+                                        (ResultAstMacroParam.Ok
                                           (ast-macro-param name parsed-ty true))]
-                                      [(ErrAstType message)
-                                        (ErrAstMacroParam message)])
-                                    (ErrAstMacroParam
+                                      [(ResultAstType.Err message)
+                                        (ResultAstMacroParam.Err message)])
+                                    (ResultAstMacroParam.Err
                                       "parse: malformed macro operand"))]
                                 [_
-                                  (ErrAstMacroParam
+                                  (ResultAstMacroParam.Err
                                     "parse: malformed macro operand")])]
                             [_
-                              (ErrAstMacroParam
+                              (ResultAstMacroParam.Err
                                 "parse: malformed macro operand")])]
-                        [_ (ErrAstMacroParam "parse: malformed macro operand")])
-                      (ErrAstMacroParam "parse: expected ':' in macro operand"))]
-                  [_ (ErrAstMacroParam "parse: malformed macro operand")])]
-              [_ (ErrAstMacroParam "parse: malformed macro operand")]))]
-        [_ (ErrAstMacroParam "parse: malformed macro operand")])]
-    [_ (ErrAstMacroParam "parse: malformed macro operand")]))
+                        [_
+                          (ResultAstMacroParam.Err
+                            "parse: malformed macro operand")])
+                      (ResultAstMacroParam.Err
+                        "parse: expected ':' in macro operand"))]
+                  [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])]
+              [_ (ResultAstMacroParam.Err "parse: malformed macro operand")]))]
+        [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])]
+    [_ (ResultAstMacroParam.Err "parse: malformed macro operand")]))
 
 (define (parse-ast-macro-param-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstMacroParamList
+  (let
+    [out : AstMacroParamList (ast-macro-param-list-new)]
+    (match (parse-ast-macro-param-list-into dispatch pools s (&mut out))
+      [(ResultAstMacroParamListBuild.Ok) (ResultAstMacroParamList.Ok out)]
+      [(ResultAstMacroParamListBuild.Err message)
+        (ResultAstMacroParamList.Err message)])))
+
+(define (parse-ast-macro-param-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [out : (&mut out AstMacroParamList)]) : ResultAstMacroParamListBuild
   (match s
-    [(Sexpr.Nil) (OkAstMacroParamList AstMacroParamNil)]
+    [(Sexpr.Nil) ResultAstMacroParamListBuild.Ok]
     [(Sexpr.Cons head tail)
       (match (parse-ast-macro-param dispatch pools (box-get head))
-        [(OkAstMacroParam parsed-head)
+        [(ResultAstMacroParam.Ok parsed-head)
           (if (ast-macro-param-variadic? parsed-head)
             (match (box-get tail)
               [(Sexpr.Nil)
-                (OkAstMacroParamList
-                  (ast-macro-param-cons parsed-head AstMacroParamNil))]
+                (begin
+                  (ast-macro-param-list-push out parsed-head)
+                  ResultAstMacroParamListBuild.Ok)]
               [_
-                (ErrAstMacroParamList
+                (ResultAstMacroParamListBuild.Err
                   "parse: variadic macro operand must be final")])
-            (match (parse-ast-macro-param-list dispatch pools (box-get tail))
-              [(OkAstMacroParamList parsed-tail)
-                (OkAstMacroParamList
-                  (ast-macro-param-cons parsed-head parsed-tail))]
-              [(ErrAstMacroParamList message) (ErrAstMacroParamList message)]))]
-        [(ErrAstMacroParam message) (ErrAstMacroParamList message)])]
-    [_ (ErrAstMacroParamList "parse: malformed macro operand list")]))
+            (begin
+              (ast-macro-param-list-push out parsed-head)
+              (parse-ast-macro-param-list-into
+                dispatch
+                pools
+                (box-get tail)
+                out)))]
+        [(ResultAstMacroParam.Err message)
+          (ResultAstMacroParamListBuild.Err message)])]
+    [_ (ResultAstMacroParamListBuild.Err "parse: malformed macro operand list")]))
 
 (define (parse-ast-param-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstParamList
+  (let
+    [out : AstParamList (ast-param-list-new)]
+    (match (parse-ast-param-list-into dispatch pools s (&mut out))
+      [(ResultAstParamListBuild.Ok) (ResultAstParamList.Ok out)]
+      [(ResultAstParamListBuild.Err message) (ResultAstParamList.Err message)])))
+
+(define (parse-ast-param-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [out : (&mut out AstParamList)]) : ResultAstParamListBuild
   (match s
-    [(Sexpr.Nil) (OkAstParamList AstParamNil)]
+    [(Sexpr.Nil) ResultAstParamListBuild.Ok]
     [(Sexpr.Cons head tail)
       (match (parse-ast-param dispatch pools (box-get head))
-        [(OkAstParam parsed-head)
-          (match (parse-ast-param-list dispatch pools (box-get tail))
-            [(OkAstParamList parsed-tail)
-              (OkAstParamList (ast-param-cons parsed-head parsed-tail))]
-            [(ErrAstParamList message) (ErrAstParamList message)])]
-        [(ErrAstParam message) (ErrAstParamList message)])]
-    [_ (ErrAstParamList "parse: malformed parameter list")]))
+        [(ResultAstParam.Ok parsed-head)
+          (begin
+            (ast-param-list-push out parsed-head)
+            (parse-ast-param-list-into dispatch pools (box-get tail) out))]
+        [(ResultAstParam.Err message) (ResultAstParamListBuild.Err message)])]
+    [_ (ResultAstParamListBuild.Err "parse: malformed parameter list")]))
 
 (define (parse-ast-field-cleanup [s : Sexpr]) : ResultAstFieldCleanup
   (match s
@@ -1651,35 +2170,39 @@
       (match (box-get key-node)
         [(Sexpr.Sym key)
           (cond
-            [(string.string-eq key ":cleanup")
+            [(string.eq key ":cleanup")
               (match (box-get tail)
                 [(Sexpr.Cons cleanup-node end)
                   (match (box-get end)
                     [(Sexpr.Nil)
                       (match (box-get cleanup-node)
                         [(Sexpr.Sym cleanup-fn)
-                          (OkAstFieldCleanup (ast-field-cleanup-fn cleanup-fn))]
+                          (ResultAstFieldCleanup.Ok
+                            (ast-field-cleanup-fn cleanup-fn))]
                         [_
-                          (ErrAstFieldCleanup
+                          (ResultAstFieldCleanup.Err
                             "parse: malformed field :cleanup metadata")])]
                     [_
-                      (ErrAstFieldCleanup
+                      (ResultAstFieldCleanup.Err
                         "parse: malformed field :cleanup metadata")])]
                 [_
-                  (ErrAstFieldCleanup
+                  (ResultAstFieldCleanup.Err
                     "parse: malformed field :cleanup metadata")])]
-            [(string.string-eq key ":owned")
+            [(string.eq key ":owned")
               (match (box-get tail)
-                [(Sexpr.Nil) (OkAstFieldCleanup (AstFieldOwnedCleanup))]
+                [(Sexpr.Nil) (ResultAstFieldCleanup.Ok (AstFieldCleanup.Owned))]
                 [_
-                  (ErrAstFieldCleanup "parse: malformed field :owned metadata")])]
+                  (ResultAstFieldCleanup.Err
+                    "parse: malformed field :owned metadata")])]
             [(compiler-parse-metadata-key? key)
-              (ErrAstFieldCleanup
-                (string.string-append "parse: unknown field metadata " key))]
+              (ResultAstFieldCleanup.Err
+                (string.append "parse: unknown field metadata " key))]
             [else
-              (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
-        [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
-    [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")]))
+              (ResultAstFieldCleanup.Err
+                "parse: malformed field cleanup metadata")])]
+        [_
+          (ResultAstFieldCleanup.Err "parse: malformed field cleanup metadata")])]
+    [_ (ResultAstFieldCleanup.Err "parse: malformed field cleanup metadata")]))
 
 (define (parse-ast-variant-payload-cleanup [s : Sexpr]) : ResultAstVariantPayloadCleanup
   (match s
@@ -1687,48 +2210,47 @@
       (match (box-get key-node)
         [(Sexpr.Sym key)
           (cond
-            [(string.string-eq key ":cleanup")
+            [(string.eq key ":cleanup")
               (match (box-get tail)
                 [(Sexpr.Cons cleanup-node end)
                   (match (box-get end)
                     [(Sexpr.Nil)
                       (match (box-get cleanup-node)
                         [(Sexpr.Sym cleanup-fn)
-                          (OkAstVariantPayloadCleanup
+                          (ResultAstVariantPayloadCleanup.Ok
                             (ast-variant-payload-cleanup-fn cleanup-fn))]
                         [_
-                          (ErrAstVariantPayloadCleanup
+                          (ResultAstVariantPayloadCleanup.Err
                             "parse: malformed enum payload :cleanup metadata")])]
                     [_
-                      (ErrAstVariantPayloadCleanup
+                      (ResultAstVariantPayloadCleanup.Err
                         "parse: malformed enum payload :cleanup metadata")])]
                 [_
-                  (ErrAstVariantPayloadCleanup
+                  (ResultAstVariantPayloadCleanup.Err
                     "parse: malformed enum payload :cleanup metadata")])]
-            [(string.string-eq key ":owned")
+            [(string.eq key ":owned")
               (match (box-get tail)
                 [(Sexpr.Nil)
-                  (OkAstVariantPayloadCleanup (AstVariantPayloadOwnedCleanup))]
+                  (ResultAstVariantPayloadCleanup.Ok
+                    (AstVariantPayloadCleanup.Owned))]
                 [_
-                  (ErrAstVariantPayloadCleanup
+                  (ResultAstVariantPayloadCleanup.Err
                     "parse: malformed enum payload :owned metadata")])]
             [(compiler-parse-metadata-key? key)
-              (ErrAstVariantPayloadCleanup
-                (string.string-append
-                  "parse: unknown enum payload metadata "
-                  key))]
+              (ResultAstVariantPayloadCleanup.Err
+                (string.append "parse: unknown enum payload metadata " key))]
             [else
-              (ErrAstVariantPayloadCleanup
+              (ResultAstVariantPayloadCleanup.Err
                 "parse: malformed enum payload cleanup metadata")])]
         [_
-          (ErrAstVariantPayloadCleanup
+          (ResultAstVariantPayloadCleanup.Err
             "parse: malformed enum payload cleanup metadata")])]
     [_
-      (ErrAstVariantPayloadCleanup
+      (ResultAstVariantPayloadCleanup.Err
         "parse: malformed enum payload cleanup metadata")]))
 
 (define (parse-ast-field-def
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstFieldDef
@@ -1741,59 +2263,81 @@
               (match (box-get rest)
                 [(Sexpr.Nil)
                   (match (parse-ast-type dispatch pools (box-get ty))
-                    [(OkAstType parsed-ty)
-                      (OkAstFieldDef
-                        (ast-field-def name parsed-ty (AstFieldNoCleanup)))]
-                    [(ErrAstType message) (ErrAstFieldDef message)])]
+                    [(ResultAstType.Ok parsed-ty)
+                      (ResultAstFieldDef.Ok
+                        (ast-field-def name parsed-ty (AstFieldCleanup.No)))]
+                    [(ResultAstType.Err message)
+                      (ResultAstFieldDef.Err message)])]
                 [(Sexpr.Cons cleanup-meta extra)
                   (match (box-get extra)
                     [(Sexpr.Nil)
                       (if allow-cleanup
                         (match (parse-ast-type dispatch pools (box-get ty))
-                          [(OkAstType parsed-ty)
+                          [(ResultAstType.Ok parsed-ty)
                             (match (parse-ast-field-cleanup
                               (box-get cleanup-meta))
-                              [(OkAstFieldCleanup parsed-cleanup)
-                                (OkAstFieldDef
+                              [(ResultAstFieldCleanup.Ok parsed-cleanup)
+                                (ResultAstFieldDef.Ok
                                   (ast-field-def name parsed-ty parsed-cleanup))]
-                              [(ErrAstFieldCleanup message)
-                                (ErrAstFieldDef message)])]
-                          [(ErrAstType message) (ErrAstFieldDef message)])
-                        (ErrAstFieldDef
+                              [(ResultAstFieldCleanup.Err message)
+                                (ResultAstFieldDef.Err message)])]
+                          [(ResultAstType.Err message)
+                            (ResultAstFieldDef.Err message)])
+                        (ResultAstFieldDef.Err
                           "parse: field cleanup metadata requires struct :cleanup metadata"))]
                     [_
-                      (ErrAstFieldDef "parse: duplicate field cleanup metadata")])]
-                [_ (ErrAstFieldDef "parse: malformed field definition")])]
-            [_ (ErrAstFieldDef "parse: malformed field definition")])]
-        [_ (ErrAstFieldDef "parse: malformed field definition")])]
-    [_ (ErrAstFieldDef "parse: malformed field definition")]))
+                      (ResultAstFieldDef.Err
+                        "parse: duplicate field cleanup metadata")])]
+                [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
+            [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
+        [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
+    [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
+
+(define (parse-ast-field-def-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [allow-cleanup : bool]
+  [out : (&mut out AstFieldDefList)]) : ResultAstFieldDefListBuild
+  (match s
+    [(Sexpr.Nil) (ResultAstFieldDefListBuild.Ok)]
+    [(Sexpr.Cons head tail)
+      (match (parse-ast-field-def dispatch pools (box-get head) allow-cleanup)
+        [(ResultAstFieldDef.Ok parsed-head)
+          (begin
+            (ast-field-def-list-push out parsed-head)
+            (parse-ast-field-def-list-into
+              dispatch
+              pools
+              (box-get tail)
+              allow-cleanup
+              out))]
+        [(ResultAstFieldDef.Err message)
+          (ResultAstFieldDefListBuild.Err message)])]
+    [_ (ResultAstFieldDefListBuild.Err "parse: malformed field list")]))
 
 (define (parse-ast-field-def-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstFieldDefList
-  (match s
-    [(Sexpr.Nil) (OkAstFieldDefList AstFieldDefNil)]
-    [(Sexpr.Cons head tail)
-      (match (parse-ast-field-def dispatch pools (box-get head) allow-cleanup)
-        [(OkAstFieldDef parsed-head)
-          (match (parse-ast-field-def-list
-            dispatch
-            pools
-            (box-get tail)
-            allow-cleanup)
-            [(OkAstFieldDefList parsed-tail)
-              (OkAstFieldDefList (ast-field-def-cons parsed-head parsed-tail))]
-            [(ErrAstFieldDefList message) (ErrAstFieldDefList message)])]
-        [(ErrAstFieldDef message) (ErrAstFieldDefList message)])]
-    [_ (ErrAstFieldDefList "parse: malformed field list")]))
+  (let
+    [out : AstFieldDefList (ast-field-def-list-new)]
+    (match (parse-ast-field-def-list-into
+      dispatch
+      pools
+      s
+      allow-cleanup
+      (&mut out))
+      [(ResultAstFieldDefListBuild.Ok) (ResultAstFieldDefList.Ok out)]
+      [(ResultAstFieldDefListBuild.Err message)
+        (ResultAstFieldDefList.Err message)])))
 
 (define (compiler-parse-metadata-key? [name : String]) : bool
   (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':')))
 
 (define (parse-ast-aggregate-lifetimes-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tail : Sexpr]) : ResultAstLifetimeList
   (parse-ast-lifetime-list-nonempty
@@ -1809,15 +2353,15 @@
         [(Sexpr.Nil)
           (match (box-get name-node)
             [(Sexpr.Sym name)
-              (if (string.string-eq name "c")
-                (OkAstStructRepr (AstStructReprC))
-                (if (string.string-eq name "packed")
-                  (ErrAstStructRepr "parse: packed repr is reserved")
-                  (ErrAstStructRepr
-                    (string.string-append "parse: unknown struct repr " name))))]
-            [_ (ErrAstStructRepr "parse: malformed :repr metadata")])]
-        [_ (ErrAstStructRepr "parse: malformed :repr metadata")])]
-    [_ (ErrAstStructRepr "parse: malformed :repr metadata")]))
+              (if (string.eq name "c")
+                (ResultAstStructRepr.Ok (AstStructRepr.C))
+                (if (string.eq name "packed")
+                  (ResultAstStructRepr.Err "parse: packed repr is reserved")
+                  (ResultAstStructRepr.Err
+                    (string.append "parse: unknown struct repr " name))))]
+            [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
+        [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
+    [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")]))
 
 (define (parse-ast-defstruct-cleanup-tail [tail : Sexpr]) : ResultAstStructCleanup
   (match tail
@@ -1826,12 +2370,16 @@
         [(Sexpr.Nil)
           (match (box-get cleanup-node)
             [(Sexpr.Sym cleanup-fn)
-              (OkAstStructCleanup (ast-struct-cleanup-fn cleanup-fn))]
+              (ResultAstStructCleanup.Ok (ast-struct-cleanup-fn cleanup-fn))]
             [_
-              (ErrAstStructCleanup
+              (ResultAstStructCleanup.Err
                 "parse: malformed defstruct :cleanup metadata")])]
-        [_ (ErrAstStructCleanup "parse: malformed defstruct :cleanup metadata")])]
-    [_ (ErrAstStructCleanup "parse: malformed defstruct :cleanup metadata")]))
+        [_
+          (ResultAstStructCleanup.Err
+            "parse: malformed defstruct :cleanup metadata")])]
+    [_
+      (ResultAstStructCleanup.Err
+        "parse: malformed defstruct :cleanup metadata")]))
 
 (define (parse-ast-defenum-cleanup-tail [tail : Sexpr]) : ResultAstEnumCleanup
   (match tail
@@ -1840,19 +2388,24 @@
         [(Sexpr.Nil)
           (match (box-get cleanup-node)
             [(Sexpr.Sym cleanup-fn)
-              (OkAstEnumCleanup (ast-enum-cleanup-fn cleanup-fn))]
-            [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
-        [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
-    [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")]))
+              (ResultAstEnumCleanup.Ok (ast-enum-cleanup-fn cleanup-fn))]
+            [_
+              (ResultAstEnumCleanup.Err
+                "parse: malformed defenum :cleanup metadata")])]
+        [_
+          (ResultAstEnumCleanup.Err
+            "parse: malformed defenum :cleanup metadata")])]
+    [_ (ResultAstEnumCleanup.Err "parse: malformed defenum :cleanup metadata")]))
 
 (define (parse-ast-defstruct-field-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]) : ResultAstStructDefParts
@@ -1861,63 +2414,58 @@
     pools
     (spanned-sexpr-form head)
     (ast-struct-cleanup? cleanup))
-    [(OkAstFieldDef parsed-field)
-      (match (parse-ast-defstruct-items
-        dispatch
-        pools
-        tail
-        lifetimes
-        repr
-        cleanup
-        seen-lifetimes
-        seen-repr
-        seen-cleanup
-        true)
-        [(OkAstStructDefParts
-            parsed-lifetimes
-            parsed-repr
-            parsed-cleanup
-            parsed-rest)
-          (OkAstStructDefParts
-            parsed-lifetimes
-            parsed-repr
-            parsed-cleanup
-            (ast-field-def-cons parsed-field parsed-rest))]
-        [(ErrAstStructDefParts message) (ErrAstStructDefParts message)])]
-    [(ErrAstFieldDef message) (ErrAstStructDefParts message)]))
+    [(ResultAstFieldDef.Ok parsed-field)
+      (let
+        [next-fields : AstFieldDefList fields]
+        (begin
+          (ast-field-def-list-push (&mut next-fields) parsed-field)
+          (parse-ast-defstruct-items
+            dispatch
+            pools
+            tail
+            lifetimes
+            repr
+            cleanup
+            next-fields
+            seen-lifetimes
+            seen-repr
+            seen-cleanup
+            true)))]
+    [(ResultAstFieldDef.Err message) (ResultAstStructDefParts.Err message)]))
 
 (define (parse-ast-defstruct-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]
   [seen-field : bool]) : ResultAstStructDefParts
   (match items
     [(SpannedSexpr.Nil _)
-      (OkAstStructDefParts lifetimes repr cleanup AstFieldDefNil)]
+      (ResultAstStructDefParts.Ok lifetimes repr cleanup fields)]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
           (match (box-get key-node)
             [(Sexpr.Sym key)
               (cond
-                [(string.string-eq key ":lifetimes")
+                [(string.eq key ":lifetimes")
                   (if seen-field
-                    (ErrAstStructDefParts
+                    (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
                     (if seen-lifetimes
-                      (ErrAstStructDefParts
+                      (ResultAstStructDefParts.Err
                         "parse: duplicate defstruct :lifetimes metadata")
                       (match (parse-ast-aggregate-lifetimes-tail
                         dispatch
                         pools
                         (box-get after-key))
-                        [(OkAstLifetimeList next-lifetimes)
+                        [(ResultAstLifetimeList.Ok next-lifetimes)
                           (parse-ast-defstruct-items
                             dispatch
                             pools
@@ -1925,25 +2473,26 @@
                             next-lifetimes
                             repr
                             cleanup
+                            fields
                             true
                             seen-repr
                             seen-cleanup
                             false)]
-                        [(ErrAstLifetimeList message)
-                          (ErrAstStructDefParts message)])))]
-                [(string.string-eq key ":repr")
+                        [(ResultAstLifetimeList.Err message)
+                          (ResultAstStructDefParts.Err message)])))]
+                [(string.eq key ":repr")
                   (if seen-field
-                    (ErrAstStructDefParts
+                    (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
                     (if seen-repr
-                      (ErrAstStructDefParts
+                      (ResultAstStructDefParts.Err
                         "parse: duplicate defstruct :repr metadata")
                       (match (parse-ast-defstruct-repr-tail (box-get after-key))
-                        [(OkAstStructRepr next-repr)
+                        [(ResultAstStructRepr.Ok next-repr)
                           (if (and
                             (ast-struct-repr-c? next-repr)
                             (ast-struct-cleanup? cleanup))
-                            (ErrAstStructDefParts
+                            (ResultAstStructDefParts.Err
                               "parse: defstruct cannot combine :repr c with :cleanup metadata")
                             (parse-ast-defstruct-items
                               dispatch
@@ -1952,24 +2501,25 @@
                               lifetimes
                               next-repr
                               cleanup
+                              fields
                               seen-lifetimes
                               true
                               seen-cleanup
                               false))]
-                        [(ErrAstStructRepr message)
-                          (ErrAstStructDefParts message)])))]
-                [(string.string-eq key ":cleanup")
+                        [(ResultAstStructRepr.Err message)
+                          (ResultAstStructDefParts.Err message)])))]
+                [(string.eq key ":cleanup")
                   (if seen-field
-                    (ErrAstStructDefParts
+                    (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
                     (if seen-cleanup
-                      (ErrAstStructDefParts
+                      (ResultAstStructDefParts.Err
                         "parse: duplicate defstruct :cleanup metadata")
                       (match (parse-ast-defstruct-cleanup-tail
                         (box-get after-key))
-                        [(OkAstStructCleanup next-cleanup)
+                        [(ResultAstStructCleanup.Ok next-cleanup)
                           (if (ast-struct-repr-c? repr)
-                            (ErrAstStructDefParts
+                            (ResultAstStructDefParts.Err
                               "parse: defstruct cannot combine :repr c with :cleanup metadata")
                             (parse-ast-defstruct-items
                               dispatch
@@ -1978,22 +2528,22 @@
                               lifetimes
                               repr
                               next-cleanup
+                              fields
                               seen-lifetimes
                               seen-repr
                               true
                               false))]
-                        [(ErrAstStructCleanup message)
-                          (ErrAstStructDefParts message)])))]
+                        [(ResultAstStructCleanup.Err message)
+                          (ResultAstStructDefParts.Err message)])))]
                 [(compiler-parse-metadata-key? key)
                   (if seen-field
-                    (ErrAstStructDefParts
+                    (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
-                    (if (string.string-eq key ":packed")
-                      (ErrAstStructDefParts "parse: packed repr is reserved")
-                      (ErrAstStructDefParts
-                        (string.string-append
-                          "parse: unknown defstruct metadata "
-                          key))))]
+                    (if (string.eq key ":packed")
+                      (ResultAstStructDefParts.Err
+                        "parse: packed repr is reserved")
+                      (ResultAstStructDefParts.Err
+                        (string.append "parse: unknown defstruct metadata " key))))]
                 [else
                   (parse-ast-defstruct-field-item
                     dispatch
@@ -2003,6 +2553,7 @@
                     lifetimes
                     repr
                     cleanup
+                    fields
                     seen-lifetimes
                     seen-repr
                     seen-cleanup)])]
@@ -2015,6 +2566,7 @@
                 lifetimes
                 repr
                 cleanup
+                fields
                 seen-lifetimes
                 seen-repr
                 seen-cleanup)])]
@@ -2027,10 +2579,11 @@
             lifetimes
             repr
             cleanup
+            fields
             seen-lifetimes
             seen-repr
             seen-cleanup)])]
-    [_ (ErrAstStructDefParts "parse: malformed field list")]))
+    [_ (ResultAstStructDefParts.Err "parse: malformed field list")]))
 
 (define (compiler-parse-type-list-has-metadata? [s : Sexpr]) : bool
   (match s
@@ -2056,45 +2609,50 @@
     [_ false]))
 
 (define (parse-ast-variant-payload-parts
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantPayloadParts
   (match s
     [(Sexpr.Nil)
-      (OkAstVariantPayloadParts AstTypeNil AstVariantPayloadCleanupNil)]
+      (ResultAstVariantPayloadParts.Ok
+        (ast-type-list-new)
+        (ast-variant-payload-cleanup-list-new))]
     [(Sexpr.Cons ty-node rest)
       (let
         [ty-form : Sexpr (box-get ty-node)]
         [rest-form : Sexpr (box-get rest)]
         (if (compiler-parse-metadata-sexpr? ty-form)
-          (ErrAstVariantPayloadParts
+          (ResultAstVariantPayloadParts.Err
             "parse: enum payload cleanup metadata must follow a payload type")
           (match (parse-ast-type dispatch pools ty-form)
-            [(OkAstType parsed-ty)
+            [(ResultAstType.Ok parsed-ty)
               (match rest-form
                 [(Sexpr.Nil)
-                  (OkAstVariantPayloadParts
-                    (ast-type-cons-with-pools pools parsed-ty AstTypeNil)
+                  (ResultAstVariantPayloadParts.Ok
+                    (ast-type-cons-with-pools
+                      pools
+                      parsed-ty
+                      (ast-type-list-new))
                     (ast-variant-payload-cleanup-cons
-                      (AstVariantPayloadNoCleanup)
-                      AstVariantPayloadCleanupNil))]
+                      (AstVariantPayloadCleanup.No)
+                      (ast-variant-payload-cleanup-list-new)))]
                 [(Sexpr.Cons cleanup-node after-cleanup)
                   (let
                     [cleanup-form : Sexpr (box-get cleanup-node)]
                     (if (compiler-parse-metadata-sexpr? cleanup-form)
                       (if allow-cleanup
                         (match (parse-ast-variant-payload-cleanup cleanup-form)
-                          [(OkAstVariantPayloadCleanup parsed-cleanup)
+                          [(ResultAstVariantPayloadCleanup.Ok parsed-cleanup)
                             (match (parse-ast-variant-payload-parts
                               dispatch
                               pools
                               (box-get after-cleanup)
                               allow-cleanup)
-                              [(OkAstVariantPayloadParts
+                              [(ResultAstVariantPayloadParts.Ok
                                   parsed-rest
                                   cleanup-rest)
-                                (OkAstVariantPayloadParts
+                                (ResultAstVariantPayloadParts.Ok
                                   (ast-type-cons-with-pools
                                     pools
                                     parsed-ty
@@ -2102,36 +2660,39 @@
                                   (ast-variant-payload-cleanup-cons
                                     parsed-cleanup
                                     cleanup-rest))]
-                              [(ErrAstVariantPayloadParts message)
-                                (ErrAstVariantPayloadParts message)])]
-                          [(ErrAstVariantPayloadCleanup message)
-                            (ErrAstVariantPayloadParts message)])
-                        (ErrAstVariantPayloadParts
+                              [(ResultAstVariantPayloadParts.Err message)
+                                (ResultAstVariantPayloadParts.Err message)])]
+                          [(ResultAstVariantPayloadCleanup.Err message)
+                            (ResultAstVariantPayloadParts.Err message)])
+                        (ResultAstVariantPayloadParts.Err
                           "parse: enum payload cleanup metadata requires enum :cleanup metadata"))
                       (match (parse-ast-variant-payload-parts
                         dispatch
                         pools
                         rest-form
                         allow-cleanup)
-                        [(OkAstVariantPayloadParts parsed-rest cleanup-rest)
-                          (OkAstVariantPayloadParts
+                        [(ResultAstVariantPayloadParts.Ok
+                            parsed-rest
+                            cleanup-rest)
+                          (ResultAstVariantPayloadParts.Ok
                             (ast-type-cons-with-pools
                               pools
                               parsed-ty
                               parsed-rest)
                             (ast-variant-payload-cleanup-cons
-                              (AstVariantPayloadNoCleanup)
+                              (AstVariantPayloadCleanup.No)
                               cleanup-rest))]
-                        [(ErrAstVariantPayloadParts message)
-                          (ErrAstVariantPayloadParts message)])))]
+                        [(ResultAstVariantPayloadParts.Err message)
+                          (ResultAstVariantPayloadParts.Err message)])))]
                 [_
-                  (ErrAstVariantPayloadParts
+                  (ResultAstVariantPayloadParts.Err
                     "parse: malformed enum payload list")])]
-            [(ErrAstType message) (ErrAstVariantPayloadParts message)])))]
-    [_ (ErrAstVariantPayloadParts "parse: malformed enum payload list")]))
+            [(ResultAstType.Err message)
+              (ResultAstVariantPayloadParts.Err message)])))]
+    [_ (ResultAstVariantPayloadParts.Err "parse: malformed enum payload list")]))
 
 (define (parse-ast-variant-def
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantDef
@@ -2140,53 +2701,74 @@
       (match (box-get name-node)
         [(Sexpr.Sym name)
           (if (compiler-parse-metadata-key? name)
-            (if (string.string-eq name ":cleanup")
-              (ErrAstVariantDef
+            (if (string.eq name ":cleanup")
+              (ResultAstVariantDef.Err
                 "parse: defenum metadata must appear before variants")
-              (ErrAstVariantDef
-                (string.string-append "parse: unknown defenum metadata " name)))
+              (ResultAstVariantDef.Err
+                (string.append "parse: unknown defenum metadata " name)))
             (match (parse-ast-variant-payload-parts
               dispatch
               pools
               (box-get fields)
               allow-cleanup)
-              [(OkAstVariantPayloadParts parsed-fields parsed-cleanups)
-                (OkAstVariantDef
+              [(ResultAstVariantPayloadParts.Ok parsed-fields parsed-cleanups)
+                (ResultAstVariantDef.Ok
                   (ast-variant-def name parsed-fields parsed-cleanups))]
-              [(ErrAstVariantPayloadParts message) (ErrAstVariantDef message)]))]
-        [_ (ErrAstVariantDef "parse: malformed variant definition")])]
-    [_ (ErrAstVariantDef "parse: malformed variant definition")]))
+              [(ResultAstVariantPayloadParts.Err message)
+                (ResultAstVariantDef.Err message)]))]
+        [_ (ResultAstVariantDef.Err "parse: malformed variant definition")])]
+    [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
+
+(define (parse-ast-variant-def-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]
+  [allow-cleanup : bool]
+  [out : (&mut out AstVariantDefList)]) : ResultAstVariantDefListBuild
+  (match s
+    [(Sexpr.Nil) (ResultAstVariantDefListBuild.Ok)]
+    [(Sexpr.Cons head tail)
+      (match (parse-ast-variant-def dispatch pools (box-get head) allow-cleanup)
+        [(ResultAstVariantDef.Ok parsed-head)
+          (begin
+            (ast-variant-def-list-push out parsed-head)
+            (parse-ast-variant-def-list-into
+              dispatch
+              pools
+              (box-get tail)
+              allow-cleanup
+              out))]
+        [(ResultAstVariantDef.Err message)
+          (ResultAstVariantDefListBuild.Err message)])]
+    [_ (ResultAstVariantDefListBuild.Err "parse: malformed variant list")]))
 
 (define (parse-ast-variant-def-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantDefList
-  (match s
-    [(Sexpr.Nil) (OkAstVariantDefList AstVariantDefNil)]
-    [(Sexpr.Cons head tail)
-      (match (parse-ast-variant-def dispatch pools (box-get head) allow-cleanup)
-        [(OkAstVariantDef parsed-head)
-          (match (parse-ast-variant-def-list
-            dispatch
-            pools
-            (box-get tail)
-            allow-cleanup)
-            [(OkAstVariantDefList parsed-tail)
-              (OkAstVariantDefList
-                (ast-variant-def-cons parsed-head parsed-tail))]
-            [(ErrAstVariantDefList message) (ErrAstVariantDefList message)])]
-        [(ErrAstVariantDef message) (ErrAstVariantDefList message)])]
-    [_ (ErrAstVariantDefList "parse: malformed variant list")]))
+  (let
+    [out : AstVariantDefList (ast-variant-def-list-new)]
+    (match (parse-ast-variant-def-list-into
+      dispatch
+      pools
+      s
+      allow-cleanup
+      (&mut out))
+      [(ResultAstVariantDefListBuild.Ok) (ResultAstVariantDefList.Ok out)]
+      [(ResultAstVariantDefListBuild.Err message)
+        (ResultAstVariantDefList.Err message)])))
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
   (cond
-    [(string.string-eq name "scalar") (OkAstDispatchIsa (AstDispatchScalar))]
-    [(string.string-eq name "avx2") (OkAstDispatchIsa (AstDispatchAvx2))]
-    [(string.string-eq name "avx512") (OkAstDispatchIsa (AstDispatchAvx512))]
+    [(string.eq name "scalar")
+      (ResultAstDispatchIsa.Ok (AstDispatchIsa.Scalar))]
+    [(string.eq name "avx2") (ResultAstDispatchIsa.Ok (AstDispatchIsa.Avx2))]
+    [(string.eq name "avx512")
+      (ResultAstDispatchIsa.Ok (AstDispatchIsa.Avx512))]
     [else
-      (ErrAstDispatchIsa
-        (string.string-append "parse: unknown defdispatch ISA " name))]))
+      (ResultAstDispatchIsa.Err
+        (string.append "parse: unknown defdispatch ISA " name))]))
 
 (define (parse-ast-dispatch-variant [s : SpannedSexpr]) : ResultAstDispatchVariant
   (match s
@@ -2200,37 +2782,52 @@
                   (match (sp-node-get fn-node)
                     [(SpannedSexpr.Sym fn-name _)
                       (match (parse-ast-dispatch-isa isa-name)
-                        [(OkAstDispatchIsa isa)
-                          (OkAstDispatchVariant
-                            (AstDispatchVariant isa fn-name))]
-                        [(ErrAstDispatchIsa message)
-                          (ErrAstDispatchVariant message)])]
+                        [(ResultAstDispatchIsa.Ok isa)
+                          (ResultAstDispatchVariant.Ok
+                            (AstDispatchVariant.Variant isa fn-name))]
+                        [(ResultAstDispatchIsa.Err message)
+                          (ResultAstDispatchVariant.Err message)])]
                     [_
-                      (ErrAstDispatchVariant
+                      (ResultAstDispatchVariant.Err
                         "parse: malformed defdispatch variant")])]
                 [_
-                  (ErrAstDispatchVariant "parse: malformed defdispatch variant")])]
-            [_ (ErrAstDispatchVariant "parse: malformed defdispatch variant")])]
-        [_ (ErrAstDispatchVariant "parse: malformed defdispatch variant")])]
-    [_ (ErrAstDispatchVariant "parse: malformed defdispatch variant")]))
+                  (ResultAstDispatchVariant.Err
+                    "parse: malformed defdispatch variant")])]
+            [_
+              (ResultAstDispatchVariant.Err
+                "parse: malformed defdispatch variant")])]
+        [_
+          (ResultAstDispatchVariant.Err "parse: malformed defdispatch variant")])]
+    [_ (ResultAstDispatchVariant.Err "parse: malformed defdispatch variant")]))
 
-(define (parse-ast-dispatch-variant-list [variants : SpannedSexpr]) : ResultAstDispatchVariantList
+(define (parse-ast-dispatch-variant-list-into
+  [variants : SpannedSexpr]
+  [out : (&mut out AstDispatchVariantList)]) : ResultAstDispatchVariantListBuild
   (match variants
-    [(SpannedSexpr.Nil _) (OkAstDispatchVariantList AstDispatchVariantNil)]
+    [(SpannedSexpr.Nil _) (ResultAstDispatchVariantListBuild.Ok)]
     [(SpannedSexpr.Cons head rest _)
       (match (parse-ast-dispatch-variant (sp-node-get head))
-        [(OkAstDispatchVariant parsed)
-          (match (parse-ast-dispatch-variant-list (sp-node-get rest))
-            [(OkAstDispatchVariantList parsed-rest)
-              (OkAstDispatchVariantList
-                (ast-dispatch-variant-cons parsed parsed-rest))]
-            [(ErrAstDispatchVariantList message)
-              (ErrAstDispatchVariantList message)])]
-        [(ErrAstDispatchVariant message) (ErrAstDispatchVariantList message)])]
-    [_ (ErrAstDispatchVariantList "parse: malformed defdispatch variant list")]))
+        [(ResultAstDispatchVariant.Ok parsed)
+          (begin
+            (ast-dispatch-variant-list-push out parsed)
+            (parse-ast-dispatch-variant-list-into (sp-node-get rest) out))]
+        [(ResultAstDispatchVariant.Err message)
+          (ResultAstDispatchVariantListBuild.Err message)])]
+    [_
+      (ResultAstDispatchVariantListBuild.Err
+        "parse: malformed defdispatch variant list")]))
+
+(define (parse-ast-dispatch-variant-list [variants : SpannedSexpr]) : ResultAstDispatchVariantList
+  (let
+    [out : AstDispatchVariantList (ast-dispatch-variant-list-new)]
+    (match (parse-ast-dispatch-variant-list-into variants (&mut out))
+      [(ResultAstDispatchVariantListBuild.Ok)
+        (ResultAstDispatchVariantList.Ok out)]
+      [(ResultAstDispatchVariantListBuild.Err message)
+        (ResultAstDispatchVariantList.Err message)])))
 
 (define (parse-ast-defenum-variant-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
@@ -2243,7 +2840,7 @@
     pools
     (spanned-sexpr-form head)
     (ast-enum-cleanup? cleanup))
-    [(OkAstVariantDef parsed-variant)
+    [(ResultAstVariantDef.Ok parsed-variant)
       (match (parse-ast-defenum-items
         dispatch
         pools
@@ -2253,16 +2850,17 @@
         seen-lifetimes
         seen-cleanup
         true)
-        [(OkAstEnumDefParts parsed-lifetimes parsed-cleanup parsed-rest)
-          (OkAstEnumDefParts
+        [(ResultAstEnumDefParts.Ok parsed-lifetimes parsed-cleanup parsed-rest)
+          (ResultAstEnumDefParts.Ok
             parsed-lifetimes
             parsed-cleanup
             (ast-variant-def-cons parsed-variant parsed-rest))]
-        [(ErrAstEnumDefParts message) (ErrAstEnumDefParts message)])]
-    [(ErrAstVariantDef message) (ErrAstEnumDefParts message)]))
+        [(ResultAstEnumDefParts.Err message)
+          (ResultAstEnumDefParts.Err message)])]
+    [(ResultAstVariantDef.Err message) (ResultAstEnumDefParts.Err message)]))
 
 (define (parse-ast-defenum-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [lifetimes : AstLifetimeList]
@@ -2272,7 +2870,7 @@
   [seen-variant : bool]) : ResultAstEnumDefParts
   (match items
     [(SpannedSexpr.Nil _)
-      (OkAstEnumDefParts lifetimes cleanup AstVariantDefNil)]
+      (ResultAstEnumDefParts.Ok lifetimes cleanup (ast-variant-def-list-new))]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
@@ -2290,17 +2888,17 @@
                     seen-lifetimes
                     seen-cleanup)]
                 [seen-variant
-                  (ErrAstEnumDefParts
+                  (ResultAstEnumDefParts.Err
                     "parse: defenum metadata must appear before variants")]
-                [(string.string-eq key ":lifetimes")
+                [(string.eq key ":lifetimes")
                   (if seen-lifetimes
-                    (ErrAstEnumDefParts
+                    (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :lifetimes metadata")
                     (match (parse-ast-aggregate-lifetimes-tail
                       dispatch
                       pools
                       (box-get after-key))
-                      [(OkAstLifetimeList next-lifetimes)
+                      [(ResultAstLifetimeList.Ok next-lifetimes)
                         (parse-ast-defenum-items
                           dispatch
                           pools
@@ -2310,14 +2908,14 @@
                           true
                           seen-cleanup
                           false)]
-                      [(ErrAstLifetimeList message)
-                        (ErrAstEnumDefParts message)]))]
-                [(string.string-eq key ":cleanup")
+                      [(ResultAstLifetimeList.Err message)
+                        (ResultAstEnumDefParts.Err message)]))]
+                [(string.eq key ":cleanup")
                   (if seen-cleanup
-                    (ErrAstEnumDefParts
+                    (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :cleanup metadata")
                     (match (parse-ast-defenum-cleanup-tail (box-get after-key))
-                      [(OkAstEnumCleanup next-cleanup)
+                      [(ResultAstEnumCleanup.Ok next-cleanup)
                         (parse-ast-defenum-items
                           dispatch
                           pools
@@ -2327,12 +2925,11 @@
                           seen-lifetimes
                           true
                           false)]
-                      [(ErrAstEnumCleanup message) (ErrAstEnumDefParts message)]))]
+                      [(ResultAstEnumCleanup.Err message)
+                        (ResultAstEnumDefParts.Err message)]))]
                 [else
-                  (ErrAstEnumDefParts
-                    (string.string-append
-                      "parse: unknown defenum metadata "
-                      key))])]
+                  (ResultAstEnumDefParts.Err
+                    (string.append "parse: unknown defenum metadata " key))])]
             [_
               (parse-ast-defenum-variant-item
                 dispatch
@@ -2353,56 +2950,71 @@
             cleanup
             seen-lifetimes
             seen-cleanup)])]
-    [_ (ErrAstEnumDefParts "parse: malformed variant list")]))
+    [_ (ResultAstEnumDefParts.Err "parse: malformed variant list")]))
 
-(define (parse-ast-pattern-list
-  [dispatch : SymI64Env]
+(define (parse-ast-pattern-list-into
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : Sexpr]) : ResultAstPatternList
+  [s : Sexpr]
+  [out : (&mut out AstPatternList)]) : ResultAstPatternListBuild
   (match s
-    [(Sexpr.Nil) (OkAstPatternList AstPatternNil)]
+    [(Sexpr.Nil) (ResultAstPatternListBuild.Ok)]
     [(Sexpr.Cons head tail)
       (match (parse-ast-pattern dispatch pools (box-get head))
-        [(OkAstPattern parsed-head)
-          (match (parse-ast-pattern-list dispatch pools (box-get tail))
-            [(OkAstPatternList parsed-tail)
-              (OkAstPatternList (ast-pattern-cons parsed-head parsed-tail))]
-            [(ErrAstPatternList message) (ErrAstPatternList message)])]
-        [(ErrAstPattern message) (ErrAstPatternList message)])]
-    [_ (ErrAstPatternList "parse: malformed pattern list")]))
+        [(ResultAstPattern.Ok parsed-head)
+          (begin
+            (ast-pattern-list-push out parsed-head)
+            (parse-ast-pattern-list-into dispatch pools (box-get tail) out))]
+        [(ResultAstPattern.Err message) (ResultAstPatternListBuild.Err message)])]
+    [_ (ResultAstPatternListBuild.Err "parse: malformed pattern list")]))
+
+(define (parse-ast-pattern-list
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]) : ResultAstPatternList
+  (let
+    [out : AstPatternList (ast-pattern-list-new)]
+    (match (parse-ast-pattern-list-into dispatch pools s (&mut out))
+      [(ResultAstPatternListBuild.Ok) (ResultAstPatternList.Ok out)]
+      [(ResultAstPatternListBuild.Err message)
+        (ResultAstPatternList.Err message)])))
 
 (define (parse-ast-pattern
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstPattern
   (match s
-    [(Sexpr.Int n text) (OkAstPattern (AstPatLiteral (AstLitInt n text)))]
-    [(Sexpr.Float text) (OkAstPattern (AstPatLiteral (AstLitFloat text)))]
-    [(Sexpr.Str text) (OkAstPattern (AstPatLiteral (AstLitString text)))]
-    [(Sexpr.Char c) (OkAstPattern (AstPatLiteral (AstLitChar c)))]
+    [(Sexpr.Int n text)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Int n text)))]
+    [(Sexpr.Float text)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Float text)))]
+    [(Sexpr.Str text)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.String text)))]
+    [(Sexpr.Char c)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Char c)))]
     [(Sexpr.Sym name)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
         (cond
           [(= tag (compiler-parse-tag-pattern-wildcard))
-            (OkAstPattern AstPatWildcard)]
+            (ResultAstPattern.Ok AstPattern.Wildcard)]
           [(= tag (compiler-parse-tag-lit-true))
-            (OkAstPattern (AstPatLiteral (AstLitBool true)))]
+            (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Bool true)))]
           [(= tag (compiler-parse-tag-lit-false))
-            (OkAstPattern (AstPatLiteral (AstLitBool false)))]
-          [else (OkAstPattern (ast-pat-binding name))]))]
+            (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Bool false)))]
+          [else (ResultAstPattern.Ok (ast-pat-binding name))]))]
     [(Sexpr.Cons name-node args)
       (match (box-get name-node)
         [(Sexpr.Sym name)
           (match (parse-ast-pattern-list dispatch pools (box-get args))
-            [(OkAstPatternList parsed-args)
-              (OkAstPattern (ast-pat-variant name parsed-args))]
-            [(ErrAstPatternList message) (ErrAstPattern message)])]
-        [_ (ErrAstPattern "parse: expected pattern")])]
-    [_ (ErrAstPattern "parse: expected pattern")]))
+            [(ResultAstPatternList.Ok parsed-args)
+              (ResultAstPattern.Ok (ast-pat-variant name parsed-args))]
+            [(ResultAstPatternList.Err message) (ResultAstPattern.Err message)])]
+        [_ (ResultAstPattern.Err "parse: expected pattern")])]
+    [_ (ResultAstPattern.Err "parse: expected pattern")]))
 
 (define (parse-ast-cfg-expr-maybe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstMaybeExpr
   (match rest
@@ -2412,130 +3024,148 @@
           (match (sp-node-get rest-tail)
             [(SpannedSexpr.Nil _)
               (match (compiler-cfg-eval dispatch (sp-node-get pred))
-                [(OkCompilerCfg enabled)
+                [(ResultCompilerCfg.Ok enabled)
                   (if enabled
                     (match (parse-ast-expr-with-pools
                       dispatch
                       pools
                       (sp-node-get then-expr))
-                      [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-                      [(ErrAstExpr message) (ErrAstMaybeExpr message)])
-                    (OkAstNoExpr))]
-                [(ErrCompilerCfg message) (ErrAstMaybeExpr message)])]
+                      [(ResultAstExpr.Ok parsed)
+                        (ResultAstMaybeExpr.SomeExpr parsed)]
+                      [(ResultAstExpr.Err message)
+                        (ResultAstMaybeExpr.Err message)])
+                    (ResultAstMaybeExpr.NoExpr))]
+                [(ResultCompilerCfg.Err message)
+                  (ResultAstMaybeExpr.Err message)])]
             [(SpannedSexpr.Cons else-expr end _)
               (match (sp-node-get end)
                 [(SpannedSexpr.Nil _)
                   (match (compiler-cfg-eval dispatch (sp-node-get pred))
-                    [(OkCompilerCfg enabled)
+                    [(ResultCompilerCfg.Ok enabled)
                       (match (parse-ast-expr-with-pools
                         dispatch
                         pools
                         (if enabled
                           (sp-node-get then-expr)
                           (sp-node-get else-expr)))
-                        [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-                        [(ErrAstExpr message) (ErrAstMaybeExpr message)])]
-                    [(ErrCompilerCfg message) (ErrAstMaybeExpr message)])]
+                        [(ResultAstExpr.Ok parsed)
+                          (ResultAstMaybeExpr.SomeExpr parsed)]
+                        [(ResultAstExpr.Err message)
+                          (ResultAstMaybeExpr.Err message)])]
+                    [(ResultCompilerCfg.Err message)
+                      (ResultAstMaybeExpr.Err message)])]
                 [_
-                  (ErrAstMaybeExpr
+                  (ResultAstMaybeExpr.Err
                     "parse: cfg expression expects predicate and expression")])]
             [_
-              (ErrAstMaybeExpr
+              (ResultAstMaybeExpr.Err
                 "parse: cfg expression expects predicate and expression")])]
         [_
-          (ErrAstMaybeExpr
+          (ResultAstMaybeExpr.Err
             "parse: cfg expression expects predicate and expression")])]
     [_
-      (ErrAstMaybeExpr "parse: cfg expression expects predicate and expression")]))
+      (ResultAstMaybeExpr.Err
+        "parse: cfg expression expects predicate and expression")]))
 
 (define (parse-ast-cfg-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-cfg-expr-maybe dispatch pools rest)
-    [(OkAstSomeExpr expr) (OkAstExpr expr)]
-    [(OkAstNoExpr)
-      (OkAstExpr
-        (ast-node-pool-context-expr-push pools (AstExprLiteral AstLitUnit)))]
-    [(ErrAstMaybeExpr message) (ErrAstExpr message)]))
+    [(ResultAstMaybeExpr.SomeExpr expr) (ResultAstExpr.Ok expr)]
+    [(ResultAstMaybeExpr.NoExpr)
+      (ResultAstExpr.Ok
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal AstLiteral.Unit)))]
+    [(ResultAstMaybeExpr.Err message) (ResultAstExpr.Err message)]))
+
+(define (parse-ast-expr-list-item-maybe
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [head : SpannedSexpr]) : ResultAstMaybeExpr
+  (match head
+    [(SpannedSexpr.Cons op-node cfg-rest _)
+      (match (sp-node-get op-node)
+        [(SpannedSexpr.Sym op _)
+          (if (string.eq op "cfg")
+            (parse-ast-cfg-expr-maybe dispatch pools (sp-node-get cfg-rest))
+            (match (parse-ast-expr-with-pools dispatch pools head)
+              [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+              [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)]))]
+        [_
+          (match (parse-ast-expr-with-pools dispatch pools head)
+            [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+            [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])])]
+    [_
+      (match (parse-ast-expr-with-pools dispatch pools head)
+        [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+        [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])]))
+
+(define (parse-ast-expr-list-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]
+  [out : (&mut out AstExprList)]) : ResultAstExprListBuild
+  (match s
+    [(SpannedSexpr.Nil _) (ResultAstExprListBuild.Ok)]
+    [(SpannedSexpr.Cons head tail _)
+      (match (parse-ast-expr-list-item-maybe dispatch pools (sp-node-get head))
+        [(ResultAstMaybeExpr.SomeExpr parsed-head)
+          (begin
+            (ast-expr-list-push out parsed-head)
+            (parse-ast-expr-list-into dispatch pools (sp-node-get tail) out))]
+        [(ResultAstMaybeExpr.NoExpr)
+          (parse-ast-expr-list-into dispatch pools (sp-node-get tail) out)]
+        [(ResultAstMaybeExpr.Err message) (ResultAstExprListBuild.Err message)])]
+    [_ (ResultAstExprListBuild.Err "parse: malformed expression list")]))
 
 (define (parse-ast-expr-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstExprList
+  (let
+    [out : AstExprList (ast-expr-list-new)]
+    (match (parse-ast-expr-list-into dispatch pools s (&mut out))
+      [(ResultAstExprListBuild.Ok) (ResultAstExprList.Ok out)]
+      [(ResultAstExprListBuild.Err message) (ResultAstExprList.Err message)])))
+
+(define (parse-ast-body-tail
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]
+  [missing-message : String]) : ResultAstExpr
   (match s
-    [(SpannedSexpr.Nil _) (OkAstExprList AstExprNil)]
-    [(SpannedSexpr.Cons head tail _)
-      (match (sp-node-get head)
-        [(SpannedSexpr.Cons op-node cfg-rest _)
-          (match (sp-node-get op-node)
-            [(SpannedSexpr.Sym op _)
-              (if (string.string-eq op "cfg")
-                (match (parse-ast-cfg-expr-maybe
-                  dispatch
-                  pools
-                  (sp-node-get cfg-rest))
-                  [(OkAstSomeExpr parsed-head)
-                    (match (parse-ast-expr-list
-                      dispatch
-                      pools
-                      (sp-node-get tail))
-                      [(OkAstExprList parsed-tail)
-                        (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
-                      [(ErrAstExprList message) (ErrAstExprList message)])]
-                  [(OkAstNoExpr)
-                    (parse-ast-expr-list dispatch pools (sp-node-get tail))]
-                  [(ErrAstMaybeExpr message) (ErrAstExprList message)])
-                (match (parse-ast-expr-with-pools
-                  dispatch
-                  pools
-                  (sp-node-get head))
-                  [(OkAstExpr parsed-head)
-                    (match (parse-ast-expr-list
-                      dispatch
-                      pools
-                      (sp-node-get tail))
-                      [(OkAstExprList parsed-tail)
-                        (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
-                      [(ErrAstExprList message) (ErrAstExprList message)])]
-                  [(ErrAstExpr message) (ErrAstExprList message)]))]
-            [_
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get head))
-                [(OkAstExpr parsed-head)
-                  (match (parse-ast-expr-list dispatch pools (sp-node-get tail))
-                    [(OkAstExprList parsed-tail)
-                      (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
-                    [(ErrAstExprList message) (ErrAstExprList message)])]
-                [(ErrAstExpr message) (ErrAstExprList message)])])]
-        [_
-          (match (parse-ast-expr-with-pools dispatch pools (sp-node-get head))
-            [(OkAstExpr parsed-head)
-              (match (parse-ast-expr-list dispatch pools (sp-node-get tail))
-                [(OkAstExprList parsed-tail)
-                  (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
-                [(ErrAstExprList message) (ErrAstExprList message)])]
-            [(ErrAstExpr message) (ErrAstExprList message)])])]
-    [_ (ErrAstExprList "parse: malformed expression list")]))
+    [(SpannedSexpr.Nil _) (ResultAstExpr.Err missing-message)]
+    [_
+      (match (parse-ast-expr-list dispatch pools s)
+        [(ResultAstExprList.Ok exprs)
+          (let
+            [n : i64 (struct-get (& exprs) len)]
+            (cond
+              [(= n 0) (ResultAstExpr.Err missing-message)]
+              [(= n 1) (ResultAstExpr.Ok (ast-expr-list-get (& exprs) 0 0))]
+              [else
+                (ResultAstExpr.Ok
+                  (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs)))]))]
+        [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]))
 
 (define (parse-ast-call-bracket-clause
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]
   [items : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools items)
-    [(OkAstExprList parsed-items)
-      (OkAstExpr
+    [(ResultAstExprList.Ok parsed-items)
+      (ResultAstExpr.Ok
         (ast-expr-wrap-span
           pools
           (ast-expr-bracket-clause-with-pools pools parsed-items)
           s))]
-    [(ErrAstExprList message) (ErrAstExpr message)]))
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-call-arg-maybe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]) : ResultAstMaybeExpr
   (match head
@@ -2545,45 +3175,55 @@
         pools
         head
         (sp-node-get items))
-        [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-        [(ErrAstExpr message) (ErrAstMaybeExpr message)])]
+        [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+        [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])]
     [(SpannedSexpr.Cons op-node cfg-rest _)
       (match (sp-node-get op-node)
         [(SpannedSexpr.Sym op _)
-          (if (string.string-eq op "cfg")
+          (if (string.eq op "cfg")
             (parse-ast-cfg-expr-maybe dispatch pools (sp-node-get cfg-rest))
             (match (parse-ast-expr-with-pools dispatch pools head)
-              [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-              [(ErrAstExpr message) (ErrAstMaybeExpr message)]))]
+              [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+              [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)]))]
         [_
           (match (parse-ast-expr-with-pools dispatch pools head)
-            [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-            [(ErrAstExpr message) (ErrAstMaybeExpr message)])])]
+            [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+            [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])])]
     [_
       (match (parse-ast-expr-with-pools dispatch pools head)
-        [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
-        [(ErrAstExpr message) (ErrAstMaybeExpr message)])]))
+        [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
+        [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])]))
 
-(define (parse-ast-call-arg-list
-  [dispatch : SymI64Env]
+(define (parse-ast-call-arg-list-into
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : SpannedSexpr]) : ResultAstExprList
+  [s : SpannedSexpr]
+  [out : (&mut out AstExprList)]) : ResultAstExprListBuild
   (match s
-    [(SpannedSexpr.Nil _) (OkAstExprList AstExprNil)]
+    [(SpannedSexpr.Nil _) (ResultAstExprListBuild.Ok)]
     [(SpannedSexpr.Cons head tail _)
       (match (parse-ast-call-arg-maybe dispatch pools (sp-node-get head))
-        [(OkAstSomeExpr parsed-head)
-          (match (parse-ast-call-arg-list dispatch pools (sp-node-get tail))
-            [(OkAstExprList parsed-tail)
-              (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
-            [(ErrAstExprList message) (ErrAstExprList message)])]
-        [(OkAstNoExpr)
-          (parse-ast-call-arg-list dispatch pools (sp-node-get tail))]
-        [(ErrAstMaybeExpr message) (ErrAstExprList message)])]
-    [_ (ErrAstExprList "parse: malformed call argument list")]))
+        [(ResultAstMaybeExpr.SomeExpr parsed-head)
+          (begin
+            (ast-expr-list-push out parsed-head)
+            (parse-ast-call-arg-list-into dispatch pools (sp-node-get tail) out))]
+        [(ResultAstMaybeExpr.NoExpr)
+          (parse-ast-call-arg-list-into dispatch pools (sp-node-get tail) out)]
+        [(ResultAstMaybeExpr.Err message) (ResultAstExprListBuild.Err message)])]
+    [_ (ResultAstExprListBuild.Err "parse: malformed call argument list")]))
+
+(define (parse-ast-call-arg-list
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]) : ResultAstExprList
+  (let
+    [out : AstExprList (ast-expr-list-new)]
+    (match (parse-ast-call-arg-list-into dispatch pools s (&mut out))
+      [(ResultAstExprListBuild.Ok) (ResultAstExprList.Ok out)]
+      [(ResultAstExprListBuild.Err message) (ResultAstExprList.Err message)])))
 
 (define (parse-ast-binary
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2597,26 +3237,77 @@
                 dispatch
                 pools
                 (sp-node-get left))
-                [(OkAstExpr parsed-left)
+                [(ResultAstExpr.Ok parsed-left)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get right))
-                    [(OkAstExpr parsed-right)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-right)
+                      (ResultAstExpr.Ok
                         (ast-expr-binary-with-pools
                           pools
                           op
                           parsed-left
                           parsed-right))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed binary expression")])]
-        [_ (ErrAstExpr "parse: malformed binary expression")])]
-    [_ (ErrAstExpr "parse: malformed binary expression")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed binary expression")])]
+        [_ (ResultAstExpr.Err "parse: malformed binary expression")])]
+    [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
+
+(define (parse-ast-binary-left-fold-tail
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [acc : i64]
+  [tail : SpannedSexpr]) : ResultAstExpr
+  (match tail
+    [(SpannedSexpr.Nil _) (ResultAstExpr.Ok acc)]
+    [(SpannedSexpr.Cons expr rest _)
+      (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
+        [(ResultAstExpr.Ok parsed-expr)
+          (parse-ast-binary-left-fold-tail
+            dispatch
+            pools
+            op
+            (ast-expr-binary-with-pools pools op acc parsed-expr)
+            (sp-node-get rest))]
+        [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+    [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
+
+(define (parse-ast-binary-left-fold
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpannedSexpr.Cons left right-tail _)
+      (match (sp-node-get right-tail)
+        [(SpannedSexpr.Cons right tail _)
+          (match (parse-ast-expr-with-pools dispatch pools (sp-node-get left))
+            [(ResultAstExpr.Ok parsed-left)
+              (match (parse-ast-expr-with-pools
+                dispatch
+                pools
+                (sp-node-get right))
+                [(ResultAstExpr.Ok parsed-right)
+                  (parse-ast-binary-left-fold-tail
+                    dispatch
+                    pools
+                    op
+                    (ast-expr-binary-with-pools
+                      pools
+                      op
+                      parsed-left
+                      parsed-right)
+                    (sp-node-get tail))]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: malformed binary expression")])]
+    [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
 
 (define (parse-ast-unary
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstUnOp]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2625,14 +3316,15 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-unary-with-pools pools op parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: malformed unary expression")])]
-    [_ (ErrAstExpr "parse: malformed unary expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast-expr-unary-with-pools pools op parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: malformed unary expression")])]
+    [_ (ResultAstExpr.Err "parse: malformed unary expression")]))
 
 (define (parse-ast-if
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2647,64 +3339,55 @@
                     dispatch
                     pools
                     (sp-node-get cond))
-                    [(OkAstExpr parsed-cond)
+                    [(ResultAstExpr.Ok parsed-cond)
                       (match (parse-ast-expr-with-pools
                         dispatch
                         pools
                         (sp-node-get then-branch))
-                        [(OkAstExpr parsed-then)
+                        [(ResultAstExpr.Ok parsed-then)
                           (match (parse-ast-expr-with-pools
                             dispatch
                             pools
                             (sp-node-get else-branch))
-                            [(OkAstExpr parsed-else)
-                              (OkAstExpr
+                            [(ResultAstExpr.Ok parsed-else)
+                              (ResultAstExpr.Ok
                                 (ast-expr-if-with-pools
                                   pools
                                   parsed-cond
                                   parsed-then
                                   parsed-else))]
-                            [(ErrAstExpr message) (ErrAstExpr message)])]
-                        [(ErrAstExpr message) (ErrAstExpr message)])]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: malformed if")])]
-            [_ (ErrAstExpr "parse: malformed if")])]
-        [_ (ErrAstExpr "parse: malformed if")])]
-    [_ (ErrAstExpr "parse: malformed if")]))
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)])]
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)])]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_ (ResultAstExpr.Err "parse: malformed if")])]
+            [_ (ResultAstExpr.Err "parse: malformed if")])]
+        [_ (ResultAstExpr.Err "parse: malformed if")])]
+    [_ (ResultAstExpr.Err "parse: malformed if")]))
 
 (define (parse-ast-while
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons cond body-tail _)
-      (match (sp-node-get body-tail)
-        [(SpannedSexpr.Cons body end _)
-          (match (sp-node-get end)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get cond))
-                [(OkAstExpr parsed-cond)
-                  (match (parse-ast-expr-with-pools
-                    dispatch
-                    pools
-                    (sp-node-get body))
-                    [(OkAstExpr parsed-body)
-                      (OkAstExpr
-                        (ast-expr-while-with-pools
-                          pools
-                          parsed-cond
-                          parsed-body))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed while")])]
-        [_ (ErrAstExpr "parse: malformed while")])]
-    [_ (ErrAstExpr "parse: malformed while")]))
+      (match (parse-ast-expr-with-pools dispatch pools (sp-node-get cond))
+        [(ResultAstExpr.Ok parsed-cond)
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            (sp-node-get body-tail)
+            "parse: malformed while")
+            [(ResultAstExpr.Ok parsed-body)
+              (ResultAstExpr.Ok
+                (ast-expr-while-with-pools pools parsed-cond parsed-body))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+    [_ (ResultAstExpr.Err "parse: malformed while")]))
 
 (define (parse-ast-set
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2717,51 +3400,52 @@
                 dispatch
                 pools
                 (sp-node-get value))
-                [(OkAstExpr parsed-value)
+                [(ResultAstExpr.Ok parsed-value)
                   (match (sp-node-get target-node)
                     [(SpannedSexpr.Sym name _)
-                      (OkAstExpr
+                      (ResultAstExpr.Ok
                         (ast-expr-set-with-pools pools name parsed-value))]
                     [_
                       (match (parse-ast-expr-with-pools
                         dispatch
                         pools
                         (sp-node-get target-node))
-                        [(OkAstExpr parsed-target)
+                        [(ResultAstExpr.Ok parsed-target)
                           (match (ast-expr-unspan-with-pools
                             pools
                             (ast-node-pool-context-expr-get pools parsed-target))
-                            [(AstExprStructGet receiver-box field)
-                              (OkAstExpr
+                            [(AstExpr.StructGet receiver-box field)
+                              (ResultAstExpr.Ok
                                 (ast-expr-struct-set-id-with-pools
                                   pools
                                   receiver-box
                                   field
                                   parsed-value))]
-                            [(AstExprBoxGet receiver-box)
-                              (OkAstExpr
+                            [(AstExpr.BoxGet receiver-box)
+                              (ResultAstExpr.Ok
                                 (ast-expr-box-set-with-pools
                                   pools
                                   receiver-box
                                   parsed-value))]
-                            [(AstExprUnquote _)
-                              (OkAstExpr
+                            [(AstExpr.Unquote _)
+                              (ResultAstExpr.Ok
                                 (ast-expr-struct-set-id-with-pools
                                   pools
                                   parsed-target
                                   (ast-expr-unquote-set-target-field-id)
                                   parsed-value))]
                             [_
-                              (ErrAstExpr
+                              (ResultAstExpr.Err
                                 "parse: set! target must be a name, struct field place, or box place")])]
-                        [(ErrAstExpr message) (ErrAstExpr message)])])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed set!")])]
-        [_ (ErrAstExpr "parse: malformed set!")])]
-    [_ (ErrAstExpr "parse: malformed set!")]))
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)])])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed set!")])]
+        [_ (ResultAstExpr.Err "parse: malformed set!")])]
+    [_ (ResultAstExpr.Err "parse: malformed set!")]))
 
 (define (parse-ast-ann-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-cast : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2778,160 +3462,191 @@
                       dispatch
                       pools
                       (sp-node-get expr))
-                      [(OkAstExpr parsed-expr)
-                        (match (parse-ast-type
+                      [(ResultAstExpr.Ok parsed-expr)
+                        (match (parse-ast-type-spanned
                           dispatch
                           pools
-                          (spanned-sexpr-form (sp-node-get ty)))
-                          [(OkAstType parsed-ty)
+                          (sp-node-get ty))
+                          [(ResultAstType.Ok parsed-ty)
                             (if is-cast
-                              (OkAstExpr
+                              (ResultAstExpr.Ok
                                 (ast-expr-cast-with-pools
                                   pools
                                   parsed-expr
                                   parsed-ty))
-                              (OkAstExpr
+                              (ResultAstExpr.Ok
                                 (ast-expr-ann-with-pools
                                   pools
                                   parsed-expr
                                   parsed-ty)))]
-                          [(ErrAstType message) (ErrAstExpr message)])]
-                      [(ErrAstExpr message) (ErrAstExpr message)])
-                    (ErrAstExpr "parse: expected ':' in annotation"))]
-                [_ (ErrAstExpr "parse: malformed annotation")])]
-            [_ (ErrAstExpr "parse: malformed annotation")])]
-        [_ (ErrAstExpr "parse: malformed annotation")])]
-    [_ (ErrAstExpr "parse: malformed annotation")]))
+                          [(ResultAstType.Err message)
+                            (ResultAstExpr.Err message)])]
+                      [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])
+                    (ResultAstExpr.Err "parse: expected ':' in annotation"))]
+                [_ (ResultAstExpr.Err "parse: malformed annotation")])]
+            [_ (ResultAstExpr.Err "parse: malformed annotation")])]
+        [_ (ResultAstExpr.Err "parse: malformed annotation")])]
+    [_ (ResultAstExpr.Err "parse: malformed annotation")]))
 
 (define (parse-ast-let-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstLetBinding
-  (match s
-    [(SpannedSexpr.BracketList items _)
-      (parse-ast-let-binding dispatch pools (sp-node-get items))]
-    [(SpannedSexpr.Cons name-node tail _)
-      (match (sp-node-get name-node)
-        [(SpannedSexpr.Sym name _)
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Cons second rest _)
-              (match (sp-node-get rest)
-                [(SpannedSexpr.Nil _)
-                  (match (parse-ast-expr-with-pools
-                    dispatch
-                    pools
-                    (sp-node-get second))
-                    [(OkAstExpr parsed-value)
-                      (OkAstLetBinding
-                        (ast-let-binding name AstNoType parsed-value))]
-                    [(ErrAstExpr message) (ErrAstLetBinding message)])]
-                [(SpannedSexpr.Cons ty value-tail _)
-                  (match (sp-node-get value-tail)
-                    [(SpannedSexpr.Cons value end _)
-                      (match (sp-node-get end)
-                        [(SpannedSexpr.Nil _)
-                          (if (sexpr-colon?
-                            (spanned-sexpr-form (sp-node-get second)))
-                            (match (parse-ast-type
-                              dispatch
-                              pools
-                              (spanned-sexpr-form (sp-node-get ty)))
-                              [(OkAstType parsed-ty)
-                                (match (parse-ast-expr-with-pools
+  (let
+    [result : ResultAstLetBinding
+      (match s
+        [(SpannedSexpr.BracketList items _)
+          (parse-ast-let-binding dispatch pools (sp-node-get items))]
+        [(SpannedSexpr.Cons name-node tail _)
+          (match (sp-node-get name-node)
+            [(SpannedSexpr.Sym name _)
+              (match (sp-node-get tail)
+                [(SpannedSexpr.Cons second rest _)
+                  (match (sp-node-get rest)
+                    [(SpannedSexpr.Nil _)
+                      (match (parse-ast-expr-with-pools
+                        dispatch
+                        pools
+                        (sp-node-get second))
+                        [(ResultAstExpr.Ok parsed-value)
+                          (ResultAstLetBinding.Ok
+                            (ast-let-binding name AstMaybeType.No parsed-value))]
+                        [(ResultAstExpr.Err message)
+                          (ResultAstLetBinding.Err message)])]
+                    [(SpannedSexpr.Cons ty value-tail _)
+                      (match (sp-node-get value-tail)
+                        [(SpannedSexpr.Cons value end _)
+                          (match (sp-node-get end)
+                            [(SpannedSexpr.Nil _)
+                              (if (sexpr-colon?
+                                (spanned-sexpr-form (sp-node-get second)))
+                                (match (parse-ast-type-spanned
                                   dispatch
                                   pools
-                                  (sp-node-get value))
-                                  [(OkAstExpr parsed-value)
-                                    (OkAstLetBinding
-                                      (ast-let-binding
-                                        name
-                                        (AstSomeType parsed-ty)
-                                        parsed-value))]
-                                  [(ErrAstExpr message)
-                                    (ErrAstLetBinding message)])]
-                              [(ErrAstType message) (ErrAstLetBinding message)])
-                            (ErrAstLetBinding
-                              "parse: expected ':' in let binding"))]
-                        [_ (ErrAstLetBinding "parse: malformed let binding")])]
-                    [_ (ErrAstLetBinding "parse: malformed let binding")])]
-                [_ (ErrAstLetBinding "parse: malformed let binding")])]
-            [_ (ErrAstLetBinding "parse: malformed let binding")])]
-        [_ (ErrAstLetBinding "parse: malformed let binding")])]
-    [_ (ErrAstLetBinding "parse: malformed let binding")]))
+                                  (sp-node-get ty))
+                                  [(ResultAstType.Ok parsed-ty)
+                                    (match (parse-ast-expr-with-pools
+                                      dispatch
+                                      pools
+                                      (sp-node-get value))
+                                      [(ResultAstExpr.Ok parsed-value)
+                                        (ResultAstLetBinding.Ok
+                                          (ast-let-binding
+                                            name
+                                            (AstMaybeType.Some parsed-ty)
+                                            parsed-value))]
+                                      [(ResultAstExpr.Err message)
+                                        (ResultAstLetBinding.Err message)])]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstLetBinding.Err message)])
+                                (ResultAstLetBinding.Err
+                                  "parse: expected ':' in let binding"))]
+                            [_
+                              (ResultAstLetBinding.Err
+                                "parse: malformed let binding")])]
+                        [_
+                          (ResultAstLetBinding.Err
+                            "parse: malformed let binding")])]
+                    [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
+                [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
+            [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
+        [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
+    (parse-ast-error-span-note-let-binding s result)))
 
-(define (parse-ast-let-binding-list
-  [dispatch : SymI64Env]
+(define (parse-ast-let-binding-list-into
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : SpannedSexpr]) : ResultAstLetBindingList
+  [s : SpannedSexpr]
+  [out : (&mut out AstLetBindingList)]) : ResultAstLetBindingListBuild
   (match s
-    [(SpannedSexpr.Nil _) (OkAstLetBindingList AstLetBindingNil)]
+    [(SpannedSexpr.Nil _) (ResultAstLetBindingListBuild.Ok)]
     [(SpannedSexpr.Cons head tail _)
       (match (parse-ast-let-binding dispatch pools (sp-node-get head))
-        [(OkAstLetBinding parsed-head)
-          (match (parse-ast-let-binding-list dispatch pools (sp-node-get tail))
-            [(OkAstLetBindingList parsed-tail)
-              (OkAstLetBindingList
-                (ast-let-binding-cons parsed-head parsed-tail))]
-            [(ErrAstLetBindingList message) (ErrAstLetBindingList message)])]
-        [(ErrAstLetBinding message) (ErrAstLetBindingList message)])]
-    [_ (ErrAstLetBindingList "parse: malformed let binding list")]))
+        [(ResultAstLetBinding.Ok parsed-head)
+          (begin
+            (ast-let-binding-list-push out parsed-head)
+            (parse-ast-let-binding-list-into
+              dispatch
+              pools
+              (sp-node-get tail)
+              out))]
+        [(ResultAstLetBinding.Err message)
+          (ResultAstLetBindingListBuild.Err message)])]
+    [_ (ResultAstLetBindingListBuild.Err "parse: malformed let binding list")]))
 
-(define (ast-let-binding-list-empty? [bindings : AstLetBindingList]) : bool
-  (match bindings
-    [(AstLetBindingNil) true]
-    [_ false]))
-
-(define (parse-ast-let-flat-tail
-  [dispatch : SymI64Env]
+(define (parse-ast-let-binding-list
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [rest : SpannedSexpr]) : ResultAstLetParts
+  [s : SpannedSexpr]) : ResultAstLetBindingList
+  (let
+    [out : AstLetBindingList (ast-let-binding-list-new)]
+    (match (parse-ast-let-binding-list-into dispatch pools s (&mut out))
+      [(ResultAstLetBindingListBuild.Ok) (ResultAstLetBindingList.Ok out)]
+      [(ResultAstLetBindingListBuild.Err message)
+        (ResultAstLetBindingList.Err message)])))
+
+(define (parse-ast-let-flat-tail-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]
+  [out : (&mut out AstLetBindingList)]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons head tail _)
       (match (sp-node-get head)
         [(SpannedSexpr.BracketList _ _)
           (match (parse-ast-let-binding dispatch pools (sp-node-get head))
-            [(OkAstLetBinding parsed-head)
-              (match (parse-ast-let-flat-tail dispatch pools (sp-node-get tail))
-                [(OkAstLetParts parsed-tail parsed-body)
-                  (OkAstLetParts
-                    (ast-let-binding-cons parsed-head parsed-tail)
-                    parsed-body)]
-                [(ErrAstLetParts message) (ErrAstLetParts message)])]
-            [(ErrAstLetBinding message) (ErrAstLetParts message)])]
-        [_
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get head))
-                [(OkAstExpr parsed-body)
-                  (OkAstLetParts AstLetBindingNil parsed-body)]
-                [(ErrAstExpr message) (ErrAstLetParts message)])]
-            [_ (ErrAstLetParts "parse: let expects exactly one body")])])]
-    [(SpannedSexpr.Nil _) (ErrAstLetParts "parse: let missing body")]
-    [_ (ErrAstLetParts "parse: malformed let")]))
+            [(ResultAstLetBinding.Ok parsed-head)
+              (begin
+                (ast-let-binding-list-push out parsed-head)
+                (parse-ast-let-flat-tail-into
+                  dispatch
+                  pools
+                  (sp-node-get tail)
+                  out))]
+            [(ResultAstLetBinding.Err message) (ResultAstExpr.Err message)])]
+        [_ (parse-ast-body-tail dispatch pools rest "parse: let missing body")])]
+    [(SpannedSexpr.Nil _) (ResultAstExpr.Err "parse: let missing body")]
+    [_ (ResultAstExpr.Err "parse: malformed let")]))
+
+(define (parse-ast-let-flat-tail
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstLetParts
+  (let
+    [out : AstLetBindingList (ast-let-binding-list-new)]
+    (match (parse-ast-let-flat-tail-into dispatch pools rest (&mut out))
+      [(ResultAstExpr.Ok parsed-body) (ResultAstLetParts.Ok out parsed-body)]
+      [(ResultAstExpr.Err message) (ResultAstLetParts.Err message)])))
 
 (define (parse-ast-let-flat
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons head _ _)
       (match (sp-node-get head)
-        [(SpannedSexpr.BracketList _ _)
-          (match (parse-ast-let-flat-tail dispatch pools rest)
-            [(OkAstLetParts parsed-bindings parsed-body)
-              (if (ast-let-binding-list-empty? parsed-bindings)
-                (ErrAstExpr "parse: let requires at least one binding")
-                (OkAstExpr
-                  (ast-expr-let-with-pools pools parsed-bindings parsed-body)))]
-            [(ErrAstLetParts message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: let requires at least one binding")])]
-    [_ (ErrAstExpr "parse: malformed let")]))
+        [(SpannedSexpr.BracketList items _)
+          (match (sp-node-get items)
+            [(SpannedSexpr.Nil _)
+              (match rest
+                [(SpannedSexpr.Cons _ body-tail _)
+                  (parse-ast-body-tail
+                    dispatch
+                    pools
+                    (sp-node-get body-tail)
+                    "parse: let missing body")]
+                [_ (ResultAstExpr.Err "parse: malformed let")])]
+            [_
+              (match (parse-ast-let-flat-tail dispatch pools rest)
+                [(ResultAstLetParts.Ok parsed-bindings parsed-body)
+                  (ResultAstExpr.Ok
+                    (ast-expr-let-with-pools pools parsed-bindings parsed-body))]
+                [(ResultAstLetParts.Err message) (ResultAstExpr.Err message)])])]
+        [_ (ResultAstExpr.Err "parse: let requires at least one binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed let")]))
 
 (define (parse-ast-let
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2939,110 +3654,96 @@
       (match (sp-node-get bindings)
         [(SpannedSexpr.BracketList _ _)
           (parse-ast-let-flat dispatch pools rest)]
-        [_
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Cons body end _)
-              (match (sp-node-get end)
-                [(SpannedSexpr.Nil _)
-                  (match (parse-ast-let-binding-list
-                    dispatch
-                    pools
-                    (sp-node-get bindings))
-                    [(OkAstLetBindingList parsed-bindings)
-                      (if (ast-let-binding-list-empty? parsed-bindings)
-                        (ErrAstExpr "parse: let requires at least one binding")
-                        (match (parse-ast-expr-with-pools
-                          dispatch
-                          pools
-                          (sp-node-get body))
-                          [(OkAstExpr parsed-body)
-                            (OkAstExpr
-                              (ast-expr-let-with-pools
-                                pools
-                                parsed-bindings
-                                parsed-body))]
-                          [(ErrAstExpr message) (ErrAstExpr message)]))]
-                    [(ErrAstLetBindingList message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: let requires at least one binding")])]
-            [_ (ErrAstExpr "parse: let requires at least one binding")])])]
-    [(SpannedSexpr.Cons _ _ _)
-      (ErrAstExpr "parse: let requires at least one binding")]
-    [_ (ErrAstExpr "parse: malformed let")]))
+        [(SpannedSexpr.Nil _)
+          (parse-ast-body-tail
+            dispatch
+            pools
+            (sp-node-get tail)
+            "parse: let missing body")]
+        [(SpannedSexpr.Cons _ _ _)
+          (match (parse-ast-let-binding-list
+            dispatch
+            pools
+            (sp-node-get bindings))
+            [(ResultAstLetBindingList.Ok parsed-bindings)
+              (match (parse-ast-body-tail
+                dispatch
+                pools
+                (sp-node-get tail)
+                "parse: let missing body")
+                [(ResultAstExpr.Ok parsed-body)
+                  (if (ast-let-binding-list-empty? (& parsed-bindings))
+                    (ResultAstExpr.Ok parsed-body)
+                    (ResultAstExpr.Ok
+                      (ast-expr-let-with-pools
+                        pools
+                        parsed-bindings
+                        parsed-body)))]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [(ResultAstLetBindingList.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: let requires at least one binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed let")]))
 
 (define (parse-ast-lambda
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons params tail _)
-      (match (sp-node-get tail)
-        [(SpannedSexpr.Cons second rest-tail _)
-          (match (sp-node-get rest-tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-param-list
-                dispatch
-                pools
-                (spanned-sexpr-form (sp-node-get params)))
-                [(OkAstParamList parsed-params)
-                  (if (ast-param-list-has-comptime? parsed-params)
-                    (ErrAstExpr
-                      "comptime parameters are only supported on top-level function definitions")
-                    (match (parse-ast-expr-with-pools
-                      dispatch
-                      pools
-                      (sp-node-get second))
-                      [(OkAstExpr parsed-body)
-                        (OkAstExpr
-                          (ast-expr-lambda-with-pools
+      (match (parse-ast-param-list
+        dispatch
+        pools
+        (spanned-sexpr-form (sp-node-get params)))
+        [(ResultAstParamList.Ok parsed-params)
+          (if (ast-param-list-has-comptime? parsed-params)
+            (ResultAstExpr.Err
+              "comptime parameters are only supported on top-level function definitions")
+            (match (sp-node-get tail)
+              [(SpannedSexpr.Cons first rest-tail _)
+                (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
+                  (match (sp-node-get rest-tail)
+                    [(SpannedSexpr.Cons ret body-tail _)
+                      (match (parse-ast-type-spanned
+                        dispatch
+                        pools
+                        (sp-node-get ret))
+                        [(ResultAstType.Ok parsed-ret)
+                          (match (parse-ast-body-tail
+                            dispatch
                             pools
-                            parsed-params
-                            AstNoType
-                            parsed-body))]
-                      [(ErrAstExpr message) (ErrAstExpr message)]))]
-                [(ErrAstParamList message) (ErrAstExpr message)])]
-            [(SpannedSexpr.Cons ret body-tail _)
-              (match (sp-node-get body-tail)
-                [(SpannedSexpr.Cons body end _)
-                  (match (sp-node-get end)
-                    [(SpannedSexpr.Nil _)
-                      (if (sexpr-colon?
-                        (spanned-sexpr-form (sp-node-get second)))
-                        (match (parse-ast-param-list
-                          dispatch
+                            (sp-node-get body-tail)
+                            "parse: malformed lambda")
+                            [(ResultAstExpr.Ok parsed-body)
+                              (ResultAstExpr.Ok
+                                (ast-expr-lambda-with-pools
+                                  pools
+                                  parsed-params
+                                  (AstMaybeType.Some parsed-ret)
+                                  parsed-body))]
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)])]
+                        [(ResultAstType.Err message)
+                          (ResultAstExpr.Err message)])]
+                    [_ (ResultAstExpr.Err "parse: malformed lambda")])
+                  (match (parse-ast-body-tail
+                    dispatch
+                    pools
+                    (sp-node-get tail)
+                    "parse: malformed lambda")
+                    [(ResultAstExpr.Ok parsed-body)
+                      (ResultAstExpr.Ok
+                        (ast-expr-lambda-with-pools
                           pools
-                          (spanned-sexpr-form (sp-node-get params)))
-                          [(OkAstParamList parsed-params)
-                            (if (ast-param-list-has-comptime? parsed-params)
-                              (ErrAstExpr
-                                "comptime parameters are only supported on top-level function definitions")
-                              (match (parse-ast-type
-                                dispatch
-                                pools
-                                (spanned-sexpr-form (sp-node-get ret)))
-                                [(OkAstType parsed-ret)
-                                  (match (parse-ast-expr-with-pools
-                                    dispatch
-                                    pools
-                                    (sp-node-get body))
-                                    [(OkAstExpr parsed-body)
-                                      (OkAstExpr
-                                        (ast-expr-lambda-with-pools
-                                          pools
-                                          parsed-params
-                                          (AstSomeType parsed-ret)
-                                          parsed-body))]
-                                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                                [(ErrAstType message) (ErrAstExpr message)]))]
-                          [(ErrAstParamList message) (ErrAstExpr message)])
-                        (ErrAstExpr "parse: expected ':' in lambda"))]
-                    [_ (ErrAstExpr "parse: malformed lambda")])]
-                [_ (ErrAstExpr "parse: malformed lambda")])]
-            [_ (ErrAstExpr "parse: malformed lambda")])]
-        [_ (ErrAstExpr "parse: malformed lambda")])]
-    [_ (ErrAstExpr "parse: malformed lambda")]))
+                          parsed-params
+                          AstMaybeType.No
+                          parsed-body))]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
+              [_ (ResultAstExpr.Err "parse: malformed lambda")]))]
+        [(ResultAstParamList.Err message) (ResultAstExpr.Err message)])]
+    [_ (ResultAstExpr.Err "parse: malformed lambda")]))
 
 (define (parse-ast-tuple-ref
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3057,17 +3758,17 @@
                     dispatch
                     pools
                     (sp-node-get expr))
-                    [(OkAstExpr parsed-expr)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-expr)
+                      (ResultAstExpr.Ok
                         (ast-expr-tuple-ref-with-pools pools parsed-expr index))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: tuple-ref index must be integer")])]
-            [_ (ErrAstExpr "parse: malformed tuple-ref")])]
-        [_ (ErrAstExpr "parse: malformed tuple-ref")])]
-    [_ (ErrAstExpr "parse: malformed tuple-ref")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_ (ResultAstExpr.Err "parse: tuple-ref index must be integer")])]
+            [_ (ResultAstExpr.Err "parse: malformed tuple-ref")])]
+        [_ (ResultAstExpr.Err "parse: malformed tuple-ref")])]
+    [_ (ResultAstExpr.Err "parse: malformed tuple-ref")]))
 
 (define (parse-ast-make-array
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3076,29 +3777,29 @@
         [(SpannedSexpr.Cons len end _)
           (match (sp-node-get end)
             [(SpannedSexpr.Nil _)
-              (match (parse-ast-type
+              (match (parse-ast-type-spanned
                 dispatch
                 pools
-                (spanned-sexpr-form (sp-node-get elem-ty)))
-                [(OkAstType parsed-ty)
+                (sp-node-get elem-ty))
+                [(ResultAstType.Ok parsed-ty)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get len))
-                    [(OkAstExpr parsed-len)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-len)
+                      (ResultAstExpr.Ok
                         (ast-expr-make-array-with-pools
                           pools
                           parsed-ty
                           parsed-len))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstType message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed make-array")])]
-        [_ (ErrAstExpr "parse: malformed make-array")])]
-    [_ (ErrAstExpr "parse: malformed make-array")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed make-array")])]
+        [_ (ResultAstExpr.Err "parse: malformed make-array")])]
+    [_ (ResultAstExpr.Err "parse: malformed make-array")]))
 
 (define (parse-ast-array-ref-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-string : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -3112,31 +3813,31 @@
                 dispatch
                 pools
                 (sp-node-get expr))
-                [(OkAstExpr parsed-expr)
+                [(ResultAstExpr.Ok parsed-expr)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get index))
-                    [(OkAstExpr parsed-index)
+                    [(ResultAstExpr.Ok parsed-index)
                       (if is-string
-                        (OkAstExpr
+                        (ResultAstExpr.Ok
                           (ast-expr-string-ref-with-pools
                             pools
                             parsed-expr
                             parsed-index))
-                        (OkAstExpr
+                        (ResultAstExpr.Ok
                           (ast-expr-array-ref-with-pools
                             pools
                             parsed-expr
                             parsed-index)))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed ref expression")])]
-        [_ (ErrAstExpr "parse: malformed ref expression")])]
-    [_ (ErrAstExpr "parse: malformed ref expression")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed ref expression")])]
+        [_ (ResultAstExpr.Err "parse: malformed ref expression")])]
+    [_ (ResultAstExpr.Err "parse: malformed ref expression")]))
 
 (define (parse-ast-array-set
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3151,33 +3852,35 @@
                     dispatch
                     pools
                     (sp-node-get expr))
-                    [(OkAstExpr parsed-expr)
+                    [(ResultAstExpr.Ok parsed-expr)
                       (match (parse-ast-expr-with-pools
                         dispatch
                         pools
                         (sp-node-get index))
-                        [(OkAstExpr parsed-index)
+                        [(ResultAstExpr.Ok parsed-index)
                           (match (parse-ast-expr-with-pools
                             dispatch
                             pools
                             (sp-node-get value))
-                            [(OkAstExpr parsed-value)
-                              (OkAstExpr
+                            [(ResultAstExpr.Ok parsed-value)
+                              (ResultAstExpr.Ok
                                 (ast-expr-array-set-with-pools
                                   pools
                                   parsed-expr
                                   parsed-index
                                   parsed-value))]
-                            [(ErrAstExpr message) (ErrAstExpr message)])]
-                        [(ErrAstExpr message) (ErrAstExpr message)])]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: malformed array-set!")])]
-            [_ (ErrAstExpr "parse: malformed array-set!")])]
-        [_ (ErrAstExpr "parse: malformed array-set!")])]
-    [_ (ErrAstExpr "parse: malformed array-set!")]))
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)])]
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)])]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_ (ResultAstExpr.Err "parse: malformed array-set!")])]
+            [_ (ResultAstExpr.Err "parse: malformed array-set!")])]
+        [_ (ResultAstExpr.Err "parse: malformed array-set!")])]
+    [_ (ResultAstExpr.Err "parse: malformed array-set!")]))
 
 (define (parse-ast-array-push
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3190,25 +3893,25 @@
                 dispatch
                 pools
                 (sp-node-get expr))
-                [(OkAstExpr parsed-expr)
+                [(ResultAstExpr.Ok parsed-expr)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get value))
-                    [(OkAstExpr parsed-value)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-value)
+                      (ResultAstExpr.Ok
                         (ast-expr-array-push-with-pools
                           pools
                           parsed-expr
                           parsed-value))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed array-push!")])]
-        [_ (ErrAstExpr "parse: malformed array-push!")])]
-    [_ (ErrAstExpr "parse: malformed array-push!")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
+        [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
+    [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
 
 (define (parse-ast-borrow
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [mutable : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -3217,14 +3920,14 @@
       (match (sp-node-get tail)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get first))
-            [(OkAstExpr parsed-place)
-              (OkAstExpr
+            [(ResultAstExpr.Ok parsed-place)
+              (ResultAstExpr.Ok
                 (ast-expr-borrow-with-pools
                   pools
                   mutable
-                  AstBorrowLifetimeInferred
+                  AstBorrowLifetime.Inferred
                   parsed-place))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
         [(SpannedSexpr.Cons place end _)
           (match (sp-node-get end)
             [(SpannedSexpr.Nil _)
@@ -3234,22 +3937,28 @@
                     dispatch
                     pools
                     (sp-node-get place))
-                    [(OkAstExpr parsed-place)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-place)
+                      (ResultAstExpr.Ok
                         (ast-expr-borrow-with-pools
                           pools
                           mutable
-                          (AstBorrowLifetimeNamed name)
+                          (AstBorrowLifetime.Named name)
                           parsed-place))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: borrow lifetime must be an identifier")])]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_
+                  (ResultAstExpr.Err
+                    "parse: borrow lifetime must be an identifier")])]
             [_
-              (ErrAstExpr "parse: borrow expects a place or lifetime and place")])]
-        [_ (ErrAstExpr "parse: borrow expects a place or lifetime and place")])]
-    [_ (ErrAstExpr "parse: borrow expects a place or lifetime and place")]))
+              (ResultAstExpr.Err
+                "parse: borrow expects a place or lifetime and place")])]
+        [_
+          (ResultAstExpr.Err
+            "parse: borrow expects a place or lifetime and place")])]
+    [_
+      (ResultAstExpr.Err "parse: borrow expects a place or lifetime and place")]))
 
 (define (parse-ast-struct-get
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3264,19 +3973,19 @@
                     dispatch
                     pools
                     (sp-node-get expr))
-                    [(OkAstExpr parsed-expr)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-expr)
+                      (ResultAstExpr.Ok
                         (ast-expr-struct-get-with-pools pools parsed-expr field))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: malformed struct-get")])]
-            [_ (ErrAstExpr "parse: malformed struct-get")])]
-        [_ (ErrAstExpr "parse: malformed struct-get")])]
-    [_ (ErrAstExpr "parse: malformed struct-get")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
+            [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
+        [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
+    [_ (ResultAstExpr.Err "parse: malformed struct-get")]))
 
 ;; `(comptime expr)` (#718) wraps exactly one inner expression for compile-time
 ;; evaluation; evaluation itself is reserved for #719.
 (define (parse-ast-comptime
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3284,65 +3993,59 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-comptime-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: comptime expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: comptime expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast-expr-comptime-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: comptime expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: comptime expects exactly one expression")]))
 
 (define (parse-ast-type-literal
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons ty end _)
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
-          (match (parse-ast-type
-            dispatch
-            pools
-            (spanned-sexpr-form (sp-node-get ty)))
-            [(OkAstType parsed-ty)
-              (OkAstExpr
+          (match (parse-ast-type-spanned dispatch pools (sp-node-get ty))
+            [(ResultAstType.Ok parsed-ty)
+              (ResultAstExpr.Ok
                 (ast-node-pool-context-expr-push
                   pools
-                  (AstExprTypeLiteral parsed-ty)))]
-            [(ErrAstType message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: type expects exactly one type")])]
-    [_ (ErrAstExpr "parse: type expects exactly one type")]))
+                  (AstExpr.TypeLiteral parsed-ty)))]
+            [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: type expects exactly one type")])]
+    [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))
 
 (define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string.string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
-    [(string.string-eq name "min") (OkAstReduceOp (AstReduceMin))]
-    [(string.string-eq name "max") (OkAstReduceOp (AstReduceMax))]
-    [(string.string-eq name "all") (OkAstReduceOp (AstReduceAll))]
-    [(string.string-eq name "any") (OkAstReduceOp (AstReduceAny))]
+    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
     [else
-      (ErrAstReduceOp
-        (string.string-append
+      (ResultAstReduceOp.Err
+        (string.append
           "parse: unsupported spmd-reduce operator `"
-          (string.string-append
-            name
-            "`; expected one of sum, min, max, all, any")))]))
+          (string.append name "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-scan-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string.string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
-    [(string.string-eq name "min") (OkAstReduceOp (AstReduceMin))]
-    [(string.string-eq name "max") (OkAstReduceOp (AstReduceMax))]
-    [(string.string-eq name "all") (OkAstReduceOp (AstReduceAll))]
-    [(string.string-eq name "any") (OkAstReduceOp (AstReduceAny))]
+    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
     [else
-      (ErrAstReduceOp
-        (string.string-append
+      (ResultAstReduceOp.Err
+        (string.append
           "parse: unsupported spmd-scan operator `"
-          (string.string-append
-            name
-            "`; expected one of sum, min, max, all, any")))]))
+          (string.append name "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-spmd-reduce-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [binding : SpannedSexpr]
@@ -3372,32 +4075,33 @@
                             [(SpannedSexpr.Nil _)
                               (if (sexpr-colon?
                                 (spanned-sexpr-form (sp-node-get colon)))
-                                (match (parse-ast-type
+                                (match (parse-ast-type-spanned
                                   dispatch
                                   pools
-                                  (spanned-sexpr-form (sp-node-get index-ty)))
-                                  [(OkAstType parsed-index-ty)
+                                  (sp-node-get index-ty))
+                                  [(ResultAstType.Ok parsed-index-ty)
                                     (match (parse-ast-expr-with-pools
                                       dispatch
                                       pools
                                       (sp-node-get start))
-                                      [(OkAstExpr parsed-start)
+                                      [(ResultAstExpr.Ok parsed-start)
                                         (match (parse-ast-expr-with-pools
                                           dispatch
                                           pools
                                           (sp-node-get end))
-                                          [(OkAstExpr parsed-end)
+                                          [(ResultAstExpr.Ok parsed-end)
                                             (match (parse-ast-expr-with-pools
                                               dispatch
                                               pools
                                               init)
-                                              [(OkAstExpr parsed-init)
+                                              [(ResultAstExpr.Ok parsed-init)
                                                 (match (parse-ast-expr-with-pools
                                                   dispatch
                                                   pools
                                                   value)
-                                                  [(OkAstExpr parsed-value)
-                                                    (OkAstExpr
+                                                  [(ResultAstExpr.Ok
+                                                      parsed-value)
+                                                    (ResultAstExpr.Ok
                                                       (ast-expr-spmd-reduce-with-pools
                                                         pools
                                                         op
@@ -3407,27 +4111,29 @@
                                                         parsed-end
                                                         parsed-init
                                                         parsed-value))]
-                                                  [(ErrAstExpr message)
-                                                    (ErrAstExpr message)])]
-                                              [(ErrAstExpr message)
-                                                (ErrAstExpr message)])]
-                                          [(ErrAstExpr message)
-                                            (ErrAstExpr message)])]
-                                      [(ErrAstExpr message)
-                                        (ErrAstExpr message)])]
-                                  [(ErrAstType message) (ErrAstExpr message)])
-                                (ErrAstExpr
+                                                  [(ResultAstExpr.Err message)
+                                                    (ResultAstExpr.Err message)])]
+                                              [(ResultAstExpr.Err message)
+                                                (ResultAstExpr.Err message)])]
+                                          [(ResultAstExpr.Err message)
+                                            (ResultAstExpr.Err message)])]
+                                      [(ResultAstExpr.Err message)
+                                        (ResultAstExpr.Err message)])]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstExpr.Err message)])
+                                (ResultAstExpr.Err
                                   "parse: expected ':' in spmd-reduce"))]
-                            [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                        [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                    [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-            [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-        [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-    [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
+                            [_
+                              (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")]))
 
 (define (parse-ast-spmd-reduce
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3447,7 +4153,7 @@
                               (match (sp-node-get end)
                                 [(SpannedSexpr.Nil _)
                                   (match (parse-ast-reduce-op op-name)
-                                    [(OkAstReduceOp op)
+                                    [(ResultAstReduceOp.Ok op)
                                       (parse-ast-spmd-reduce-binding
                                         dispatch
                                         pools
@@ -3455,20 +4161,24 @@
                                         (sp-node-get binding)
                                         (sp-node-get init)
                                         (sp-node-get value))]
-                                    [(ErrAstReduceOp message)
-                                      (ErrAstExpr message)])]
-                                [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                            [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                        [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                    [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-                [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-            [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-        [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
-    [(SpannedSexpr.Cons _ _ _) (ErrAstExpr "parse: malformed spmd-reduce")]
-    [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
+                                    [(ResultAstReduceOp.Err message)
+                                      (ResultAstExpr.Err message)])]
+                                [_
+                                  (ResultAstExpr.Err
+                                    "parse: malformed spmd-reduce")])]
+                            [_
+                              (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+                [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
+    [(SpannedSexpr.Cons _ _ _)
+      (ResultAstExpr.Err "parse: malformed spmd-reduce")]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")]))
 
 (define (parse-ast-spmd-scan
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3490,7 +4200,7 @@
                                   (match (sp-node-get end)
                                     [(SpannedSexpr.Nil _)
                                       (match (parse-ast-scan-op op-name)
-                                        [(OkAstReduceOp op)
+                                        [(ResultAstReduceOp.Ok op)
                                           (parse-ast-spmd-scan-bindings
                                             dispatch
                                             pools
@@ -3499,22 +4209,25 @@
                                             (sp-node-get prefix-binding)
                                             (sp-node-get value)
                                             (sp-node-get body))]
-                                        [(ErrAstReduceOp message)
-                                          (ErrAstExpr message)])]
+                                        [(ResultAstReduceOp.Err message)
+                                          (ResultAstExpr.Err message)])]
                                     [_
-                                      (ErrAstExpr "parse: malformed spmd-scan")])]
-                                [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-                            [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-                        [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-                    [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-                [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-            [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-        [_ (ErrAstExpr "parse: malformed spmd-scan")])]
-    [(SpannedSexpr.Cons _ _ _) (ErrAstExpr "parse: malformed spmd-scan")]
-    [_ (ErrAstExpr "parse: malformed spmd-scan")]))
+                                      (ResultAstExpr.Err
+                                        "parse: malformed spmd-scan")])]
+                                [_
+                                  (ResultAstExpr.Err
+                                    "parse: malformed spmd-scan")])]
+                            [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+                        [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+                    [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+                [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-scan")])]
+    [(SpannedSexpr.Cons _ _ _) (ResultAstExpr.Err "parse: malformed spmd-scan")]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-scan")]))
 
 (define (parse-ast-spmd-scan-bindings
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [range-binding : SpannedSexpr]
@@ -3546,11 +4259,11 @@
                             [(SpannedSexpr.Nil _)
                               (if (sexpr-colon?
                                 (spanned-sexpr-form (sp-node-get colon)))
-                                (match (parse-ast-type
+                                (match (parse-ast-type-spanned
                                   dispatch
                                   pools
-                                  (spanned-sexpr-form (sp-node-get index-ty)))
-                                  [(OkAstType parsed-index-ty)
+                                  (sp-node-get index-ty))
+                                  [(ResultAstType.Ok parsed-index-ty)
                                     (parse-ast-spmd-scan-prefix-binding
                                       dispatch
                                       pools
@@ -3562,23 +4275,27 @@
                                       prefix-binding
                                       value
                                       body)]
-                                  [(ErrAstType message) (ErrAstExpr message)])
-                                (ErrAstExpr
+                                  [(ResultAstType.Err message)
+                                    (ResultAstExpr.Err message)])
+                                (ResultAstExpr.Err
                                   "parse: expected ':' in spmd-scan range binding"))]
                             [_
-                              (ErrAstExpr
+                              (ResultAstExpr.Err
                                 "parse: malformed spmd-scan range binding")])]
                         [_
-                          (ErrAstExpr
+                          (ResultAstExpr.Err
                             "parse: malformed spmd-scan range binding")])]
-                    [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
-                [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
-            [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
-        [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
-    [_ (ErrAstExpr "parse: malformed spmd-scan range binding")]))
+                    [_
+                      (ResultAstExpr.Err
+                        "parse: malformed spmd-scan range binding")])]
+                [_
+                  (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")]))
 
 (define (parse-ast-spmd-scan-prefix-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [index : String]
@@ -3614,37 +4331,38 @@
                         [(SpannedSexpr.Nil _)
                           (if (sexpr-colon?
                             (spanned-sexpr-form (sp-node-get colon)))
-                            (match (parse-ast-type
+                            (match (parse-ast-type-spanned
                               dispatch
                               pools
-                              (spanned-sexpr-form (sp-node-get prefix-ty)))
-                              [(OkAstType parsed-prefix-ty)
+                              (sp-node-get prefix-ty))
+                              [(ResultAstType.Ok parsed-prefix-ty)
                                 (match (parse-ast-expr-with-pools
                                   dispatch
                                   pools
                                   start)
-                                  [(OkAstExpr parsed-start)
+                                  [(ResultAstExpr.Ok parsed-start)
                                     (match (parse-ast-expr-with-pools
                                       dispatch
                                       pools
                                       end)
-                                      [(OkAstExpr parsed-end)
+                                      [(ResultAstExpr.Ok parsed-end)
                                         (match (parse-ast-expr-with-pools
                                           dispatch
                                           pools
                                           (sp-node-get init))
-                                          [(OkAstExpr parsed-init)
+                                          [(ResultAstExpr.Ok parsed-init)
                                             (match (parse-ast-expr-with-pools
                                               dispatch
                                               pools
                                               value)
-                                              [(OkAstExpr parsed-value)
+                                              [(ResultAstExpr.Ok parsed-value)
                                                 (match (parse-ast-expr-with-pools
                                                   dispatch
                                                   pools
                                                   body)
-                                                  [(OkAstExpr parsed-body)
-                                                    (OkAstExpr
+                                                  [(ResultAstExpr.Ok
+                                                      parsed-body)
+                                                    (ResultAstExpr.Ok
                                                       (ast-expr-spmd-scan-with-pools
                                                         pools
                                                         op
@@ -3657,29 +4375,35 @@
                                                         parsed-init
                                                         parsed-value
                                                         parsed-body))]
-                                                  [(ErrAstExpr message)
-                                                    (ErrAstExpr message)])]
-                                              [(ErrAstExpr message)
-                                                (ErrAstExpr message)])]
-                                          [(ErrAstExpr message)
-                                            (ErrAstExpr message)])]
-                                      [(ErrAstExpr message)
-                                        (ErrAstExpr message)])]
-                                  [(ErrAstExpr message) (ErrAstExpr message)])]
-                              [(ErrAstType message) (ErrAstExpr message)])
-                            (ErrAstExpr
+                                                  [(ResultAstExpr.Err message)
+                                                    (ResultAstExpr.Err message)])]
+                                              [(ResultAstExpr.Err message)
+                                                (ResultAstExpr.Err message)])]
+                                          [(ResultAstExpr.Err message)
+                                            (ResultAstExpr.Err message)])]
+                                      [(ResultAstExpr.Err message)
+                                        (ResultAstExpr.Err message)])]
+                                  [(ResultAstExpr.Err message)
+                                    (ResultAstExpr.Err message)])]
+                              [(ResultAstType.Err message)
+                                (ResultAstExpr.Err message)])
+                            (ResultAstExpr.Err
                               "parse: expected ':' in spmd-scan prefix binding"))]
                         [_
-                          (ErrAstExpr
+                          (ResultAstExpr.Err
                             "parse: malformed spmd-scan prefix binding")])]
-                    [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
-                [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
-            [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
-        [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
-    [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")]))
+                    [_
+                      (ResultAstExpr.Err
+                        "parse: malformed spmd-scan prefix binding")])]
+                [_
+                  (ResultAstExpr.Err
+                    "parse: malformed spmd-scan prefix binding")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")]))
 
 (define (parse-ast-spmd-broadcast
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3692,22 +4416,22 @@
                 dispatch
                 pools
                 (sp-node-get value-node))
-                [(OkAstExpr value)
+                [(ResultAstExpr.Ok value)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get lane-node))
-                    [(OkAstExpr lane)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok lane)
+                      (ResultAstExpr.Ok
                         (ast-expr-spmd-broadcast-with-pools pools value lane))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed spmd-broadcast")])]
-        [_ (ErrAstExpr "parse: malformed spmd-broadcast")])]
-    [_ (ErrAstExpr "parse: malformed spmd-broadcast")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-broadcast")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-broadcast")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-broadcast")]))
 
 (define (parse-ast-spmd-shuffle
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3720,22 +4444,22 @@
                 dispatch
                 pools
                 (sp-node-get value-node))
-                [(OkAstExpr value)
+                [(ResultAstExpr.Ok value)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get lane-node))
-                    [(OkAstExpr lane)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok lane)
+                      (ResultAstExpr.Ok
                         (ast-expr-spmd-shuffle-with-pools pools value lane))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed spmd-shuffle")])]
-        [_ (ErrAstExpr "parse: malformed spmd-shuffle")])]
-    [_ (ErrAstExpr "parse: malformed spmd-shuffle")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")]))
 
 (define (parse-ast-try
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3743,14 +4467,14 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-try-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: try expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: try expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok (ast-expr-try-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: try expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: try expects exactly one expression")]))
 
 (define (parse-ast-return
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3758,14 +4482,14 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-return-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: return expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: return expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok (ast-expr-return-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: return expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: return expects exactly one expression")]))
 
 (define (parse-ast-box-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [is-get : bool]
@@ -3775,22 +4499,24 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
+            [(ResultAstExpr.Ok parsed-expr)
               (if is-get
-                (OkAstExpr (ast-expr-box-get-with-pools pools parsed-expr))
+                (ResultAstExpr.Ok
+                  (ast-expr-box-get-with-pools pools parsed-expr))
                 (if is-take
-                  (OkAstExpr (ast-expr-box-take-with-pools pools parsed-expr))
-                  (OkAstExpr (ast-expr-box-with-pools pools parsed-expr))))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
+                  (ResultAstExpr.Ok
+                    (ast-expr-box-take-with-pools pools parsed-expr))
+                  (ResultAstExpr.Ok (ast-expr-box-with-pools pools parsed-expr))))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
         [_
-          (ErrAstExpr
+          (ResultAstExpr.Err
             (if is-get
               "parse: box-get expects exactly one expression"
               (if is-take
                 "parse: box-take expects exactly one expression"
                 "parse: box expects exactly one expression")))])]
     [_
-      (ErrAstExpr
+      (ResultAstExpr.Err
         (if is-get
           "parse: box-get expects exactly one expression"
           (if is-take
@@ -3800,7 +4526,7 @@
 ;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
 ;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
 (define (parse-ast-ptr-null
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3810,57 +4536,52 @@
           (match (sp-node-get end)
             [(SpannedSexpr.Nil _)
               (if (sexpr-colon? (spanned-sexpr-form (sp-node-get colon)))
-                (match (parse-ast-type
-                  dispatch
-                  pools
-                  (spanned-sexpr-form (sp-node-get ty)))
-                  [(OkAstType parsed-ty)
-                    (OkAstExpr
+                (match (parse-ast-type-spanned dispatch pools (sp-node-get ty))
+                  [(ResultAstType.Ok parsed-ty)
+                    (ResultAstExpr.Ok
                       (ast-node-pool-context-expr-push
                         pools
-                        (AstExprPtrNull parsed-ty)))]
-                  [(ErrAstType message) (ErrAstExpr message)])
-                (ErrAstExpr "parse: expected ':' in ptr-null"))]
+                        (AstExpr.PtrNull parsed-ty)))]
+                  [(ResultAstType.Err message) (ResultAstExpr.Err message)])
+                (ResultAstExpr.Err "parse: expected ':' in ptr-null"))]
             [_
-              (ErrAstExpr
+              (ResultAstExpr.Err
                 "parse: ptr-null expects (ptr-null : T) with a pointer type T")])]
         [_
-          (ErrAstExpr
+          (ResultAstExpr.Err
             "parse: ptr-null expects (ptr-null : T) with a pointer type T")])]
     [_
-      (ErrAstExpr
+      (ResultAstExpr.Err
         "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
 
 ;; `(init : T)` carries an explicit target type. Bare `(init)` is contextual
 ;; and must be checked/lowered in a position with an expected type.
 (define (parse-ast-init
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (OkAstExpr (ast-expr-init-contextual-with-pools pools))]
+      (ResultAstExpr.Ok (ast-expr-init-contextual-with-pools pools))]
     [(SpannedSexpr.Cons colon ty-tail _)
       (match (sp-node-get ty-tail)
         [(SpannedSexpr.Cons ty end _)
           (match (sp-node-get end)
             [(SpannedSexpr.Nil _)
               (if (sexpr-colon? (spanned-sexpr-form (sp-node-get colon)))
-                (match (parse-ast-type
-                  dispatch
-                  pools
-                  (spanned-sexpr-form (sp-node-get ty)))
-                  [(OkAstType parsed-ty)
-                    (OkAstExpr (ast-expr-init-with-pools pools parsed-ty))]
-                  [(ErrAstType message) (ErrAstExpr message)])
-                (ErrAstExpr "parse: expected ':' in init"))]
-            [_ (ErrAstExpr "parse: init expects (init : T)")])]
-        [_ (ErrAstExpr "parse: init expects (init : T)")])]
-    [_ (ErrAstExpr "parse: init expects (init : T)")]))
+                (match (parse-ast-type-spanned dispatch pools (sp-node-get ty))
+                  [(ResultAstType.Ok parsed-ty)
+                    (ResultAstExpr.Ok
+                      (ast-expr-init-with-pools pools parsed-ty))]
+                  [(ResultAstType.Err message) (ResultAstExpr.Err message)])
+                (ResultAstExpr.Err "parse: expected ':' in init"))]
+            [_ (ResultAstExpr.Err "parse: init expects (init : T)")])]
+        [_ (ResultAstExpr.Err "parse: init expects (init : T)")])]
+    [_ (ResultAstExpr.Err "parse: init expects (init : T)")]))
 
 ;; `(ptr-null? p)` - a single pointer operand.
 (define (parse-ast-ptr-null-check
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3868,14 +4589,16 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-ptr-null-check-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast-expr-ptr-null-check-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_
+          (ResultAstExpr.Err "parse: ptr-null? expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: ptr-null? expects exactly one expression")]))
 
 (define (parse-ast-ptr-read
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3883,11 +4606,12 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-ptr-read-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast-expr-ptr-read-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: ptr-read expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: ptr-read expects exactly one expression")]))
 
 (define (parse-ast-ptr-addr-of
   [pools : AstNodePoolContext]
@@ -3898,13 +4622,15 @@
         [(SpannedSexpr.Nil _)
           (match (spanned-sexpr-form (sp-node-get name))
             [(Sexpr.Sym local)
-              (OkAstExpr (ast-expr-ptr-addr-of-with-pools pools local))]
-            [_ (ErrAstExpr "parse: ptr-addr-of expects a local name")])]
-        [_ (ErrAstExpr "parse: ptr-addr-of expects exactly one local name")])]
-    [_ (ErrAstExpr "parse: ptr-addr-of expects exactly one local name")]))
+              (ResultAstExpr.Ok (ast-expr-ptr-addr-of-with-pools pools local))]
+            [_ (ResultAstExpr.Err "parse: ptr-addr-of expects a local name")])]
+        [_
+          (ResultAstExpr.Err
+            "parse: ptr-addr-of expects exactly one local name")])]
+    [_ (ResultAstExpr.Err "parse: ptr-addr-of expects exactly one local name")]))
 
 (define (parse-ast-ptr-write
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3917,25 +4643,29 @@
                 dispatch
                 pools
                 (sp-node-get ptr))
-                [(OkAstExpr parsed-ptr)
+                [(ResultAstExpr.Ok parsed-ptr)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get value))
-                    [(OkAstExpr parsed-value)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-value)
+                      (ResultAstExpr.Ok
                         (ast-expr-ptr-write-with-pools
                           pools
                           parsed-ptr
                           parsed-value))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")])]
-        [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")])]
-    [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: ptr-write! expects exactly two expressions")])]
+        [_
+          (ResultAstExpr.Err
+            "parse: ptr-write! expects exactly two expressions")])]
+    [_ (ResultAstExpr.Err "parse: ptr-write! expects exactly two expressions")]))
 
 (define (parse-ast-ptr-offset
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3948,25 +4678,29 @@
                 dispatch
                 pools
                 (sp-node-get ptr))
-                [(OkAstExpr parsed-ptr)
+                [(ResultAstExpr.Ok parsed-ptr)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get offset))
-                    [(OkAstExpr parsed-offset)
-                      (OkAstExpr
+                    [(ResultAstExpr.Ok parsed-offset)
+                      (ResultAstExpr.Ok
                         (ast-expr-ptr-offset-with-pools
                           pools
                           parsed-ptr
                           parsed-offset))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")])]
-        [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")])]
-    [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")]))
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: ptr-offset expects exactly two expressions")])]
+        [_
+          (ResultAstExpr.Err
+            "parse: ptr-offset expects exactly two expressions")])]
+    [_ (ResultAstExpr.Err "parse: ptr-offset expects exactly two expressions")]))
 
 (define (parse-ast-ptr-cast-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-int-to-ptr : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -3983,38 +4717,42 @@
                       dispatch
                       pools
                       (sp-node-get expr))
-                      [(OkAstExpr parsed-expr)
-                        (match (parse-ast-type
+                      [(ResultAstExpr.Ok parsed-expr)
+                        (match (parse-ast-type-spanned
                           dispatch
                           pools
-                          (spanned-sexpr-form (sp-node-get ty)))
-                          [(OkAstType parsed-ty)
+                          (sp-node-get ty))
+                          [(ResultAstType.Ok parsed-ty)
                             (if is-int-to-ptr
-                              (OkAstExpr
+                              (ResultAstExpr.Ok
                                 (ast-expr-int-to-ptr-with-pools
                                   pools
                                   parsed-expr
                                   parsed-ty))
-                              (OkAstExpr
+                              (ResultAstExpr.Ok
                                 (ast-expr-ptr-cast-with-pools
                                   pools
                                   parsed-expr
                                   parsed-ty)))]
-                          [(ErrAstType message) (ErrAstExpr message)])]
-                      [(ErrAstExpr message) (ErrAstExpr message)])
-                    (ErrAstExpr "parse: expected ':' in pointer cast"))]
+                          [(ResultAstType.Err message)
+                            (ResultAstExpr.Err message)])]
+                      [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])
+                    (ResultAstExpr.Err "parse: expected ':' in pointer cast"))]
                 [_
-                  (ErrAstExpr
+                  (ResultAstExpr.Err
                     "parse: pointer cast expects (form expr : pointer-type)")])]
             [_
-              (ErrAstExpr
+              (ResultAstExpr.Err
                 "parse: pointer cast expects (form expr : pointer-type)")])]
         [_
-          (ErrAstExpr "parse: pointer cast expects (form expr : pointer-type)")])]
-    [_ (ErrAstExpr "parse: pointer cast expects (form expr : pointer-type)")]))
+          (ResultAstExpr.Err
+            "parse: pointer cast expects (form expr : pointer-type)")])]
+    [_
+      (ResultAstExpr.Err
+        "parse: pointer cast expects (form expr : pointer-type)")]))
 
 (define (parse-ast-ptr-to-int
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4022,14 +4760,15 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed-expr)
-              (OkAstExpr (ast-expr-ptr-to-int-with-pools pools parsed-expr))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")]))
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast-expr-ptr-to-int-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: ptr->int expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: ptr->int expects exactly one expression")]))
 
 (define (parse-ast-one-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [name : String]) : ResultAstExpr
@@ -4039,18 +4778,18 @@
         [(SpannedSexpr.Nil _)
           (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))]
         [_
-          (ErrAstExpr
-            (string.string-append
+          (ResultAstExpr.Err
+            (string.append
               "parse: "
-              (string.string-append name " expects exactly one expression")))])]
+              (string.append name " expects exactly one expression")))])]
     [_
-      (ErrAstExpr
-        (string.string-append
+      (ResultAstExpr.Err
+        (string.append
           "parse: "
-          (string.string-append name " expects exactly one expression")))]))
+          (string.append name " expects exactly one expression")))]))
 
 (define (parse-ast-two-exprs
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [name : String]) : ResultAstExprPair
@@ -4064,131 +4803,138 @@
                 dispatch
                 pools
                 (sp-node-get first))
-                [(OkAstExpr parsed-first)
+                [(ResultAstExpr.Ok parsed-first)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get second))
-                    [(OkAstExpr parsed-second)
-                      (OkAstExprPair (AstExprPair parsed-first parsed-second))]
-                    [(ErrAstExpr message) (ErrAstExprPair message)])]
-                [(ErrAstExpr message) (ErrAstExprPair message)])]
+                    [(ResultAstExpr.Ok parsed-second)
+                      (ResultAstExprPair.Ok
+                        (AstExprPair parsed-first parsed-second))]
+                    [(ResultAstExpr.Err message)
+                      (ResultAstExprPair.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExprPair.Err message)])]
             [_
-              (ErrAstExprPair
-                (string.string-append
+              (ResultAstExprPair.Err
+                (string.append
                   "parse: "
-                  (string.string-append name " expects exactly two expressions")))])]
+                  (string.append name " expects exactly two expressions")))])]
         [_
-          (ErrAstExprPair
-            (string.string-append
+          (ResultAstExprPair.Err
+            (string.append
               "parse: "
-              (string.string-append name " expects exactly two expressions")))])]
+              (string.append name " expects exactly two expressions")))])]
     [_
-      (ErrAstExprPair
-        (string.string-append
+      (ResultAstExprPair.Err
+        (string.append
           "parse: "
-          (string.string-append name " expects exactly two expressions")))]))
+          (string.append name " expects exactly two expressions")))]))
 
 (define (parse-ast-string-data
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "string-data")
-    [(OkAstExpr expr) (OkAstExpr (ast-expr-string-data-with-pools pools expr))]
-    [(ErrAstExpr message) (ErrAstExpr message)]))
+    [(ResultAstExpr.Ok expr)
+      (ResultAstExpr.Ok (ast-expr-string-data-with-pools pools expr))]
+    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-string-from-bytes
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-two-exprs dispatch pools rest "string-from-bytes")
-    [(OkAstExprPair pair)
-      (OkAstExpr
+    [(ResultAstExprPair.Ok pair)
+      (ResultAstExpr.Ok
         (ast-expr-string-from-bytes-with-pools
           pools
           (struct-get pair first)
           (struct-get pair second)))]
-    [(ErrAstExprPair message) (ErrAstExpr message)]))
+    [(ResultAstExprPair.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-array-data
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "array-data")
-    [(OkAstExpr expr) (OkAstExpr (ast-expr-array-data-with-pools pools expr))]
-    [(ErrAstExpr message) (ErrAstExpr message)]))
+    [(ResultAstExpr.Ok expr)
+      (ResultAstExpr.Ok (ast-expr-array-data-with-pools pools expr))]
+    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-no-arg-low-level
   [rest : SpannedSexpr]
   [name : String]
   [expr : i64]) : ResultAstExpr
   (match rest
-    [(SpannedSexpr.Nil _) (OkAstExpr expr)]
+    [(SpannedSexpr.Nil _) (ResultAstExpr.Ok expr)]
     [_
-      (ErrAstExpr
-        (string.string-append
-          "parse: "
-          (string.string-append name " expects no arguments")))]))
+      (ResultAstExpr.Err
+        (string.append "parse: " (string.append name " expects no arguments")))]))
 
 (define (parse-ast-cpuid-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-two-exprs dispatch pools rest "cpuid")
-    [(OkAstExprPair pair)
+    [(ResultAstExprPair.Ok pair)
       (let
         [leaf : i64 (struct-get pair first)]
         [subleaf : i64 (struct-get pair second)]
         (cond
           [(= tag (compiler-parse-tag-expr-cpuid-eax))
-            (OkAstExpr (ast-expr-cpuid-eax-with-pools pools leaf subleaf))]
+            (ResultAstExpr.Ok
+              (ast-expr-cpuid-eax-with-pools pools leaf subleaf))]
           [(= tag (compiler-parse-tag-expr-cpuid-ebx))
-            (OkAstExpr (ast-expr-cpuid-ebx-with-pools pools leaf subleaf))]
+            (ResultAstExpr.Ok
+              (ast-expr-cpuid-ebx-with-pools pools leaf subleaf))]
           [(= tag (compiler-parse-tag-expr-cpuid-ecx))
-            (OkAstExpr (ast-expr-cpuid-ecx-with-pools pools leaf subleaf))]
-          [else (OkAstExpr (ast-expr-cpuid-edx-with-pools pools leaf subleaf))]))]
-    [(ErrAstExprPair message) (ErrAstExpr message)]))
+            (ResultAstExpr.Ok
+              (ast-expr-cpuid-ecx-with-pools pools leaf subleaf))]
+          [else
+            (ResultAstExpr.Ok
+              (ast-expr-cpuid-edx-with-pools pools leaf subleaf))]))]
+    [(ResultAstExprPair.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-xgetbv
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "xgetbv")
-    [(OkAstExpr expr) (OkAstExpr (ast-expr-xgetbv-with-pools pools expr))]
-    [(ErrAstExpr message) (ErrAstExpr message)]))
+    [(ResultAstExpr.Ok expr)
+      (ResultAstExpr.Ok (ast-expr-xgetbv-with-pools pools expr))]
+    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-syscall-count [args : AstExprList]) : i64
-  (match args
-    [(AstExprNil) 0]
-    [(AstExprCons _ rest) (+ 1 (parse-ast-syscall-count (box-get rest)))]))
+  (struct-get (& args) len))
 
 ;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
 ;; arguments (1 to 7 operands total). Typechecking requires an enclosing
 ;; `(unsafe ...)` context before this lowers to a raw `syscall` instruction.
 (define (parse-ast-syscall
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
-    [(OkAstExprList args)
+    [(ResultAstExprList.Ok args)
       (let
         [count : i64 (parse-ast-syscall-count args)]
         (if (< count 1)
-          (ErrAstExpr "parse: syscall requires a syscall number")
+          (ResultAstExpr.Err "parse: syscall requires a syscall number")
           (if (> count 7)
-            (ErrAstExpr
+            (ResultAstExpr.Err
               "parse: syscall takes at most 7 operands (number plus six arguments)")
-            (OkAstExpr (ast-expr-syscall-with-pools pools args)))))]
-    [(ErrAstExprList message) (ErrAstExpr message)]))
+            (ResultAstExpr.Ok (ast-expr-syscall-with-pools pools args)))))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-with-region
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: with-arena requires a region name before its body")]
+      (ResultAstExpr.Err
+        "parse: with-arena requires a region name before its body")]
     [(SpannedSexpr.Cons _ _ _)
       (match rest
         [(SpannedSexpr.Cons region-node body _)
@@ -4196,88 +4942,89 @@
             [(SpannedSexpr.Sym region _)
               (match (sp-node-get body)
                 [(SpannedSexpr.Nil _)
-                  (ErrAstExpr
-                    (string.string-append
+                  (ResultAstExpr.Err
+                    (string.append
                       "parse: with-arena '"
-                      (string.string-append
-                        region
-                        "' requires a non-empty body")))]
+                      (string.append region "' requires a non-empty body")))]
                 [_
                   (match (parse-ast-expr-list dispatch pools (sp-node-get body))
-                    [(OkAstExprList exprs)
-                      (OkAstExpr
+                    [(ResultAstExprList.Ok exprs)
+                      (ResultAstExpr.Ok
                         (ast-node-pool-context-expr-push
                           pools
-                          (AstExprWithRegion region exprs)))]
-                    [(ErrAstExprList message) (ErrAstExpr message)])])]
+                          (AstExpr.WithRegion region exprs)))]
+                    [(ResultAstExprList.Err message)
+                      (ResultAstExpr.Err message)])])]
             [_
-              (ErrAstExpr "parse: with-arena region name must be an identifier")])]
-        [_ (ErrAstExpr "parse: malformed with-arena")])]
-    [_ (ErrAstExpr "parse: malformed with-arena")]))
+              (ResultAstExpr.Err
+                "parse: with-arena region name must be an identifier")])]
+        [_ (ResultAstExpr.Err "parse: malformed with-arena")])]
+    [_ (ResultAstExpr.Err "parse: malformed with-arena")]))
 
 (define (parse-ast-with-escape
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: with-escape requires a scratch arena before its body")]
+      (ResultAstExpr.Err
+        "parse: with-escape requires a scratch arena before its body")]
     [(SpannedSexpr.Cons scratch body _)
       (match (sp-node-get body)
         [(SpannedSexpr.Nil _)
-          (ErrAstExpr "parse: with-escape requires a non-empty body")]
+          (ResultAstExpr.Err "parse: with-escape requires a non-empty body")]
         [_
           (match (parse-ast-expr-with-pools
             dispatch
             pools
             (sp-node-get scratch))
-            [(OkAstExpr parsed-scratch)
+            [(ResultAstExpr.Ok parsed-scratch)
               (match (parse-ast-expr-list dispatch pools (sp-node-get body))
-                [(OkAstExprList exprs)
-                  (OkAstExpr
+                [(ResultAstExprList.Ok exprs)
+                  (ResultAstExpr.Ok
                     (ast-expr-with-escape-with-pools pools parsed-scratch exprs))]
-                [(ErrAstExprList message) (ErrAstExpr message)])]
-            [(ErrAstExpr message) (ErrAstExpr message)])])]
-    [_ (ErrAstExpr "parse: malformed with-escape")]))
+                [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
+    [_ (ResultAstExpr.Err "parse: malformed with-escape")]))
 
 (define (parse-ast-with-scratch
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: with-scratch requires a non-empty body")]
+      (ResultAstExpr.Err "parse: with-scratch requires a non-empty body")]
     [(SpannedSexpr.Cons _ _ _)
       (match (parse-ast-expr-list dispatch pools rest)
-        [(OkAstExprList exprs)
-          (OkAstExpr (ast-expr-with-scratch-with-pools pools exprs))]
-        [(ErrAstExprList message) (ErrAstExpr message)])]
-    [_ (ErrAstExpr "parse: malformed with-scratch")]))
+        [(ResultAstExprList.Ok exprs)
+          (ResultAstExpr.Ok (ast-expr-with-scratch-with-pools pools exprs))]
+        [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]
+    [_ (ResultAstExpr.Err "parse: malformed with-scratch")]))
 
 (define (parse-ast-in-arena
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: in-arena requires an arena before its body")]
+      (ResultAstExpr.Err "parse: in-arena requires an arena before its body")]
     [(SpannedSexpr.Cons arena body _)
       (match (sp-node-get body)
         [(SpannedSexpr.Nil _)
-          (ErrAstExpr "parse: in-arena requires a non-empty body")]
+          (ResultAstExpr.Err "parse: in-arena requires a non-empty body")]
         [_
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get arena))
-            [(OkAstExpr parsed-arena)
+            [(ResultAstExpr.Ok parsed-arena)
               (match (parse-ast-expr-list dispatch pools (sp-node-get body))
-                [(OkAstExprList exprs)
-                  (OkAstExpr
+                [(ResultAstExprList.Ok exprs)
+                  (ResultAstExpr.Ok
                     (ast-expr-in-arena-with-pools pools parsed-arena exprs))]
-                [(ErrAstExprList message) (ErrAstExpr message)])]
-            [(ErrAstExpr message) (ErrAstExpr message)])])]
-    [_ (ErrAstExpr "parse: malformed in-arena")]))
+                [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
+    [_ (ResultAstExpr.Err "parse: malformed in-arena")]))
 
 (define (parse-ast-resource-binding-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]) : ResultAstResourceBinding
   (match items
@@ -4288,12 +5035,12 @@
             [(SpannedSexpr.Sym name _)
               (match (sp-node-get rest)
                 [(SpannedSexpr.Nil _)
-                  (ErrAstResourceBinding
+                  (ResultAstResourceBinding.Err
                     "parse: with binding is missing initializer")]
                 [(SpannedSexpr.Cons init tail _)
                   (match (sp-node-get tail)
                     [(SpannedSexpr.Nil _)
-                      (ErrAstResourceBinding
+                      (ResultAstResourceBinding.Err
                         "parse: with binding is missing cleanup function")]
                     [(SpannedSexpr.Cons cleanup extra _)
                       (match (sp-node-get extra)
@@ -4302,97 +5049,125 @@
                             dispatch
                             pools
                             (sp-node-get init))
-                            [(OkAstExpr parsed-init)
+                            [(ResultAstExpr.Ok parsed-init)
                               (match (parse-ast-expr-with-pools
                                 dispatch
                                 pools
                                 (sp-node-get cleanup))
-                                [(OkAstExpr parsed-cleanup)
-                                  (OkAstResourceBinding
+                                [(ResultAstExpr.Ok parsed-cleanup)
+                                  (ResultAstResourceBinding.Ok
                                     (ast-resource-binding
                                       name
                                       parsed-init
                                       parsed-cleanup))]
-                                [(ErrAstExpr message)
-                                  (ErrAstResourceBinding message)])]
-                            [(ErrAstExpr message)
-                              (ErrAstResourceBinding message)])]
+                                [(ResultAstExpr.Err message)
+                                  (ResultAstResourceBinding.Err message)])]
+                            [(ResultAstExpr.Err message)
+                              (ResultAstResourceBinding.Err message)])]
                         [_
-                          (ErrAstResourceBinding
+                          (ResultAstResourceBinding.Err
                             "parse: with binding has too many fields")])]
-                    [_ (ErrAstResourceBinding "parse: malformed with binding")])]
-                [_ (ErrAstResourceBinding "parse: malformed with binding")])]
+                    [_
+                      (ResultAstResourceBinding.Err
+                        "parse: malformed with binding")])]
+                [_
+                  (ResultAstResourceBinding.Err "parse: malformed with binding")])]
             [_
-              (ErrAstResourceBinding
+              (ResultAstResourceBinding.Err
                 "parse: with binding name must be an identifier")])]
-        [_ (ErrAstResourceBinding "parse: malformed with binding")])]
-    [_ (ErrAstResourceBinding "parse: malformed with binding")]))
+        [_ (ResultAstResourceBinding.Err "parse: malformed with binding")])]
+    [_ (ResultAstResourceBinding.Err "parse: malformed with binding")]))
 
 (define (parse-ast-resource-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [binding : SpannedSexpr]) : ResultAstResourceBinding
   (match binding
     [(SpannedSexpr.BracketList items _)
       (parse-ast-resource-binding-items dispatch pools (sp-node-get items))]
-    [_ (ErrAstResourceBinding "parse: with binding must use bracket syntax")]))
+    [_
+      (ResultAstResourceBinding.Err
+        "parse: with binding must use bracket syntax")]))
 
-(define (parse-ast-resource-binding-list
-  [dispatch : SymI64Env]
+(define (parse-ast-resource-binding-list-into
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [bindings : SpannedSexpr]) : ResultAstResourceBindingList
+  [bindings : SpannedSexpr]
+  [out : (&mut out AstResourceBindingList)]) : ResultAstResourceBindingListBuild
   (match bindings
-    [(SpannedSexpr.Nil _) (OkAstResourceBindingList AstResourceBindingNil)]
+    [(SpannedSexpr.Nil _) (ResultAstResourceBindingListBuild.Ok)]
     [(SpannedSexpr.Cons head rest _)
       (match (parse-ast-resource-binding dispatch pools (sp-node-get head))
-        [(OkAstResourceBinding parsed-head)
-          (match (parse-ast-resource-binding-list
-            dispatch
-            pools
-            (sp-node-get rest))
-            [(OkAstResourceBindingList parsed-rest)
-              (OkAstResourceBindingList
-                (ast-resource-binding-cons parsed-head parsed-rest))]
-            [(ErrAstResourceBindingList message)
-              (ErrAstResourceBindingList message)])]
-        [(ErrAstResourceBinding message) (ErrAstResourceBindingList message)])]
-    [_ (ErrAstResourceBindingList "parse: malformed with binding list")]))
+        [(ResultAstResourceBinding.Ok parsed-head)
+          (begin
+            (ast-resource-binding-list-push out parsed-head)
+            (parse-ast-resource-binding-list-into
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstResourceBinding.Err message)
+          (ResultAstResourceBindingListBuild.Err message)])]
+    [_
+      (ResultAstResourceBindingListBuild.Err
+        "parse: malformed with binding list")]))
+
+(define (parse-ast-resource-binding-list
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [bindings : SpannedSexpr]) : ResultAstResourceBindingList
+  (let
+    [out : AstResourceBindingList (ast-resource-binding-list-new)]
+    (match (parse-ast-resource-binding-list-into
+      dispatch
+      pools
+      bindings
+      (&mut out))
+      [(ResultAstResourceBindingListBuild.Ok)
+        (ResultAstResourceBindingList.Ok out)]
+      [(ResultAstResourceBindingListBuild.Err message)
+        (ResultAstResourceBindingList.Err message)])))
 
 (define (parse-ast-with-resource
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: with requires a binding list before its body")]
+      (ResultAstExpr.Err "parse: with requires a binding list before its body")]
     [(SpannedSexpr.Cons bindings body _)
       (match (sp-node-get bindings)
         [(SpannedSexpr.Nil _)
-          (ErrAstExpr "parse: with requires a non-empty binding list")]
+          (ResultAstExpr.Err "parse: with requires a non-empty binding list")]
         [(SpannedSexpr.Cons _ _ _)
           (match (sp-node-get body)
             [(SpannedSexpr.Nil _)
-              (ErrAstExpr "parse: with requires a non-empty body")]
+              (ResultAstExpr.Err "parse: with requires a non-empty body")]
             [_
               (match (parse-ast-resource-binding-list
                 dispatch
                 pools
                 (sp-node-get bindings))
-                [(OkAstResourceBindingList parsed-bindings)
+                [(ResultAstResourceBindingList.Ok parsed-bindings)
                   (match (parse-ast-expr-list dispatch pools (sp-node-get body))
-                    [(OkAstExprList parsed-body)
-                      (OkAstExpr
+                    [(ResultAstExprList.Ok parsed-body)
+                      (ResultAstExpr.Ok
                         (ast-node-pool-context-expr-push
                           pools
-                          (AstExprWithResource
-                            (box (AstWithResource parsed-bindings parsed-body)))))]
-                    [(ErrAstExprList message) (ErrAstExpr message)])]
-                [(ErrAstResourceBindingList message) (ErrAstExpr message)])])]
-        [_ (ErrAstExpr "parse: malformed with binding list")])]
-    [_ (ErrAstExpr "parse: malformed with")]))
+                          (AstExpr.WithResource
+                            (box
+                              (AstWithResource.WithResource
+                                parsed-bindings
+                                parsed-body)))))]
+                    [(ResultAstExprList.Err message)
+                      (ResultAstExpr.Err message)])]
+                [(ResultAstResourceBindingList.Err message)
+                  (ResultAstExpr.Err message)])])]
+        [_ (ResultAstExpr.Err "parse: malformed with binding list")])]
+    [_ (ResultAstExpr.Err "parse: malformed with")]))
 
 (define (parse-ast-match-arm
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
@@ -4407,53 +5182,71 @@
                 dispatch
                 pools
                 (spanned-sexpr-form (sp-node-get pattern)))
-                [(OkAstPattern parsed-pattern)
+                [(ResultAstPattern.Ok parsed-pattern)
                   (match (parse-ast-expr-with-pools
                     dispatch
                     pools
                     (sp-node-get body))
-                    [(OkAstExpr parsed-body)
-                      (OkAstMatchArm (ast-match-arm parsed-pattern parsed-body))]
-                    [(ErrAstExpr message) (ErrAstMatchArm message)])]
-                [(ErrAstPattern message) (ErrAstMatchArm message)])]
-            [_ (ErrAstMatchArm "parse: malformed match arm")])]
-        [_ (ErrAstMatchArm "parse: malformed match arm")])]
-    [_ (ErrAstMatchArm "parse: malformed match arm")]))
+                    [(ResultAstExpr.Ok parsed-body)
+                      (ResultAstMatchArm.Ok
+                        (ast-match-arm parsed-pattern parsed-body))]
+                    [(ResultAstExpr.Err message)
+                      (ResultAstMatchArm.Err message)])]
+                [(ResultAstPattern.Err message) (ResultAstMatchArm.Err message)])]
+            [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
+        [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
+    [_ (ResultAstMatchArm.Err "parse: malformed match arm")]))
 
-(define (parse-ast-match-arm-list
-  [dispatch : SymI64Env]
+(define (parse-ast-match-arm-list-into
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : SpannedSexpr]) : ResultAstMatchArmList
+  [s : SpannedSexpr]
+  [out : (&mut out AstMatchArmList)]) : ResultAstMatchArmListBuild
   (match s
-    [(SpannedSexpr.Nil _) (OkAstMatchArmList AstMatchArmNil)]
+    [(SpannedSexpr.Nil _) (ResultAstMatchArmListBuild.Ok)]
     [(SpannedSexpr.Cons head tail _)
       (match (parse-ast-match-arm dispatch pools (sp-node-get head))
-        [(OkAstMatchArm parsed-head)
-          (match (parse-ast-match-arm-list dispatch pools (sp-node-get tail))
-            [(OkAstMatchArmList parsed-tail)
-              (OkAstMatchArmList (ast-match-arm-cons parsed-head parsed-tail))]
-            [(ErrAstMatchArmList message) (ErrAstMatchArmList message)])]
-        [(ErrAstMatchArm message) (ErrAstMatchArmList message)])]
-    [_ (ErrAstMatchArmList "parse: malformed match arm list")]))
+        [(ResultAstMatchArm.Ok parsed-head)
+          (begin
+            (ast-match-arm-list-push out parsed-head)
+            (parse-ast-match-arm-list-into
+              dispatch
+              pools
+              (sp-node-get tail)
+              out))]
+        [(ResultAstMatchArm.Err message)
+          (ResultAstMatchArmListBuild.Err message)])]
+    [_ (ResultAstMatchArmListBuild.Err "parse: malformed match arm list")]))
+
+(define (parse-ast-match-arm-list
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]) : ResultAstMatchArmList
+  (let
+    [out : AstMatchArmList (ast-match-arm-list-new)]
+    (match (parse-ast-match-arm-list-into dispatch pools s (&mut out))
+      [(ResultAstMatchArmListBuild.Ok) (ResultAstMatchArmList.Ok out)]
+      [(ResultAstMatchArmListBuild.Err message)
+        (ResultAstMatchArmList.Err message)])))
 
 (define (parse-ast-match
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons scrutinee arms _)
       (match (parse-ast-expr-with-pools dispatch pools (sp-node-get scrutinee))
-        [(OkAstExpr parsed-scrutinee)
+        [(ResultAstExpr.Ok parsed-scrutinee)
           (match (parse-ast-match-arm-list dispatch pools (sp-node-get arms))
-            [(OkAstMatchArmList parsed-arms)
-              (OkAstExpr
+            [(ResultAstMatchArmList.Ok parsed-arms)
+              (ResultAstExpr.Ok
                 (ast-expr-match-with-pools pools parsed-scrutinee parsed-arms))]
-            [(ErrAstMatchArmList message) (ErrAstExpr message)])]
-        [(ErrAstExpr message) (ErrAstExpr message)])]
-    [_ (ErrAstExpr "parse: malformed match")]))
+            [(ResultAstMatchArmList.Err message) (ResultAstExpr.Err message)])]
+        [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+    [_ (ResultAstExpr.Err "parse: malformed match")]))
 
 (define (parse-ast-foreach-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [binding : SpannedSexpr]
   [body : SpannedSexpr]) : ResultAstExpr
@@ -4475,27 +5268,27 @@
                             [(SpannedSexpr.Nil _)
                               (if (sexpr-colon?
                                 (spanned-sexpr-form (sp-node-get colon)))
-                                (match (parse-ast-type
+                                (match (parse-ast-type-spanned
                                   dispatch
                                   pools
-                                  (spanned-sexpr-form (sp-node-get index-ty)))
-                                  [(OkAstType parsed-index-ty)
+                                  (sp-node-get index-ty))
+                                  [(ResultAstType.Ok parsed-index-ty)
                                     (match (parse-ast-expr-with-pools
                                       dispatch
                                       pools
                                       (sp-node-get start))
-                                      [(OkAstExpr parsed-start)
+                                      [(ResultAstExpr.Ok parsed-start)
                                         (match (parse-ast-expr-with-pools
                                           dispatch
                                           pools
                                           (sp-node-get end))
-                                          [(OkAstExpr parsed-end)
+                                          [(ResultAstExpr.Ok parsed-end)
                                             (match (parse-ast-expr-with-pools
                                               dispatch
                                               pools
                                               body)
-                                              [(OkAstExpr parsed-body)
-                                                (OkAstExpr
+                                              [(ResultAstExpr.Ok parsed-body)
+                                                (ResultAstExpr.Ok
                                                   (ast-expr-foreach-with-pools
                                                     pools
                                                     index
@@ -4503,24 +5296,29 @@
                                                     parsed-start
                                                     parsed-end
                                                     parsed-body))]
-                                              [(ErrAstExpr message)
-                                                (ErrAstExpr message)])]
-                                          [(ErrAstExpr message)
-                                            (ErrAstExpr message)])]
-                                      [(ErrAstExpr message)
-                                        (ErrAstExpr message)])]
-                                  [(ErrAstType message) (ErrAstExpr message)])
-                                (ErrAstExpr "parse: expected ':' in foreach"))]
-                            [_ (ErrAstExpr "parse: malformed foreach binding")])]
-                        [_ (ErrAstExpr "parse: malformed foreach binding")])]
-                    [_ (ErrAstExpr "parse: malformed foreach binding")])]
-                [_ (ErrAstExpr "parse: malformed foreach binding")])]
-            [_ (ErrAstExpr "parse: malformed foreach binding")])]
-        [_ (ErrAstExpr "parse: malformed foreach binding")])]
-    [_ (ErrAstExpr "parse: malformed foreach binding")]))
+                                              [(ResultAstExpr.Err message)
+                                                (ResultAstExpr.Err message)])]
+                                          [(ResultAstExpr.Err message)
+                                            (ResultAstExpr.Err message)])]
+                                      [(ResultAstExpr.Err message)
+                                        (ResultAstExpr.Err message)])]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstExpr.Err message)])
+                                (ResultAstExpr.Err
+                                  "parse: expected ':' in foreach"))]
+                            [_
+                              (ResultAstExpr.Err
+                                "parse: malformed foreach binding")])]
+                        [_
+                          (ResultAstExpr.Err "parse: malformed foreach binding")])]
+                    [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+                [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+            [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+        [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed foreach binding")]))
 
 (define (parse-ast-foreach
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4538,71 +5336,75 @@
                         pools
                         (sp-node-get binding)
                         (sp-node-get body))]
-                    [_ (ErrAstExpr "parse: malformed foreach")])]
-                [_ (ErrAstExpr "parse: malformed foreach")])]
-            [_ (ErrAstExpr "parse: malformed foreach")])]
-        [_ (ErrAstExpr "parse: malformed foreach")])]
-    [_ (ErrAstExpr "parse: malformed foreach")]))
+                    [_ (ResultAstExpr.Err "parse: malformed foreach")])]
+                [_ (ResultAstExpr.Err "parse: malformed foreach")])]
+            [_ (ResultAstExpr.Err "parse: malformed foreach")])]
+        [_ (ResultAstExpr.Err "parse: malformed foreach")])]
+    [_ (ResultAstExpr.Err "parse: malformed foreach")]))
 
 (define (parse-ast-call
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-with-pools dispatch pools head)
-    [(OkAstExpr parsed-head)
+    [(ResultAstExpr.Ok parsed-head)
       (match (parse-ast-call-arg-list dispatch pools rest)
-        [(OkAstExprList parsed-args)
-          (OkAstExpr (ast-expr-call-with-pools pools parsed-head parsed-args))]
-        [(ErrAstExprList message) (ErrAstExpr message)])]
-    [(ErrAstExpr message) (ErrAstExpr message)]))
+        [(ResultAstExprList.Ok parsed-args)
+          (ResultAstExpr.Ok
+            (ast-expr-call-with-pools pools parsed-head parsed-args))]
+        [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]
+    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-begin
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
-    [(OkAstExprList exprs)
-      (OkAstExpr (ast-node-pool-context-expr-push pools (AstExprBegin exprs)))]
-    [(ErrAstExprList message) (ErrAstExpr message)]))
+    [(ResultAstExprList.Ok exprs)
+      (ResultAstExpr.Ok
+        (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs)))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 ;; `(unsafe expr+)` parses like `begin` but requires a non-empty body. v1 has
 ;; the same behavior as `begin`; it marks an unsafe context for later raw-pointer
 ;; ops (#955).
 (define (parse-ast-unsafe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstExpr "parse: unsafe requires a non-empty body")]
+      (ResultAstExpr.Err "parse: unsafe requires a non-empty body")]
     [_
       (match (parse-ast-expr-list dispatch pools rest)
-        [(OkAstExprList exprs)
-          (OkAstExpr
-            (ast-node-pool-context-expr-push pools (AstExprUnsafe exprs)))]
-        [(ErrAstExprList message) (ErrAstExpr message)])]))
+        [(ResultAstExprList.Ok exprs)
+          (ResultAstExpr.Ok
+            (ast-node-pool-context-expr-push pools (AstExpr.Unsafe exprs)))]
+        [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]))
 
 (define (parse-ast-tuple
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
-    [(OkAstExprList exprs)
-      (OkAstExpr (ast-node-pool-context-expr-push pools (AstExprTuple exprs)))]
-    [(ErrAstExprList message) (ErrAstExpr message)]))
+    [(ResultAstExprList.Ok exprs)
+      (ResultAstExpr.Ok
+        (ast-node-pool-context-expr-push pools (AstExpr.Tuple exprs)))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-array
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
-    [(OkAstExprList exprs)
-      (OkAstExpr (ast-node-pool-context-expr-push pools (AstExprArray exprs)))]
-    [(ErrAstExprList message) (ErrAstExpr message)]))
+    [(ResultAstExprList.Ok exprs)
+      (ResultAstExpr.Ok
+        (ast-node-pool-context-expr-push pools (AstExpr.Array exprs)))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-quote-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -4611,23 +5413,25 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
-            [(OkAstExpr parsed)
+            [(ResultAstExpr.Ok parsed)
               (cond
                 [(= tag (compiler-parse-tag-expr-quote))
-                  (OkAstExpr (ast-expr-quote-with-pools pools parsed))]
+                  (ResultAstExpr.Ok (ast-expr-quote-with-pools pools parsed))]
                 [(= tag (compiler-parse-tag-expr-quasiquote))
-                  (OkAstExpr (ast-expr-quasiquote-with-pools pools parsed))]
+                  (ResultAstExpr.Ok
+                    (ast-expr-quasiquote-with-pools pools parsed))]
                 [(= tag (compiler-parse-tag-expr-unquote))
-                  (OkAstExpr (ast-expr-unquote-with-pools pools parsed))]
+                  (ResultAstExpr.Ok (ast-expr-unquote-with-pools pools parsed))]
                 [else
-                  (OkAstExpr
+                  (ResultAstExpr.Ok
                     (ast-expr-unquote-splicing-with-pools pools parsed))])]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [_ (ErrAstExpr "parse: quote form expects exactly one expression")])]
-    [_ (ErrAstExpr "parse: quote form expects exactly one expression")]))
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_
+          (ResultAstExpr.Err "parse: quote form expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: quote form expects exactly one expression")]))
 
 (define (parse-ast-list-expr-tag
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [head : SpannedSexpr]
@@ -4711,6 +5515,16 @@
     [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-return))
       (parse-ast-return dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-break))
+      (parse-ast-no-arg-low-level
+        rest
+        "break"
+        (ast-expr-break-with-pools pools))]
+    [(= tag (compiler-parse-tag-expr-continue))
+      (parse-ast-no-arg-low-level
+        rest
+        "continue"
+        (ast-expr-continue-with-pools pools))]
     [(= tag (compiler-parse-tag-expr-box))
       (parse-ast-box-like dispatch pools rest false false)]
     [(= tag (compiler-parse-tag-expr-box-get))
@@ -4727,17 +5541,17 @@
       (parse-ast-no-arg-low-level
         rest
         "program-argc"
-        (ast-node-pool-context-expr-push pools (AstExprProgramArgc)))]
+        (ast-node-pool-context-expr-push pools (AstExpr.ProgramArgc)))]
     [(= tag (compiler-parse-tag-expr-program-argv))
       (parse-ast-no-arg-low-level
         rest
         "program-argv"
-        (ast-node-pool-context-expr-push pools (AstExprProgramArgv)))]
+        (ast-node-pool-context-expr-push pools (AstExpr.ProgramArgv)))]
     [(= tag (compiler-parse-tag-expr-program-envp))
       (parse-ast-no-arg-low-level
         rest
         "program-envp"
-        (ast-node-pool-context-expr-push pools (AstExprProgramEnvp)))]
+        (ast-node-pool-context-expr-push pools (AstExpr.ProgramEnvp)))]
     [(= tag (compiler-parse-tag-expr-cpuid-eax))
       (parse-ast-cpuid-like dispatch pools tag rest)]
     [(= tag (compiler-parse-tag-expr-cpuid-ebx))
@@ -4757,20 +5571,20 @@
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
       (parse-ast-ptr-null-check dispatch pools rest)]
     [(= tag (compiler-parse-tag-decl-comptime-decl))
-      (ErrAstExpr
+      (ResultAstExpr.Err
         "parse: comptime-decl is only valid as a top-level declaration")]
     [(= tag (compiler-parse-tag-decl-comptime-decls))
-      (ErrAstExpr (parse-ast-comptime-decls-removed-message))]
+      (ResultAstExpr.Err (parse-ast-comptime-decls-removed-message))]
     [else (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-list-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match head
     [(SpannedSexpr.Sym op _)
-      (if (string.string-eq op "init")
+      (if (string.eq op "init")
         (match rest
           [(SpannedSexpr.Cons first _ _)
             (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
@@ -4798,7 +5612,13 @@
             [(ast-unop-tag? tag)
               (parse-ast-unary dispatch pools (ast-unop-from-tag tag) rest)]
             [(ast-binop-tag? tag)
-              (parse-ast-binary dispatch pools (ast-binop-from-tag tag) rest)]
+              (if (ast-left-fold-binop-tag? tag)
+                (parse-ast-binary-left-fold
+                  dispatch
+                  pools
+                  (ast-binop-from-tag tag)
+                  rest)
+                (parse-ast-binary dispatch pools (ast-binop-from-tag tag) rest))]
             [(= tag (compiler-parse-tag-ty-ref))
               (parse-ast-borrow dispatch pools false rest)]
             [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -4807,105 +5627,109 @@
     [_ (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-expr-with-pools
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstExpr
-  (match s
-    [(SpannedSexpr.Int n text _)
-      (OkAstExpr
-        (ast-expr-wrap-span
-          pools
-          (ast-node-pool-context-expr-push
-            pools
-            (AstExprLiteral (AstLitInt n text)))
-          s))]
-    [(SpannedSexpr.Float text _)
-      (OkAstExpr
-        (ast-expr-wrap-span
-          pools
-          (ast-node-pool-context-expr-push
-            pools
-            (AstExprLiteral (AstLitFloat text)))
-          s))]
-    [(SpannedSexpr.Str text _)
-      (OkAstExpr
-        (ast-expr-wrap-span
-          pools
-          (ast-node-pool-context-expr-push
-            pools
-            (AstExprLiteral (AstLitString text)))
-          s))]
-    [(SpannedSexpr.Char c _)
-      (OkAstExpr
-        (ast-expr-wrap-span
-          pools
-          (ast-node-pool-context-expr-push
-            pools
-            (AstExprLiteral (AstLitChar c)))
-          s))]
-    [(SpannedSexpr.Sym name _)
-      (let
-        [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
-        (cond
-          [(= tag (compiler-parse-tag-lit-true))
-            (OkAstExpr
-              (ast-expr-wrap-span
-                pools
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExprLiteral (AstLitBool true)))
-                s))]
-          [(= tag (compiler-parse-tag-lit-false))
-            (OkAstExpr
-              (ast-expr-wrap-span
-                pools
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExprLiteral (AstLitBool false)))
-                s))]
-          [(= tag (compiler-parse-tag-unit))
-            (OkAstExpr
-              (ast-expr-wrap-span
-                pools
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExprLiteral AstLitUnit))
-                s))]
-          [else
-            (OkAstExpr
-              (ast-expr-wrap-span
-                pools
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExprVar (intern name)))
-                s))]))]
-    [(SpannedSexpr.Cons head rest _)
-      (match (sp-node-get head)
-        [(SpannedSexpr.Sym op _)
-          (if (string.string-eq op "cfg")
-            (match (parse-ast-cfg-expr dispatch pools (sp-node-get rest))
-              [(OkAstExpr parsed)
-                (OkAstExpr (ast-expr-wrap-span pools parsed s))]
-              [(ErrAstExpr message) (ErrAstExpr message)])
-            (match (parse-ast-list-expr
-              dispatch
+  (let
+    [result : ResultAstExpr
+      (match s
+        [(SpannedSexpr.Int n text _)
+          (ResultAstExpr.Ok
+            (ast-expr-wrap-span
               pools
-              (sp-node-get head)
-              (sp-node-get rest))
-              [(OkAstExpr parsed)
-                (OkAstExpr (ast-expr-wrap-span pools parsed s))]
-              [(ErrAstExpr message) (ErrAstExpr message)]))]
-        [_
-          (match (parse-ast-list-expr
-            dispatch
-            pools
-            (sp-node-get head)
-            (sp-node-get rest))
-            [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span pools parsed s))]
-            [(ErrAstExpr message) (ErrAstExpr message)])])]
-    [_ (ErrAstExpr "parse: malformed expression")]))
+              (ast-node-pool-context-expr-push
+                pools
+                (AstExpr.Literal (AstLiteral.Int n text)))
+              s))]
+        [(SpannedSexpr.Float text _)
+          (ResultAstExpr.Ok
+            (ast-expr-wrap-span
+              pools
+              (ast-node-pool-context-expr-push
+                pools
+                (AstExpr.Literal (AstLiteral.Float text)))
+              s))]
+        [(SpannedSexpr.Str text _)
+          (ResultAstExpr.Ok
+            (ast-expr-wrap-span
+              pools
+              (ast-node-pool-context-expr-push
+                pools
+                (AstExpr.Literal (AstLiteral.String text)))
+              s))]
+        [(SpannedSexpr.Char c _)
+          (ResultAstExpr.Ok
+            (ast-expr-wrap-span
+              pools
+              (ast-node-pool-context-expr-push
+                pools
+                (AstExpr.Literal (AstLiteral.Char c)))
+              s))]
+        [(SpannedSexpr.Sym name _)
+          (let
+            [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
+            (cond
+              [(= tag (compiler-parse-tag-lit-true))
+                (ResultAstExpr.Ok
+                  (ast-expr-wrap-span
+                    pools
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Literal (AstLiteral.Bool true)))
+                    s))]
+              [(= tag (compiler-parse-tag-lit-false))
+                (ResultAstExpr.Ok
+                  (ast-expr-wrap-span
+                    pools
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Literal (AstLiteral.Bool false)))
+                    s))]
+              [(= tag (compiler-parse-tag-unit))
+                (ResultAstExpr.Ok
+                  (ast-expr-wrap-span
+                    pools
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Literal AstLiteral.Unit))
+                    s))]
+              [else
+                (ResultAstExpr.Ok
+                  (ast-expr-wrap-span
+                    pools
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Var (intern name)))
+                    s))]))]
+        [(SpannedSexpr.Cons head rest _)
+          (match (sp-node-get head)
+            [(SpannedSexpr.Sym op _)
+              (if (string.eq op "cfg")
+                (match (parse-ast-cfg-expr dispatch pools (sp-node-get rest))
+                  [(ResultAstExpr.Ok parsed)
+                    (ResultAstExpr.Ok (ast-expr-wrap-span pools parsed s))]
+                  [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])
+                (match (parse-ast-list-expr
+                  dispatch
+                  pools
+                  (sp-node-get head)
+                  (sp-node-get rest))
+                  [(ResultAstExpr.Ok parsed)
+                    (ResultAstExpr.Ok (ast-expr-wrap-span pools parsed s))]
+                  [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
+            [_
+              (match (parse-ast-list-expr
+                dispatch
+                pools
+                (sp-node-get head)
+                (sp-node-get rest))
+                [(ResultAstExpr.Ok parsed)
+                  (ResultAstExpr.Ok (ast-expr-wrap-span pools parsed s))]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
+        [_ (ResultAstExpr.Err "parse: malformed expression")])]
+    (parse-ast-error-span-note-expr s result)))
 
-(define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
+(define (parse-ast-expr [dispatch : sym_i64_env.SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstExpr (parse-ast-expr-with-pools dispatch pools s)]
@@ -4914,7 +5738,7 @@
       result)))
 
 (define (parse-ast-define-value
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [rest : SpannedSexpr]) : ResultAstDecl
@@ -4923,37 +5747,39 @@
       (match (sp-node-get tail)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-expr-with-pools dispatch pools (sp-node-get first))
-            [(OkAstExpr parsed-value)
-              (OkAstDecl (ast-decl-def name AstNoType parsed-value))]
-            [(ErrAstExpr message) (ErrAstDecl message)])]
+            [(ResultAstExpr.Ok parsed-value)
+              (ResultAstDecl.Ok
+                (ast-decl-def name AstMaybeType.No parsed-value))]
+            [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])]
         [(SpannedSexpr.Cons ty value-tail _)
           (match (sp-node-get value-tail)
             [(SpannedSexpr.Cons value end _)
               (match (sp-node-get end)
                 [(SpannedSexpr.Nil _)
                   (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
-                    (match (parse-ast-type
+                    (match (parse-ast-type-spanned
                       dispatch
                       pools
-                      (spanned-sexpr-form (sp-node-get ty)))
-                      [(OkAstType parsed-ty)
+                      (sp-node-get ty))
+                      [(ResultAstType.Ok parsed-ty)
                         (match (parse-ast-expr-with-pools
                           dispatch
                           pools
                           (sp-node-get value))
-                          [(OkAstExpr parsed-value)
-                            (OkAstDecl
+                          [(ResultAstExpr.Ok parsed-value)
+                            (ResultAstDecl.Ok
                               (ast-decl-def
                                 name
-                                (AstSomeType parsed-ty)
+                                (AstMaybeType.Some parsed-ty)
                                 parsed-value))]
-                          [(ErrAstExpr message) (ErrAstDecl message)])]
-                      [(ErrAstType message) (ErrAstDecl message)])
-                    (ErrAstDecl "parse: expected ':' in definition"))]
-                [_ (ErrAstDecl "parse: malformed value definition")])]
-            [_ (ErrAstDecl "parse: malformed value definition")])]
-        [_ (ErrAstDecl "parse: malformed value definition")])]
-    [_ (ErrAstDecl "parse: malformed value definition")]))
+                          [(ResultAstExpr.Err message)
+                            (ResultAstDecl.Err message)])]
+                      [(ResultAstType.Err message) (ResultAstDecl.Err message)])
+                    (ResultAstDecl.Err "parse: expected ':' in definition"))]
+                [_ (ResultAstDecl.Err "parse: malformed value definition")])]
+            [_ (ResultAstDecl.Err "parse: malformed value definition")])]
+        [_ (ResultAstDecl.Err "parse: malformed value definition")])]
+    [_ (ResultAstDecl.Err "parse: malformed value definition")]))
 
 (define (parse-ast-define-fn-export-tail [tail : Sexpr]) : ResultAstFnExport
   (match tail
@@ -4963,13 +5789,17 @@
           (match (box-get value-node)
             [(Sexpr.Str value)
               (if (> (string.string-length value) 0)
-                (OkAstFnExport (ast-fn-export value))
-                (ErrAstFnExport
+                (ResultAstFnExport.Ok (ast-fn-export value))
+                (ResultAstFnExport.Err
                   "parse: define :export-symbol must not be empty"))]
             [_
-              (ErrAstFnExport "parse: malformed define :export-symbol metadata")])]
-        [_ (ErrAstFnExport "parse: malformed define :export-symbol metadata")])]
-    [_ (ErrAstFnExport "parse: malformed define :export-symbol metadata")]))
+              (ResultAstFnExport.Err
+                "parse: malformed define :export-symbol metadata")])]
+        [_
+          (ResultAstFnExport.Err
+            "parse: malformed define :export-symbol metadata")])]
+    [_
+      (ResultAstFnExport.Err "parse: malformed define :export-symbol metadata")]))
 
 (define (parse-ast-define-fn-metadata? [item : SpannedSexpr]) : bool
   (match (spanned-sexpr-form item)
@@ -4986,16 +5816,16 @@
   [body : i64]
   [export : AstFnExport]) : ResultAstDecl
   (match export
-    [(AstFnNoExport)
-      (OkAstDecl (ast-decl-def-fn-export name params ret body export))]
-    [(AstFnExport _)
+    [(AstFnExport.No)
+      (ResultAstDecl.Ok (ast-decl-def-fn-export name params ret body export))]
+    [(AstFnExport.Export _)
       (if (ast-param-list-has-comptime? params)
-        (ErrAstDecl
+        (ResultAstDecl.Err
           "parse: define :export-symbol cannot be used on functions with comptime parameters")
-        (OkAstDecl (ast-decl-def-fn-export name params ret body export)))]))
+        (ResultAstDecl.Ok (ast-decl-def-fn-export name params ret body export)))]))
 
 (define (parse-ast-define-fn-rest
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [params : AstParamList]
@@ -5007,43 +5837,35 @@
       (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
         (match (sp-node-get tail)
           [(SpannedSexpr.Cons ret body-tail _)
-            (match (sp-node-get body-tail)
-              [(SpannedSexpr.Cons body end _)
-                (match (sp-node-get end)
-                  [(SpannedSexpr.Nil _)
-                    (match (parse-ast-type
-                      dispatch
-                      pools
-                      (spanned-sexpr-form (sp-node-get ret)))
-                      [(OkAstType parsed-ret)
-                        (match (parse-ast-expr-with-pools
-                          dispatch
-                          pools
-                          (sp-node-get body))
-                          [(OkAstExpr parsed-body)
-                            (parse-ast-define-fn-finish
-                              name
-                              params
-                              parsed-ret
-                              parsed-body
-                              export)]
-                          [(ErrAstExpr message) (ErrAstDecl message)])]
-                      [(ErrAstType message) (ErrAstDecl message)])]
-                  [_ (ErrAstDecl "parse: malformed function definition")])]
-              [_ (ErrAstDecl "parse: malformed function definition")])]
-          [_ (ErrAstDecl "parse: malformed function definition")])
+            (match (parse-ast-type-spanned dispatch pools (sp-node-get ret))
+              [(ResultAstType.Ok parsed-ret)
+                (match (parse-ast-body-tail
+                  dispatch
+                  pools
+                  (sp-node-get body-tail)
+                  "parse: malformed function definition")
+                  [(ResultAstExpr.Ok parsed-body)
+                    (parse-ast-define-fn-finish
+                      name
+                      params
+                      parsed-ret
+                      parsed-body
+                      export)]
+                  [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])]
+              [(ResultAstType.Err message) (ResultAstDecl.Err message)])]
+          [_ (ResultAstDecl.Err "parse: malformed function definition")])
         (if (parse-ast-define-fn-metadata? (sp-node-get first))
           (match (spanned-sexpr-form (sp-node-get first))
             [(Sexpr.Cons key-node after-key)
               (match (box-get key-node)
                 [(Sexpr.Sym key)
-                  (if (string.string-eq key ":export-symbol")
+                  (if (string.eq key ":export-symbol")
                     (if seen-export
-                      (ErrAstDecl
+                      (ResultAstDecl.Err
                         "parse: duplicate define :export-symbol metadata")
                       (match (parse-ast-define-fn-export-tail
                         (box-get after-key))
-                        [(OkAstFnExport parsed-export)
+                        [(ResultAstFnExport.Ok parsed-export)
                           (parse-ast-define-fn-rest
                             dispatch
                             pools
@@ -5052,53 +5874,50 @@
                             parsed-export
                             true
                             (sp-node-get tail))]
-                        [(ErrAstFnExport message) (ErrAstDecl message)]))
+                        [(ResultAstFnExport.Err message)
+                          (ResultAstDecl.Err message)]))
                     (if (compiler-parse-metadata-key? key)
-                      (ErrAstDecl
-                        (string.string-append
-                          "parse: unknown define metadata "
-                          key))
-                      (ErrAstDecl
+                      (ResultAstDecl.Err
+                        (string.append "parse: unknown define metadata " key))
+                      (ResultAstDecl.Err
                         "parse: malformed define :export-symbol metadata")))]
-                [_ (ErrAstDecl "parse: malformed function definition")])]
-            [_ (ErrAstDecl "parse: malformed function definition")])
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get first))
-                [(OkAstExpr parsed-body)
-                  (parse-ast-define-fn-finish
-                    name
-                    params
-                    (AstTyUnit)
-                    parsed-body
-                    export)]
-                [(ErrAstExpr message) (ErrAstDecl message)])]
-            [_ (ErrAstDecl "parse: expected ':' in function definition")])))]
-    [_ (ErrAstDecl "parse: malformed function definition")]))
+                [_ (ResultAstDecl.Err "parse: malformed function definition")])]
+            [_ (ResultAstDecl.Err "parse: malformed function definition")])
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            rest
+            "parse: malformed function definition")
+            [(ResultAstExpr.Ok parsed-body)
+              (parse-ast-define-fn-finish
+                name
+                params
+                (AstType.Unit)
+                parsed-body
+                export)]
+            [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])))]
+    [_ (ResultAstDecl.Err "parse: malformed function definition")]))
 
 (define (parse-ast-define-fn
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [params : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-param-list dispatch pools (spanned-sexpr-form params))
-    [(OkAstParamList parsed-params)
+    [(ResultAstParamList.Ok parsed-params)
       (parse-ast-define-fn-rest
         dispatch
         pools
         name
         parsed-params
-        AstFnNoExport
+        AstFnExport.No
         false
         rest)]
-    [(ErrAstParamList message) (ErrAstDecl message)]))
+    [(ResultAstParamList.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-define
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5115,12 +5934,12 @@
                 name
                 (sp-node-get params)
                 (sp-node-get after-name))]
-            [_ (ErrAstDecl "parse: malformed define")])]
-        [_ (ErrAstDecl "parse: malformed define")])]
-    [_ (ErrAstDecl "parse: malformed define")]))
+            [_ (ResultAstDecl.Err "parse: malformed define")])]
+        [_ (ResultAstDecl.Err "parse: malformed define")])]
+    [_ (ResultAstDecl.Err "parse: malformed define")]))
 
 (define (parse-ast-defmacro
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5143,46 +5962,46 @@
                                   dispatch
                                   pools
                                   (spanned-sexpr-form (sp-node-get params)))
-                                  [(OkAstMacroParamList parsed-params)
-                                    (match (parse-ast-type
+                                  [(ResultAstMacroParamList.Ok parsed-params)
+                                    (match (parse-ast-type-spanned
                                       dispatch
                                       pools
-                                      (spanned-sexpr-form (sp-node-get ret)))
-                                      [(OkAstType parsed-ret)
+                                      (sp-node-get ret))
+                                      [(ResultAstType.Ok parsed-ret)
                                         (match (parse-ast-expr-with-pools
                                           dispatch
                                           pools
                                           (sp-node-get body))
-                                          [(OkAstExpr parsed-body)
-                                            (OkAstDecl
+                                          [(ResultAstExpr.Ok parsed-body)
+                                            (ResultAstDecl.Ok
                                               (ast-decl-def-macro
                                                 name
                                                 parsed-params
                                                 parsed-ret
                                                 parsed-body))]
-                                          [(ErrAstExpr message)
-                                            (ErrAstDecl message)])]
-                                      [(ErrAstType message)
-                                        (ErrAstDecl message)])]
-                                  [(ErrAstMacroParamList message)
-                                    (ErrAstDecl message)])
-                                (ErrAstDecl
+                                          [(ResultAstExpr.Err message)
+                                            (ResultAstDecl.Err message)])]
+                                      [(ResultAstType.Err message)
+                                        (ResultAstDecl.Err message)])]
+                                  [(ResultAstMacroParamList.Err message)
+                                    (ResultAstDecl.Err message)])
+                                (ResultAstDecl.Err
                                   "parse: expected ':' in macro definition"))]
-                            [_ (ErrAstDecl "parse: malformed defmacro")])]
-                        [_ (ErrAstDecl "parse: malformed defmacro")])]
-                    [_ (ErrAstDecl "parse: malformed defmacro")])]
-                [_ (ErrAstDecl "parse: malformed defmacro")])]
-            [_ (ErrAstDecl "parse: malformed defmacro")])]
-        [_ (ErrAstDecl "parse: malformed defmacro")])]
-    [_ (ErrAstDecl "parse: malformed defmacro")]))
+                            [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+                        [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+                    [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+                [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+            [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+        [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
+    [_ (ResultAstDecl.Err "parse: malformed defmacro")]))
 
 (define (parse-ast-extern-varargs-typed-name? [name : String]) : bool
   (if (> (string.string-length name) 3)
-    (string.string-eq (string.substring name 0 3) "...")
+    (string.eq (string.substring name 0 3) "...")
     false))
 
 (define (parse-ast-extern-varargs-tail-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]) : ResultAstType
   (if (parse-ast-extern-varargs-typed-name? name)
@@ -5190,23 +6009,24 @@
       dispatch
       pools
       (Sexpr.Sym (string.substring name 3 (- (string.string-length name) 3))))
-    (ErrAstType "parse: expected typed extern varargs tail")))
+    (ResultAstType.Err "parse: expected typed extern varargs tail")))
 
 (define (parse-ast-extern-head-fixed-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match (parse-ast-param dispatch pools (spanned-sexpr-form item))
-    [(OkAstParam param)
+    [(ResultAstParam.Ok param)
       (match param
-        [(AstParam _ ty comptime?)
+        [(AstParam.Param _ ty comptime?)
           (if comptime?
-            (ErrAstExternHeadItem "parse: extern parameters cannot be comptime")
-            (OkAstExternHeadItem (AstExternHeadParam ty)))])]
-    [(ErrAstParam message) (ErrAstExternHeadItem message)]))
+            (ResultAstExternHeadItem.Err
+              "parse: extern parameters cannot be comptime")
+            (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty)))])]
+    [(ResultAstParam.Err message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]
   [items : SpannedSexpr]) : ResultAstExternHeadItem
@@ -5221,19 +6041,19 @@
                   (if (sexpr-colon? (spanned-sexpr-form (sp-node-get colon)))
                     (match (sp-node-get ty-node)
                       [(SpannedSexpr.Sym ty-name _)
-                        (if (string.string-eq ty-name "...")
-                          (ErrAstExternHeadItem
+                        (if (string.eq ty-name "...")
+                          (ResultAstExternHeadItem.Err
                             "parse: extern typed varargs tail needs a type")
                           (if (parse-ast-extern-varargs-typed-name? ty-name)
                             (match (parse-ast-extern-varargs-tail-type
                               dispatch
                               pools
                               ty-name)
-                              [(OkAstType tail-ty)
-                                (OkAstExternHeadItem
-                                  (AstExternHeadVarargsTyped tail-ty))]
-                              [(ErrAstType message)
-                                (ErrAstExternHeadItem message)])
+                              [(ResultAstType.Ok tail-ty)
+                                (ResultAstExternHeadItem.Ok
+                                  (AstExternHeadItem.VarargsTyped tail-ty))]
+                              [(ResultAstType.Err message)
+                                (ResultAstExternHeadItem.Err message)])
                             (parse-ast-extern-head-fixed-param
                               dispatch
                               pools
@@ -5247,68 +6067,74 @@
     [_ (parse-ast-extern-head-fixed-param dispatch pools item)]))
 
 (define (parse-ast-extern-head-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match item
     [(SpannedSexpr.Sym name _)
-      (if (string.string-eq name "...")
-        (OkAstExternHeadItem (AstExternHeadVarargsOpen))
+      (if (string.eq name "...")
+        (ResultAstExternHeadItem.Ok (AstExternHeadItem.VarargsOpen))
         (if (parse-ast-extern-varargs-typed-name? name)
-          (ErrAstExternHeadItem
+          (ResultAstExternHeadItem.Err
             "parse: typed extern varargs tail must use bracket syntax")
-          (ErrAstExternHeadItem "parse: malformed extern function head")))]
+          (ResultAstExternHeadItem.Err "parse: malformed extern function head")))]
     [(SpannedSexpr.BracketList items _)
       (parse-ast-extern-head-bracket-item
         dispatch
         pools
         item
         (sp-node-get items))]
-    [_ (ErrAstExternHeadItem "parse: malformed extern function head")]))
+    [_ (ResultAstExternHeadItem.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-head-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]) : ResultAstExternHeader
   (match items
-    [(SpannedSexpr.Nil _) (OkAstExternHeader "" AstTypeNil (AstExternAbiC))]
+    [(SpannedSexpr.Nil _)
+      (ResultAstExternHeader.Ok "" (ast-type-list-new) (AstExternAbi.C))]
     [(SpannedSexpr.Cons item tail _)
       (let
         [item : SpannedSexpr (sp-node-get item)]
         [tail : SpannedSexpr (sp-node-get tail)]
         (match (parse-ast-extern-head-item dispatch pools item)
-          [(OkAstExternHeadItem parsed-item)
+          [(ResultAstExternHeadItem.Ok parsed-item)
             (match parsed-item
-              [(AstExternHeadParam ty)
+              [(AstExternHeadItem.Param ty)
                 (match (parse-ast-extern-head-items dispatch pools tail)
-                  [(OkAstExternHeader _ parsed-tail parsed-abi)
-                    (OkAstExternHeader
+                  [(ResultAstExternHeader.Ok _ parsed-tail parsed-abi)
+                    (ResultAstExternHeader.Ok
                       ""
                       (ast-type-cons-with-pools pools ty parsed-tail)
                       parsed-abi)]
-                  [(ErrAstExternHeader message) (ErrAstExternHeader message)])]
-              [(AstExternHeadVarargsOpen)
+                  [(ResultAstExternHeader.Err message)
+                    (ResultAstExternHeader.Err message)])]
+              [(AstExternHeadItem.VarargsOpen)
                 (match tail
                   [(SpannedSexpr.Nil _)
-                    (OkAstExternHeader "" AstTypeNil (AstExternAbiCVarargsOpen))]
-                  [_
-                    (ErrAstExternHeader
-                      "parse: extern varargs tail must be final")])]
-              [(AstExternHeadVarargsTyped tail-ty)
-                (match tail
-                  [(SpannedSexpr.Nil _)
-                    (OkAstExternHeader
+                    (ResultAstExternHeader.Ok
                       ""
-                      AstTypeNil
-                      (AstExternAbiCVarargsTyped tail-ty))]
+                      (ast-type-list-new)
+                      (AstExternAbi.CVarargsOpen))]
                   [_
-                    (ErrAstExternHeader
+                    (ResultAstExternHeader.Err
+                      "parse: extern varargs tail must be final")])]
+              [(AstExternHeadItem.VarargsTyped tail-ty)
+                (match tail
+                  [(SpannedSexpr.Nil _)
+                    (ResultAstExternHeader.Ok
+                      ""
+                      (ast-type-list-new)
+                      (AstExternAbi.CVarargsTyped tail-ty))]
+                  [_
+                    (ResultAstExternHeader.Err
                       "parse: extern varargs tail must be final")])])]
-          [(ErrAstExternHeadItem message) (ErrAstExternHeader message)]))]
-    [_ (ErrAstExternHeader "parse: malformed extern function head")]))
+          [(ResultAstExternHeadItem.Err message)
+            (ResultAstExternHeader.Err message)]))]
+    [_ (ResultAstExternHeader.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-header
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]) : ResultAstExternHeader
   (match head
@@ -5319,11 +6145,12 @@
             dispatch
             pools
             (sp-node-get params))
-            [(OkAstExternHeader _ param-types abi)
-              (OkAstExternHeader name param-types abi)]
-            [(ErrAstExternHeader message) (ErrAstExternHeader message)])]
-        [_ (ErrAstExternHeader "parse: malformed extern function head")])]
-    [_ (ErrAstExternHeader "parse: malformed extern function head")]))
+            [(ResultAstExternHeader.Ok _ param-types abi)
+              (ResultAstExternHeader.Ok name param-types abi)]
+            [(ResultAstExternHeader.Err message)
+              (ResultAstExternHeader.Err message)])]
+        [_ (ResultAstExternHeader.Err "parse: malformed extern function head")])]
+    [_ (ResultAstExternHeader.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-c-varargs-legacy-message) : String
   "parse: legacy :abi c-varargs metadata is retired; use function-head ... or ...T varargs")
@@ -5335,30 +6162,32 @@
         [(Sexpr.Sym name)
           (match (box-get rest)
             [(Sexpr.Nil)
-              (if (string.string-eq name "c")
-                (OkAstExternAbi (AstExternAbiC))
-                (if (string.string-eq name "c-varargs")
-                  (ErrAstExternAbi (parse-ast-extern-c-varargs-legacy-message))
-                  (ErrAstExternAbi
-                    (string.string-append "parse: unknown extern ABI " name))))]
+              (if (string.eq name "c")
+                (ResultAstExternAbi.Ok (AstExternAbi.C))
+                (if (string.eq name "c-varargs")
+                  (ResultAstExternAbi.Err
+                    (parse-ast-extern-c-varargs-legacy-message))
+                  (ResultAstExternAbi.Err
+                    (string.append "parse: unknown extern ABI " name))))]
             [(Sexpr.Cons fixed-node end)
               (match (box-get end)
                 [(Sexpr.Nil)
                   (match (box-get fixed-node)
                     [(Sexpr.Int _ _)
-                      (if (string.string-eq name "c-varargs")
-                        (ErrAstExternAbi
+                      (if (string.eq name "c-varargs")
+                        (ResultAstExternAbi.Err
                           (parse-ast-extern-c-varargs-legacy-message))
-                        (ErrAstExternAbi
-                          (string.string-append
-                            "parse: unknown extern ABI "
-                            name)))]
+                        (ResultAstExternAbi.Err
+                          (string.append "parse: unknown extern ABI " name)))]
                     [_
-                      (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
-                [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
-            [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
-        [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
-    [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")]))
+                      (ResultAstExternAbi.Err
+                        "parse: malformed extern :abi metadata")])]
+                [_
+                  (ResultAstExternAbi.Err
+                    "parse: malformed extern :abi metadata")])]
+            [_ (ResultAstExternAbi.Err "parse: malformed extern :abi metadata")])]
+        [_ (ResultAstExternAbi.Err "parse: malformed extern :abi metadata")])]
+    [_ (ResultAstExternAbi.Err "parse: malformed extern :abi metadata")]))
 
 (define (parse-ast-extern-string-tail [key : String] [tail : Sexpr]) : ResultAstExternSymbol
   (match tail
@@ -5368,26 +6197,26 @@
           (match (box-get value-node)
             [(Sexpr.Str value)
               (if (> (string.string-length value) 0)
-                (OkAstExternSymbol value)
-                (ErrAstExternSymbol
-                  (string.string-append
+                (ResultAstExternSymbol.Ok value)
+                (ResultAstExternSymbol.Err
+                  (string.append
                     "parse: extern "
-                    (string.string-append key " must not be empty"))))]
+                    (string.append key " must not be empty"))))]
             [_
-              (ErrAstExternSymbol
-                (string.string-append
+              (ResultAstExternSymbol.Err
+                (string.append
                   "parse: malformed extern "
-                  (string.string-append key " metadata")))])]
+                  (string.append key " metadata")))])]
         [_
-          (ErrAstExternSymbol
-            (string.string-append
+          (ResultAstExternSymbol.Err
+            (string.append
               "parse: malformed extern "
-              (string.string-append key " metadata")))])]
+              (string.append key " metadata")))])]
     [_
-      (ErrAstExternSymbol
-        (string.string-append
+      (ResultAstExternSymbol.Err
+        (string.append
           "parse: malformed extern "
-          (string.string-append key " metadata")))]))
+          (string.append key " metadata")))]))
 
 (define (parse-ast-extern-symbol-tail [tail : Sexpr]) : ResultAstExternSymbol
   (parse-ast-extern-string-tail ":symbol" tail))
@@ -5397,19 +6226,19 @@
   [parsed : AstExternAbi]) : ResultAstExternAbi
   (if (ast-extern-abi-c-varargs? base)
     (match parsed
-      [(AstExternAbiC) (OkAstExternAbi base)]
+      [(AstExternAbi.C) (ResultAstExternAbi.Ok base)]
       [_
-        (ErrAstExternAbi
+        (ResultAstExternAbi.Err
           "parse: extern varargs tail cannot be combined with another ABI")])
-    (OkAstExternAbi parsed)))
+    (ResultAstExternAbi.Ok parsed)))
 
 (define (parse-ast-extern-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
   (match items
@@ -5419,28 +6248,24 @@
           [(SpannedSexpr.Cons ty end _)
             (match (sp-node-get end)
               [(SpannedSexpr.Nil _)
-                (match (parse-ast-type
-                  dispatch
-                  pools
-                  (spanned-sexpr-form (sp-node-get ty)))
-                  [(OkAstType parsed-ty)
-                    (OkAstExternParts
-                      (AstExternMetadata abi symbol link-inputs seen-abi)
-                      parsed-ty)]
-                  [(ErrAstType message) (ErrAstExternParts message)])]
-              [_ (ErrAstExternParts "parse: malformed extern")])]
-          [_ (ErrAstExternParts "parse: malformed extern")])
+                (match (parse-ast-type-spanned dispatch pools (sp-node-get ty))
+                  [(ResultAstType.Ok parsed-ty)
+                    (ResultAstExternParts.Ok abi symbol seen-abi parsed-ty)]
+                  [(ResultAstType.Err message)
+                    (ResultAstExternParts.Err message)])]
+              [_ (ResultAstExternParts.Err "parse: malformed extern")])]
+          [_ (ResultAstExternParts.Err "parse: malformed extern")])
         (match (spanned-sexpr-form (sp-node-get head))
           [(Sexpr.Cons key-node after-key)
             (match (box-get key-node)
               [(Sexpr.Sym key)
                 (cond
-                  [(string.string-eq key ":abi")
+                  [(string.eq key ":abi")
                     (if seen-abi
-                      (ErrAstExternParts
+                      (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
                       (match (parse-ast-extern-abi-tail (box-get after-key))
-                        [(OkAstExternAbi parsed-abi)
+                        [(ResultAstExternAbi.Ok parsed-abi)
                           (parse-ast-extern-items
                             dispatch
                             pools
@@ -5450,13 +6275,14 @@
                             link-inputs
                             true
                             seen-symbol)]
-                        [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                  [(string.string-eq key ":symbol")
+                        [(ResultAstExternAbi.Err message)
+                          (ResultAstExternParts.Err message)]))]
+                  [(string.eq key ":symbol")
                     (if seen-symbol
-                      (ErrAstExternParts
+                      (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
                       (match (parse-ast-extern-symbol-tail (box-get after-key))
-                        [(OkAstExternSymbol parsed-symbol)
+                        [(ResultAstExternSymbol.Ok parsed-symbol)
                           (parse-ast-extern-items
                             dispatch
                             pools
@@ -5466,115 +6292,118 @@
                             link-inputs
                             seen-abi
                             true)]
-                        [(ErrAstExternSymbol message)
-                          (ErrAstExternParts message)]))]
-                  [(string.string-eq key ":link-lib")
+                        [(ResultAstExternSymbol.Err message)
+                          (ResultAstExternParts.Err message)]))]
+                  [(string.eq key ":link-lib")
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkLib value))
-                          seen-abi
-                          seen-symbol)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string.string-eq key ":link-search")
+                            (AstExternLinkInput.Lib value))
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
+                  [(string.eq key ":link-search")
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkSearch value))
-                          seen-abi
-                          seen-symbol)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string.string-eq key ":link-arg")
+                            (AstExternLinkInput.Search value))
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
+                  [(string.eq key ":link-arg")
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-items
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkArg value))
-                          seen-abi
-                          seen-symbol)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                            (AstExternLinkInput.Arg value))
+                          (parse-ast-extern-items
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
-                    (ErrAstExternParts
-                      (string.string-append
-                        "parse: unknown extern metadata "
-                        key))]
-                  [else (ErrAstExternParts "parse: expected ':' in extern")])]
-              [_ (ErrAstExternParts "parse: expected ':' in extern")])]
-          [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
-    [_ (ErrAstExternParts "parse: malformed extern")]))
+                    (ResultAstExternParts.Err
+                      (string.append "parse: unknown extern metadata " key))]
+                  [else
+                    (ResultAstExternParts.Err "parse: expected ':' in extern")])]
+              [_ (ResultAstExternParts.Err "parse: expected ':' in extern")])]
+          [_ (ResultAstExternParts.Err "parse: expected ':' in extern")]))]
+    [_ (ResultAstExternParts.Err "parse: malformed extern")]))
 
 (define (parse-ast-extern-head-finish
   [pools : AstNodePoolContext]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
   [seen-abi : bool]
   [param-types : AstTypeList]
   [ret : AstType]) : ResultAstExternParts
-  (OkAstExternParts
-    (AstExternMetadata abi symbol link-inputs seen-abi)
+  (ResultAstExternParts.Ok
+    abi
+    symbol
+    seen-abi
     (ast-ty-func-with-pools pools param-types ret)))
 
 (define (parse-ast-extern-head-post-ret
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
   [param-types : AstTypeList]
   [ret : AstType]) : ResultAstExternParts
   (match items
     [(SpannedSexpr.Nil _)
-      (parse-ast-extern-head-finish
-        pools
-        abi
-        symbol
-        link-inputs
-        seen-abi
-        param-types
-        ret)]
+      (parse-ast-extern-head-finish pools abi symbol seen-abi param-types ret)]
     [(SpannedSexpr.Cons head tail _)
       (match (spanned-sexpr-form (sp-node-get head))
         [(Sexpr.Cons key-node after-key)
           (match (box-get key-node)
             [(Sexpr.Sym key)
               (cond
-                [(string.string-eq key ":abi")
+                [(string.eq key ":abi")
                   (if seen-abi
-                    (ErrAstExternParts "parse: duplicate extern :abi metadata")
+                    (ResultAstExternParts.Err
+                      "parse: duplicate extern :abi metadata")
                     (match (parse-ast-extern-abi-tail (box-get after-key))
-                      [(OkAstExternAbi parsed-abi)
+                      [(ResultAstExternAbi.Ok parsed-abi)
                         (match (parse-ast-extern-abi-combine abi parsed-abi)
-                          [(OkAstExternAbi combined-abi)
+                          [(ResultAstExternAbi.Ok combined-abi)
                             (parse-ast-extern-head-post-ret
                               dispatch
                               pools
@@ -5586,15 +6415,16 @@
                               seen-symbol
                               param-types
                               ret)]
-                          [(ErrAstExternAbi message)
-                            (ErrAstExternParts message)])]
-                      [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                [(string.string-eq key ":symbol")
+                          [(ResultAstExternAbi.Err message)
+                            (ResultAstExternParts.Err message)])]
+                      [(ResultAstExternAbi.Err message)
+                        (ResultAstExternParts.Err message)]))]
+                [(string.eq key ":symbol")
                   (if seen-symbol
-                    (ErrAstExternParts
+                    (ResultAstExternParts.Err
                       "parse: duplicate extern :symbol metadata")
                     (match (parse-ast-extern-symbol-tail (box-get after-key))
-                      [(OkAstExternSymbol parsed-symbol)
+                      [(ResultAstExternSymbol.Ok parsed-symbol)
                         (parse-ast-extern-head-post-ret
                           dispatch
                           pools
@@ -5606,79 +6436,89 @@
                           true
                           param-types
                           ret)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)]))]
-                [(string.string-eq key ":link-lib")
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)]))]
+                [(string.eq key ":link-lib")
                   (match (parse-ast-extern-string-tail
                     ":link-lib"
                     (box-get after-key))
-                    [(OkAstExternSymbol value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                    [(ResultAstExternSymbol.Ok value)
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
-                          (AstExternLinkLib value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
-                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                [(string.string-eq key ":link-search")
+                          (AstExternLinkInput.Lib value))
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
+                    [(ResultAstExternSymbol.Err message)
+                      (ResultAstExternParts.Err message)])]
+                [(string.eq key ":link-search")
                   (match (parse-ast-extern-string-tail
                     ":link-search"
                     (box-get after-key))
-                    [(OkAstExternSymbol value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                    [(ResultAstExternSymbol.Ok value)
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
-                          (AstExternLinkSearch value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
-                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                [(string.string-eq key ":link-arg")
+                          (AstExternLinkInput.Search value))
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
+                    [(ResultAstExternSymbol.Err message)
+                      (ResultAstExternParts.Err message)])]
+                [(string.eq key ":link-arg")
                   (match (parse-ast-extern-string-tail
                     ":link-arg"
                     (box-get after-key))
-                    [(OkAstExternSymbol value)
-                      (parse-ast-extern-head-post-ret
-                        dispatch
-                        pools
-                        (sp-node-get tail)
-                        abi
-                        symbol
-                        (ast-extern-link-input-list-append
+                    [(ResultAstExternSymbol.Ok value)
+                      (begin
+                        (ast-extern-link-input-list-push
                           link-inputs
-                          (AstExternLinkArg value))
-                        seen-abi
-                        seen-symbol
-                        param-types
-                        ret)]
-                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                          (AstExternLinkInput.Arg value))
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          pools
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types
+                          ret))]
+                    [(ResultAstExternSymbol.Err message)
+                      (ResultAstExternParts.Err message)])]
                 [(compiler-parse-metadata-key? key)
-                  (ErrAstExternParts
-                    (string.string-append "parse: unknown extern metadata " key))]
-                [else (ErrAstExternParts "parse: malformed extern")])]
-            [_ (ErrAstExternParts "parse: malformed extern")])]
-        [_ (ErrAstExternParts "parse: malformed extern")])]
-    [_ (ErrAstExternParts "parse: malformed extern")]))
+                  (ResultAstExternParts.Err
+                    (string.append "parse: unknown extern metadata " key))]
+                [else (ResultAstExternParts.Err "parse: malformed extern")])]
+            [_ (ResultAstExternParts.Err "parse: malformed extern")])]
+        [_ (ResultAstExternParts.Err "parse: malformed extern")])]
+    [_ (ResultAstExternParts.Err "parse: malformed extern")]))
 
 (define (parse-ast-extern-head-rest
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
-  [link-inputs : AstExternLinkInputList]
+  [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
   [param-types : AstTypeList]) : ResultAstExternParts
@@ -5689,26 +6529,20 @@
           [(SpannedSexpr.Cons ret end _)
             (match (sp-node-get end)
               [(SpannedSexpr.Nil _)
-                (match (parse-ast-type
-                  dispatch
-                  pools
-                  (spanned-sexpr-form (sp-node-get ret)))
-                  [(OkAstType parsed-ret)
+                (match (parse-ast-type-spanned dispatch pools (sp-node-get ret))
+                  [(ResultAstType.Ok parsed-ret)
                     (parse-ast-extern-head-finish
                       pools
                       abi
                       symbol
-                      link-inputs
                       seen-abi
                       param-types
                       parsed-ret)]
-                  [(ErrAstType message) (ErrAstExternParts message)])]
+                  [(ResultAstType.Err message)
+                    (ResultAstExternParts.Err message)])]
               [_
-                (match (parse-ast-type
-                  dispatch
-                  pools
-                  (spanned-sexpr-form (sp-node-get ret)))
-                  [(OkAstType parsed-ret)
+                (match (parse-ast-type-spanned dispatch pools (sp-node-get ret))
+                  [(ResultAstType.Ok parsed-ret)
                     (parse-ast-extern-head-post-ret
                       dispatch
                       pools
@@ -5720,21 +6554,22 @@
                       seen-symbol
                       param-types
                       parsed-ret)]
-                  [(ErrAstType message) (ErrAstExternParts message)])])]
-          [_ (ErrAstExternParts "parse: malformed extern")])
+                  [(ResultAstType.Err message)
+                    (ResultAstExternParts.Err message)])])]
+          [_ (ResultAstExternParts.Err "parse: malformed extern")])
         (match (spanned-sexpr-form (sp-node-get head))
           [(Sexpr.Cons key-node after-key)
             (match (box-get key-node)
               [(Sexpr.Sym key)
                 (cond
-                  [(string.string-eq key ":abi")
+                  [(string.eq key ":abi")
                     (if seen-abi
-                      (ErrAstExternParts
+                      (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
                       (match (parse-ast-extern-abi-tail (box-get after-key))
-                        [(OkAstExternAbi parsed-abi)
+                        [(ResultAstExternAbi.Ok parsed-abi)
                           (match (parse-ast-extern-abi-combine abi parsed-abi)
-                            [(OkAstExternAbi combined-abi)
+                            [(ResultAstExternAbi.Ok combined-abi)
                               (parse-ast-extern-head-rest
                                 dispatch
                                 pools
@@ -5745,15 +6580,16 @@
                                 true
                                 seen-symbol
                                 param-types)]
-                            [(ErrAstExternAbi message)
-                              (ErrAstExternParts message)])]
-                        [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                  [(string.string-eq key ":symbol")
+                            [(ResultAstExternAbi.Err message)
+                              (ResultAstExternParts.Err message)])]
+                        [(ResultAstExternAbi.Err message)
+                          (ResultAstExternParts.Err message)]))]
+                  [(string.eq key ":symbol")
                     (if seen-symbol
-                      (ErrAstExternParts
+                      (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
                       (match (parse-ast-extern-symbol-tail (box-get after-key))
-                        [(OkAstExternSymbol parsed-symbol)
+                        [(ResultAstExternSymbol.Ok parsed-symbol)
                           (parse-ast-extern-head-rest
                             dispatch
                             pools
@@ -5764,125 +6600,159 @@
                             seen-abi
                             true
                             param-types)]
-                        [(ErrAstExternSymbol message)
-                          (ErrAstExternParts message)]))]
-                  [(string.string-eq key ":link-lib")
+                        [(ResultAstExternSymbol.Err message)
+                          (ResultAstExternParts.Err message)]))]
+                  [(string.eq key ":link-lib")
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkLib value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string.string-eq key ":link-search")
+                            (AstExternLinkInput.Lib value))
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
+                  [(string.eq key ":link-search")
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkSearch value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string.string-eq key ":link-arg")
+                            (AstExternLinkInput.Search value))
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
+                  [(string.eq key ":link-arg")
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-head-rest
-                          dispatch
-                          pools
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
+                      [(ResultAstExternSymbol.Ok value)
+                        (begin
+                          (ast-extern-link-input-list-push
                             link-inputs
-                            (AstExternLinkArg value))
-                          seen-abi
-                          seen-symbol
-                          param-types)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                            (AstExternLinkInput.Arg value))
+                          (parse-ast-extern-head-rest
+                            dispatch
+                            pools
+                            (sp-node-get tail)
+                            abi
+                            symbol
+                            link-inputs
+                            seen-abi
+                            seen-symbol
+                            param-types))]
+                      [(ResultAstExternSymbol.Err message)
+                        (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
-                    (ErrAstExternParts
-                      (string.string-append
-                        "parse: unknown extern metadata "
-                        key))]
-                  [else (ErrAstExternParts "parse: expected ':' in extern")])]
-              [_ (ErrAstExternParts "parse: expected ':' in extern")])]
-          [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
-    [_ (ErrAstExternParts "parse: malformed extern")]))
+                    (ResultAstExternParts.Err
+                      (string.append "parse: unknown extern metadata " key))]
+                  [else
+                    (ResultAstExternParts.Err "parse: expected ':' in extern")])]
+              [_ (ResultAstExternParts.Err "parse: expected ':' in extern")])]
+          [_ (ResultAstExternParts.Err "parse: expected ':' in extern")]))]
+    [_ (ResultAstExternParts.Err "parse: malformed extern")]))
 
 (define (parse-ast-extern-function-head
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-extern-header dispatch pools head)
-    [(OkAstExternHeader name param-types abi)
-      (match (parse-ast-extern-head-rest
-        dispatch
-        pools
-        rest
-        abi
-        name
-        AstExternLinkInputNil
-        false
-        false
-        param-types)
-        [(OkAstExternParts metadata ty)
-          (OkAstDecl (ast-decl-extern name (AstExternFunction) metadata ty))]
-        [(ErrAstExternParts message) (ErrAstDecl message)])]
-    [(ErrAstExternHeader message) (ErrAstDecl message)]))
+    [(ResultAstExternHeader.Ok name param-types abi)
+      (let
+        [link-inputs : AstExternLinkInputList (ast-extern-link-input-list-new)]
+        (match (parse-ast-extern-head-rest
+          dispatch
+          pools
+          rest
+          abi
+          name
+          (&mut link-inputs)
+          false
+          false
+          param-types)
+          [(ResultAstExternParts.Ok parsed-abi parsed-symbol explicit-abi ty)
+            (ResultAstDecl.Ok
+              (ast-decl-extern
+                name
+                (AstExternKind.Function)
+                (AstExternMetadata.Metadata
+                  parsed-abi
+                  parsed-symbol
+                  link-inputs
+                  explicit-abi)
+                ty))]
+          [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
+    [(ResultAstExternHeader.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-extern
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpannedSexpr.Cons name-node after-name _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
-          (match (parse-ast-extern-items
-            dispatch
-            pools
-            (sp-node-get after-name)
-            (AstExternAbiC)
-            name
-            AstExternLinkInputNil
-            false
-            false)
-            [(OkAstExternParts metadata parsed-ty)
-              (OkAstDecl
-                (ast-decl-extern name (AstExternValue) metadata parsed-ty))]
-            [(ErrAstExternParts message) (ErrAstDecl message)])]
+          (let
+            [link-inputs : AstExternLinkInputList
+              (ast-extern-link-input-list-new)]
+            (match (parse-ast-extern-items
+              dispatch
+              pools
+              (sp-node-get after-name)
+              (AstExternAbi.C)
+              name
+              (&mut link-inputs)
+              false
+              false)
+              [(ResultAstExternParts.Ok
+                  parsed-abi
+                  parsed-symbol
+                  explicit-abi
+                  parsed-ty)
+                (ResultAstDecl.Ok
+                  (ast-decl-extern
+                    name
+                    (AstExternKind.Value)
+                    (AstExternMetadata.Metadata
+                      parsed-abi
+                      parsed-symbol
+                      link-inputs
+                      explicit-abi)
+                    parsed-ty))]
+              [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
         [_
           (parse-ast-extern-function-head
             dispatch
             pools
             (sp-node-get name-node)
             (sp-node-get after-name))])]
-    [_ (ErrAstDecl "parse: malformed extern")]))
+    [_ (ResultAstDecl.Err "parse: malformed extern")]))
 
 (define (parse-ast-defenum
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5893,33 +6763,29 @@
             dispatch
             pools
             (sp-node-get variants)
-            AstLifetimeNil
-            (AstEnumNoCleanup)
+            (ast-lifetime-list-new)
+            (AstEnumCleanup.No)
             false
             false
             false)
-            [(OkAstEnumDefParts lifetimes cleanup parsed-variants)
-              (match parsed-variants
-                [(AstVariantDefNil)
-                  (ErrAstDecl "parse: defenum needs at least one variant")]
-                [_
-                  (match lifetimes
-                    [(AstLifetimeNil)
-                      (OkAstDecl
-                        (ast-decl-def-enum name cleanup parsed-variants))]
-                    [_
-                      (OkAstDecl
-                        (ast-decl-def-enum-lifetimes
-                          name
-                          lifetimes
-                          cleanup
-                          parsed-variants))])])]
-            [(ErrAstEnumDefParts message) (ErrAstDecl message)])]
-        [_ (ErrAstDecl "parse: malformed defenum")])]
-    [_ (ErrAstDecl "parse: malformed defenum")]))
+            [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
+              (if (ast-variant-def-list-empty? (& parsed-variants))
+                (ResultAstDecl.Err "parse: defenum needs at least one variant")
+                (if (ast-lifetime-list-empty? (& lifetimes))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-enum name cleanup parsed-variants))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-enum-lifetimes
+                      name
+                      lifetimes
+                      cleanup
+                      parsed-variants))))]
+            [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)])]
+        [_ (ResultAstDecl.Err "parse: malformed defenum")])]
+    [_ (ResultAstDecl.Err "parse: malformed defenum")]))
 
 (define (parse-ast-defstruct
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5930,33 +6796,30 @@
             dispatch
             pools
             (sp-node-get fields)
-            AstLifetimeNil
-            (AstStructReprDefault)
-            (AstStructNoCleanup)
+            (ast-lifetime-list-new)
+            (AstStructRepr.Default)
+            (AstStructCleanup.No)
+            (ast-field-def-list-new)
             false
             false
             false
             false)
-            [(OkAstStructDefParts lifetimes repr cleanup parsed-fields)
-              (match parsed-fields
-                [(AstFieldDefNil)
-                  (ErrAstDecl "parse: defstruct needs at least one field")]
-                [_
-                  (match lifetimes
-                    [(AstLifetimeNil)
-                      (OkAstDecl
-                        (ast-decl-def-struct name repr cleanup parsed-fields))]
-                    [_
-                      (OkAstDecl
-                        (ast-decl-def-struct-lifetimes
-                          name
-                          lifetimes
-                          repr
-                          cleanup
-                          parsed-fields))])])]
-            [(ErrAstStructDefParts message) (ErrAstDecl message)])]
-        [_ (ErrAstDecl "parse: malformed defstruct")])]
-    [_ (ErrAstDecl "parse: malformed defstruct")]))
+            [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
+              (if (ast-field-def-list-empty? (& parsed-fields))
+                (ResultAstDecl.Err "parse: defstruct needs at least one field")
+                (if (ast-lifetime-list-empty? (& lifetimes))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-struct name repr cleanup parsed-fields))
+                  (ResultAstDecl.Ok
+                    (ast-decl-def-struct-lifetimes
+                      name
+                      lifetimes
+                      repr
+                      cleanup
+                      parsed-fields))))]
+            [(ResultAstStructDefParts.Err message) (ResultAstDecl.Err message)])]
+        [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
+    [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
 
 (define (parse-ast-defdispatch [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5964,25 +6827,76 @@
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
           (match (parse-ast-dispatch-variant-list (sp-node-get variants))
-            [(OkAstDispatchVariantList parsed-variants)
-              (match parsed-variants
-                [(AstDispatchVariantNil)
-                  (ErrAstDecl "parse: defdispatch needs at least one variant")]
-                [_ (OkAstDecl (ast-decl-def-dispatch name parsed-variants))])]
-            [(ErrAstDispatchVariantList message) (ErrAstDecl message)])]
-        [_ (ErrAstDecl "parse: malformed defdispatch")])]
-    [_ (ErrAstDecl "parse: malformed defdispatch")]))
+            [(ResultAstDispatchVariantList.Ok parsed-variants)
+              (if (ast-dispatch-variant-list-empty? (& parsed-variants))
+                (ResultAstDecl.Err
+                  "parse: defdispatch needs at least one variant")
+                (ResultAstDecl.Ok (ast-decl-def-dispatch name parsed-variants)))]
+            [(ResultAstDispatchVariantList.Err message)
+              (ResultAstDecl.Err message)])]
+        [_ (ResultAstDecl.Err "parse: malformed defdispatch")])]
+    [_ (ResultAstDecl.Err "parse: malformed defdispatch")]))
 
-(define (parse-ast-module [rest : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-module-body-forms-into-vec
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [forms : SpannedSexpr]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
+  (match forms
+    [(SpannedSexpr.Nil _) (ResultParseAstDeclVec.Ok)]
+    [(SpannedSexpr.Cons form rest _)
+      (match (parse-ast-decl-maybe-with-pools dispatch pools (sp-node-get form))
+        [(ResultAstMaybeDecl.SomeDecl decl)
+          (begin
+            (parse-ast-decl-vec-push out decl)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstMaybeDecl.Decls decls)
+          (begin
+            (parse-ast-decl-vec-push-list! out decls)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstMaybeDecl.NoDecl)
+          (parse-ast-module-body-forms-into-vec
+            dispatch
+            pools
+            (sp-node-get rest)
+            out)]
+        [(ResultAstMaybeDecl.Err message) (ResultParseAstDeclVec.Err message)])]
+    [_ (ResultParseAstDeclVec.Err "parse: malformed module")]))
+
+(define (parse-ast-module-body
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [name : String]
+  [body : SpannedSexpr]) : ResultAstDecl
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    (match (parse-ast-module-body-forms-into-vec dispatch pools body (&mut out))
+      [(ResultParseAstDeclVec.Ok)
+        (ResultAstDecl.Ok
+          (ast-decl-module-body name (parse-ast-decl-vec-to-list (& out))))]
+      [(ResultParseAstDeclVec.Err message) (ResultAstDecl.Err message)])))
+
+(define (parse-ast-module
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpannedSexpr.Cons name-node end _)
-      (match (sp-node-get end)
-        [(SpannedSexpr.Nil _)
-          (match (sp-node-get name-node)
-            [(SpannedSexpr.Sym name _) (OkAstDecl (ast-decl-module name))]
-            [_ (ErrAstDecl "parse: malformed module")])]
-        [_ (ErrAstDecl "parse: malformed module")])]
-    [_ (ErrAstDecl "parse: malformed module")]))
+      (match (sp-node-get name-node)
+        [(SpannedSexpr.Sym name _)
+          (match (sp-node-get end)
+            [(SpannedSexpr.Nil _) (ResultAstDecl.Ok (ast-decl-module name))]
+            [_ (parse-ast-module-body dispatch pools name (sp-node-get end))])]
+        [_ (ResultAstDecl.Err "parse: malformed module")])]
+    [_ (ResultAstDecl.Err "parse: malformed module")]))
 
 (define (parse-ast-import-spec
   [kind : AstImportKind]
@@ -5990,7 +6904,8 @@
   [module-name : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]) : ResultAstDecl
-  (OkAstDecl (AstDeclImport (AstImportSpec kind path module-name alias span))))
+  (ResultAstDecl.Ok
+    (AstDecl.Import (AstImportSpec.Spec kind path module-name alias span))))
 
 (define (parse-ast-import-alias
   [kind : AstImportKind]
@@ -6009,20 +6924,20 @@
                   (match (sp-node-get alias-node)
                     [(SpannedSexpr.Sym alias _)
                       (if (or
-                        (string.string-eq as-name "as")
-                        (string.string-eq as-name ":as"))
+                        (string.eq as-name "as")
+                        (string.eq as-name ":as"))
                         (parse-ast-import-spec
                           kind
                           path
                           module-name
-                          (AstSomeImportAlias alias)
+                          (AstMaybeImportAlias.Some alias)
                           span)
-                        (ErrAstDecl "parse: malformed import"))]
-                    [_ (ErrAstDecl "parse: malformed import")])]
-                [_ (ErrAstDecl "parse: malformed import")])]
-            [_ (ErrAstDecl "parse: malformed import")])]
-        [_ (ErrAstDecl "parse: malformed import")])]
-    [_ (ErrAstDecl "parse: malformed import")]))
+                        (ResultAstDecl.Err "parse: malformed import"))]
+                    [_ (ResultAstDecl.Err "parse: malformed import")])]
+                [_ (ResultAstDecl.Err "parse: malformed import")])]
+            [_ (ResultAstDecl.Err "parse: malformed import")])]
+        [_ (ResultAstDecl.Err "parse: malformed import")])]
+    [_ (ResultAstDecl.Err "parse: malformed import")]))
 
 (define (parse-ast-import-module-tail
   [path : String]
@@ -6035,20 +6950,20 @@
           (match (sp-node-get after-module)
             [(SpannedSexpr.Nil _)
               (parse-ast-import-spec
-                (AstImportPath)
+                (AstImportKind.Path)
                 path
-                (AstSomeModuleName module-name)
-                AstNoImportAlias
+                (AstMaybeModuleName.Some module-name)
+                AstMaybeImportAlias.No
                 span)]
             [_
               (parse-ast-import-alias
-                (AstImportPath)
+                (AstImportKind.Path)
                 path
-                (AstSomeModuleName module-name)
+                (AstMaybeModuleName.Some module-name)
                 (sp-node-get after-module)
                 span)])]
-        [_ (ErrAstDecl "parse: malformed import")])]
-    [_ (ErrAstDecl "parse: malformed import")]))
+        [_ (ResultAstDecl.Err "parse: malformed import")])]
+    [_ (ResultAstDecl.Err "parse: malformed import")]))
 
 (define (parse-ast-import-tail
   [path : String]
@@ -6057,71 +6972,69 @@
   (match tail
     [(SpannedSexpr.Nil _)
       (parse-ast-import-spec
-        (AstImportPath)
+        (AstImportKind.Path)
         path
-        AstNoModuleName
-        AstNoImportAlias
+        AstMaybeModuleName.No
+        AstMaybeImportAlias.No
         span)]
     [(SpannedSexpr.Cons head-node after-head _)
       (match (sp-node-get head-node)
         [(SpannedSexpr.Sym head _)
-          (if (string.string-eq head "as")
+          (if (string.eq head "as")
             (parse-ast-import-alias
-              (AstImportPath)
+              (AstImportKind.Path)
               path
-              AstNoModuleName
+              AstMaybeModuleName.No
               tail
               span)
-            (if (string.string-eq head "module")
+            (if (string.eq head "module")
               (parse-ast-import-module-tail path (sp-node-get after-head) span)
-              (ErrAstDecl "parse: malformed import")))]
-        [_ (ErrAstDecl "parse: malformed import")])]
-    [_ (ErrAstDecl "parse: malformed import")]))
+              (ResultAstDecl.Err "parse: malformed import")))]
+        [_ (ResultAstDecl.Err "parse: malformed import")])]
+    [_ (ResultAstDecl.Err "parse: malformed import")]))
 
 (define (parse-ast-import-macro-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [call-form : SpannedSexpr]
   [tail : SpannedSexpr]
   [span : AstSourceSpan]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools call-form)
-    [(OkAstExpr call-expr)
+    [(ResultAstExpr.Ok call-expr)
       (match (ast-expr-unspan-with-pools
         pools
         (ast-node-pool-context-expr-get pools call-expr))
-        [(AstExprCall _ _)
+        [(AstExpr.Call _ _)
           (match tail
             [(SpannedSexpr.Nil _)
               (parse-ast-import-spec
-                (AstImportMacro call-expr AstNoModuleName)
+                (AstImportKind.Macro call-expr AstMaybeModuleName.No)
                 ""
-                AstNoModuleName
-                AstNoImportAlias
+                AstMaybeModuleName.No
+                AstMaybeImportAlias.No
                 span)]
             [(SpannedSexpr.Cons head-node _ _)
               (match (sp-node-get head-node)
                 [(SpannedSexpr.Sym head _)
-                  (if (or
-                    (string.string-eq head "as")
-                    (string.string-eq head ":as"))
+                  (if (or (string.eq head "as") (string.eq head ":as"))
                     (parse-ast-import-alias
-                      (AstImportMacro call-expr AstNoModuleName)
+                      (AstImportKind.Macro call-expr AstMaybeModuleName.No)
                       ""
-                      AstNoModuleName
+                      AstMaybeModuleName.No
                       tail
                       span)
-                    (ErrAstDecl "parse: malformed import"))]
-                [_ (ErrAstDecl "parse: malformed import")])]
-            [_ (ErrAstDecl "parse: malformed import")])]
-        [_ (ErrAstDecl "parse: import macro operand must be a call")])]
-    [(ErrAstExpr message) (ErrAstDecl message)]))
+                    (ResultAstDecl.Err "parse: malformed import"))]
+                [_ (ResultAstDecl.Err "parse: malformed import")])]
+            [_ (ResultAstDecl.Err "parse: malformed import")])]
+        [_ (ResultAstDecl.Err "parse: import macro operand must be a call")])]
+    [(ResultAstExpr.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-dotted-import-tl-suffix? [name : String]) : bool
   (let
     [n : i64 (string.string-length name)]
     (if (< n 3)
       false
-      (string.string-eq (string.substring name (- n 3) 3) ".tl"))))
+      (string.eq (string.substring name (- n 3) 3) ".tl"))))
 
 (define (parse-ast-dotted-import-name-valid? [name : String]) : bool
   (let
@@ -6170,32 +7083,32 @@
   [tail : SpannedSexpr]
   [span : AstSourceSpan]) : ResultAstDecl
   (if (not (parse-ast-dotted-import-name-valid? module-name))
-    (ErrAstDecl "parse: invalid dotted import module name")
+    (ResultAstDecl.Err "parse: invalid dotted import module name")
     (match tail
       [(SpannedSexpr.Nil _)
         (parse-ast-import-spec
-          (AstImportModule)
+          (AstImportKind.Module)
           module-name
-          (AstSomeModuleName module-name)
-          (AstSomeImportAlias
+          (AstMaybeModuleName.Some module-name)
+          (AstMaybeImportAlias.Some
             (parse-ast-dotted-import-default-alias module-name))
           span)]
       [(SpannedSexpr.Cons head-node _ _)
         (match (sp-node-get head-node)
           [(SpannedSexpr.Sym head _)
-            (if (or (string.string-eq head "as") (string.string-eq head ":as"))
+            (if (or (string.eq head "as") (string.eq head ":as"))
               (parse-ast-import-alias
-                (AstImportModule)
+                (AstImportKind.Module)
                 module-name
-                (AstSomeModuleName module-name)
+                (AstMaybeModuleName.Some module-name)
                 tail
                 span)
-              (ErrAstDecl "parse: malformed import"))]
-          [_ (ErrAstDecl "parse: malformed import")])]
-      [_ (ErrAstDecl "parse: malformed import")])))
+              (ResultAstDecl.Err "parse: malformed import"))]
+          [_ (ResultAstDecl.Err "parse: malformed import")])]
+      [_ (ResultAstDecl.Err "parse: malformed import")])))
 
 (define (parse-ast-import
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [span : AstSourceSpan]) : ResultAstDecl
@@ -6213,13 +7126,13 @@
             (sp-node-get path-node)
             (sp-node-get tail)
             span)]
-        [_ (ErrAstDecl "parse: malformed import")])]
-    [_ (ErrAstDecl "parse: malformed import")]))
+        [_ (ResultAstDecl.Err "parse: malformed import")])]
+    [_ (ResultAstDecl.Err "parse: malformed import")]))
 
 (define (parse-ast-include-str [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstDecl "parse: include-str expects name and string path")]
+      (ResultAstDecl.Err "parse: include-str expects name and string path")]
     [(SpannedSexpr.Cons name-node tail _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
@@ -6229,21 +7142,25 @@
                 [(SpannedSexpr.Str path _)
                   (match (sp-node-get after-path)
                     [(SpannedSexpr.Nil _)
-                      (OkAstDecl (AstDeclIncludeStr name path))]
+                      (ResultAstDecl.Ok (AstDecl.IncludeStr name path))]
                     [_
-                      (ErrAstDecl
+                      (ResultAstDecl.Err
                         "parse: include-str expects exactly two operands")])]
-                [_ (ErrAstDecl "parse: include-str path must be a string")])]
+                [_
+                  (ResultAstDecl.Err "parse: include-str path must be a string")])]
             [(SpannedSexpr.Nil _)
-              (ErrAstDecl "parse: include-str expects name and string path")]
-            [_ (ErrAstDecl "parse: include-str expects exactly two operands")])]
-        [_ (ErrAstDecl "parse: include-str name must be a symbol")])]
-    [_ (ErrAstDecl "parse: malformed include-str")]))
+              (ResultAstDecl.Err
+                "parse: include-str expects name and string path")]
+            [_
+              (ResultAstDecl.Err
+                "parse: include-str expects exactly two operands")])]
+        [_ (ResultAstDecl.Err "parse: include-str name must be a symbol")])]
+    [_ (ResultAstDecl.Err "parse: malformed include-str")]))
 
 (define (parse-ast-include-bin [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpannedSexpr.Nil _)
-      (ErrAstDecl "parse: include-bin expects name and string path")]
+      (ResultAstDecl.Err "parse: include-bin expects name and string path")]
     [(SpannedSexpr.Cons name-node tail _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
@@ -6253,29 +7170,28 @@
                 [(SpannedSexpr.Str path _)
                   (match (sp-node-get after-path)
                     [(SpannedSexpr.Nil _)
-                      (OkAstDecl (AstDeclIncludeBin name path))]
+                      (ResultAstDecl.Ok (AstDecl.IncludeBin name path))]
                     [_
-                      (ErrAstDecl
+                      (ResultAstDecl.Err
                         "parse: include-bin expects exactly two operands")])]
-                [_ (ErrAstDecl "parse: include-bin path must be a string")])]
+                [_
+                  (ResultAstDecl.Err "parse: include-bin path must be a string")])]
             [(SpannedSexpr.Nil _)
-              (ErrAstDecl "parse: include-bin expects name and string path")]
-            [_ (ErrAstDecl "parse: include-bin expects exactly two operands")])]
-        [_ (ErrAstDecl "parse: include-bin name must be a symbol")])]
-    [_ (ErrAstDecl "parse: malformed include-bin")]))
+              (ResultAstDecl.Err
+                "parse: include-bin expects name and string path")]
+            [_
+              (ResultAstDecl.Err
+                "parse: include-bin expects exactly two operands")])]
+        [_ (ResultAstDecl.Err "parse: include-bin name must be a symbol")])]
+    [_ (ResultAstDecl.Err "parse: malformed include-bin")]))
 
 (define (parse-ast-test-body [pools : AstNodePoolContext] [exprs : AstExprList]) : i64
-  (match exprs
-    [(AstExprCons only rest)
-      (let
-        [rest-list : AstExprList (box-get rest)]
-        (match rest-list
-          [(AstExprNil) only]
-          [_ (ast-node-pool-context-expr-push pools (AstExprBegin exprs))]))]
-    [_ (ast-node-pool-context-expr-push pools (AstExprBegin exprs))]))
+  (if (= (struct-get (& exprs) len) 1)
+    (ast-expr-list-get (& exprs) 0 0)
+    (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs))))
 
 (define (parse-ast-test
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [form-span : AstSourceSpan]) : ResultAstDecl
@@ -6285,21 +7201,21 @@
         [(SpannedSexpr.Sym name _)
           (match (sp-node-get body-forms)
             [(SpannedSexpr.Nil _)
-              (ErrAstDecl "parse: test needs at least one expression")]
+              (ResultAstDecl.Err "parse: test needs at least one expression")]
             [_
               (match (parse-ast-expr-list
                 dispatch
                 pools
                 (sp-node-get body-forms))
-                [(OkAstExprList exprs)
-                  (OkAstDecl
+                [(ResultAstExprList.Ok exprs)
+                  (ResultAstDecl.Ok
                     (ast-decl-test
                       name
                       (parse-ast-test-body pools exprs)
                       form-span))]
-                [(ErrAstExprList message) (ErrAstDecl message)])])]
-        [_ (ErrAstDecl "parse: malformed test")])]
-    [_ (ErrAstDecl "parse: malformed test")]))
+                [(ResultAstExprList.Err message) (ResultAstDecl.Err message)])])]
+        [_ (ResultAstDecl.Err "parse: malformed test")])]
+    [_ (ResultAstDecl.Err "parse: malformed test")]))
 
 (define (parse-ast-comptime-decl-payload-message) : String
   "parse: comptime-decl accepts only defstruct, defenum, or define")
@@ -6308,14 +7224,14 @@
   "parse: comptime-decls is removed; use a declaration-emitting macro instead")
 
 (define (parse-ast-generated-decl-meta
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [meta : SpannedSexpr]) : ResultAstGeneratedDeclMeta
   (match meta
     [(SpannedSexpr.Cons head-node meta-rest _)
       (match (sp-node-get head-node)
         [(SpannedSexpr.Sym head _)
-          (if (string.string-eq head ":generated")
+          (if (string.eq head ":generated")
             (match (sp-node-get meta-rest)
               [(SpannedSexpr.Cons generator-node item-tail _)
                 (match (sp-node-get generator-node)
@@ -6328,38 +7244,38 @@
                               dispatch
                               pools
                               (sp-node-get arg-key-forms))
-                              [(OkAstExprList arg-keys)
-                                (OkAstGeneratedDeclMeta
-                                  (AstSomeGeneratedDeclMeta
+                              [(ResultAstExprList.Ok arg-keys)
+                                (ResultAstGeneratedDeclMeta.Ok
+                                  (AstGeneratedDeclMeta.Some
                                     generator-name
                                     item-name
                                     arg-keys
                                     ""))]
-                              [(ErrAstExprList message)
-                                (ErrAstGeneratedDeclMeta message)])]
+                              [(ResultAstExprList.Err message)
+                                (ResultAstGeneratedDeclMeta.Err message)])]
                           [_
-                            (ErrAstGeneratedDeclMeta
+                            (ResultAstGeneratedDeclMeta.Err
                               "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
                       [_
-                        (ErrAstGeneratedDeclMeta
+                        (ResultAstGeneratedDeclMeta.Err
                           "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
                   [_
-                    (ErrAstGeneratedDeclMeta
+                    (ResultAstGeneratedDeclMeta.Err
                       "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
               [_
-                (ErrAstGeneratedDeclMeta
+                (ResultAstGeneratedDeclMeta.Err
                   "parse: :generated metadata expects generator name, item name, and argument key expressions")])
-            (ErrAstGeneratedDeclMeta
+            (ResultAstGeneratedDeclMeta.Err
               "parse: comptime-decl metadata must be :generated"))]
         [_
-          (ErrAstGeneratedDeclMeta
+          (ResultAstGeneratedDeclMeta.Err
             "parse: comptime-decl metadata must be :generated")])]
     [_
-      (ErrAstGeneratedDeclMeta
+      (ResultAstGeneratedDeclMeta.Err
         "parse: comptime-decl metadata must be :generated")]))
 
 (define (parse-ast-comptime-decl-payload
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [template : SpannedSexpr]) : ResultAstDecl
   (match template
@@ -6375,21 +7291,23 @@
                 (parse-ast-defenum dispatch pools (sp-node-get template-rest))]
               [(= tag (compiler-parse-tag-decl-defstruct))
                 (parse-ast-defstruct dispatch pools (sp-node-get template-rest))]
-              [else (ErrAstDecl (parse-ast-comptime-decl-payload-message))]))]
-        [_ (ErrAstDecl (parse-ast-comptime-decl-payload-message))])]
-    [_ (ErrAstDecl (parse-ast-comptime-decl-payload-message))]))
+              [else
+                (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))]))]
+        [_ (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))])]
+    [_ (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))]))
 
 (define (parse-ast-comptime-decl-with-meta
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [meta : AstGeneratedDeclMeta]
   [template : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-comptime-decl-payload dispatch pools template)
-    [(OkAstDecl decl) (OkAstDecl (ast-decl-comptime-decl-with-meta meta decl))]
-    [(ErrAstDecl message) (ErrAstDecl message)]))
+    [(ResultAstDecl.Ok decl)
+      (ResultAstDecl.Ok (ast-decl-comptime-decl-with-meta meta decl))]
+    [(ResultAstDecl.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-comptime-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6399,7 +7317,7 @@
           (parse-ast-comptime-decl-with-meta
             dispatch
             pools
-            AstNoGeneratedDeclMeta
+            AstGeneratedDeclMeta.No
             (sp-node-get first))]
         [(SpannedSexpr.Cons template end _)
           (match (sp-node-get end)
@@ -6408,25 +7326,26 @@
                 dispatch
                 pools
                 (sp-node-get first))
-                [(OkAstGeneratedDeclMeta parsed-meta)
+                [(ResultAstGeneratedDeclMeta.Ok parsed-meta)
                   (parse-ast-comptime-decl-with-meta
                     dispatch
                     pools
                     parsed-meta
                     (sp-node-get template))]
-                [(ErrAstGeneratedDeclMeta message) (ErrAstDecl message)])]
+                [(ResultAstGeneratedDeclMeta.Err message)
+                  (ResultAstDecl.Err message)])]
             [_
-              (ErrAstDecl
+              (ResultAstDecl.Err
                 "parse: comptime-decl expects one template or generated metadata plus one template")])]
         [_
-          (ErrAstDecl
+          (ResultAstDecl.Err
             "parse: comptime-decl expects one template or generated metadata plus one template")])]
     [_
-      (ErrAstDecl
+      (ResultAstDecl.Err
         "parse: comptime-decl expects one template or generated metadata plus one template")]))
 
 (define (parse-ast-unsafe-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6434,138 +7353,157 @@
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
           (match (parse-ast-decl dispatch pools (sp-node-get inner))
-            [(OkAstDecl decl)
+            [(ResultAstDecl.Ok decl)
               (match decl
-                [(AstDeclDefFn _ _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
-                [(AstDeclExtern _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
+                [(AstDecl.DefFn _ _ _ _ _)
+                  (ResultAstDecl.Ok (ast-decl-unsafe decl))]
+                [(AstDecl.Extern _ _ _ _)
+                  (ResultAstDecl.Ok (ast-decl-unsafe decl))]
                 [_
-                  (ErrAstDecl
+                  (ResultAstDecl.Err
                     "parse: unsafe declaration accepts only function define or extern")])]
-            [(ErrAstDecl message) (ErrAstDecl message)])]
+            [(ResultAstDecl.Err message) (ResultAstDecl.Err message)])]
         [_
-          (ErrAstDecl
+          (ResultAstDecl.Err
             "parse: unsafe declaration expects exactly one declaration")])]
-    [_ (ErrAstDecl "parse: unsafe declaration expects exactly one declaration")]))
+    [_
+      (ResultAstDecl.Err
+        "parse: unsafe declaration expects exactly one declaration")]))
 
 (define (parse-ast-module-macro-call
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [form : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools form)
-    [(OkAstExpr call-expr)
+    [(ResultAstExpr.Ok call-expr)
       (match (ast-expr-unspan-with-pools
         pools
         (ast-node-pool-context-expr-get pools call-expr))
-        [(AstExprCall _ _)
+        [(AstExpr.Call _ _)
           (parse-ast-import-spec
-            (AstImportMacroDecls call-expr AstNoModuleName)
+            (AstImportKind.MacroDecls call-expr AstMaybeModuleName.No)
             ""
-            AstNoModuleName
-            AstNoImportAlias
+            AstMaybeModuleName.No
+            AstMaybeImportAlias.No
             (ast-source-span-from-source-span (spanned-sexpr-span form)))]
-        [_ (ErrAstDecl "parse: expected declaration")])]
-    [(ErrAstExpr message) (ErrAstDecl message)]))
+        [_ (ResultAstDecl.Err "parse: expected declaration")])]
+    [(ResultAstExpr.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstDecl
-  (match s
-    [(SpannedSexpr.Cons head-node rest _)
-      (match (sp-node-get head-node)
-        [(SpannedSexpr.Sym head _)
-          (let
-            [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-            (cond
-              [(= tag (compiler-parse-tag-decl-define))
-                (parse-ast-define dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-extern))
-                (parse-ast-extern dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-defenum))
-                (parse-ast-defenum dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-defstruct))
-                (parse-ast-defstruct dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-defdispatch))
-                (parse-ast-defdispatch (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-defmacro))
-                (parse-ast-defmacro dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-import))
-                (parse-ast-import
-                  dispatch
-                  pools
-                  (sp-node-get rest)
-                  (ast-source-span-from-source-span (spanned-sexpr-span s)))]
-              [(= tag (compiler-parse-tag-decl-include-str))
-                (parse-ast-include-str (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-include-bin))
-                (parse-ast-include-bin (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-module))
-                (parse-ast-module (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-comptime-decl))
-                (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-comptime-decls))
-                (ErrAstDecl (parse-ast-comptime-decls-removed-message))]
-              [(= tag (compiler-parse-tag-expr-unsafe))
-                (parse-ast-unsafe-decl dispatch pools (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-test))
-                (parse-ast-test
-                  dispatch
-                  pools
-                  (sp-node-get rest)
-                  (ast-source-span-from-source-span (spanned-sexpr-span s)))]
-              [(compiler-parse-policy-form? head)
-                (ErrAstDecl (compiler-parse-abstraction-policy-message))]
-              [else (parse-ast-module-macro-call dispatch pools s)]))]
-        [_ (ErrAstDecl "parse: malformed declaration")])]
-    [_ (ErrAstDecl "parse: malformed declaration")]))
+  (let
+    [result : ResultAstDecl
+      (match s
+        [(SpannedSexpr.Cons head-node rest _)
+          (match (sp-node-get head-node)
+            [(SpannedSexpr.Sym head _)
+              (let
+                [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
+                (cond
+                  [(= tag (compiler-parse-tag-decl-define))
+                    (parse-ast-define dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-extern))
+                    (parse-ast-extern dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-defenum))
+                    (parse-ast-defenum dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-defstruct))
+                    (parse-ast-defstruct dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-defdispatch))
+                    (parse-ast-defdispatch (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-defmacro))
+                    (parse-ast-defmacro dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-import))
+                    (parse-ast-import
+                      dispatch
+                      pools
+                      (sp-node-get rest)
+                      (ast-source-span-from-source-span (spanned-sexpr-span s)))]
+                  [(= tag (compiler-parse-tag-decl-include-str))
+                    (parse-ast-include-str (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-include-bin))
+                    (parse-ast-include-bin (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-module))
+                    (parse-ast-module dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-comptime-decl))
+                    (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-comptime-decls))
+                    (ResultAstDecl.Err
+                      (parse-ast-comptime-decls-removed-message))]
+                  [(= tag (compiler-parse-tag-expr-unsafe))
+                    (parse-ast-unsafe-decl dispatch pools (sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-test))
+                    (parse-ast-test
+                      dispatch
+                      pools
+                      (sp-node-get rest)
+                      (ast-source-span-from-source-span (spanned-sexpr-span s)))]
+                  [(compiler-parse-policy-form? head)
+                    (ResultAstDecl.Err
+                      (compiler-parse-abstraction-policy-message))]
+                  [else (parse-ast-module-macro-call dispatch pools s)]))]
+            [_ (ResultAstDecl.Err "parse: malformed declaration")])]
+        [_ (ResultAstDecl.Err "parse: malformed declaration")])]
+    (parse-ast-error-span-note-decl s result)))
 
 (define (parse-ast-decl-maybe-with-pools
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMaybeDecl
-  (match s
-    [(SpannedSexpr.Cons head-node rest _)
-      (match (sp-node-get head-node)
-        [(SpannedSexpr.Sym head _)
-          (if (string.string-eq head "cfg")
-            (match (sp-node-get rest)
-              [(SpannedSexpr.Cons pred decl-tail _)
-                (match (sp-node-get decl-tail)
-                  [(SpannedSexpr.Cons decl-form end _)
-                    (match (sp-node-get end)
-                      [(SpannedSexpr.Nil _)
-                        (match (compiler-cfg-eval dispatch (sp-node-get pred))
-                          [(OkCompilerCfg enabled)
-                            (if enabled
-                              (parse-ast-decl-maybe-with-pools
-                                dispatch
-                                pools
-                                (sp-node-get decl-form))
-                              (OkAstNoDecl))]
-                          [(ErrCompilerCfg message) (ErrAstMaybeDecl message)])]
+  (let
+    [result : ResultAstMaybeDecl
+      (match s
+        [(SpannedSexpr.Cons head-node rest _)
+          (match (sp-node-get head-node)
+            [(SpannedSexpr.Sym head _)
+              (if (string.eq head "cfg")
+                (match (sp-node-get rest)
+                  [(SpannedSexpr.Cons pred decl-tail _)
+                    (match (sp-node-get decl-tail)
+                      [(SpannedSexpr.Cons decl-form end _)
+                        (match (sp-node-get end)
+                          [(SpannedSexpr.Nil _)
+                            (match (compiler-cfg-eval
+                              dispatch
+                              (sp-node-get pred))
+                              [(ResultCompilerCfg.Ok enabled)
+                                (if enabled
+                                  (parse-ast-decl-maybe-with-pools
+                                    dispatch
+                                    pools
+                                    (sp-node-get decl-form))
+                                  (ResultAstMaybeDecl.NoDecl))]
+                              [(ResultCompilerCfg.Err message)
+                                (ResultAstMaybeDecl.Err message)])]
+                          [_
+                            (ResultAstMaybeDecl.Err
+                              "parse: cfg declaration expects predicate and declaration")])]
                       [_
-                        (ErrAstMaybeDecl
+                        (ResultAstMaybeDecl.Err
                           "parse: cfg declaration expects predicate and declaration")])]
                   [_
-                    (ErrAstMaybeDecl
-                      "parse: cfg declaration expects predicate and declaration")])]
-              [_
-                (ErrAstMaybeDecl
-                  "parse: cfg declaration expects predicate and declaration")])
-            (if (=
-              (compiler-parse-dispatch-tag dispatch head)
-              (compiler-parse-tag-decl-comptime-decls))
-              (ErrAstMaybeDecl (parse-ast-comptime-decls-removed-message))
+                    (ResultAstMaybeDecl.Err
+                      "parse: cfg declaration expects predicate and declaration")])
+                (if (=
+                  (compiler-parse-dispatch-tag dispatch head)
+                  (compiler-parse-tag-decl-comptime-decls))
+                  (ResultAstMaybeDecl.Err
+                    (parse-ast-comptime-decls-removed-message))
+                  (match (parse-ast-decl dispatch pools s)
+                    [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
+                    [(ResultAstDecl.Err message)
+                      (ResultAstMaybeDecl.Err message)])))]
+            [_
               (match (parse-ast-decl dispatch pools s)
-                [(OkAstDecl decl) (OkAstSomeDecl decl)]
-                [(ErrAstDecl message) (ErrAstMaybeDecl message)])))]
-        [_
-          (match (parse-ast-decl dispatch pools s)
-            [(OkAstDecl decl) (OkAstSomeDecl decl)]
-            [(ErrAstDecl message) (ErrAstMaybeDecl message)])])]
-    [_ (ErrAstMaybeDecl "parse: malformed declaration")]))
+                [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
+                [(ResultAstDecl.Err message) (ResultAstMaybeDecl.Err message)])])]
+        [_ (ResultAstMaybeDecl.Err "parse: malformed declaration")])]
+    (parse-ast-error-span-note-maybe-decl s result)))
 
-(define (parse-ast-decl-maybe [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMaybeDecl
+(define (parse-ast-decl-maybe
+  [dispatch : sym_i64_env.SymI64Env]
+  [s : SpannedSexpr]) : ResultAstMaybeDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstMaybeDecl
@@ -6574,112 +7512,135 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(defstruct ParseAstDeclVec
-  (slots (Array AstDecl))
-  (len i64))
+(comptime-decl
+  (:generated vector-family ParseAstDeclVec "AstDecl")
+  (defstruct ParseAstDeclVec
+    (slots (Array AstDecl))
+    (len i64)))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
-  (AstDeclModule (intern "<parse-ast-decl-vec-fallback>")))
+  (AstDecl.Module (intern "<parse-ast-decl-vec-fallback>")))
 
-(define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (ParseAstDeclVec (array.make-array AstDecl cap) 0)))
-
-(define (parse-ast-decl-vec-new) : ParseAstDeclVec
-  (parse-ast-decl-vec-with-capacity 16))
-
-(define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
-  (struct-get v len))
-
-(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
-  (array.array-length (struct-get v slots)))
-
-(define (parse-ast-decl-vec-get
-  [v : (& v ParseAstDeclVec)]
-  [index : i64]
-  [fallback : AstDecl]) : AstDecl
-  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array.array-ref (struct-get v slots) index)
-    fallback))
-
-(define (parse-ast-decl-vec-copy-range
-  [dst : (&mut dst (Array AstDecl))]
-  [src : (& src (Array AstDecl))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array.array-set! dst index (array.array-ref src index))
-      (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
-
-(define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
-  (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array.array-length (struct-get v slots))]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
-    (begin
-      (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
-
-(define (parse-ast-decl-vec-push
-  [v : (&mut v ParseAstDeclVec)]
-  [value : AstDecl]) : unit
-  (begin
-    (if (< (struct-get v len) (array.array-length (struct-get v slots)))
-      unit
-      (parse-ast-decl-vec-grow v))
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-with-capacity "AstDecl")
+  (define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
     (let
-      [index : i64 (struct-get v len)]
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (ParseAstDeclVec (make-array AstDecl cap) 0))))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-new "AstDecl")
+  (define (parse-ast-decl-vec-new) : ParseAstDeclVec
+    (parse-ast-decl-vec-with-capacity 16)))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-len "AstDecl")
+  (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-capacity "AstDecl")
+  (define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-get "AstDecl")
+  (define (parse-ast-decl-vec-get
+    [v : (& v ParseAstDeclVec)]
+    [index : i64]
+    [fallback : AstDecl]) : AstDecl
+    (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
+      (array-ref (struct-get v slots) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-copy-range "AstDecl")
+  (define (parse-ast-decl-vec-copy-range
+    [dst : (&mut dst (Array AstDecl))]
+    [src : (& src (Array AstDecl))]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
       (begin
-        (array.array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (array-set! dst index (array-ref src index))
+        (parse-ast-decl-vec-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-grow "AstDecl")
+  (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
+    (let
+      [n : i64 (struct-get v len)]
+      [old-cap : i64 (array-length (struct-get v slots))]
+      [new-cap : i64
+        (if (< old-cap 1)
+          1
+          (* old-cap 2))]
+      [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
+      (begin
+        (parse-ast-decl-vec-copy-range
+          (&mut bigger)
+          (& (struct-get v slots))
+          0
+          n)
+        (set! (struct-get v slots) bigger)))))
+
+(comptime-decl
+  (:generated vector-family parse-ast-decl-vec-push "AstDecl")
+  (define (parse-ast-decl-vec-push
+    [v : (&mut v ParseAstDeclVec)]
+    [value : AstDecl]) : unit
+    (begin
+      (if (< (struct-get v len) (array-length (struct-get v slots)))
+        unit
+        (parse-ast-decl-vec-grow v))
+      (let
+        [index : i64 (struct-get v len)]
+        (begin
+          (array-set! (struct-get v slots) index value)
+          (set! (struct-get v len) (+ index 1)))))))
 
 (define (parse-ast-decl-vec-push-list!
   [out : (&mut out ParseAstDeclVec)]
   [decls : AstDeclList]) : unit
-  (match decls
-    [(AstDeclNil) unit]
-    [(AstDeclCons head rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) unit]
+    [(AstDeclListStep.Cons head rest)
       (begin
         (parse-ast-decl-vec-push out head)
-        (parse-ast-decl-vec-push-list! out (box-get rest)))]))
+        (parse-ast-decl-vec-push-list! out rest))]))
 
-(define (parse-ast-decl-vec-to-list-from
+(define (parse-ast-decl-vec-copy-to-list
   [items : (& items ParseAstDeclVec)]
   [index : i64]
-  [tail : AstDeclList]) : AstDeclList
-  (if (< index 0)
-    tail
-    (parse-ast-decl-vec-to-list-from
-      items
-      (- index 1)
-      (ast-decl-cons
-        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
-        tail))))
+  [out : (&mut out AstDeclList)]) : unit
+  (if (>= index (parse-ast-decl-vec-len items))
+    unit
+    (begin
+      (ast-decl-list-push
+        out
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+      (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
 
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
-  (parse-ast-decl-vec-to-list-from
-    items
-    (- (parse-ast-decl-vec-len items) 1)
-    AstDeclNil))
+  (let
+    [out : AstDeclList
+      (ast-decl-list-with-capacity (parse-ast-decl-vec-len items))]
+    (begin
+      (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
+      out)))
 
 (define (parse-ast-program-forms-into-vec
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
-  (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkParseAstDeclVec)
+  (if (= (peek-spanned-tag toks cur) (token.tag-end))
+    (ResultParseAstDeclVec.Ok)
     (let
       ;; The spanned tree for one top-level form is dead once its AstDecl is
       ;; built (the decl carries AST-pool ids + spans by value, no sp ids), so
@@ -6689,62 +7650,65 @@
       (match (read-form-spanned-result toks cur)
         [(ResultSpannedSexpr.Ok form)
           (match (parse-ast-decl-maybe-with-pools dispatch pools form)
-            [(OkAstSomeDecl decl)
+            [(ResultAstMaybeDecl.SomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
                 (parse-ast-decl-vec-push out decl)
                 (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(OkAstDecls decls)
+            [(ResultAstMaybeDecl.Decls decls)
               (begin
                 (sp-node-pool-truncate! mark)
                 (parse-ast-decl-vec-push-list! out decls)
                 (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(OkAstNoDecl)
+            [(ResultAstMaybeDecl.NoDecl)
               (begin
                 (sp-node-pool-truncate! mark)
                 (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(ErrAstMaybeDecl message) (ErrParseAstDeclVec message)])]
+            [(ResultAstMaybeDecl.Err message)
+              (ResultParseAstDeclVec.Err message)])]
         [(ResultSpannedSexpr.Err err)
-          (ErrParseAstDeclVec (source-error-message err))]))))
+          (ResultParseAstDeclVec.Err (token.source-error-message err))]))))
 
 (define (parse-ast-program-forms
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclList
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     [result : ResultParseAstDeclVec
       (parse-ast-program-forms-into-vec dispatch pools toks cur (&mut out))]
     (match result
-      [(OkParseAstDeclVec) (OkAstDeclList (parse-ast-decl-vec-to-list (& out)))]
-      [(ErrParseAstDeclVec message) (ErrAstDeclList message)])))
+      [(ResultParseAstDeclVec.Ok)
+        (ResultAstDeclList.Ok (parse-ast-decl-vec-to-list (& out)))]
+      [(ResultParseAstDeclVec.Err message) (ResultAstDeclList.Err message)])))
 
-(define (parse-ast-program-dispatch) : SymI64Env
+(define (parse-ast-program-dispatch) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env))
 
-(define (parse-ast-program-dispatch-with-cfg [cfgs : SymI64Env]) : SymI64Env
+(define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match cfgs
-    [(SymI64Nil) (compiler-parse-dispatch-env)]
+    [(sym_i64_env.SymI64Nil) (compiler-parse-dispatch-env)]
     [_ (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)]))
 
 (define (parse-ast-program-with-cfg-and-pools
-  [toks : (Array SpannedToken)]
-  [cfgs : SymI64Env]
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
     [cur : (Array i64) (array.make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
+    [dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array.array-set! cur 0 0)
+      (array-set! cur 0 0)
       (match (parse-ast-program-forms dispatch pools toks cur)
-        [(OkAstDeclList decls) (OkAstProgram (ast-program decls))]
-        [(ErrAstDeclList message) (ErrAstProgram message)]))))
+        [(ResultAstDeclList.Ok decls) (ResultAstProgram.Ok (ast-program decls))]
+        [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
 
 (define (parse-ast-program-with-cfg
-  [toks : (Array SpannedToken)]
-  [cfgs : SymI64Env]) : ResultAstProgram
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
@@ -6753,7 +7717,7 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
+(define (parse-ast-program [toks : (Array token.SpannedToken)]) : ResultAstProgram
   (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
@@ -6761,14 +7725,17 @@
 
 (define (parse-ast-source-with-cfg-and-pools
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks)
       (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
-    [(ResultSpannedTokens.Err err) (ErrAstProgram (source-error-message err))]))
+    [(ResultSpannedTokens.Err err)
+      (ResultAstProgram.Err (token.source-error-message err))]))
 
-(define (parse-ast-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultAstProgram
+(define (parse-ast-source-with-cfg
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
@@ -6779,23 +7746,23 @@
 
 (define (parse-ast-repl-module-macro-call-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport
-        (AstImportSpec
-          (AstImportMacroDecls _ _)
+    [(AstDecl.Import
+        (AstImportSpec.Spec
+          (AstImportKind.MacroDecls _ _)
           path
-          (AstNoModuleName)
-          (AstNoImportAlias)
+          (AstMaybeModuleName.No)
+          (AstMaybeImportAlias.No)
           _))
-      (string.string-eq path "")]
+      (string.eq path "")]
     [_ false]))
 
 (define (parse-ast-repl-expr-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [form : SpannedSexpr]) : ResultAstReplItem
   (match (parse-ast-expr-with-pools dispatch pools form)
-    [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
-    [(ErrAstExpr message) (ErrAstReplItem message)]))
+    [(ResultAstExpr.Ok expr) (ResultAstReplItem.Ok (AstReplExpr expr))]
+    [(ResultAstExpr.Err message) (ResultAstReplItem.Err message)]))
 
 (define (parse-ast-repl-source-with-pools
   [src : String]
@@ -6804,26 +7771,28 @@
     [(ResultSpannedTokens.Ok toks)
       (let
         [cur : (Array i64) (array.make-array i64 1)]
-        [dispatch : SymI64Env (parse-ast-program-dispatch)]
+        [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
         (begin
           (sp-node-pool-reset!)
-          (array.array-set! cur 0 0)
-          (if (= (peek-spanned-tag toks cur) (tag-end))
-            (ErrAstReplItem "parse: expected REPL input")
+          (array-set! cur 0 0)
+          (if (= (peek-spanned-tag toks cur) (token.tag-end))
+            (ResultAstReplItem.Err "parse: expected REPL input")
             (match (read-form-spanned-result toks cur)
               [(ResultSpannedSexpr.Ok form)
-                (if (= (peek-spanned-tag toks cur) (tag-end))
+                (if (= (peek-spanned-tag toks cur) (token.tag-end))
                   (match (parse-ast-decl dispatch pools form)
-                    [(OkAstDecl decl)
+                    [(ResultAstDecl.Ok decl)
                       (if (parse-ast-repl-module-macro-call-decl? decl)
                         (parse-ast-repl-expr-item dispatch pools form)
-                        (OkAstReplItem (AstReplDecl decl)))]
-                    [(ErrAstDecl _)
+                        (ResultAstReplItem.Ok (AstReplDecl decl)))]
+                    [(ResultAstDecl.Err _)
                       (parse-ast-repl-expr-item dispatch pools form)])
-                  (ErrAstReplItem "parse: trailing tokens after REPL input"))]
+                  (ResultAstReplItem.Err
+                    "parse: trailing tokens after REPL input"))]
               [(ResultSpannedSexpr.Err err)
-                (ErrAstReplItem (source-error-message err))]))))]
-    [(ResultSpannedTokens.Err err) (ErrAstReplItem (source-error-message err))]))
+                (ResultAstReplItem.Err (token.source-error-message err))]))))]
+    [(ResultSpannedTokens.Err err)
+      (ResultAstReplItem.Err (token.source-error-message err))]))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (let
@@ -6840,13 +7809,13 @@
 
 (define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
-  (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkParseAstDeclVecDiagnostic)
+  (if (= (peek-spanned-tag toks cur) (token.tag-end))
+    (ResultParseAstDeclVecDiagnostic.Ok)
     (let
       ;; Bound the spanned pool to a single top-level form (see
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
@@ -6854,58 +7823,61 @@
       [mark : i64 (sp-node-pool-len)]
       (match (read-form-spanned-result toks cur)
         [(ResultSpannedSexpr.Ok spanned-form)
-          (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
-            [(OkAstSomeDecl decl)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-decl-vec-push out decl)
-                (parse-ast-program-forms-diagnostic-into-vec
-                  path
-                  dispatch
-                  pools
-                  toks
-                  cur
-                  out))]
-            [(OkAstDecls decls)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-decl-vec-push-list! out decls)
-                (parse-ast-program-forms-diagnostic-into-vec
-                  path
-                  dispatch
-                  pools
-                  toks
-                  cur
-                  out))]
-            [(OkAstNoDecl)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms-diagnostic-into-vec
-                  path
-                  dispatch
-                  pools
-                  toks
-                  cur
-                  out))]
-            [(ErrAstMaybeDecl message)
-              (ErrParseAstDeclVecDiagnostic
-                (box
-                  (parse-ast-canonical-diagnostic
-                    (compiler-diagnostic-from-span
-                      path
-                      (spanned-sexpr-span spanned-form)
-                      message))))])]
+          (begin
+            (parse-ast-error-span-clear!)
+            (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
+              [(ResultAstMaybeDecl.SomeDecl decl)
+                (begin
+                  (sp-node-pool-truncate! mark)
+                  (parse-ast-decl-vec-push out decl)
+                  (parse-ast-program-forms-diagnostic-into-vec
+                    path
+                    dispatch
+                    pools
+                    toks
+                    cur
+                    out))]
+              [(ResultAstMaybeDecl.Decls decls)
+                (begin
+                  (sp-node-pool-truncate! mark)
+                  (parse-ast-decl-vec-push-list! out decls)
+                  (parse-ast-program-forms-diagnostic-into-vec
+                    path
+                    dispatch
+                    pools
+                    toks
+                    cur
+                    out))]
+              [(ResultAstMaybeDecl.NoDecl)
+                (begin
+                  (sp-node-pool-truncate! mark)
+                  (parse-ast-program-forms-diagnostic-into-vec
+                    path
+                    dispatch
+                    pools
+                    toks
+                    cur
+                    out))]
+              [(ResultAstMaybeDecl.Err message)
+                (ResultParseAstDeclVecDiagnostic.Err
+                  (box
+                    (parse-ast-canonical-diagnostic
+                      (compiler-diagnostic-from-span
+                        path
+                        (parse-ast-error-span-current
+                          (spanned-sexpr-span spanned-form))
+                        message))))]))]
         [(ResultSpannedSexpr.Err err)
-          (ErrParseAstDeclVecDiagnostic
+          (ResultParseAstDeclVecDiagnostic.Err
             (box
               (parse-ast-canonical-diagnostic
                 (compiler-diagnostic-from-source-error path err))))]))))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
@@ -6918,35 +7890,38 @@
         cur
         (&mut out))]
     (match result
-      [(OkParseAstDeclVecDiagnostic)
-        (OkAstDeclListDiagnostic (parse-ast-decl-vec-to-list (& out)))]
-      [(ErrParseAstDeclVecDiagnostic diag) (ErrAstDeclListDiagnostic diag)])))
+      [(ResultParseAstDeclVecDiagnostic.Ok)
+        (ResultAstDeclListDiagnostic.Ok (parse-ast-decl-vec-to-list (& out)))]
+      [(ResultParseAstDeclVecDiagnostic.Err diag)
+        (ResultAstDeclListDiagnostic.Err diag)])))
 
 (define (parse-ast-program-diagnostic
   [path : String]
-  [toks : (Array SpannedToken)]) : ResultAstProgramDiagnostic
+  [toks : (Array token.SpannedToken)]) : ResultAstProgramDiagnostic
   (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
 
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
-  [toks : (Array SpannedToken)]
-  [cfgs : SymI64Env]
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
     [cur : (Array i64) (array.make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
+    [dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array.array-set! cur 0 0)
+      (array-set! cur 0 0)
       (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
-        [(OkAstDeclListDiagnostic decls)
-          (OkAstProgramDiagnostic (ast-program decls))]
-        [(ErrAstDeclListDiagnostic diag) (ErrAstProgramDiagnostic diag)]))))
+        [(ResultAstDeclListDiagnostic.Ok decls)
+          (ResultAstProgramDiagnostic.Ok (ast-program decls))]
+        [(ResultAstDeclListDiagnostic.Err diag)
+          (ResultAstProgramDiagnostic.Err diag)]))))
 
 (define (parse-ast-program-diagnostic-with-cfg
   [path : String]
-  [toks : (Array SpannedToken)]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
@@ -6961,13 +7936,13 @@
 (define (parse-ast-source-diagnostic-with-cfg-and-pools
   [path : String]
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks)
       (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
     [(ResultSpannedTokens.Err err)
-      (ErrAstProgramDiagnostic
+      (ResultAstProgramDiagnostic.Err
         (box
           (parse-ast-canonical-diagnostic
             (compiler-diagnostic-from-source-error path err))))]))
@@ -6975,7 +7950,7 @@
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
   [src : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
@@ -6985,166 +7960,188 @@
       result)))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons _ rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (+ 1 (ast-decl-list-count rest)))]))
+  (ast-decl-list-len (& decls)))
 
 (define (ast-decl-list-tag-sum [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (+ (ast-decl-tag decl) (ast-decl-list-tag-sum rest)))]))
 
 (define (compiler-parse-expr-list-count [exprs : AstExprList]) : i64
-  (match exprs
-    [(AstExprNil) 0]
-    [(AstExprCons _ rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (+ 1 (compiler-parse-expr-list-count rest)))]))
+  (struct-get (& exprs) len))
 
 (define (compiler-parse-macro-call-node-ok?
   [call-expr : i64]
   [name : String]
   [want-args : i64]) : bool
   (match (ast-expr-unspan (ast-node-get call-expr))
-    [(AstExprCall head args)
+    [(AstExpr.Call head args)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         (and
           (= (compiler-parse-expr-list-count args) want-args)
           (match (ast-expr-unspan head-expr)
-            [(AstExprVar found) (string.string-eq (intern-str found) name)]
+            [(AstExpr.Var found) (string.eq (intern-str found) name)]
             [_ false])))]
     [_ false]))
 
 (define (compiler-parse-resource-binding-count
   [bindings : AstResourceBindingList]) : i64
-  (match bindings
-    [(AstResourceBindingNil) 0]
-    [(AstResourceBindingCons _ rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (+ 1 (compiler-parse-resource-binding-count rest)))]))
+  (ast-resource-binding-list-len (& bindings)))
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclCons (AstDeclImport (AstImportSpec (AstImportPath) path _ _ _)) _)
-      (string.string-eq path "stdlib/test.tl")]
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
+        (AstDecl.Import (AstImportSpec.Spec (AstImportKind.Path) path _ _ _))
+        _)
+      (string.eq path "stdlib/test.tl")]
     [_ false]))
 
 (define (ast-first-include-str-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclCons (AstDeclIncludeStr name path) _)
-      (and (string.string-eq name "payload") (string.string-eq path "data.txt"))]
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeStr name path) _)
+      (and (string.eq name "payload") (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclCons (AstDeclIncludeBin name path) _)
-      (and (string.string-eq name "payload") (string.string-eq path "data.bin"))]
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeBin name path) _)
+      (and (string.eq name "payload") (string.eq path "data.bin"))]
     [_ false]))
 
 (define (compiler-parse-module-decl-ok?) : bool
   (match (parse-ast-source "(module std.io)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclModule name) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Module name) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil) (= name (intern "std.io"))]
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil) (= name (intern "std.io"))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-module-body-ok?) : bool
+  (match (parse-ast-source "(module local.helper (define value : i64 1))")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ModuleBody name body-box) rest)
+            (let
+              [rest : AstDeclList rest]
+              [body : AstDeclList (box-get body-box)]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
+                  (match (ast-decl-list-step body)
+                    [(AstDeclListStep.Cons
+                        (AstDecl.Def value-name _ _)
+                        body-rest)
+                      (let
+                        [body-rest : AstDeclList body-rest]
+                        (and
+                          (= name (intern "local.helper"))
+                          (= value-name (intern "value"))
+                          (match (ast-decl-list-step body-rest)
+                            [(AstDeclListStep.Nil) true]
+                            [_ false])))]
+                    [_ false])]
+                [_ false]))]
+          [_ false]))]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-module-body-malformed-ok?) : bool
+  (match (parse-ast-source "(module local.helper (define bad))")
+    [(ResultAstProgram.Ok _) false]
+    [(ResultAstProgram.Err message)
+      (string.eq message "parse: malformed value definition")]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
   (match (parse-ast-source "(import \"stdlib/tl\" module std.io :as io)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons
-              (AstDeclImport
-                (AstImportSpec
-                  (AstImportPath)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.Path)
                   path
-                  (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)
+                  (AstMaybeModuleName.Some module-name)
+                  (AstMaybeImportAlias.Some alias)
                   _))
               rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
-                    (string.string-eq path "stdlib/tl")
-                    (string.string-eq module-name "std.io")
-                    (string.string-eq alias "io"))]
+                    (string.eq path "stdlib/tl")
+                    (string.eq module-name "std.io")
+                    (string.eq alias "io"))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-dotted-import-explicit-alias-ok?) : bool
   (match (parse-ast-source "(import stdlib.core_macros :as core)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons
-              (AstDeclImport
-                (AstImportSpec
-                  (AstImportModule)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.Module)
                   module-path
-                  (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)
+                  (AstMaybeModuleName.Some module-name)
+                  (AstMaybeImportAlias.Some alias)
                   _))
               rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
-                    (string.string-eq module-path "stdlib.core_macros")
-                    (string.string-eq module-name "stdlib.core_macros")
-                    (string.string-eq alias "core"))]
+                    (string.eq module-path "stdlib.core_macros")
+                    (string.eq module-name "stdlib.core_macros")
+                    (string.eq alias "core"))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-dotted-import-default-alias-ok?) : bool
   (match (parse-ast-source "(import stdlib.core_macros)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons
-              (AstDeclImport
-                (AstImportSpec
-                  (AstImportModule)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.Module)
                   module-path
-                  (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)
+                  (AstMaybeModuleName.Some module-name)
+                  (AstMaybeImportAlias.Some alias)
                   _))
               rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
-                    (string.string-eq module-path "stdlib.core_macros")
-                    (string.string-eq module-name "stdlib.core_macros")
-                    (string.string-eq alias "core_macros"))]
+                    (string.eq module-path "stdlib.core_macros")
+                    (string.eq module-name "stdlib.core_macros")
+                    (string.eq alias "core_macros"))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-dotted-import-metadata-ok?) : bool
   (and
@@ -7153,56 +8150,56 @@
 
 (define (compiler-parse-module-macro-call-ok?) : bool
   (match (parse-ast-source "(point-vec i64)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons
-              (AstDeclImport
-                (AstImportSpec
-                  (AstImportMacroDecls call-expr _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.MacroDecls call-expr _)
                   path
-                  (AstNoModuleName)
-                  (AstNoImportAlias)
+                  (AstMaybeModuleName.No)
+                  (AstMaybeImportAlias.No)
                   _))
               rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
-                    (string.string-eq path "")
+                    (string.eq path "")
                     (compiler-parse-macro-call-node-ok? call-expr "point-vec" 1))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-macro-import-ok?) : bool
   (match (parse-ast-source "(import (vector i64) as svec)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons
-              (AstDeclImport
-                (AstImportSpec
-                  (AstImportMacro call-expr _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.Macro call-expr _)
                   path
-                  (AstNoModuleName)
-                  (AstSomeImportAlias alias)
+                  (AstMaybeModuleName.No)
+                  (AstMaybeImportAlias.Some alias)
                   _))
               rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
-                    (string.string-eq path "")
-                    (string.string-eq alias "svec")
+                    (string.eq path "")
+                    (string.eq alias "svec")
                     (compiler-parse-macro-call-node-ok? call-expr "vector" 1))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-module-macro-surface-ok?) : bool
   (and
@@ -7227,11 +8224,11 @@
 
 (define (compiler-parse-include-str-ok?) : bool
   (match (parse-ast-source "(include-str payload \"data.txt\")")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-first-include-str-ok? decls))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-include-str-errors-ok?) : bool
   (and
@@ -7253,11 +8250,11 @@
 
 (define (compiler-parse-include-bin-ok?) : bool
   (match (parse-ast-source "(include-bin payload \"data.bin\")")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-first-include-bin-ok? decls))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-include-bin-errors-ok?) : bool
   (and
@@ -7279,82 +8276,76 @@
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : AstDispatchVariantList]) : bool
-  (match variants
-    [(AstDispatchVariantCons
-        (AstDispatchVariant (AstDispatchScalar) scalar-name)
-        rest0)
-      (let
-        [rest0 : AstDispatchVariantList (box-get rest0)]
-        (match rest0
-          [(AstDispatchVariantCons
-              (AstDispatchVariant (AstDispatchAvx2) avx2-name)
-              rest1)
-            (let
-              [rest1 : AstDispatchVariantList (box-get rest1)]
-              (match rest1
-                [(AstDispatchVariantCons
-                    (AstDispatchVariant (AstDispatchAvx512) avx512-name)
-                    rest2)
-                  (let
-                    [rest2 : AstDispatchVariantList (box-get rest2)]
-                    (match rest2
-                      [(AstDispatchVariantNil)
-                        (and
-                          (string.string-eq scalar-name "dot-scalar")
-                          (string.string-eq avx2-name "dot-avx2")
-                          (string.string-eq avx512-name "dot-avx512"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (if (= (struct-get (& variants) len) 3)
+    (match (ast-dispatch-variant-list-get
+      (& variants)
+      0
+      (ast-dispatch-variant-fallback))
+      [(AstDispatchVariant.Variant (AstDispatchIsa.Scalar) scalar-name)
+        (match (ast-dispatch-variant-list-get
+          (& variants)
+          1
+          (ast-dispatch-variant-fallback))
+          [(AstDispatchVariant.Variant (AstDispatchIsa.Avx2) avx2-name)
+            (match (ast-dispatch-variant-list-get
+              (& variants)
+              2
+              (ast-dispatch-variant-fallback))
+              [(AstDispatchVariant.Variant (AstDispatchIsa.Avx512) avx512-name)
+                (and
+                  (string.eq scalar-name "dot-scalar")
+                  (string.eq avx2-name "dot-avx2")
+                  (string.eq avx512-name "dot-avx512"))]
+              [_ false])]
+          [_ false])]
+      [_ false])
+    false))
 
 (define (compiler-parse-defdispatch-shape-ok?) : bool
   (match (parse-ast-source
     "(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefDispatch name variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefDispatch name variants) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "dot"))
                     (compiler-parse-defdispatch-variants-ok? variants))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-defdispatch-scalar-only-ok?) : bool
   (match (parse-ast-source "(defdispatch id (scalar id-scalar))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefDispatch name variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefDispatch name variants) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "id"))
-                    (match variants
-                      [(AstDispatchVariantCons
-                          (AstDispatchVariant (AstDispatchScalar) scalar-name)
-                          variant-rest)
-                        (let
-                          [variant-rest : AstDispatchVariantList
-                            (box-get variant-rest)]
-                          (match variant-rest
-                            [(AstDispatchVariantNil)
-                              (string.string-eq scalar-name "id-scalar")]
-                            [_ false]))]
+                    (= (struct-get (& variants) len) 1)
+                    (match (ast-dispatch-variant-list-get
+                      (& variants)
+                      0
+                      (ast-dispatch-variant-fallback))
+                      [(AstDispatchVariant.Variant
+                          (AstDispatchIsa.Scalar)
+                          scalar-name)
+                        (string.eq scalar-name "id-scalar")]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-defdispatch-tests-ok?) : bool
   (and
@@ -7380,13 +8371,13 @@
   (ast-expr-tag (ast-expr-unspan expr)))
 
 (define (ast-main-body-tag [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList (box-get rest)]
+        [rest : AstDeclList rest]
         (match decl
-          [(AstDeclDefFn name _ _ body-box _)
+          [(AstDecl.DefFn name _ _ body-box _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (if (= name (intern "main"))
@@ -7396,28 +8387,28 @@
 
 (define (compiler-parse-nested-expr-span-ok?) : bool
   (match (parse-ast-source "(define (main) : i64 (+ 1 (* 2 3)))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match body
-                [(AstExprSpanned inner-box body-span)
+                [(AstExpr.Spanned inner-box body-span)
                   (let
                     [inner : AstExpr (ast-node-get inner-box)]
                     (match inner
-                      [(AstExprBinary _ _ right-box)
+                      [(AstExpr.Binary _ _ right-box)
                         (let
                           [right : AstExpr (ast-node-get right-box)]
                           (match right
-                            [(AstExprSpanned right-inner-box right-span)
+                            [(AstExpr.Spanned right-inner-box right-span)
                               (let
                                 [right-inner : AstExpr
                                   (ast-node-get right-inner-box)]
                                 (match right-inner
-                                  [(AstExprBinary _ _ _)
+                                  [(AstExpr.Binary _ _ _)
                                     (and
                                       (=
                                         (ast-source-span-start-line body-span)
@@ -7440,22 +8431,22 @@
     [src : String "(define)"]
     (and
       (match (parse-ast-source src)
-        [(ErrAstProgram message)
-          (string.string-eq message "parse: malformed define")]
+        [(ResultAstProgram.Err message)
+          (string.eq message "parse: malformed define")]
         [_ false])
       (match (lex-spanned-result src)
         [(ResultSpannedTokens.Ok toks)
           (let
-            [cur : (Array i64) (array.make-array i64 1)]
+            [cur : (Array i64) (make-array i64 1)]
             (begin
-              (array.array-set! cur 0 0)
+              (array-set! cur 0 0)
               (match (read-form-spanned-result toks cur)
                 [(ResultSpannedSexpr.Ok form)
                   (let
-                    [span : SourceSpan (spanned-sexpr-span form)]
+                    [span : token.SourceSpan (spanned-sexpr-span form)]
                     (and
-                      (= (span-start-line span) 1)
-                      (= (span-start-col span) 1)))]
+                      (= (token.span-start-line span) 1)
+                      (= (token.span-start-col span) 1)))]
                 [(ResultSpannedSexpr.Err _) false])))]
         [(ResultSpannedTokens.Err _) false]))))
 
@@ -7466,13 +8457,65 @@
   [line : i64]
   [col : i64]) : bool
   (match (parse-ast-source-diagnostic path src)
-    [(ErrAstProgramDiagnostic diag)
+    [(ResultAstProgramDiagnostic.Err diag)
       (and
-        (string.string-eq (compiler-diagnostic-path (box-get diag)) path)
+        (string.eq (compiler-diagnostic-path (box-get diag)) path)
         (= (compiler-diagnostic-line (box-get diag)) line)
         (= (compiler-diagnostic-col (box-get diag)) col)
-        (string.string-eq (compiler-diagnostic-message (box-get diag)) want))]
-    [(OkAstProgramDiagnostic _) false]))
+        (string.eq (compiler-diagnostic-message (box-get diag)) want))]
+    [(ResultAstProgramDiagnostic.Ok _) false]))
+
+(define (compiler-parse-diagnostic-location-ok?
+  [path : String]
+  [src : String]
+  [want : String]
+  [line : i64]
+  [col : i64]) : bool
+  (match (parse-ast-source-diagnostic path src)
+    [(ResultAstProgramDiagnostic.Err diag)
+      (and
+        (string.eq (compiler-diagnostic-path (box-get diag)) path)
+        (= (compiler-diagnostic-line (box-get diag)) line)
+        (= (compiler-diagnostic-col (box-get diag)) col)
+        (string.eq (compiler-diagnostic-message (box-get diag)) want))]
+    [(ResultAstProgramDiagnostic.Ok _) false]))
+
+(define (compiler-parse-nested-diagnostic-spans-ok?) : bool
+  (and
+    (compiler-parse-diagnostic-location-ok?
+      "bad-define.tl"
+      "(define)"
+      "parse: malformed define"
+      1
+      1)
+    (compiler-parse-diagnostic-location-ok?
+      "nested-binary.tl"
+      "(define (main) : i64
+  (+ 1))"
+      "parse: malformed binary expression"
+      2
+      3)
+    (compiler-parse-diagnostic-location-ok?
+      "nested-let.tl"
+      "(define (main) : i64
+  (let [x : i64 1]))"
+      "parse: let missing body"
+      2
+      3)
+    (compiler-parse-diagnostic-location-ok?
+      "annotation-type.tl"
+      "(define (main) : i64
+  (cast 1 : (Ptr)))"
+      "parse: Ptr expects exactly one type"
+      2
+      13)
+    (compiler-parse-diagnostic-location-ok?
+      "let-binding.tl"
+      "(define (main) : i64
+  (let [x : i64] x))"
+      "parse: malformed let binding"
+      2
+      8)))
 
 (define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
   (and
@@ -7493,31 +8536,33 @@
       "(define]"
       "reader: mismatched delimiter: expected ')' but found ']' at 1:8"
       1
-      1)
+      8)
     (compiler-parse-reader-diagnostic-ok?
       "wrong-close-bracket.tl"
       "[define)"
       "reader: mismatched delimiter: expected ']' but found ')' at 1:8"
       1
-      1)))
+      8)))
 
 (define (compiler-parse-float-literal-ok?) : bool
   (match (parse-ast-source "(define (main) : f64 1.5)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn name _ (AstTyF64) body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefFn name _ (AstType.F64) body-box _)
+              _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
                 (= name (intern "main"))
                 (match (ast-expr-unspan body)
-                  [(AstExprLiteral (AstLitFloat text))
-                    (string.string-eq text "1.5")]
+                  [(AstExpr.Literal (AstLiteral.Float text))
+                    (string.eq text "1.5")]
                   [_ false])))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-smoke-source) : String
   "(import \"stdlib/test.tl\")
@@ -7538,7 +8583,7 @@
 
 (define (compiler-parse-smoke-score [program : AstProgram]) : i64
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (+
@@ -7556,32 +8601,32 @@
 ;; messages so a regression that drops or relabels an error is caught (#655).
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
-    [(ErrAstProgram message) (string.string-eq message want)]
-    [(OkAstProgram _) false]))
+    [(ResultAstProgram.Err message) (string.eq message want)]
+    [(ResultAstProgram.Ok _) false]))
 
 (define (compiler-parse-error-ok-with-cfg?
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [want : String]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
-    [(ErrAstProgram message) (string.string-eq message want)]
-    [(OkAstProgram _) false]))
+    [(ResultAstProgram.Err message) (string.eq message want)]
+    [(ResultAstProgram.Ok _) false]))
 
 (define (compiler-parse-diagnostic-code-ok?) : bool
   (match (parse-ast-source-diagnostic
     "parse-code.tl"
     (compiler-parse-malformed-binary-source))
-    [(ErrAstProgramDiagnostic diag)
+    [(ResultAstProgramDiagnostic.Err diag)
       (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
           (and
-            (string.string-eq code (compiler-diagnostic-code-parse))
+            (string.eq code (compiler-diagnostic-code-parse))
             (match (compiler-diagnostic-category (box-get diag))
               [(CompilerDiagnosticSomeString category)
-                (string.string-eq category "parse")]
+                (string.eq category "parse")]
               [CompilerDiagnosticNoString false]))]
         [CompilerDiagnosticNoString false])]
-    [(OkAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Ok _) false]))
 
 ;; Minimal complete programs that lex cleanly but reach a specific parser
 ;; rejection, one per representative special form.
@@ -7615,81 +8660,83 @@
 
 (define (compiler-parse-region-ok?) : bool
   (match (parse-ast-source (compiler-parse-region-source))
-    [(OkAstProgram _) true]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Ok _) true]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-arena-source) : String
   "(define (main) : i64
   (with-arena r 5))")
 
 ;; `with-arena` is the canonical spelling (#801, #1118). Assert it parses to
-;; the `AstExprWithRegion` form, not an unbound call.
+;; the `AstExpr.WithRegion` form, not an unbound call.
 (define (compiler-parse-arena-ok?) : bool
   (match (parse-ast-source (compiler-parse-arena-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn name _ (AstTyI64) body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefFn name _ (AstType.I64) body-box _)
+              _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
                 (= name (intern "main"))
                 (match (ast-expr-unspan body)
-                  [(AstExprWithRegion region _) (string.string-eq region "r")]
+                  [(AstExpr.WithRegion region _) (string.eq region "r")]
                   [_ false])))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-raw-pointer-source) : String
   "(extern (raw-map [arg0 : (Ptr i64)]) : (MutPtr (Ptr u8)))")
 
 (define (compiler-parse-type-ptr-u8? [ty : AstType]) : bool
   (match ty
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (match (ty-node-get elem)
-        [(AstTyU8) true]
+        [(AstType.U8) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-ptr-i64? [ty : AstType]) : bool
   (match ty
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (match (ty-node-get elem)
-        [(AstTyI64) true]
+        [(AstType.I64) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-mut-ptr-u8? [ty : AstType]) : bool
   (match ty
-    [(AstTyMutPtr elem)
+    [(AstType.MutPtr elem)
       (match (ty-node-get elem)
-        [(AstTyU8) true]
+        [(AstType.U8) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-mut-ptr-ptr-u8? [ty : AstType]) : bool
   (match ty
-    [(AstTyMutPtr elem) (compiler-parse-type-ptr-u8? (ty-node-get elem))]
+    [(AstType.MutPtr elem) (compiler-parse-type-ptr-u8? (ty-node-get elem))]
     [_ false]))
 
 (define (compiler-parse-type-ref-string? [ty : AstType] [region : String]) : bool
   (match ty
-    [(AstTyRef actual inner)
+    [(AstType.Ref actual inner)
       (and
-        (string.string-eq actual region)
+        (string.eq actual region)
         (match (ty-node-get inner)
-          [(AstTyString) true]
+          [(AstType.String) true]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-type-ref-str? [ty : AstType] [region : String]) : bool
   (match ty
-    [(AstTyRef actual inner)
+    [(AstType.Ref actual inner)
       (and
-        (string.string-eq actual region)
+        (string.eq actual region)
         (match (ty-node-get inner)
-          [(AstTyStr) true]
+          [(AstType.Str) true]
           [_ false]))]
     [_ false]))
 
@@ -7697,13 +8744,13 @@
   [ty : AstType]
   [region : String]) : bool
   (match ty
-    [(AstTyMutRef actual inner)
+    [(AstType.MutRef actual inner)
       (and
-        (string.string-eq actual region)
+        (string.eq actual region)
         (match (ty-node-get inner)
-          [(AstTyDynArray elem)
+          [(AstType.DynArray elem)
             (match (ty-node-get elem)
-              [(AstTyI64) true]
+              [(AstType.I64) true]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -7724,15 +8771,10 @@
   0)")
 
 (define (compiler-parse-param-list-count [params : AstParamList]) : i64
-  (match params
-    [(AstParamNil) 0]
-    [(AstParamCons _ rest)
-      (+ 1 (compiler-parse-param-list-count (box-get rest)))]))
+  (ast-param-list-len (& params)))
 
 (define (compiler-parse-type-list-count [types : AstTypeList]) : i64
-  (match types
-    [(AstTypeNil) 0]
-    [(AstTypeCons _ rest) (+ 1 (compiler-parse-type-list-count (box-get rest)))]))
+  (ast-type-list-len (& types)))
 
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
@@ -7742,103 +8784,99 @@
 
 (define (compiler-parse-raw-pointer-ok?) : bool
   (match (parse-ast-source (compiler-parse-raw-pointer-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclExtern name _ _ ty) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Extern name _ _ ty) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "raw-map"))
                     (match ty
-                      [(AstTyFunc args ret)
-                        (match (box-get args)
-                          [(AstTypeCons first tail)
-                            (let
-                              [first : AstType (ty-node-get first)]
-                              [tail : AstTypeList (box-get tail)]
-                              (and
-                                (compiler-parse-type-ptr-i64? first)
-                                (match tail
-                                  [(AstTypeNil)
-                                    (compiler-parse-type-mut-ptr-ptr-u8?
-                                      (ty-node-get ret))]
-                                  [_ false])))]
-                          [_ false])]
+                      [(AstType.Func args ret)
+                        (let
+                          [args-list : AstTypeList (box-get args)]
+                          (and
+                            (= (ast-type-list-len (& args-list)) 1)
+                            (compiler-parse-type-ptr-i64?
+                              (ty-node-get
+                                (ast-type-list-get
+                                  (& args-list)
+                                  0
+                                  (ast-type-id-fallback))))
+                            (compiler-parse-type-mut-ptr-ptr-u8?
+                              (ty-node-get ret))))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
-  (match inputs
-    [(AstExternLinkInputCons (AstExternLinkLib lib) rest0)
-      (let
-        [rest0 : AstExternLinkInputList (box-get rest0)]
-        (match rest0
-          [(AstExternLinkInputCons (AstExternLinkSearch dir) rest1)
-            (let
-              [rest1 : AstExternLinkInputList (box-get rest1)]
-              (match rest1
-                [(AstExternLinkInputCons (AstExternLinkArg arg-value) rest2)
-                  (let
-                    [rest2 : AstExternLinkInputList (box-get rest2)]
-                    (match rest2
-                      [(AstExternLinkInputNil)
-                        (and
-                          (string.string-eq lib "m")
-                          (string.string-eq dir "native/lib")
-                          (string.string-eq arg-value "-Wl,--as-needed"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  (and
+    (= (ast-extern-link-input-list-len (& inputs)) 3)
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      0
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Lib lib) (string.eq lib "m")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      1
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Search dir) (string.eq dir "native/lib")]
+      [_ false])
+    (match (ast-extern-link-input-list-get
+      (& inputs)
+      2
+      (ast-extern-link-input-fallback))
+      [(AstExternLinkInput.Arg arg-value)
+        (string.eq arg-value "-Wl,--as-needed")]
+      [_ false])))
 
 (define (compiler-parse-extern-metadata-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-metadata-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclExtern name _ metadata ty) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Extern name _ metadata ty) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "local-call"))
-                    (string.string-eq
+                    (string.eq
                       (ast-extern-metadata-symbol metadata)
                       "foreign_exact")
                     (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
                     (compiler-parse-extern-link-inputs-ok?
                       (ast-extern-metadata-link-inputs metadata))
                     (match ty
-                      [(AstTyFunc args ret)
-                        (match (box-get args)
-                          [(AstTypeCons first tail)
-                            (let
-                              [first : AstType (ty-node-get first)]
-                              [tail : AstTypeList (box-get tail)]
-                              (and
-                                (match first
-                                  [(AstTyI64) true]
-                                  [_ false])
-                                (match tail
-                                  [(AstTypeNil)
-                                    (match (ty-node-get ret)
-                                      [(AstTyI64) true]
-                                      [_ false])]
-                                  [_ false])))]
-                          [_ false])]
+                      [(AstType.Func args ret)
+                        (let
+                          [args-list : AstTypeList (box-get args)]
+                          (and
+                            (= (ast-type-list-len (& args-list)) 1)
+                            (match (ty-node-get
+                              (ast-type-list-get
+                                (& args-list)
+                                0
+                                (ast-type-id-fallback)))
+                              [(AstType.I64) true]
+                              [_ false])
+                            (match (ty-node-get ret)
+                              [(AstType.I64) true]
+                              [_ false])))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-extern-varargs-metadata-rejected-ok?) : bool
   (compiler-parse-error-ok?
@@ -7847,119 +8885,81 @@
 
 (define (compiler-parse-extern-head-typed-varargs-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name _ metadata ty)
+    [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "snprintf"))
         (match (ast-extern-metadata-abi metadata)
-          [(AstExternAbiCVarargsTyped tail-ty)
+          [(AstExternAbi.CVarargsTyped tail-ty)
             (match tail-ty
-              [(AstTyF64) true]
+              [(AstType.F64) true]
               [_ false])]
           [_ false])
         (match ty
-          [(AstTyFunc args ret)
-            (and
-              (= (compiler-parse-type-list-count (box-get args)) 3)
-              (match (ty-node-get ret)
-                [(AstTyI32) true]
-                [_ false])
-              (match (box-get args)
-                [(AstTypeCons first rest0)
-                  (let
-                    [first : AstType (ty-node-get first)]
-                    [rest0 : AstTypeList (box-get rest0)]
-                    (and
-                      (compiler-parse-type-mut-ptr-u8? first)
-                      (match rest0
-                        [(AstTypeCons second rest1)
-                          (let
-                            [second : AstType (ty-node-get second)]
-                            [rest1 : AstTypeList (box-get rest1)]
-                            (and
-                              (match second
-                                [(AstTyI64) true]
-                                [_ false])
-                              (match rest1
-                                [(AstTypeCons third rest2)
-                                  (let
-                                    [third : AstType (ty-node-get third)]
-                                    [rest2 : AstTypeList (box-get rest2)]
-                                    (and
-                                      (compiler-parse-type-ptr-u8? third)
-                                      (match rest2
-                                        [(AstTypeNil) true]
-                                        [_ false])))]
-                                [_ false])))]
-                        [_ false])))]
-                [_ false]))]
+          [(AstType.Func args ret)
+            (let
+              [args-list : AstTypeList (box-get args)]
+              (and
+                (= (compiler-parse-type-list-count args-list) 3)
+                (match (ty-node-get ret)
+                  [(AstType.I32) true]
+                  [_ false])
+                (compiler-parse-type-mut-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 0 (ast-type-id-fallback))))
+                (match (ty-node-get
+                  (ast-type-list-get (& args-list) 1 (ast-type-id-fallback)))
+                  [(AstType.I64) true]
+                  [_ false])
+                (compiler-parse-type-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 2 (ast-type-id-fallback))))))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-extern-head-open-varargs-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name _ metadata ty)
+    [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "printf"))
         (match (ast-extern-metadata-abi metadata)
-          [(AstExternAbiCVarargsOpen) true]
+          [(AstExternAbi.CVarargsOpen) true]
           [_ false])
         (match ty
-          [(AstTyFunc args ret)
-            (and
-              (= (compiler-parse-type-list-count (box-get args)) 1)
-              (match (ty-node-get ret)
-                [(AstTyI32) true]
-                [_ false])
-              (match (box-get args)
-                [(AstTypeCons first rest)
-                  (let
-                    [first : AstType (ty-node-get first)]
-                    [rest : AstTypeList (box-get rest)]
-                    (and
-                      (compiler-parse-type-ptr-u8? first)
-                      (match rest
-                        [(AstTypeNil) true]
-                        [_ false])))]
-                [_ false]))]
+          [(AstType.Func args ret)
+            (let
+              [args-list : AstTypeList (box-get args)]
+              (and
+                (= (compiler-parse-type-list-count args-list) 1)
+                (match (ty-node-get ret)
+                  [(AstType.I32) true]
+                  [_ false])
+                (compiler-parse-type-ptr-u8?
+                  (ty-node-get
+                    (ast-type-list-get (& args-list) 0 (ast-type-id-fallback))))))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-i64-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-parse-two-i64-types? [args : AstTypeList]) : bool
-  (match args
-    [(AstTypeCons first rest0)
-      (let
-        [first : AstType (ty-node-get first)]
-        [rest0 : AstTypeList (box-get rest0)]
-        (and
-          (compiler-parse-i64-type? first)
-          (match rest0
-            [(AstTypeCons second rest1)
-              (let
-                [second : AstType (ty-node-get second)]
-                [rest1 : AstTypeList (box-get rest1)]
-                (and
-                  (compiler-parse-i64-type? second)
-                  (match rest1
-                    [(AstTypeNil) true]
-                    [_ false])))]
-            [_ false])))]
-    [_ false]))
+  (and
+    (= (ast-type-list-len (& args)) 2)
+    (compiler-parse-i64-type?
+      (ty-node-get (ast-type-list-get (& args) 0 (ast-type-id-fallback))))
+    (compiler-parse-i64-type?
+      (ty-node-get (ast-type-list-get (& args) 1 (ast-type-id-fallback))))))
 
 (define (compiler-parse-extern-head-fixed-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name _ metadata ty)
+    [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "local-add"))
-        (string.string-eq
-          (ast-extern-metadata-symbol metadata)
-          "foreign_add_exact")
+        (string.eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
         (match ty
-          [(AstTyFunc args ret)
+          [(AstType.Func args ret)
             (and
               (= (compiler-parse-type-list-count (box-get args)) 2)
               (compiler-parse-i64-type? (ty-node-get ret))
@@ -7969,21 +8969,21 @@
 
 (define (compiler-parse-extern-function-head-varargs-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-function-head-varargs-source))
-    [(OkAstProgram (AstProgram decls-box))
-      (match (box-get decls-box)
-        [(AstDeclCons first rest0)
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons first rest0)
           (let
-            [rest0 : AstDeclList (box-get rest0)]
-            (match rest0
-              [(AstDeclCons second rest1)
+            [rest0 : AstDeclList rest0]
+            (match (ast-decl-list-step rest0)
+              [(AstDeclListStep.Cons second rest1)
                 (let
-                  [rest1 : AstDeclList (box-get rest1)]
-                  (match rest1
-                    [(AstDeclCons third rest2)
+                  [rest1 : AstDeclList rest1]
+                  (match (ast-decl-list-step rest1)
+                    [(AstDeclListStep.Cons third rest2)
                       (let
-                        [rest2 : AstDeclList (box-get rest2)]
-                        (match rest2
-                          [(AstDeclNil)
+                        [rest2 : AstDeclList rest2]
+                        (match (ast-decl-list-step rest2)
+                          [(AstDeclListStep.Nil)
                             (and
                               (compiler-parse-extern-head-typed-varargs-decl-ok?
                                 first)
@@ -7994,69 +8994,77 @@
                     [_ false]))]
               [_ false]))]
         [_ false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-define-export-symbol-ok?) : bool
   (match (parse-ast-source (compiler-parse-define-export-symbol-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn name params ret _ export) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn name params ret _ export) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "_write"))
                     (= (compiler-parse-param-list-count params) 3)
                     (match ret
-                      [(AstTyI32) true]
+                      [(AstType.I32) true]
                       [_ false])
                     (match export
-                      [(AstFnExport symbol) (= symbol (intern "_write"))]
+                      [(AstFnExport.Export symbol) (= symbol (intern "_write"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
 (define (compiler-parse-init-ok?) : bool
   (match (parse-ast-source "(define (main) : i64 (init : i64))")
-    [(OkAstProgram (AstProgram decls-box))
-      (match (box-get decls-box)
-        [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) AstDeclNil)
-          (match (ast-expr-unspan (ast-node-get body-box))
-            [(AstExprInit ty)
-              (match ty
-                [(AstSomeType inner)
-                  (match inner
-                    [(AstTyI64) true]
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) done-box)
+          (let
+            [done : AstDeclList done-box]
+            (and
+              (ast-decl-list-empty? (& done))
+              (match (ast-expr-unspan (ast-node-get body-box))
+                [(AstExpr.Init ty)
+                  (match ty
+                    [(AstMaybeType.Some inner)
+                      (match inner
+                        [(AstType.I64) true]
+                        [_ false])]
                     [_ false])]
-                [_ false])]
-            [_ false])]
+                [_ false])))]
         [_ false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-contextual-init-ok?) : bool
   (match (parse-ast-source
     "(define (init) : i64 7) (define (main) : i64 (init))")
-    [(OkAstProgram (AstProgram decls-box))
-      (match (box-get decls-box)
-        [(AstDeclCons _ rest)
-          (match (box-get rest)
-            [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) AstDeclNil)
-              (match (ast-expr-unspan (ast-node-get body-box))
-                [(AstExprInit ty)
-                  (match ty
-                    [(AstNoType) true]
-                    [_ false])]
-                [_ false])]
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons _ rest)
+          (match (ast-decl-list-step rest)
+            [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) done-box)
+              (let
+                [done : AstDeclList done-box]
+                (and
+                  (ast-decl-list-empty? (& done))
+                  (match (ast-expr-unspan (ast-node-get body-box))
+                    [(AstExpr.Init ty)
+                      (match ty
+                        [(AstMaybeType.No) true]
+                        [_ false])]
+                    [_ false])))]
             [_ false])]
         [_ false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-init-call-name-source) : String
   "(define (init [n : i64]) : i64 n)
@@ -8077,45 +9085,43 @@
 
 (define (compiler-parse-reference-ok?) : bool
   (match (parse-ast-source (compiler-parse-reference-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ params _ _ _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ params _ _ _) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
-                  (match params
-                    [(AstParamCons (AstParam _ first-ty false) rest0)
-                      (let
-                        [rest0 : AstParamList (box-get rest0)]
-                        (and
-                          (compiler-parse-type-ref-string? first-ty "r")
-                          (match rest0
-                            [(AstParamCons (AstParam _ second-ty false) rest1)
-                              (let
-                                [rest1 : AstParamList (box-get rest1)]
-                                (and
-                                  (compiler-parse-type-ref-str? second-ty "r")
-                                  (match rest1
-                                    [(AstParamCons
-                                        (AstParam _ third-ty false)
-                                        rest2)
-                                      (let
-                                        [rest2 : AstParamList (box-get rest2)]
-                                        (match rest2
-                                          [(AstParamNil)
-                                            (compiler-parse-type-mut-ref-dyn-array-i64?
-                                              third-ty
-                                              "phase")]
-                                          [_ false]))]
-                                    [_ false])))]
-                            [_ false])))]
-                    [_ false])]
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
+                  (and
+                    (= (ast-param-list-len (& params)) 3)
+                    (match (ast-param-list-get
+                      (& params)
+                      0
+                      (ast-param-fallback))
+                      [(AstParam.Param _ first-ty false)
+                        (compiler-parse-type-ref-string? first-ty "r")]
+                      [_ false])
+                    (match (ast-param-list-get
+                      (& params)
+                      1
+                      (ast-param-fallback))
+                      [(AstParam.Param _ second-ty false)
+                        (compiler-parse-type-ref-str? second-ty "r")]
+                      [_ false])
+                    (match (ast-param-list-get
+                      (& params)
+                      2
+                      (ast-param-fallback))
+                      [(AstParam.Param _ third-ty false)
+                        (compiler-parse-type-mut-ref-dyn-array-i64?
+                          third-ty
+                          "phase")]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-borrow-source) : String
   "(define (main [x : i64]) : i64
@@ -8127,12 +9133,11 @@
 
 (define (compiler-parse-borrow-inferred-var? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprBorrow false AstBorrowLifetimeInferred place-box)
+    [(AstExpr.Borrow false AstBorrowLifetime.Inferred place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name)
-            (string.string-eq (intern-str place-name) name)]
+          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -8140,12 +9145,11 @@
   [expr : AstExpr]
   [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprBorrow true AstBorrowLifetimeInferred place-box)
+    [(AstExpr.Borrow true AstBorrowLifetime.Inferred place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name)
-            (string.string-eq (intern-str place-name) name)]
+          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -8154,215 +9158,174 @@
   [lifetime : String]
   [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprBorrow false (AstBorrowLifetimeNamed actual-lifetime) place-box)
+    [(AstExpr.Borrow false (AstBorrowLifetime.Named actual-lifetime) place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name)
+          [(AstExpr.Var place-name)
             (and
-              (string.string-eq actual-lifetime lifetime)
-              (string.string-eq (intern-str place-name) name))]
+              (string.eq actual-lifetime lifetime)
+              (string.eq (intern-str place-name) name))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-borrow-ok?) : bool
   (match (parse-ast-source (compiler-parse-borrow-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprBegin exprs)
-                      (match exprs
-                        [(AstExprCons first rest0)
-                          (let
-                            [first : AstExpr (ast-node-get first)]
-                            [rest0 : AstExprList (box-get rest0)]
-                            (match rest0
-                              [(AstExprCons second rest1)
-                                (let
-                                  [second : AstExpr (ast-node-get second)]
-                                  (match (ast-expr-unspan first)
-                                    [(AstExprBorrow
-                                        _
-                                        AstBorrowLifetimeInferred
-                                        first-place-box)
-                                      (let
-                                        [first-place : AstExpr
-                                          (ast-node-get first-place-box)]
-                                        (match (ast-expr-unspan first-place)
-                                          [(AstExprVar first-name)
-                                            (if (string.string-eq
-                                              (intern-str first-name)
-                                              "x")
-                                              (match (ast-expr-unspan second)
-                                                [(AstExprBorrow
-                                                    _
-                                                    (AstBorrowLifetimeNamed
-                                                      lifetime)
-                                                    second-place-box)
-                                                  (let
-                                                    [second-place : AstExpr
-                                                      (ast-node-get
-                                                        second-place-box)]
-                                                    (match (ast-expr-unspan
-                                                      second-place)
-                                                      [(AstExprVar second-name)
-                                                        (and
-                                                          (string.string-eq
-                                                            lifetime
-                                                            "x")
-                                                          (string.string-eq
-                                                            (intern-str
-                                                              second-name)
-                                                            "x"))]
-                                                      [_ false]))]
-                                                [_ false])
-                                              false)]
-                                          [_ false]))]
-                                    [_ false]))]
-                              [_ false]))]
-                        [_ false])]
+                    [(AstExpr.Begin exprs)
+                      (if (>= (struct-get (& exprs) len) 2)
+                        (let
+                          [first : AstExpr
+                            (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
+                          [second : AstExpr
+                            (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
+                          (match (ast-expr-unspan first)
+                            [(AstExpr.Borrow
+                                _
+                                AstBorrowLifetime.Inferred
+                                first-place-box)
+                              (let
+                                [first-place : AstExpr
+                                  (ast-node-get first-place-box)]
+                                (match (ast-expr-unspan first-place)
+                                  [(AstExpr.Var first-name)
+                                    (if (string.eq (intern-str first-name) "x")
+                                      (match (ast-expr-unspan second)
+                                        [(AstExpr.Borrow
+                                            _
+                                            (AstBorrowLifetime.Named lifetime)
+                                            second-place-box)
+                                          (let
+                                            [second-place : AstExpr
+                                              (ast-node-get second-place-box)]
+                                            (match (ast-expr-unspan
+                                              second-place)
+                                              [(AstExpr.Var second-name)
+                                                (and
+                                                  (string.eq lifetime "x")
+                                                  (string.eq
+                                                    (intern-str second-name)
+                                                    "x"))]
+                                              [_ false]))]
+                                        [_ false])
+                                      false)]
+                                  [_ false]))]
+                            [_ false]))
+                        false)]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-try-source) : String
   "(define (main) : i64 (wrap (try (read))))")
 
 (define (compiler-parse-try-ok?) : bool
   (match (parse-ast-source (compiler-parse-try-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprCall _ args)
-                      (match args
-                        [(AstExprCons arg rest-args)
-                          (let
-                            [arg : AstExpr (ast-node-get arg)]
-                            [rest-args : AstExprList (box-get rest-args)]
-                            (match rest-args
-                              [(AstExprNil)
-                                (match (ast-expr-unspan arg)
-                                  [(AstExprTry _) true]
-                                  [_ false])]
-                              [_ false]))]
-                        [_ false])]
+                    [(AstExpr.Call _ args)
+                      (if (= (struct-get (& args) len) 1)
+                        (let
+                          [arg : AstExpr
+                            (ast-node-get (ast-expr-list-get (& args) 0 0))]
+                          (match (ast-expr-unspan arg)
+                            [(AstExpr.Try _) true]
+                            [_ false]))
+                        false)]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-return-source) : String
   "(define (main) : i64 (return 42))")
 
 (define (compiler-parse-return-ok?) : bool
   (match (parse-ast-source (compiler-parse-return-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprReturn inner-box)
+                    [(AstExpr.Return inner-box)
                       (let
                         [inner : AstExpr (ast-node-get inner-box)]
                         (match (ast-expr-unspan inner)
-                          [(AstExprLiteral (AstLitInt 42 _)) true]
+                          [(AstExpr.Literal (AstLiteral.Int 42 _)) true]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-unit-expr? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprLiteral AstLitUnit) true]
+    [(AstExpr.Literal AstLiteral.Unit) true]
     [_ false]))
 
 (define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprBegin exprs)
-      (match exprs
-        [(AstExprCons first rest0)
-          (let
-            [first : AstExpr (ast-node-get first)]
-            [rest0 : AstExprList (box-get rest0)]
-            (match rest0
-              [(AstExprCons last rest1)
-                (let
-                  [last : AstExpr (ast-node-get last)]
-                  [rest1 : AstExprList (box-get rest1)]
-                  (match rest1
-                    [(AstExprNil)
-                      (and
-                        (match (ast-expr-unspan first)
-                          [(AstExprReturn _) true]
-                          [_ false])
-                        (compiler-parse-unit-expr? last))]
-                    [_ false]))]
-              [_ false]))]
-        [_ false])]
+    [(AstExpr.Begin exprs)
+      (if (= (struct-get (& exprs) len) 2)
+        (let
+          [first : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
+          [last : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
+          (and
+            (match (ast-expr-unspan first)
+              [(AstExpr.Return _) true]
+              [_ false])
+            (compiler-parse-unit-expr? last)))
+        false)]
     [_ false]))
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprVar found) (string.string-eq (intern-str found) name)]
+    [(AstExpr.Var found) (string.eq (intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprReturn _) true]
+    [(AstExpr.Return _) true]
     [_ false]))
 
 (define (compiler-parse-guard-call-args-ok? [args : AstExprList]) : bool
-  (match args
-    [(AstExprCons cond rest0)
-      (let
-        [cond : AstExpr (ast-node-get cond)]
-        [rest0 : AstExprList (box-get rest0)]
-        (and
-          (compiler-parse-call-head-name? cond "ok")
-          (match rest0
-            [(AstExprCons body-arg rest1)
-              (let
-                [body-arg : AstExpr (ast-node-get body-arg)]
-                [rest1 : AstExprList (box-get rest1)]
-                (and
-                  (match rest1
-                    [(AstExprNil) true]
-                    [_ false])
-                  (compiler-parse-return-expr? body-arg)))]
-            [_ false])))]
-    [_ false]))
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [cond : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [body-arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      (and
+        (compiler-parse-call-head-name? cond "ok")
+        (compiler-parse-return-expr? body-arg)))
+    false))
 
 (define (compiler-parse-call-arg-count [args : AstExprList]) : i64
-  (match args
-    [(AstExprNil) 0]
-    [(AstExprCons _ rest)
-      (let
-        [rest : AstExprList (box-get rest)]
-        (+ 1 (compiler-parse-call-arg-count rest)))]))
+  (struct-get (& args) len))
 
 (define (compiler-parse-call-body-ok?
   [source : String]
@@ -8370,18 +9333,18 @@
   [want-args : i64]
   [check-guard-args : bool]) : bool
   (match (parse-ast-source source)
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprCall func-box args)
+                    [(AstExpr.Call func-box args)
                       (let
                         [func : AstExpr (ast-node-get func-box)]
                         (and
@@ -8393,7 +9356,7 @@
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-guard-forms-ok?) : bool
   (and
@@ -8466,7 +9429,7 @@
 
 (define (compiler-parse-no-generated-meta-ok? [meta : AstGeneratedDeclMeta]) : bool
   (match meta
-    [(AstNoGeneratedDeclMeta) true]
+    [(AstGeneratedDeclMeta.No) true]
     [_ false]))
 
 (define (compiler-parse-generated-meta-ok?
@@ -8475,22 +9438,22 @@
   [want-item : String]
   [want-arg-count : i64]) : bool
   (match meta
-    [(AstSomeGeneratedDeclMeta generator-name item-name arg-keys _)
+    [(AstGeneratedDeclMeta.Some generator-name item-name arg-keys _)
       (and
-        (string.string-eq generator-name want-generator)
-        (string.string-eq item-name want-item)
+        (string.eq generator-name want-generator)
+        (string.eq item-name want-item)
         (= (compiler-parse-expr-list-count arg-keys) want-arg-count))]
     [_ false]))
 
 (define (compiler-parse-comptime-defstruct-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (and
           (compiler-parse-no-generated-meta-ok? meta)
           (match template
-            [(AstDeclDefStruct name _ _ fields)
+            [(AstDecl.DefStruct name _ _ fields)
               (and
                 (= name (intern "Point"))
                 (= (compiler-parse-field-count fields) 2))]
@@ -8499,19 +9462,19 @@
 
 (define (compiler-parse-comptime-defenum-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (and
           (compiler-parse-no-generated-meta-ok? meta)
           (match template
-            [(AstDeclDefEnum name _ _) (= name (intern "Maybe"))]
+            [(AstDecl.DefEnum name _ _) (= name (intern "Maybe"))]
             [_ false])))]
     [_ false]))
 
 (define (compiler-parse-comptime-define-value-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (and
@@ -8521,20 +9484,20 @@
             "Box_String"
             1)
           (match template
-            [(AstDeclDef name _ value-box)
+            [(AstDecl.Def name _ value-box)
               (let
                 [value : AstExpr (ast-node-get value-box)]
                 (and
                   (= name (intern "box-size"))
                   (match (ast-expr-unspan value)
-                    [(AstExprLiteral (AstLitInt actual _)) (= actual 8)]
+                    [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual 8)]
                     [_ false])))]
             [_ false])))]
     [_ false]))
 
 (define (compiler-parse-comptime-define-fn-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (and
@@ -8544,33 +9507,34 @@
             "make-box-string"
             1)
           (match template
-            [(AstDeclDefFn name _ (AstTyI64) _ _) (= name (intern "make-box"))]
+            [(AstDecl.DefFn name _ (AstType.I64) _ _)
+              (= name (intern "make-box"))]
             [_ false])))]
     [_ false]))
 
 (define (compiler-parse-comptime-decl-ok?) : bool
   (match (parse-ast-source (compiler-parse-comptime-decl-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons first rest1-box)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons first rest1-box)
             (let
-              [rest1 : AstDeclList (box-get rest1-box)]
-              (match rest1
-                [(AstDeclCons second rest2-box)
+              [rest1 : AstDeclList rest1-box]
+              (match (ast-decl-list-step rest1)
+                [(AstDeclListStep.Cons second rest2-box)
                   (let
-                    [rest2 : AstDeclList (box-get rest2-box)]
-                    (match rest2
-                      [(AstDeclCons third rest3-box)
+                    [rest2 : AstDeclList rest2-box]
+                    (match (ast-decl-list-step rest2)
+                      [(AstDeclListStep.Cons third rest3-box)
                         (let
-                          [rest3 : AstDeclList (box-get rest3-box)]
-                          (match rest3
-                            [(AstDeclCons fourth rest4-box)
+                          [rest3 : AstDeclList rest3-box]
+                          (match (ast-decl-list-step rest3)
+                            [(AstDeclListStep.Cons fourth rest4-box)
                               (let
-                                [rest4 : AstDeclList (box-get rest4-box)]
-                                (match rest4
-                                  [(AstDeclNil)
+                                [rest4 : AstDeclList rest4-box]
+                                (match (ast-decl-list-step rest4)
+                                  [(AstDeclListStep.Nil)
                                     (and
                                       (= (ast-decl-list-count decls) 4)
                                       (= (ast-decl-list-tag-sum decls) 32)
@@ -8587,7 +9551,7 @@
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-unsafe-decl-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
@@ -8595,101 +9559,116 @@
 
 (define (compiler-parse-unsafe-decl-ok?) : bool
   (match (parse-ast-source (compiler-parse-unsafe-decl-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons first tail)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons first tail)
             (let
-              [tail : AstDeclList (box-get tail)]
+              [tail : AstDeclList tail]
               (match first
-                [(AstDeclUnsafe first-inner-box)
+                [(AstDecl.Unsafe first-inner-box)
                   (let
                     [first-inner : AstDecl (box-get first-inner-box)]
                     (match first-inner
-                      [(AstDeclDefFn name _ (AstTyI64) _ _)
-                        (match tail
-                          [(AstDeclCons second AstDeclNil)
-                            (match second
-                              [(AstDeclUnsafe second-inner-box)
-                                (let
-                                  [second-inner : AstDecl
-                                    (box-get second-inner-box)]
-                                  (match second-inner
-                                    [(AstDeclExtern extern-name _ _ extern-ty)
-                                      (and
-                                        (= name (intern "danger"))
-                                        (= extern-name (intern "raw-call"))
-                                        (match extern-ty
-                                          [(AstTyFunc _ ret)
-                                            (match (ty-node-get ret)
-                                              [(AstTyI64) true]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false]))]
-                              [_ false])]
+                      [(AstDecl.DefFn name _ (AstType.I64) _ _)
+                        (match (ast-decl-list-step tail)
+                          [(AstDeclListStep.Cons second done-box)
+                            (let
+                              [done : AstDeclList done-box]
+                              (and
+                                (ast-decl-list-empty? (& done))
+                                (match second
+                                  [(AstDecl.Unsafe second-inner-box)
+                                    (let
+                                      [second-inner : AstDecl
+                                        (box-get second-inner-box)]
+                                      (match second-inner
+                                        [(AstDecl.Extern
+                                            extern-name
+                                            _
+                                            _
+                                            extern-ty)
+                                          (and
+                                            (= name (intern "danger"))
+                                            (= extern-name (intern "raw-call"))
+                                            (match extern-ty
+                                              [(AstType.Func _ ret)
+                                                (match (ty-node-get ret)
+                                                  [(AstType.I64) true]
+                                                  [_ false])]
+                                              [_ false]))]
+                                        [_ false]))]
+                                  [_ false])))]
                           [_ false])]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-field-count [fields : AstFieldDefList]) : i64
-  (match fields
-    [(AstFieldDefNil) 0]
-    [(AstFieldDefCons _ rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (+ 1 (compiler-parse-field-count rest)))]))
+  (struct-get (& fields) len))
 
 (define (compiler-parse-field-cleanup-score [cleanup : AstFieldCleanup]) : i64
   (match cleanup
-    [(AstFieldNoCleanup) 0]
-    [(AstFieldCleanupFn _) 10]
-    [(AstFieldOwnedCleanup) 100]))
+    [(AstFieldCleanup.No) 0]
+    [(AstFieldCleanup.Fn _) 10]
+    [(AstFieldCleanup.Owned) 100]))
 
 (define (compiler-parse-field-cleanup-list-score [fields : AstFieldDefList]) : i64
-  (match fields
-    [(AstFieldDefNil) 0]
-    [(AstFieldDefCons field rest)
-      (let
-        [rest : AstFieldDefList (box-get rest)]
-        (match field
-          [(AstFieldDef _ _ cleanup)
-            (+
-              (compiler-parse-field-cleanup-score cleanup)
-              (compiler-parse-field-cleanup-list-score rest))]))]))
+  (compiler-parse-field-cleanup-list-score-at (& fields) 0))
+
+(define (compiler-parse-field-cleanup-list-score-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get fields len))
+    0
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ _ cleanup)
+        (+
+          (compiler-parse-field-cleanup-score cleanup)
+          (compiler-parse-field-cleanup-list-score-at fields (+ index 1)))])))
 
 (define (compiler-parse-variant-payload-cleanup-score
   [cleanup : AstVariantPayloadCleanup]) : i64
   (match cleanup
-    [(AstVariantPayloadNoCleanup) 0]
-    [(AstVariantPayloadCleanupFn _) 10]
-    [(AstVariantPayloadOwnedCleanup) 100]))
+    [(AstVariantPayloadCleanup.No) 0]
+    [(AstVariantPayloadCleanup.Fn _) 10]
+    [(AstVariantPayloadCleanup.Owned) 100]))
 
 (define (compiler-parse-variant-payload-cleanup-list-score
   [cleanups : AstVariantPayloadCleanupList]) : i64
-  (match cleanups
-    [(AstVariantPayloadCleanupNil) 0]
-    [(AstVariantPayloadCleanupCons cleanup rest)
-      (let
-        [rest : AstVariantPayloadCleanupList (box-get rest)]
-        (+
-          (compiler-parse-variant-payload-cleanup-score cleanup)
-          (compiler-parse-variant-payload-cleanup-list-score rest)))]))
+  (compiler-parse-variant-payload-cleanup-list-score-at (& cleanups) 0))
+
+(define (compiler-parse-variant-payload-cleanup-list-score-at
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get cleanups len))
+    0
+    (+
+      (compiler-parse-variant-payload-cleanup-score
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback)))
+      (compiler-parse-variant-payload-cleanup-list-score-at
+        cleanups
+        (+ index 1)))))
 
 (define (compiler-parse-variant-list-cleanup-score
   [variants : AstVariantDefList]) : i64
-  (match variants
-    [(AstVariantDefNil) 0]
-    [(AstVariantDefCons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef _ _ cleanups)
-            (+
-              (compiler-parse-variant-payload-cleanup-list-score cleanups)
-              (compiler-parse-variant-list-cleanup-score rest))]))]))
+  (compiler-parse-variant-list-cleanup-score-at (& variants) 0))
+
+(define (compiler-parse-variant-list-cleanup-score-at
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get variants len))
+    0
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (+
+          (compiler-parse-variant-payload-cleanup-list-score cleanups)
+          (compiler-parse-variant-list-cleanup-score-at variants (+ index 1)))])))
 
 (define (compiler-parse-struct-cleanup-source) : String
   "(defstruct Resource
@@ -8700,29 +9679,31 @@
 
 (define (compiler-parse-struct-cleanup-ok?) : bool
   (match (parse-ast-source (compiler-parse-struct-cleanup-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefStruct name repr cleanup fields) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefStruct name repr cleanup fields)
+              rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Resource"))
                     (match repr
-                      [(AstStructReprDefault) true]
+                      [(AstStructRepr.Default) true]
                       [_ false])
                     (match cleanup
-                      [(AstStructCleanupFn cleanup-name)
+                      [(AstStructCleanup.Fn cleanup-name)
                         (= cleanup-name (intern "close-resource"))]
                       [_ false])
                     (= (compiler-parse-field-count fields) 3)
                     (= (compiler-parse-field-cleanup-list-score fields) 110))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-enum-cleanup-source) : String
   "(defenum Resource
@@ -8731,25 +9712,25 @@
 
 (define (compiler-parse-enum-cleanup-ok?) : bool
   (match (parse-ast-source (compiler-parse-enum-cleanup-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefEnum name cleanup variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefEnum name cleanup variants) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Resource"))
                     (match cleanup
-                      [(AstEnumCleanupFn cleanup-name)
+                      [(AstEnumCleanup.Fn cleanup-name)
                         (= cleanup-name (intern "close-resource"))]
                       [_ false])
                     (= (compiler-parse-variant-list-cleanup-score variants) 110))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-comptime-struct-cleanup-source) : String
   "(comptime-decl
@@ -8759,28 +9740,28 @@
 
 (define (compiler-parse-comptime-struct-cleanup-ok?) : bool
   (match (parse-ast-source (compiler-parse-comptime-struct-cleanup-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclComptimeDecl _ template-box) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ template-box) rest)
             (let
               [template : AstDecl (box-get template-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match template
-                    [(AstDeclDefStruct _ repr cleanup fields)
+                    [(AstDecl.DefStruct _ repr cleanup fields)
                       (and
                         (match repr
-                          [(AstStructReprDefault) true]
+                          [(AstStructRepr.Default) true]
                           [_ false])
                         (ast-struct-cleanup? cleanup)
                         (= (compiler-parse-field-cleanup-list-score fields) 10))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-cleanup-metadata-ok?) : bool
   (and
@@ -8796,47 +9777,47 @@
 
 (define (compiler-parse-repr-c-ok?) : bool
   (match (parse-ast-source (compiler-parse-repr-c-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefStruct name repr _ fields) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefStruct name repr _ fields) rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Stat"))
                     (ast-struct-repr-c? repr)
                     (= (compiler-parse-field-count fields) 2))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-comptime-repr-c-source) : String
   "(comptime-decl (defstruct Stat (:repr c) (size i64)))")
 
 (define (compiler-parse-comptime-repr-c-ok?) : bool
   (match (parse-ast-source (compiler-parse-comptime-repr-c-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclComptimeDecl _ template-box) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ template-box) rest)
             (let
               [template : AstDecl (box-get template-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match template
-                    [(AstDeclDefStruct _ repr _ fields)
+                    [(AstDecl.DefStruct _ repr _ fields)
                       (and
                         (ast-struct-repr-c? repr)
                         (= (compiler-parse-field-count fields) 1))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-inline-test-source) : String
   "(test parser-basic
@@ -8845,26 +9826,26 @@
 
 (define (compiler-parse-inline-test-ok?) : bool
   (match (parse-ast-source (compiler-parse-inline-test-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclTest name body-box span) tail)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Test name body-box span) tail)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [tail : AstDeclList (box-get tail)]
-              (match tail
-                [(AstDeclNil)
+              [tail : AstDeclList tail]
+              (match (ast-decl-list-step tail)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "parser-basic"))
                     (= (ast-source-span-start-line span) 1)
                     (match (ast-expr-unspan body)
-                      [(AstExprBegin exprs)
+                      [(AstExpr.Begin exprs)
                         (= (compiler-parse-expr-list-count exprs) 2)]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-comptime-decl-bad-payload-source) : String
   "(comptime-decl (extern (x) : i64))")
@@ -9072,8 +10053,8 @@
   (match (parse-ast-source
     "(define (id [x : i64]) : i64 x)
 (define (main) : i64 (let [x : i64 41] (id x)))")
-    [(OkAstProgram _) true]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Ok _) true]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-let-error-tests-ok?) : bool
   (and
@@ -9087,8 +10068,11 @@
       "(define (main) : i64 (let [x : i64 1]))"
       "parse: let missing body")
     (compiler-parse-error-ok?
-      "(define (main) : i64 (let [x : i64 1] x x))"
-      "parse: let expects exactly one body")))
+      "(define (main) : i64 (let []))"
+      "parse: let missing body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let ()))"
+      "parse: let missing body")))
 
 (define (compiler-parse-abstraction-policy-tests-ok?) : bool
   (and
@@ -9287,6 +10271,7 @@
 (define (compiler-parse-error-tests-ok?) : bool
   (cond
     [(not (compiler-parse-diagnostic-code-ok?)) false]
+    [(not (compiler-parse-nested-diagnostic-spans-ok?)) false]
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
     [(not (compiler-parse-comptime-decl-error-tests-ok?)) false]
     [(not (compiler-parse-comptime-decls-error-tests-ok?)) false]
@@ -9321,35 +10306,39 @@
 ;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
 (define (compiler-parse-ok? [src : String]) : bool
   (match (parse-ast-source src)
-    [(OkAstProgram _) true]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Ok _) true]
+    [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+(define (compiler-parse-ok-with-cfg?
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
-    [(OkAstProgram _) true]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Ok _) true]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-cfg-decl-count-ok?
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [want : i64]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
         (= (ast-decl-list-count decls) want))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-cfg-error? [src : String] [cfgs : SymI64Env]) : bool
+(define (compiler-parse-cfg-error?
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
-    [(OkAstProgram _) false]
-    [(ErrAstProgram _) true]))
+    [(ResultAstProgram.Ok _) false]
+    [(ResultAstProgram.Err _) true]))
 
 (define (compiler-parse-cfg-tests-ok?) : bool
   (let
-    [feature-cfg : SymI64Env
+    [feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable (compiler-cfg-empty) "feature")]
-    [windows-feature-cfg : SymI64Env
+    [windows-feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable feature-cfg "windows")]
     (and
       (compiler-parse-cfg-decl-count-ok?
@@ -9433,18 +10422,28 @@
       "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
 
 ;
-;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
-;; legacy-parenthesized binding forms; reject an empty binding list. Completes
-;; the let family alongside the existing flat-let accept and let error tests.
+;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, legacy
+;; parenthesized binding forms, and empty-binding body wrappers. Completes the
+;; let family alongside the existing flat-let accept and let error tests.
 (define (compiler-parse-let-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (let [x 1] x))")
     (compiler-parse-ok?
       "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
     (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (let [] 0))"
-      "parse: malformed let binding")))
+    (compiler-parse-ok? "(define (main) : i64 (let [] 0))")
+    (compiler-parse-ok? "(define (main) : i64 (let () 0))")))
+
+(define (compiler-parse-implicit-body-tail-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
+    (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x (+ x 1)))")
+    (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
+    (compiler-parse-ok? "(define (main) : i64 (let () 1 2))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (while false unit unit) 0))")
+    (compiler-parse-ok? "(define (main) : i64 unit 42)")
+    (compiler-parse-ok? "(define (main) : i64 ((lambda () : i64 unit 42)))")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and
@@ -9542,17 +10541,39 @@
     (compiler-parse-ok?
       "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
     (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64 (begin (+ a b c d) (* a b c d)))")
+    (compiler-parse-ok?
       "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
+    (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64 (begin (bit-and a b c d) (bit-or a b c d) (bit-xor a b c d)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (not))"
       "parse: malformed unary expression")
     (compiler-parse-error-ok?
       "(define (main [a : i64]) : i64 (+ a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (+))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64]) : i64 (* a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (*))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64]) : i64 (bit-and a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (bit-or))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64] [b : i64] [c : i64]) : i64 (shl a b c))"
       "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
   (let
-    [private-cfg : SymI64Env
+    [private-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable
         (compiler-cfg-empty)
         "feature-compiler-private-dynamic-buffer")]
@@ -9599,44 +10620,36 @@
 (define (compiler-parse-with-escape-shape-ok?) : bool
   (match (parse-ast-source
     "(define (main) : String (with-escape (arena-make) (string.int->string 42)))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprWithEscape scratch-box body-exprs)
+                    [(AstExpr.WithEscape scratch-box body-exprs)
                       (let
                         [scratch : AstExpr (ast-node-get scratch-box)]
                         (match (ast-expr-unspan scratch)
-                          [(AstExprCall callee-box AstExprNil)
+                          [(AstExpr.Call callee-box call-args)
                             (let
                               [callee : AstExpr (ast-node-get callee-box)]
                               (match (ast-expr-unspan callee)
-                                [(AstExprVar name)
+                                [(AstExpr.Var name)
                                   (and
-                                    (string.string-eq
-                                      (intern-str name)
-                                      "arena-make")
-                                    (match body-exprs
-                                      [(AstExprCons _ tail)
-                                        (let
-                                          [tail : AstExprList (box-get tail)]
-                                          (match tail
-                                            [(AstExprNil) true]
-                                            [_ false]))]
-                                      [_ false]))]
+                                    (= (struct-get (& call-args) len) 0)
+                                    (string.eq (intern-str name) "arena-make")
+                                    (= (struct-get (& body-exprs) len) 1))]
                                 [_ false]))]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-with-escape-tests-ok?) : bool
   (and
@@ -9653,33 +10666,23 @@
 (define (compiler-parse-with-scratch-shape-ok?) : bool
   (match (parse-ast-source
     "(define (main) : String (with-scratch (string.int->string 41) (string.int->string 42)))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprWithScratch body-exprs)
-                      (match body-exprs
-                        [(AstExprCons _ tail)
-                          (let
-                            [tail : AstExprList (box-get tail)]
-                            (match tail
-                              [(AstExprCons _ end)
-                                (match (box-get end)
-                                  [(AstExprNil) true]
-                                  [_ false])]
-                              [_ false]))]
-                        [_ false])]
+                    [(AstExpr.WithScratch body-exprs)
+                      (= (struct-get (& body-exprs) len) 2)]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-with-scratch-tests-ok?) : bool
   (and
@@ -9692,40 +10695,30 @@
 (define (compiler-parse-in-arena-shape-ok?) : bool
   (match (parse-ast-source
     "(define (main [arena : Arena]) : i64 (in-arena arena 1 2))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprInArena arena-box body-exprs)
+                    [(AstExpr.InArena arena-box body-exprs)
                       (let
                         [arena : AstExpr (ast-node-get arena-box)]
                         (match (ast-expr-unspan arena)
-                          [(AstExprVar name)
+                          [(AstExpr.Var name)
                             (and
-                              (string.string-eq (intern-str name) "arena")
-                              (match body-exprs
-                                [(AstExprCons _ tail)
-                                  (let
-                                    [tail : AstExprList (box-get tail)]
-                                    (match tail
-                                      [(AstExprCons _ end)
-                                        (match (box-get end)
-                                          [(AstExprNil) true]
-                                          [_ false])]
-                                      [_ false]))]
-                                [_ false]))]
+                              (string.eq (intern-str name) "arena")
+                              (= (struct-get (& body-exprs) len) 2))]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-in-arena-tests-ok?) : bool
   (and
@@ -9749,60 +10742,50 @@
 
 (define (compiler-parse-resource-with-shape-ok?) : bool
   (match (parse-ast-source (compiler-parse-resource-with-source))
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
-                    [(AstExprWithResource wr-box)
+                    [(AstExpr.WithResource wr-box)
                       (match (box-get wr-box)
-                        [(AstWithResource bindings body-exprs)
-                          (and
+                        [(AstWithResource.WithResource bindings body-exprs)
+                          (if (and
                             (=
                               (compiler-parse-resource-binding-count bindings)
                               2)
-                            (= (compiler-parse-expr-list-count body-exprs) 2)
-                            (match body-exprs
-                              [(AstExprCons _ tail)
-                                (let
-                                  [tail : AstExprList (box-get tail)]
-                                  (match tail
-                                    [(AstExprCons nested done-box)
-                                      (let
-                                        [nested : AstExpr (ast-node-get nested)]
-                                        [done : AstExprList (box-get done-box)]
-                                        (match done
-                                          [(AstExprNil)
-                                            (match (ast-expr-unspan nested)
-                                              [(AstExprWithResource
-                                                  nested-wr-box)
-                                                (match (box-get nested-wr-box)
-                                                  [(AstWithResource
-                                                      nested-bindings
-                                                      nested-body)
-                                                    (and
-                                                      (=
-                                                        (compiler-parse-resource-binding-count
-                                                          nested-bindings)
-                                                        1)
-                                                      (=
-                                                        (compiler-parse-expr-list-count
-                                                          nested-body)
-                                                        1))])]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false]))]
-                              [_ false]))])]
+                            (= (compiler-parse-expr-list-count body-exprs) 2))
+                            (let
+                              [nested : AstExpr
+                                (ast-node-get
+                                  (ast-expr-list-get (& body-exprs) 1 0))]
+                              (match (ast-expr-unspan nested)
+                                [(AstExpr.WithResource nested-wr-box)
+                                  (match (box-get nested-wr-box)
+                                    [(AstWithResource.WithResource
+                                        nested-bindings
+                                        nested-body)
+                                      (and
+                                        (=
+                                          (compiler-parse-resource-binding-count
+                                            nested-bindings)
+                                          1)
+                                        (=
+                                          (compiler-parse-expr-list-count
+                                            nested-body)
+                                          1))])]
+                                [_ false]))
+                            false)])]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-resource-with-tests-ok?) : bool
   (and
@@ -9840,46 +10823,43 @@
 (define (compiler-parse-quote-syntax-shape-ok?) : bool
   (match (parse-ast-source
     "(define (mk [e : Expr]) : Expr `(if ,e true false))")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ ret-ty body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ ret-ty body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (match ret-ty
-                      [(AstTyVar name)
-                        (string.string-eq (intern-str name) "Expr")]
+                      [(AstType.Var name) (string.eq (intern-str name) "Expr")]
                       [_ false])
                     (match (ast-expr-unspan body)
-                      [(AstExprQuasiquote template-box)
+                      [(AstExpr.Quasiquote template-box)
                         (let
                           [template : AstExpr (ast-node-get template-box)]
                           (match (ast-expr-unspan template)
-                            [(AstExprIf cond-box _ _)
+                            [(AstExpr.If cond-box _ _)
                               (let
                                 [cond : AstExpr (ast-node-get cond-box)]
                                 (match (ast-expr-unspan cond)
-                                  [(AstExprUnquote unquoted-box)
+                                  [(AstExpr.Unquote unquoted-box)
                                     (let
                                       [unquoted : AstExpr
                                         (ast-node-get unquoted-box)]
                                       (match (ast-expr-unspan unquoted)
-                                        [(AstExprVar name)
-                                          (string.string-eq
-                                            (intern-str name)
-                                            "e")]
+                                        [(AstExpr.Var name)
+                                          (string.eq (intern-str name) "e")]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-quote-syntax-tests-ok?) : bool
   (and
@@ -9898,24 +10878,24 @@
 ;; parser's `parse_repl_item` tests.
 (define (compiler-parse-repl-decl-ok? [src : String]) : bool
   (match (parse-ast-repl-source src)
-    [(OkAstReplItem item)
+    [(ResultAstReplItem.Ok item)
       (match item
         [(AstReplDecl _) true]
         [(AstReplExpr _) false])]
-    [(ErrAstReplItem _) false]))
+    [(ResultAstReplItem.Err _) false]))
 
 (define (compiler-parse-repl-expr-ok? [src : String]) : bool
   (match (parse-ast-repl-source src)
-    [(OkAstReplItem item)
+    [(ResultAstReplItem.Ok item)
       (match item
         [(AstReplExpr _) true]
         [(AstReplDecl _) false])]
-    [(ErrAstReplItem _) false]))
+    [(ResultAstReplItem.Err _) false]))
 
 (define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
   (match (parse-ast-repl-source src)
-    [(OkAstReplItem _) false]
-    [(ErrAstReplItem message) (string.string-eq message expected)]))
+    [(ResultAstReplItem.Ok _) false]
+    [(ResultAstReplItem.Err message) (string.eq message expected)]))
 
 (define (compiler-parse-repl-tests-ok?) : bool
   (and
@@ -9942,14 +10922,14 @@
 ;; _comptime_lambda_param_rejected.
 (define (compiler-parse-first-fn-has-comptime-param? [src : String]) : bool
   (match (parse-ast-source src)
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefFn _ params _ _ _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ params _ _ _) _)
             (ast-param-list-has-comptime? params)]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-comptime-param-tests-ok?) : bool
   (and
@@ -9964,35 +10944,37 @@
 (define (compiler-parse-defmacro-shape-ok?) : bool
   (match (parse-ast-source
     "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
-    [(OkAstProgram (AstProgram decls-box))
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclDefMacro name params (AstTyBool) _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefMacro name params (AstType.Bool) _)
+              rest)
             (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
+              [rest : AstDeclList rest]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "all"))
-                    (match params
-                      [(AstMacroParamCons
-                          (AstMacroParam first (AstTyBool) false)
-                          tail)
-                        (let
-                          [tail : AstMacroParamList (box-get tail)]
-                          (match tail
-                            [(AstMacroParamCons
-                                (AstMacroParam rest (AstTyBool) true)
-                                AstMacroParamNil)
-                              (and
-                                (= first (intern "first"))
-                                (= rest (intern "rest")))]
-                            [_ false]))]
+                    (= (ast-macro-param-list-len (& params)) 2)
+                    (match (ast-macro-param-list-get
+                      (& params)
+                      0
+                      (ast-macro-param-fallback))
+                      [(AstMacroParam.Param first (AstType.Bool) false)
+                        (= first (intern "first"))]
+                      [_ false])
+                    (match (ast-macro-param-list-get
+                      (& params)
+                      1
+                      (ast-macro-param-fallback))
+                      [(AstMacroParam.Param rest (AstType.Bool) true)
+                        (= rest (intern "rest"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and
@@ -10022,6 +11004,7 @@
     (compiler-parse-module-macro-surface-ok?)
     (compiler-parse-defdispatch-tests-ok?)
     (compiler-parse-flat-let-call-body-ok?)
+    (compiler-parse-implicit-body-tail-ok?)
     (compiler-parse-inline-test-ok?)
     (compiler-parse-try-ok?)))
 
@@ -10136,7 +11119,7 @@
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (if (and
         (= (compiler-parse-smoke-score program) 36)
         (compiler-parse-nested-expr-span-ok?)
@@ -10148,11 +11131,14 @@
         (compiler-parse-comptime-decl-ok?)
         (compiler-parse-unsafe-decl-ok?)
         (compiler-parse-module-decl-ok?)
+        (compiler-parse-module-body-ok?)
+        (compiler-parse-module-body-malformed-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)
         (compiler-parse-defdispatch-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
+        (compiler-parse-implicit-body-tail-ok?)
         (compiler-parse-inline-test-ok?)
         (compiler-parse-try-ok?)
         (compiler-parse-return-ok?)
@@ -10195,4 +11181,4 @@
           42
           (io.panic "parse: error-path self-tests failed"))
         (io.panic "parse: compiler AST smoke score mismatch"))]
-    [(ErrAstProgram message) (io.panic message)]))
+    [(ResultAstProgram.Err message) (io.panic message)]))

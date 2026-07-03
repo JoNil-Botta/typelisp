@@ -73,7 +73,7 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
 - `process_api.tl` remains a runnable fixture for command-validation paths that
-  intentionally call `process-output` / `process-start` and therefore preserve
+  intentionally call `output` / `start` and therefore preserve
   the staged `requires-stage0-symbol:tl_process_start,tl_process_wait`
   coverage. Pure command construction, argv/env vector builders, validation
   helpers, duplicate-name order, list conversion, and result/error predicates
@@ -134,10 +134,10 @@ Inline stdlib coverage:
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks
   for fixed seeds, and system-seed result payloads.
-- `math.tl` owns inline tests for the pure scalar helpers for `i64` and `f64`:
-  negative/zero/positive absolute values and sign predicates, min/max order,
-  clamp low/high/inside cases, reversed bounds, and explicit signed-min
-  fallback behavior for integer abs.
+- `math.tl` owns inline tests for the pure scalar helpers for `i64`, `f64`,
+  and `f32`: negative/zero/positive absolute values, the generic float `abs`
+  macro, sign predicates, min/max order, clamp low/high/inside cases, reversed
+  bounds, and explicit signed-min fallback behavior for integer abs.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.

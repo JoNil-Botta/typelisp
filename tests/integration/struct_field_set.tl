@@ -25,22 +25,18 @@
   (let
     [items : (Array Pair) (array.make-array Pair 0)]
     (begin
-      (array.array-push! items (Pair 1 2))
-      (array.array-push! items (Pair 3 4))
-      (set! (struct-get (array.array-ref items 1) x) 30)
-      (set! (struct-get (array.array-ref items 0) y) 12)
-      (+
-        (struct-get (array.array-ref items 1) x)
-        (struct-get (array.array-ref items 0) y)))))
+      (array-push! items (Pair 1 2))
+      (array-push! items (Pair 3 4))
+      (set! (struct-get (array-ref items 1) x) 30)
+      (set! (struct-get (array-ref items 0) y) 12)
+      (+ (struct-get (array-ref items 1) x) (struct-get (array-ref items 0) y)))))
 
 (define (fixed-array-element-field-set) : i64
   (let
     [items : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
     (begin
-      (set! (struct-get (array.array-ref items 1) y) 15)
-      (+
-        (struct-get (array.array-ref items 1) x)
-        (struct-get (array.array-ref items 1) y)))))
+      (set! (struct-get (array-ref items 1) y) 15)
+      (+ (struct-get (array-ref items 1) x) (struct-get (array-ref items 1) y)))))
 
 (define (nested-field-set) : i64
   (let
@@ -56,8 +52,8 @@
   (let
     [items : (Array Pair 1) (array (Pair 1 2))]
     (begin
-      (mut-ref-field-set! (&mut (array.array-ref items 0)))
-      (struct-get (array.array-ref items 0) x))))
+      (mut-ref-field-set! (&mut (array-ref items 0)))
+      (struct-get (array-ref items 0) x))))
 
 (define (tuple-field-set) : i64
   (let

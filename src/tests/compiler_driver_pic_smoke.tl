@@ -1,25 +1,28 @@
 ;; compiler_driver_pic_smoke.tl - Driver-level smoke for no-entry PIC images.
 (import stdlib.string)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_driver_core.tl")
 
-(define (compiler-driver-pic-smoke-roots) : vector.StringVec
-  (vector.string-vec-push
-    (vector.string-vec-push (vector.string-vec-new) "stdlib")
-    "../stdlib"))
+(define (compiler-driver-pic-smoke-roots) : svec.StringVector
+  (let
+    [roots : svec.StringVector (svec.new)]
+    (begin
+      (svec.push (&mut roots) "stdlib")
+      (svec.push (&mut roots) "../stdlib")
+      roots)))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool
-  (string.string-contains (& text) (& needle)))
+  (string.contains (& text) (& needle)))
 
 (define (compiler-driver-pic-smoke-paths-contain?
   [paths : AstDeclPathList]
   [needle : String]) : bool
-  (match paths
-    [(AstDeclPathNil) false]
-    [(AstDeclPathCons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) false]
+    [(AstDeclPathListStep.Cons path rest)
       (or
         (compiler-driver-pic-smoke-contains? path needle)
-        (compiler-driver-pic-smoke-paths-contain? (box-get rest) needle))]))
+        (compiler-driver-pic-smoke-paths-contain? rest needle))]))
 
 (define (compiler-driver-pic-smoke-output-ok?
   [output : CompilerBackendPicOutput]) : bool
@@ -44,7 +47,7 @@
     true
     (compiler-driver-pic-smoke-roots)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty))
     [(ResultCompilerDriverPic.Ok output)
       (compiler-driver-pic-smoke-output-ok? output)]
@@ -84,11 +87,11 @@
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)
-    (BackendTargetWindows)
+    (CompilerBackendTarget.Windows)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty))
     [(ResultCompilerDriverPic.Ok _) false]
     [(ResultCompilerDriverPic.Err diag)
@@ -107,10 +110,11 @@
 (define (main) : i64
   (begin
     (unless
-      (compiler-driver-pic-smoke-core-macros-ok? (BackendTargetLinux))
+      (compiler-driver-pic-smoke-core-macros-ok? (CompilerBackendTarget.Linux))
       (return 1))
     (unless
-      (compiler-driver-pic-smoke-core-macros-ok? (BackendTargetWindows))
+      (compiler-driver-pic-smoke-core-macros-ok?
+        (CompilerBackendTarget.Windows))
       (return 2))
     (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
     (unless

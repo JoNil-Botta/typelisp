@@ -1,25 +1,25 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/str_cat.tl")
 (import "stdlib/string.tl")
-(import "stdlib/thread.tl")
-(import (thread-handle i64) as thread_i64)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 
 (define (safe-threading-box [base : i64]) : (Box i64)
   (box (+ base 22)))
 
-(define (safe-threading-join-i64 [thread : thread_i64.Handle] [failure : i64]) : i64
-  (match (thread_i64.join thread)
+(define (safe-threading-join-i64 [worker : thread_i64.Handle] [failure : i64]) : i64
+  (match (thread_i64.join worker)
     [(thread_i64.I64JoinOk value) value]
     [(thread_i64.I64JoinErr _) failure]))
 
-(define (safe-threading-join-box-value [thread : ThreadBoxI64] [failure : i64]) : i64
-  (match (thread-join-box-i64 thread)
+(define (safe-threading-join-box-value [worker : ThreadBoxI64] [failure : i64]) : i64
+  (match (thread.join-box-i64 worker)
     [(ThreadBoxI64JoinOk cell) (box-get cell)]
     [(ThreadBoxI64JoinErr _) failure]))
 
-(define (safe-threading-join-string-ok? [thread : ThreadString]) : bool
-  (match (thread-join-string thread)
-    [(ThreadStringJoinOk text) (string-eq text "safe-thread")]
+(define (safe-threading-join-string-ok? [worker : ThreadString]) : bool
+  (match (thread.join-string worker)
+    [(ThreadStringJoinOk text) (eq text "safe-thread")]
     [(ThreadStringJoinErr _) false]))
 
 (define (safe-threading-finish
@@ -39,18 +39,18 @@
 (define (main) : i64
   (let
     [base : i64 20]
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     (match (thread_i64.spawn
       (lambda () : i64
         (+ base 1)))
       [(thread_i64.I64SpawnErr _) 4]
       [(thread_i64.I64SpawnOk number)
-        (match (thread-spawn-box-i64
+        (match (thread.spawn-box-i64
           (lambda () : (Box i64)
             (in-arena owner (safe-threading-box 20))))
           [(ThreadBoxI64SpawnErr _) 5]
           [(ThreadBoxI64SpawnOk cell)
-            (match (thread-spawn-string
+            (match (thread.spawn-string
               (lambda () : String
                 (in-arena owner (str-cat "safe" "-" "thread"))))
               [(ThreadStringSpawnErr _) 6]

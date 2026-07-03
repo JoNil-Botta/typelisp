@@ -6,6 +6,6 @@
     ([i : i64 0 n])
     (let
       [tmp : i64 0]
-      (if (> (array.array-ref xs i) 0)
-        (set! tmp (array.array-ref xs i))
-        (array.array-set! out i tmp)))))
+      (if (> (array-ref xs i) 0)
+        (set! tmp (array-ref xs i))
+        (array-set! out i tmp)))))

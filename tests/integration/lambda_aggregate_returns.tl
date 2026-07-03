@@ -27,4 +27,4 @@
       (+
         (match (mk-enum)
           [(BoxI n) n])
-        (+ (array.array-length (mk-array)) (struct-get (mk-struct) y))))))
+        (+ (array-length (mk-array)) (struct-get (mk-struct) y))))))

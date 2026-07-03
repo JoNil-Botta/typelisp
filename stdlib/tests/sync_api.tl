@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
@@ -16,7 +17,7 @@
 
 (define (sync-api-empty-i64-channel) : channel_i64.Channel
   (let
-    [raw : (Array i64) (make-array i64 (channel_i64.raw-field-count))]
+    [raw : (Array i64) (array.make-array i64 (channel_i64.raw-field-count))]
     (channel_i64.load-raw raw 0)))
 
 (define (sync-api-duplicate-channel-score
@@ -27,7 +28,7 @@
 
 (define (sync-api-run-channel [channel : channel_i64.Channel]) : i64
   (let
-    [packed : (Array i64) (make-array i64 (channel_i64.raw-field-count))]
+    [packed : (Array i64) (array.make-array i64 (channel_i64.raw-field-count))]
     (begin
       (channel_i64.store-raw! channel packed 0)
       (let
@@ -58,7 +59,7 @@
 (define (sync-api-run-pair-channel [channel : sync.ChannelI64PairChannel]) : i64
   (let
     [packed : (Array i64)
-      (make-array i64 sync.channel-i64-pair-raw-field-count)]
+      (array.make-array i64 sync.channel-i64-pair-raw-field-count)]
     (begin
       (sync.channel-i64-pair-store-raw! channel packed 0)
       (let
@@ -90,8 +91,9 @@
 
 (define (sync-api-run-string-channel [channel : sync.ChannelString]) : i64
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
-    [packed : (Array i64) (make-array i64 sync.channel-string-raw-field-count)]
+    [owner : arena.Arena (arena.make-atomic)]
+    [packed : (Array i64)
+      (array.make-array i64 sync.channel-string-raw-field-count)]
     (begin
       (sync.channel-string-store-raw! channel packed 0)
       (let
@@ -99,16 +101,16 @@
         [send-a : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "alpha" ":one")))]
+            (in-arena owner (string.append "alpha" ":one")))]
         [send-b : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "beta" ":two")))]
+            (in-arena owner (string.append "beta" ":two")))]
         [first : String (sync.channel-string-recv-or loaded "missing")]
         [send-c : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "gamma" ":three")))]
+            (in-arena owner (string.append "gamma" ":three")))]
         [second : String (sync.channel-string-recv-or loaded "missing")]
         [third : String (sync.channel-string-recv-or loaded "missing")]
         [closed : bool (sync.channel-string-close loaded)]
@@ -117,9 +119,9 @@
           send-b
           send-c
           closed
-          (string.string-eq first "alpha:one")
-          (string.string-eq second "beta:two")
-          (string.string-eq third "gamma:three"))
+          (string.eq first "alpha:one")
+          (string.eq second "beta:two")
+          (string.eq third "gamma:three"))
           42
           9)))))
 
@@ -130,7 +132,7 @@
 
 (define (sync-api-run-mutex [mutex : mutex_i64.Mutex]) : i64
   (let
-    [packed : (Array i64) (make-array i64 (mutex_i64.raw-field-count))]
+    [packed : (Array i64) (array.make-array i64 (mutex_i64.raw-field-count))]
     (begin
       (mutex_i64.store-raw! mutex packed 0)
       (let

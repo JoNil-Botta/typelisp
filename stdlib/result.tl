@@ -1,7 +1,9 @@
 ;# Generic recoverable-error result module macro.
 ;#
-;# Import with `(import "stdlib/result.tl")`, then instantiate a concrete module
+;# Import with `(import stdlib.result)`, then instantiate a concrete module
 ;# with `(import (result i64 String) as result_i64_string)`.
+(module stdlib.result)
+
 ;: Emit a generated recoverable-error result module for success type `T` and
 ;: error type `E`.
 (defmacro (result [T : type] [E : type]) : Module
@@ -69,7 +71,9 @@
         (module ,module-name)
         (import (result ,T ,E) as local_result)
         (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
-          (local_result.value-or value fallback))))))
+          (match value
+            [(local_result.Ok inner) inner]
+            [(local_result.Err _) fallback]))))))
 
 (cfg test (import (result-test-user i64 String) as result_i64_string_user))
 

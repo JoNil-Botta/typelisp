@@ -90,10 +90,10 @@
   (let
     [items : (Array PairF64) (array.make-array PairF64 2)]
     (begin
-      (array.array-set! items 0 (PairF64 3.0 4.0))
-      (array.array-set! items 1 (PairF64 5.0 6.0))
-      (if (= (pair-sum (array.array-ref items 0)) 7.0)
-        (= (struct-get (array.array-ref items 1) y) 6.0)
+      (array-set! items 0 (PairF64 3.0 4.0))
+      (array-set! items 1 (PairF64 5.0 6.0))
+      (if (= (pair-sum (array-ref items 0)) 7.0)
+        (= (struct-get (array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

@@ -1,8 +1,8 @@
 ;; #2386: a 16-byte two-word register-group ENUM (tag in word0, a single
 ;; word-class payload in word1). Unlike register_pair_struct.tl, this exercises
 ;; the full register-group ENUM path END TO END across call boundaries:
-;;   * construction (IrInstrPack: tag word0 + payload word1) and match/payload
-;;     extraction (IrInstrWord),
+;;   * construction (CompilerIrInstr.Pack: tag word0 + payload word1) and match/payload
+;;     extraction (CompilerIrInstr.Word),
 ;;   * pass-by-value into a call in a register pair and return-by-value in
 ;;     %rax:%rdx,
 ;;   * a register-group value carried through an `if` (a Phi of two group values),

@@ -67,7 +67,7 @@ of imitating transitional patterns still present in the tree:
   #2454, #2492). The legacy `(import "path/file.tl")` spelling is being
   removed.
 - **Stdlib names**: module-name prefixes on stdlib functions
-  (`string-append`, `fs-read-dir`, ...) are flat-namespace fossils; the
+  (`string-append`, `read-dir`, ...) are flat-namespace fossils; the
   end-state is qualified short names such as `str.append` (#2582, #2583).
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
   `cond`) are canonical; qualified `core.` calls are transitional (#2581).
@@ -198,6 +198,7 @@ struct/enum fields, and (optionally) `let` bindings.
 ;; Control flow
 (if (< answer 100) "small" "large")
 (while (> answer 0) (set! answer (- answer 1)))
+(while true (if (< answer 0) (break) unit) (set! answer (- answer 1)))
 (begin (print 1) (print 2) 0)
 (begin (when (< answer 0) (return 0)) answer)
 
@@ -209,7 +210,7 @@ struct/enum fields, and (optionally) `let` bindings.
 (let ([n : i64 (init)]
       [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
-  (+ n (array.array-ref items 0)))
+  (+ n (array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,
@@ -665,6 +666,8 @@ primitives kept for legacy code. The staged lint rule is available with
 `typelisp lint --deprecated-string-concat` while the remaining in-tree
 migrations land. `typelisp lint --redundant-function-name` enables the staged
 rule for functions or macros that repeat their module prefix in the local name.
+`typelisp lint --prefer-dotted-field` enables the staged rule that prefers
+`p.field` and `(set! p.field value)` over simple local `struct-get` forms.
 
 ### Memory and aliasing
 
@@ -745,21 +748,22 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
-...)` with a typed first-class `Arena` from `arena-make` when one supported
-result must be cloned out across repeated scratch builds; use `(with-scratch
-body ...)` when a supported result should be cloned out from a fresh one-shot
-scratch arena; use `(arena-make-atomic)` for a shared atomic allocation target;
-use `(in-arena arena body ...)` when the result should remain owned by that
-first-class arena; reserve manual `arena-set!` / `arena-rewind` /
-`arena-destroy` calls for unsafe internals that can prove every invalidated
-handle is dead.
+...)` with a typed first-class `arena.Arena` from `arena.make` when one
+supported result must be cloned out across repeated scratch builds; use
+`(with-scratch body ...)` when a supported result should be cloned out from a
+fresh one-shot scratch arena; use `(arena.make-atomic)` for a shared atomic
+allocation target; use `(in-arena arena body ...)` when the result should remain
+owned by that first-class arena; use `arena.phase` plus `arena.rewind-safe!` or
+`arena.destroy-safe!` for checker-proven ordinary single-thread arena
+invalidation; reserve manual `arena.set!` / `arena.rewind` / `arena.destroy`
+calls for unsafe internals that can prove every invalidated handle is dead.
 
 ### Safe task threading
 
 Safe task threads use generated typed closure modules from `stdlib/thread.tl`,
-such as `(import (thread.thread-handle i64) as thread_i64)` with
+such as `(import (thread.handle i64) as thread_i64)` with
 `thread_i64.spawn` / `thread_i64.join`, plus aggregate wrappers such as
-`thread-spawn-string` and their matching joins. The checker validates the
+`thread.spawn-string` and their matching joins. The checker validates the
 captured environment and joined result structurally: references, borrowed `str`
 views, scoped regions, ordinary first-class arenas, raw pointer ownership
 claims, live mutable aliases, and guards do not cross safe task-thread
@@ -794,14 +798,19 @@ functions in reverse binding order on scope exit for files, process handles,
 locks, mapped files, and similar resources; it does not imply destructors,
 `free`, or arena reset semantics.
 
-Programs that need manual control import `stdlib/arena.tl` and use the typed
-first-class arena helpers. `arena-make`, `arena-make-atomic`, and
-`arena-current` create or observe an `Arena`; `arena-mark` records an
-`ArenaMark`. Raw integers do not satisfy those public helper signatures.
-`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`,
-because switching, freeing, or rewinding arenas can invalidate live heap
-handles. The safe `with-arena` surface remains preferred for scoped cleanup,
-while `in-arena` is the safe dynamic allocation-target switch without
+Programs that need manual control import `stdlib.arena` and use the typed
+first-class arena helpers. `arena.make`, `arena.make-atomic`, and
+`arena.current` create or observe an `arena.Arena`; `arena.mark` records an
+`arena.ArenaMark`; `arena.phase` records an `arena.ArenaPhase` token for a
+direct local ordinary `arena.make` owner. `arena.rewind-safe!` consumes that
+token and invalidates only values allocated in the token's phase;
+`arena.destroy-safe!` consumes a direct local ordinary owner and invalidates all
+values owned by it.
+The checker rejects both operations while such values, borrows, captures, or
+owner handles remain live. Raw integers do not satisfy those public helper
+signatures. `arena.set!`, raw `arena.destroy`, and raw `arena.rewind` require
+`(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
+live heap handles. The safe `in-arena` form switches allocation targets without
 marking, rewinding, destroying, or cloning. See [SPEC.md §7.3](SPEC.md) for
 details.
 

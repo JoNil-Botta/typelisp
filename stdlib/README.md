@@ -17,11 +17,12 @@ use.
 
 ## Current Modules
 
-- `arena.tl`: typed first-class `Arena` and `ArenaMark` helper declarations for
-  manual allocation control. `arena-make`, `arena-make-atomic`,
-  `arena-current`, and `arena-mark` are safe; switching, destroying, and
-  rewinding arenas require `(unsafe ...)`. Import it with
-  `(import "stdlib/arena.tl")`.
+- `arena.tl`: typed first-class `Arena`, `ArenaMark`, and `ArenaPhase` helper
+  declarations for manual allocation control. `arena.make`,
+  `arena.make-atomic`, `arena.current`, `arena.mark`, `arena.phase`,
+  `arena.rewind-safe!`, and `arena.destroy-safe!` are safe under their checker
+  proofs; raw switching, destroying, and rewinding helpers require
+  `(unsafe ...)`. Import it with `(import stdlib.arena)`.
 - `atomic.tl`: explicit sequentially consistent atomic integer operations on
   one dynamic-array element. The first surface supports `i32` and `i64`
   load/store/add/fetch-add helpers and is the only safe overlap-tolerant SPMD
@@ -45,13 +46,20 @@ use.
   `bytes` view surface. Import it with `(import "stdlib/byte_buf_core.tl")`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
-  `TypeInfo`, and dense sequence wrappers), plus exported compile-time helper
-  signatures such as `expr-int`, `expr-list-head`, and
-  `expr-clause-list->expr-list`. `expr-type` returns the produced type of a
-  captured expression for macro-time reflection. The compiler verifies these
-  shapes when the module is loaded and maps the syntax declarations and helper
-  calls to the current compile-time-only macro representation during the CTFE
-  migration. Import it with `(import "stdlib/comptime.tl")`.
+  `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
+  `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
+  exported compile-time helper signatures such as `expr-int`,
+  `expr-list-head`, `expr-clause-list->expr-list`, `pattern-variant`,
+  `match-arm`, and `expr-match`. `expr-type` returns the produced type of a
+  captured expression for macro-time reflection. Dense sequence accessors use
+  the public `items` and `len` fields in ordinary stdlib source; remaining
+  compiler intrinsics are syntax constructors, reflection helpers, and
+  provenance-preserving sequence operations such as `expr-list-tail`,
+  `expr-clause-list->expr-list`, and `expr-binding-clause-list->expr-list`.
+  The compiler verifies these shapes when the module is loaded and maps the
+  syntax declarations and helper calls to the current compile-time-only macro
+  representation during the CTFE migration. Import it with
+  `(import "stdlib/comptime.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
@@ -72,23 +80,23 @@ use.
   returns `I64RangeDone`.
   Import it with `(import "stdlib/iterator.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list/vector
-  helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
-  target-cfg-derived `env-path-separator` wrappers. Lookups are implemented
+  helpers, including the stdlib-owned `var-exists?`, `var-value`, and
+  target-cfg-derived `path-separator` wrappers. Lookups are implemented
   entirely in TypeLisp (#2142 follow-up): the Linux side walks the SysV
   stack-captured environment through the `program-argv`/`program-argc` builtins
   (`envp = &argv[argc+1]`), and the Windows side scans the
   `GetEnvironmentStringsA` block (case-insensitively) via a direct kernel32
   binding, replacing the former backend `getenv`/`strlen` libc shims.
-  `env-path-list`, `env-path-split`, and `env-path-join` remain list-compatible
+  `path-list`, `path-split`, and `path-join` remain list-compatible
   wrappers; new append-heavy callers should use the `StringVec` variants
-  `env-path-list-vec`, `env-path-split-vec`, and `env-path-join-vec`. Import it
+  `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
   with `(import "stdlib/env.tl")`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
-  wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
-  `cpu-runs-avx512f?` / `cpu-runs-avx512bw?` report an ISA as runnable only
-  when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
-  underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
-  `cpu-has-avx512f?` / `cpu-has-avx512bw?` accessors. Backs
+  wrappers over backend runtime symbols (#1167). `runs-avx2?` /
+  `runs-avx512f?` / `runs-avx512bw?` report an ISA as runnable only when both
+  the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
+  underlying `osxsave?` / `xcr0` / `max-leaf` / `has-avx2?` /
+  `has-avx512f?` / `has-avx512bw?` accessors. Backs
   `scripts/detect_simd_isa.tl`, which replaced the C cpuid probe (#1168). The
   `defdispatch` runtime SIMD dispatch design in `SPEC.md` uses the same
   capability model internally; ordinary dispatched calls should not require user
@@ -154,7 +162,7 @@ use.
   removal wrappers. Use a set
   when only key membership matters; use a map when each key carries a meaningful
   value rather than modeling membership with dummy map values. Import it with
-  `(import "stdlib/set.tl")` and instantiate with `(import (set i64) as iset)`.
+  `(import stdlib.set)` and instantiate with `(import (set i64) as iset)`.
 - `sort.tl`: generated stable deterministic in-place insertion sort helpers for
   `(vector T)` modules. `(vec T)` extends the matching generated vector
   module with `sort!`; scalar element types use built-in `<`, while String and
@@ -177,44 +185,45 @@ use.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
-  number conversion helpers. It is also the first `serialize.tl` strategy:
+  number conversion helpers. It is also a `serialize.tl` strategy for scalar,
+  fixed-array, dynamic-array, and struct roots with nested structs and arrays:
   instantiate with `(import (serialize.serialize json Person) as person_json)`
   to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
   Import it with `(import "stdlib/json.tl")`.
-- `math.tl`: pure scalar math helpers with no imports or platform externs:
-  absolute value, min, max, clamp, and sign predicates for `i64` and `f64`.
+- `math.tl`: pure scalar math helpers with no runtime imports or platform
+  externs: absolute value for `i64`, `f64`, and `f32`, plus min, max, clamp,
+  and sign predicates for `i64` and `f64`.
   Transcendental/libm-style functions such as `sqrt`, trigonometry,
   `log`, and `pow` are intentionally deferred until a freestanding soft-math or
   explicit platform-extern policy is chosen. Import it with
   `(import "stdlib/math.tl")`.
 - `option.tl`: module-emitting `(option T)` macro for absence-only results.
-  Import it with `(import "stdlib/option.tl")` and instantiate with a module
+  Import it with `(import stdlib.option)` and instantiate with a module
   alias such as `(import (option i64) as option_i64)`. Each generated module
   exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
   `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
   for the same payload type share the generated module/type.
 - `result.tl`: module-emitting `(result T E)` macro for recoverable-error
   results with success payload `T` and error payload `E`. Import it with
-  `(import "stdlib/result.tl")` and instantiate with a module alias such as
+  `(import stdlib.result)` and instantiate with a module alias such as
   `(import (result i64 String) as result_i64_string)`. Each generated module
   exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
   consuming `value-or`, and same-payload `map`; duplicate imports for the same
   success/error pair share the generated module/type.
-- `result_family.tl`: lightweight enum-only `(result T E)` macro for generated
-  recoverable-error modules that should expose only `Result`, `Ok`, and `Err`.
-  Import it with `(import "stdlib/result_family.tl")` when a compiler-internal
-  module needs generated result variants without the public helper API from
-  `result.tl`.
-- `serialize.tl`: format-generic struct derive macro. Import it with
+- `serialize.tl`: format-generic value serializer macro. Import it with
   `(import stdlib.serialize)`, import a format strategy module, then instantiate
-  with `(import (serialize.serialize fmt Person) as person_ser)`. The generated
-  module exposes `encode` / `decode` over the strategy's `Value` type, a local
-  `Result` enum, and any format-specific declarations emitted by the strategy's
-  `extra-decls` hook. The first implementation covers scalar fields and nested
-  structs through strategy hook macros; enum and sequence support remain
-  follow-up slices under #3837.
+  with `(import (serialize.serialize fmt Person) as person_ser)` or a scalar or
+  array root such as `(import (serialize.serialize fmt (Array i64)) as i64s_ser)`.
+  The generated module exposes `encode` / `decode` over the strategy's `Value`
+  type, a local `Result` enum, and any format-specific declarations emitted by
+  the strategy's `extra-decls` hook. Current serializers cover primitive roots,
+  fixed-array roots, dynamic-array roots, struct roots, nested structs, arrays,
+  and tuples within supported roots; strategy hooks own object and sequence
+  representation, decode diagnostics, and helper aliases. The checked toy format
+  exercises the hook contract, and `json.tl` provides the JSON integration
+  strategy. Enum and tuple roots remain separate follow-ups.
 - `process.tl`: process command/output/error data model and the public
-  `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
+  `output`/`start`/`wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
   also exposes `StringVec` argv conversion helpers plus `ProcessEnvVec`, a
   parallel-`StringVec` env builder surface. Vector argv helpers convert once
@@ -235,13 +244,13 @@ use.
   and `alloc-reset-peak`. Import it with
   `(import stdlib.profile)`.
 - `queue.tl`: generated growable deque family (collections v1, #1549/#2797)
-  over a circular `(Array T)`. Import `(deque T)` with a module alias, such as
-  `(import (deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
+  over a circular `(Array T)`. Import `(queue.deque T)` with a module alias,
+  such as `(import (queue.deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
   `with-capacity`, `push-back`, `push-front`, `pop-front`, `pop-back`,
   `peek-front`, `peek-back`, `get`, `len`, `capacity`, and `is-empty?` in that
   generated module namespace. Mutators take `&mut` and update in place; reads
   take `&`, peeks/get use caller fallbacks, and empty pops return `Pop.Empty`.
-  Import the macro with `(import "stdlib/queue.tl")`.
+  Import the macro with `(import stdlib.queue)`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
   OS-entropy seed source. Import it with `(import "stdlib/random.tl")`.
@@ -267,29 +276,37 @@ use.
   `(import "stdlib/test.tl")`.
 - `thread.tl`: minimal native thread primitives for selfhost worker pools:
   spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
-  count, plus generated `(thread-handle T)` modules for checked scalar nullary
-  closures such as `(import (thread.thread-handle i64) as thread_i64)` with
+  count, plus generated `(thread.handle T)` modules for checked scalar nullary
+  closures such as `(import (thread.handle i64) as thread_i64)` with
   `thread_i64.Handle`, `thread_i64.spawn`, and `thread_i64.join`.
-  `thread-spawn-string`/`thread-join-string` and
-  `thread-spawn-array-i64`/`thread-join-array-i64` and
-  `thread-spawn-box-i64`/`thread-join-box-i64` run the task in a fresh atomic
+  `thread.spawn-string`/`thread.join-string` and
+  `thread.spawn-array-i64`/`thread.join-array-i64` and
+  `thread.spawn-box-i64`/`thread.join-box-i64` run the task in a fresh atomic
   arena before returning the joined aggregate. Linux uses raw clone/futex/eventfd
   syscalls; Windows uses kernel32 threads and semaphores. Import it with
-  `(import "stdlib/thread.tl")`.
+  `(import stdlib.thread)`.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
-  counters. `time-unix-ms` returns wall-clock Unix epoch milliseconds and
-  `time-monotonic-ms` returns monotonic elapsed milliseconds, both as
+  counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
+  `monotonic-ms` returns monotonic elapsed milliseconds, both as
   `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
   sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render
-  helper used by the borrowed companion. Import it with
-  `(import "stdlib/text_buf.tl")`.
+  helper used by the borrowed companion. Its declarations are emitted from
+  `text_buf_family.tl`; import it with `(import "stdlib/text_buf.tl")`.
 - `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
   borrowed-chunk companion surface. Import it with
   `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
   `text_buf.tl` while the compatibility surface keeps owned chunk storage, but
-  adapts to the owned render helper at explicit materialization boundaries.
+  both surfaces are emitted from `text_buf_family.tl` and adapt to the owned
+  render helper at explicit materialization boundaries.
+- `text_buf_family.tl`: declaration-emitting generator source for the owned
+  `TextBuf` and borrowed `TextBufBorrowed` families. It is imported by the
+  public text-buffer modules rather than by ordinary callers.
+  This is the reference pattern for flat compatibility twins that cannot yet
+  become generated module imports: keep the stable public modules as thin shells,
+  splice shared declarations from one `: Decls` generator, and leave only
+  caller-site compatibility macros or inline tests in the shell.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`, with `I64Vec` preserved as the compatibility template and
   `StringVec` added as the first non-i64 stdlib instantiation. Both provide
@@ -396,7 +413,7 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   compatibility aliases below remain recognized by the plan table.
 - **Compatibility alias:** legacy env spellings recognized by the runtime-plan
   ownership table: `tl_env_var_exists`, `tl_env_var_value`,
-  `env-path-separator`. Their backend emitters are empty because
+  `path-separator`. Their backend emitters are empty because
   `stdlib/env.tl` owns environment lookup in TypeLisp (#2142 follow-up), and
   source builds use the `env.tl` wrappers directly.
 - **Deprecated/delete candidate:** no current runtime-plan symbols are in this
@@ -423,7 +440,7 @@ Use four standard scratch patterns:
   and return only scalars or values allocated outside the scoped arena. This is
   the preferred safe path and uses no `stdlib/arena.tl` unsafe helpers.
 - **Clone one result out:** allocate a reusable first-class arena with
-  `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
+  `arena.make`, then wrap each transient build in `(with-escape scratch ...)`.
   Supported body results are cloned into the enclosing active arena before the
   scratch arena is rewound.
 - **One-shot clone-out:** use `(with-scratch body ...)` when a supported result
@@ -432,8 +449,13 @@ Use four standard scratch patterns:
 - **Keep results in a first-class arena:** allocate or receive a typed `Arena`
   and wrap the build in `(in-arena arena ...)`. The result remains owned by that
   first-class arena.
-- **Manual unsafe arena:** import `stdlib/arena.tl` and call `arena-set!`,
-  `arena-rewind`, or `arena-destroy` only inside `(unsafe ...)` when the caller
+- **Safe ordinary arena invalidation:** import `stdlib.arena`, record a phase
+  token with `arena.phase`, allocate phase-local values through
+  `(in-arena owner ...)`, then call `arena.rewind-safe!` when the checker can
+  prove every value from that phase is dead. Use `arena.destroy-safe!` only when
+  all values from the ordinary owner are dead.
+- **Manual unsafe arena:** import `stdlib.arena` and call `arena.set!`,
+  `arena.rewind`, or `arena.destroy` only inside `(unsafe ...)` when the caller
   can prove every invalidated heap handle is dead. Prefer the safe patterns
   above for normal tool code.
 
@@ -457,7 +479,7 @@ owned stdlib imports keep the compatibility wrappers.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
-| `is-char-whitespace`, `char-eq`, `string-index-of-byte`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
+| `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-append`, `string-concat`, `string-copy`, `substring`, `string-slice`, `string-concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string-concat-all` is the packed-array target for long `str-cat` expansions and still consumes an owned `(Array String)` pack. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
@@ -475,11 +497,11 @@ owned stdlib imports keep the compatibility wrappers.
 | `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until the `ByteBuf`/`bytes` split lands. |
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around stdlib FFI stdio helpers and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
-| `env-get`, `env-path-list`, `env-path-list-vec`, `env-path-split`, `env-path-split-vec`, `env-path-join`, `env-path-join-vec` | Lookup names, split inputs, and explicit join separators are borrowed `str` inputs. Environment values and split/join results allocate fresh active-arena Strings and either vector backing arrays or compatibility list spines when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `fs-path-join`, `fs-path-join-owned-pair`, `fs-path-join-many`, `fs-dirname`, `fs-basename`, `fs-extension`, `fs-path-absolute?`, `fs-path-normalize`, `fs-path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-read-dir-vec`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-path-join` remains the two-argument borrowed function; `fs-path-join-owned-pair` accepts two owned `String` segments and delegates to it; `fs-path-join-many` is the variadic macro alias for owned `String` segments, expanding zero segments to `""`, one segment to that segment, and two or more segments to pairwise joins that delegate to `fs-path-join`. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). `fs-path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `fs-path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments with a `StringVec` stack, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `fs-path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux and Windows through stdlib FFI, without symlink canonicalization. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux and Windows; directory and other node sizes are zero in this first slice. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior. `try-read-dir` and `try-read-dir-vec` return entry names only in a `StringVec`, filter `.` and `..`, preserve host directory order without promising stable sorting, and allocate returned storage and entry strings in the active arena; Linux reads directories directly through syscalls, while Windows uses kernel32 `FindFirstFileA`/`FindNextFileA`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes. |
+| `get`, `path-list`, `path-list-vec`, `path-split`, `path-split-vec`, `path-join`, `path-join-vec` | Lookup names, split inputs, and explicit join separators are borrowed `str` inputs. Environment values and split/join results allocate fresh active-arena Strings and either vector backing arrays or compatibility list spines when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
+| `path-join`, `path-join-owned-pair`, `path-join-many`, `dirname`, `basename`, `extension`, `path-absolute?`, `path-normalize`, `path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-read-dir-vec`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `path-join` remains the two-argument borrowed function; `path-join-owned-pair` accepts two owned `String` segments and delegates to it; `path-join-many` is the variadic macro alias for owned `String` segments, expanding zero segments to `""`, one segment to that segment, and two or more segments to pairwise joins that delegate to `path-join`. `dirname`/`basename`/`extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `extension` operates on the basename and treats a leading-dot name as extensionless). `path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments with a `StringVec` stack, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux and Windows through stdlib FFI, without symlink canonicalization. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux and Windows; directory and other node sizes are zero in this first slice. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior. `try-read-dir` and `try-read-dir-vec` return entry names only in a `StringVec`, filter `.` and `..`, preserve host directory order without promising stable sorting, and allocate returned storage and entry strings in the active arena; Linux reads directories directly through syscalls, while Windows uses kernel32 `FindFirstFileA`/`FindNextFileA`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes. |
 | `ffi-c-bytes-*`, `ffi-cbytes`, `ffi-c-string-*`, `ffi-cstr` helpers | `ffi-c-bytes-required-bytes`, `ffi-c-bytes-interior-nul?`, and `ffi-c-bytes-copy!` inspect or copy borrowed `(& r bytes)` into caller-owned `(MutPtr u8)` storage without allocating. `ffi-c-bytes-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. `ffi-c-bytes-alloc` and `ffi-cbytes` allocate a NUL-terminated byte buffer in the active arena, return null for interior NUL input, and keep the returned `(Ptr u8)` valid only until the owning arena is rewound, reset, or destroyed. The `ffi-c-string-*` and `ffi-cstr` compatibility wrappers borrow `String` inputs as bytes and delegate to the same implementation. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
-| `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
+| `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. The `abs` macro covers typed `f64` and `f32` expressions; `i64` uses `math-i64-abs`/`math-i64-abs-or` for explicit signed-min behavior. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
 | `array.tl` helper macros | Macro wrappers add no allocation by themselves. `make-array` allocates and initializes dynamic-array storage under the same rules as the compiler intrinsic; `array-length` and `array-ref` inspect existing storage, `array-set!` mutates existing storage, and `array-push!` may grow dynamic-array backing storage. |
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*`, `i64-string-map-*`, and scalar `(hashmap K V)` module helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. Flat legacy `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; generated-module mutators take `&mut` and update `Map` in place. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` and module `get-value-borrowed` return a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, module `get-mut-entry*`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path for flat helpers or `entry-or-insert`/`insert` for modules. |
 | `(set T)` generated modules in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Mutators take `&mut` and update the stored set in place. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
@@ -491,17 +513,17 @@ owned stdlib imports keep the compatibility wrappers.
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
 | `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from arrays or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing array. The module intentionally omits borrowed `bytes` views and in-place indexed mutation for hot append-only import sites. |
-| `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
+| `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` are accepted only under checker-proven ordinary direct-owner rules. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
-| `(serialize format T)` generated modules in `serialize.tl` | The generic derive macro itself allocates no runtime storage; it emits calls to the selected format module's hook macros. Generated `encode` allocation behavior is therefore format-owned, while generated `decode` initializes one output aggregate and mutates its fields in place before returning `Result.Ok` or `Result.Err`. Nested struct derives reuse generated serializer modules and do not copy collection storage beyond whatever the strategy hooks explicitly allocate. |
+| `(serialize format T)` generated modules in `serialize.tl` | The generic serializer macro itself allocates no runtime storage; it emits calls to the selected format module's hook macros. Generated `encode` allocation behavior is therefore format-owned, while generated `decode` initializes one output aggregate for struct and fixed-array roots/fields before returning `Result.Ok` or `Result.Err`. Dynamic-array roots and fields allocate the decoded output array at the decoded length. Nested struct serializers reuse generated modules and do not copy collection storage beyond decoded array storage and whatever the strategy hooks explicitly allocate. |
 | `string-eq`, `string=?`, `string->int` | Equality and integer parsing helpers inspect borrowed string bytes without allocating. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |
-| `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes. `StringVec` argv helpers accumulate through vector backing storage and convert once to `ProcessStringList`, allocating list nodes while preserving vector order. `ProcessEnvVec` stores env overrides in parallel `StringVec` buffers with an equal-length invariant; append/growth allocate through the underlying vectors, validation checks invalid names and shape, and conversion to `ProcessEnvList` allocates list nodes while preserving vector order and duplicate names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `process-borrowed-output`, `process-borrowed-run`, and `process-borrowed-start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux and Windows, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin where supported. Unsupported targets return structured errors. |
-| `thread-*` helpers in `thread.tl` | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread-spawn-string`, `thread-spawn-array-i64`, and `thread-spawn-box-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |
-| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and compatibility weight-list cons nodes in the active arena. Array and generated `(vector i64)` weighted-index helpers scan existing storage without cons nodes; the legacy list helper copies weights into an active-arena array wrapper before selection. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads a platform seed through FFI, normalizes it, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
+| `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes. `StringVec` argv helpers accumulate through vector backing storage and convert once to `ProcessStringList`, allocating list nodes while preserving vector order. `ProcessEnvVec` stores env overrides in parallel `StringVec` buffers with an equal-length invariant; append/growth allocate through the underlying vectors, validation checks invalid names and shape, and conversion to `ProcessEnvList` allocates list nodes while preserving vector order and duplicate names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `output`, `run`, and `start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux and Windows, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin where supported. Unsupported targets return structured errors. |
+| `thread.tl` helpers | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread.spawn-string`, `thread.spawn-array-i64`, and `thread.spawn-box-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |
+| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and compatibility weight-list cons nodes in the active arena. Array and generated `(vector i64)` weighted-index helpers scan existing storage without cons nodes; the legacy list helper copies weights into an active-arena array wrapper before selection. Draws are deterministic from caller-provided seeds and do not read host entropy. `system-seed` reads a platform seed through FFI, normalizes it, and returns a `ResultSystemSeed` aggregate in the active arena; `from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
 | `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` adapts borrowed chunks to owned chunk nodes at the materialization boundary and reuses the shared ordered-chunk render path. |
-| `msvc-*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings. PATH, Visual Studio toolset, and Windows SDK candidate scans use `StringVec` storage internally. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
+| `msvc.*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings. PATH, Visual Studio toolset, and Windows SDK candidate scans use `StringVec` storage internally. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -513,8 +535,8 @@ reference-typed aggregate results; the runnable stdlib compatibility wrappers
 still expose owned `String`/aggregate APIs. No stdlib function mutates a
 caller-provided buffer in place. Except for the explicit `stdlib/arena.tl`
 manual-control surface, stdlib APIs do not manually reset arenas and should
-prefer `with-arena` for scoped reclamation. Source-level `arena-set!`,
-`arena-destroy`, and `arena-rewind` require `(unsafe ...)`. `str` is specified as
+prefer `with-arena` for scoped reclamation. Source-level `arena.set!`,
+`arena.destroy`, and `arena.rewind` require `(unsafe ...)`. `str` is specified as
 an immutable borrowed text referent, not a mutable buffer type; those policies
 should remain explicit when borrowed strings and mutable buffers are added.
 
@@ -564,12 +586,13 @@ Stdlib modules are imported explicitly:
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")
 (import "stdlib/serialize.tl")
-(import "stdlib/set.tl")
+(import stdlib.set)
 (import "stdlib/sort.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/time.tl")
 (import "stdlib/text_buf.tl")
+(import "stdlib/text_buf_family.tl")
 (import "stdlib/vector_slice.tl")
 ```
 

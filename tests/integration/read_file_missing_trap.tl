@@ -1,5 +1,6 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length
-    (read-file "tests/integration/this-path-does-not-exist-zzz.txt")))
+  (string.string-length
+    (io.read-file "tests/integration/this-path-does-not-exist-zzz.txt")))

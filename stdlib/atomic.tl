@@ -8,6 +8,7 @@
 ;# Usage: `(import stdlib.atomic)`
 ;#
 ;# ```typelisp
+;# (import stdlib.array as array)
 ;# (import stdlib.atomic)
 ;#
 ;# (define (add-counts [ix : (Array i64)] [out : (Array i64)] [n : i64]) : unit

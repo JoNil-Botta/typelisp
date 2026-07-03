@@ -28,6 +28,7 @@ target_ra
 
 # Self-host build artifacts
 src/compiler_backend_runtime_fixture
+src/lsp_frame_core
 
 # Native build artifacts
 *.exe

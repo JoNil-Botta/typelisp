@@ -31,7 +31,7 @@
 (define (main) : i64
   (let
     [text : String (arg 1)]
-    [rounds : i64 (string->int (arg 2))]
+    [rounds : i64 (>int (arg 2))]
     (begin
       (print (scan-repeat text rounds))
       0)))

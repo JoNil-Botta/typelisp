@@ -8,72 +8,69 @@
 (import stdlib.io)
 (import stdlib.array)
 (import stdlib.string)
-(import stdlib.str_cat)
 (import stdlib.hashmap)
 (import "compiler_liveness.tl")
 (cfg test (import stdlib.test))
 
 (defenum CompilerRegStringList
-  (CompilerRegStringNil)
-  (CompilerRegStringCons String (Box CompilerRegStringList)))
+  (Nil)
+  (Cons String (Box CompilerRegStringList)))
 
 (defenum CompilerRegLocation
-  (CompilerRegRegister String)
+  (Register String)
   ;; #2386: a 2-word register-group value lives in two GP registers (word0,
   ;; word1). A group that cannot get two registers spills to a 16-byte slot,
-  ;; represented as the ordinary CompilerRegSpill (the backend reads the second
+  ;; represented as the ordinary CompilerRegLocation.Spill (the backend reads the second
   ;; word at offset-8 using the program word-count map).
-  (CompilerRegRegisterPair String String)
-  (CompilerRegSpill i64)
+  (RegisterPair String String)
+  (Spill i64)
   ;; Rematerialization: a single-def value whose definition is a cheap static
   ;; recompute (a constant or an address materialization `leaq label(%rip)`) is
   ;; not spilled to a slot under pressure -- it is RECOMPUTED at each use and its
   ;; defining store is dropped. The carried IrValue is exactly what the def Mov
   ;; produced, so recomputing always yields the identical value.
-  (CompilerRegRemat CompilerIrValue))
+  (Remat CompilerIrValue))
 
 (defenum CompilerRegMaybeLocation
-  (CompilerRegNoLocation)
-  (CompilerRegSomeLocation CompilerRegLocation))
+  (No)
+  (Some CompilerRegLocation))
 
 (defenum CompilerRegMaybeString
-  (CompilerRegNoString)
-  (CompilerRegSomeString String))
+  (No)
+  (Some String))
 
 (defenum CompilerRegTargetAbi
-  (CompilerRegAbiLinux)
-  (CompilerRegAbiWindows))
+  (Linux)
+  (Windows))
 
 (defenum CompilerRegAssignment
-  (CompilerRegAssignment i64 CompilerRegLocation))
+  (Assignment i64 CompilerRegLocation))
 
 (defenum CompilerRegAssignmentList
-  (CompilerRegAssignmentNil)
-  (CompilerRegAssignmentCons
-    CompilerRegAssignment
-    (Box CompilerRegAssignmentList)))
+  (Nil)
+  (Cons CompilerRegAssignment (Box CompilerRegAssignmentList)))
 
 (defenum CompilerRegInterval
-  (CompilerRegInterval i64 i64 i64))
+  (Interval i64 i64 i64))
 
 (defenum CompilerRegIntervalList
-  (CompilerRegIntervalNil)
-  (CompilerRegIntervalCons CompilerRegInterval (Box CompilerRegIntervalList)))
+  (Nil)
+  (Cons CompilerRegInterval (Box CompilerRegIntervalList)))
 
 (defenum CompilerRegMaybeInterval
-  (CompilerRegNoInterval)
-  (CompilerRegSomeInterval CompilerRegInterval))
+  (No)
+  (Some CompilerRegInterval))
 
 (defenum CompilerRegVarType
-  (CompilerRegVarType i64 AstType))
+  (Type i64 AstType))
 
 (defenum CompilerRegVarTypeList
-  (CompilerRegVarTypeNil)
-  (CompilerRegVarTypeCons CompilerRegVarType (Box CompilerRegVarTypeList)))
+  (Nil)
+  (Cons CompilerRegVarType (Box CompilerRegVarTypeList)))
 
 (defenum CompilerRegMaybeType
-  (CompilerRegNoType)
-  (CompilerRegSomeType AstType))
+  (No)
+  (Some AstType))
 
 (defstruct CompilerRegVarTypes
   (entries CompilerRegVarTypeList)
@@ -94,20 +91,18 @@
   (segments (Array CompilerRegIntervalList)))
 
 (defenum CompilerRegIntervalSelection
-  (CompilerRegIntervalSelection
-    CompilerRegIntervalList
-    CompilerRegIntervalIndex))
+  (Selection CompilerRegIntervalList CompilerRegIntervalIndex))
 
 (defenum CompilerRegActive
-  (CompilerRegActive i64 i64 String))
+  (Active i64 i64 String))
 
 (defenum CompilerRegActiveList
-  (CompilerRegActiveNil)
-  (CompilerRegActiveCons CompilerRegActive (Box CompilerRegActiveList)))
+  (Nil)
+  (Cons CompilerRegActive (Box CompilerRegActiveList)))
 
 (defenum CompilerRegMaybeActive
-  (CompilerRegNoActive)
-  (CompilerRegSomeActive CompilerRegActive))
+  (No)
+  (Some CompilerRegActive))
 
 ;; One accepted per-call-region placement (M-G2b): a spilled call-spanning
 ;; root `var` is homed in its shadow caller-saved register over the point
@@ -295,7 +290,7 @@
   (clobber-points CompilerLiveI64Set))
 
 (defenum CompilerRegPlan
-  (CompilerRegPlan
+  (Plan
     CompilerRegAssignmentList
     CompilerLiveI64Set
     CompilerRegIntervalList
@@ -304,15 +299,15 @@
     CompilerRegSplitPlan))
 
 (defenum CompilerRegAssignState
-  (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentTable))
+  (State CompilerRegActiveList CompilerRegAssignmentTable))
 
 (defenum CompilerRegCallSaveAssignState
-  (CompilerRegCallSaveAssignState
+  (State
     CompilerRegAssignmentTable
     CompilerRegCallSplit))
 
 (defenum CompilerRegCallSaveRewrite
-  (CompilerRegCallSaveRewrite
+  (Rewrite
     CompilerIrBlockList
     i64
     i64
@@ -320,7 +315,7 @@
     CompilerRegVarTypeList))
 
 (defenum CompilerRegCallSaveInstrRewrite
-  (CompilerRegCallSaveInstrRewrite
+  (Rewrite
     CompilerIrInstrList
     i64
     i64
@@ -346,19 +341,19 @@
   3)
 
 (defenum CompilerRegMaybeCallSaveActive
-  (CompilerRegNoCallSaveActive)
-  (CompilerRegSomeCallSaveActive i64 i64 AstType))
+  (No)
+  (Some i64 i64 AstType))
 
 (defenum CompilerRegEdgeCopyDirection
-  (CompilerRegEdgeCopyIntoRegion)
-  (CompilerRegEdgeCopyOutOfRegion))
+  (IntoRegion)
+  (OutOfRegion))
 
 (defenum CompilerRegEdgeCopyPlacement
-  (CompilerRegEdgeCopyPredEnd)
-  (CompilerRegEdgeCopySuccEntry))
+  (PredEnd)
+  (SuccEntry))
 
 (defenum CompilerRegEdgeCopy
-  (CompilerRegEdgeCopy
+  (Copy
     String
     String
     i64
@@ -368,20 +363,20 @@
     CompilerRegEdgeCopyPlacement))
 
 (defenum CompilerRegEdgeCopyList
-  (CompilerRegEdgeCopyNil)
-  (CompilerRegEdgeCopyCons CompilerRegEdgeCopy (Box CompilerRegEdgeCopyList)))
+  (Nil)
+  (Cons CompilerRegEdgeCopy (Box CompilerRegEdgeCopyList)))
 
 (defenum CompilerRegEdgeCopyPlacementResult
-  (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopyPlacement)
-  (CompilerRegEdgeCopyPlacementRefused String))
+  (Ok CompilerRegEdgeCopyPlacement)
+  (Refused String))
 
 (defenum CompilerRegEdgeCopyPlan
-  (CompilerRegEdgeCopyPlan CompilerRegEdgeCopyList)
-  (CompilerRegEdgeCopyRefused String))
+  (Plan CompilerRegEdgeCopyList)
+  (Refused String))
 
 (defenum CompilerRegEdgeCopyRewrite
-  (CompilerRegEdgeCopyRewrite CompilerIrBlockList)
-  (CompilerRegEdgeCopyRewriteRefused String))
+  (Rewrite CompilerIrBlockList)
+  (Refused String))
 
 ;; A loop-split rescue candidate. The region is a LIST of block labels: a single
 ;; label for the single-block (read-only / non-phi self-loop / step-2 single-block)
@@ -389,8 +384,8 @@
 ;; phi-carried homing. apply-candidate remaps every region block and the edge-copy
 ;; plan (already multi-block aware) places boundary copies at the region edges.
 (defenum CompilerRegLoopSplitCandidate
-  (CompilerRegLoopSplitNoCandidate)
-  (CompilerRegLoopSplitCandidate
+  (NoCandidate)
+  (Candidate
     i64
     CompilerRegStringList
     AstType
@@ -406,10 +401,7 @@
   (CompilerRegLoopSplitEvict String i64))
 
 (defenum CompilerRegParamAssignPlan
-  (CompilerRegParamAssignPlan
-    CompilerRegAssignmentTable
-    CompilerLiveI64Set
-    CompilerLiveI64Set))
+  (Plan CompilerRegAssignmentTable CompilerLiveI64Set CompilerLiveI64Set))
 
 (cfg
   (any regalloc-census test)
@@ -417,11 +409,11 @@
     (counts (Array i64))))
 
 (defenum CompilerRegMove
-  (CompilerRegMove i64 i64 bool))
+  (Move i64 i64 bool))
 
 (defenum CompilerRegMoveList
-  (CompilerRegMoveNil)
-  (CompilerRegMoveCons CompilerRegMove (Box CompilerRegMoveList)))
+  (Nil)
+  (Cons CompilerRegMove (Box CompilerRegMoveList)))
 
 ;; Deterministic move-copy classes used by scalar home coalescing. Roots are the
 ;; lowest var id in each class; allocation then reuses any assigned class home.
@@ -455,37 +447,37 @@
 (define (compiler-reg-string-cons
   [head : String]
   [rest : CompilerRegStringList]) : CompilerRegStringList
-  (CompilerRegStringCons head (box rest)))
+  (CompilerRegStringList.Cons head (box rest)))
 
 (define (compiler-reg-assignment-cons
   [head : CompilerRegAssignment]
   [rest : CompilerRegAssignmentList]) : CompilerRegAssignmentList
-  (CompilerRegAssignmentCons head (box rest)))
+  (CompilerRegAssignmentList.Cons head (box rest)))
 
 (define (compiler-reg-interval-cons
   [head : CompilerRegInterval]
   [rest : CompilerRegIntervalList]) : CompilerRegIntervalList
-  (CompilerRegIntervalCons head (box rest)))
+  (CompilerRegIntervalList.Cons head (box rest)))
 
 (define (compiler-reg-var-type-cons
   [head : CompilerRegVarType]
   [rest : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (CompilerRegVarTypeCons head (box rest)))
+  (CompilerRegVarTypeList.Cons head (box rest)))
 
 (define (compiler-reg-edge-copy-cons
   [head : CompilerRegEdgeCopy]
   [rest : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
-  (CompilerRegEdgeCopyCons head (box rest)))
+  (CompilerRegEdgeCopyList.Cons head (box rest)))
 
 (define (compiler-reg-active-cons
   [head : CompilerRegActive]
   [rest : CompilerRegActiveList]) : CompilerRegActiveList
-  (CompilerRegActiveCons head (box rest)))
+  (CompilerRegActiveList.Cons head (box rest)))
 
 (define (compiler-reg-move-cons
   [head : CompilerRegMove]
   [rest : CompilerRegMoveList]) : CompilerRegMoveList
-  (CompilerRegMoveCons head (box rest)))
+  (CompilerRegMoveList.Cons head (box rest)))
 
 (define (compiler-reg-min [a : i64] [b : i64]) : i64
   (if (< a b)
@@ -528,7 +520,7 @@
         "%r14"
         (compiler-reg-string-cons
           "%r15"
-          (compiler-reg-string-cons "%rbx" CompilerRegStringNil))))))
+          (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil))))))
 
 (define (compiler-reg-sysv-integer-register-count) : i64
   (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers)))
@@ -558,7 +550,7 @@
           "%r15"
           (compiler-reg-string-cons
             "%rbx"
-            (compiler-reg-string-cons "%rbp" CompilerRegStringNil)))))))
+            (compiler-reg-string-cons "%rbp" CompilerRegStringList.Nil)))))))
 
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that
@@ -571,7 +563,7 @@
     "%r9"
     (compiler-reg-string-cons
       "%rcx"
-      (compiler-reg-string-cons "%rdx" CompilerRegStringNil))))
+      (compiler-reg-string-cons "%rdx" CompilerRegStringList.Nil))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -590,7 +582,7 @@
                 "%r9"
                 (compiler-reg-string-cons
                   "%r10"
-                  (compiler-reg-string-cons "%r11" CompilerRegStringNil))))))))))
+                  (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))))
 
 (define (compiler-reg-sysv-callee-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -601,22 +593,22 @@
         "%r13"
         (compiler-reg-string-cons
           "%r14"
-          (compiler-reg-string-cons "%r15" CompilerRegStringNil))))))
+          (compiler-reg-string-cons "%r15" CompilerRegStringList.Nil))))))
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
-    "%rax"
+    "%r9"
     (compiler-reg-string-cons
       "%rcx"
       (compiler-reg-string-cons
         "%rdx"
         (compiler-reg-string-cons
-          "%r8"
+          "%rax"
           (compiler-reg-string-cons
-            "%r9"
+            "%r8"
             (compiler-reg-string-cons
               "%r10"
-              (compiler-reg-string-cons "%r11" CompilerRegStringNil))))))))
+              (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -631,7 +623,37 @@
             "%r13"
             (compiler-reg-string-cons
               "%r14"
-              (compiler-reg-string-cons "%r15" CompilerRegStringNil))))))))
+              (compiler-reg-string-cons "%r15" CompilerRegStringList.Nil))))))))
+
+(define (compiler-reg-string-list-append
+  [left : CompilerRegStringList]
+  [right : CompilerRegStringList]) : CompilerRegStringList
+  (match left
+    [(CompilerRegStringList.Nil) right]
+    [(CompilerRegStringList.Cons reg rest)
+      (compiler-reg-string-cons
+        reg
+        (compiler-reg-string-list-append (box-get rest) right))]))
+
+(define (compiler-reg-caller-saved-integer-registers-for-abi
+  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-zero-call-caller-saved-integer-registers)]
+    [(CompilerRegTargetAbi.Windows)
+      (compiler-reg-win64-caller-saved-integer-registers)]))
+
+(define (compiler-reg-callee-saved-integer-registers-for-abi
+  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (match abi
+    [(CompilerRegTargetAbi.Linux) (compiler-reg-sysv-integer-registers)]
+    [(CompilerRegTargetAbi.Windows)
+      (compiler-reg-win64-callee-saved-integer-registers)]))
+
+(define (compiler-reg-callee-saved-integer-register-count-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (compiler-reg-string-list-count
+    (compiler-reg-callee-saved-integer-registers-for-abi abi)))
 
 ;; Persistent float homes use XMM registers that are caller-saved on both SysV
 ;; and Windows x64, avoid %xmm0/%xmm1 arithmetic scratch, avoid %xmm15 outgoing
@@ -644,7 +666,7 @@
       "%xmm3"
       (compiler-reg-string-cons
         "%xmm4"
-        (compiler-reg-string-cons "%xmm5" CompilerRegStringNil)))))
+        (compiler-reg-string-cons "%xmm5" CompilerRegStringList.Nil)))))
 
 (define (compiler-reg-vector-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -661,7 +683,7 @@
               "%vec11"
               (compiler-reg-string-cons
                 "%vec12"
-                (compiler-reg-string-cons "%vec13" CompilerRegStringNil)))))))))
+                (compiler-reg-string-cons "%vec13" CompilerRegStringList.Nil)))))))))
 
 (define (compiler-reg-mask-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -674,7 +696,7 @@
           "%k4"
           (compiler-reg-string-cons
             "%k5"
-            (compiler-reg-string-cons "%k6" CompilerRegStringNil)))))))
+            (compiler-reg-string-cons "%k6" CompilerRegStringList.Nil)))))))
 
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -709,10 +731,10 @@
                                 "%xmm14"
                                 (compiler-reg-string-cons
                                   "%xmm15"
-                                  CompilerRegStringNil)))))))))))))))))
+                                  CompilerRegStringList.Nil)))))))))))))))))
 
 (define (compiler-reg-sysv-callee-saved-xmm-registers) : CompilerRegStringList
-  CompilerRegStringNil)
+  CompilerRegStringList.Nil)
 
 (define (compiler-reg-win64-caller-saved-xmm-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -725,7 +747,7 @@
           "%xmm3"
           (compiler-reg-string-cons
             "%xmm4"
-            (compiler-reg-string-cons "%xmm5" CompilerRegStringNil)))))))
+            (compiler-reg-string-cons "%xmm5" CompilerRegStringList.Nil)))))))
 
 (define (compiler-reg-win64-callee-saved-xmm-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -746,49 +768,51 @@
                   "%xmm13"
                   (compiler-reg-string-cons
                     "%xmm14"
-                    (compiler-reg-string-cons "%xmm15" CompilerRegStringNil)))))))))))
+                    (compiler-reg-string-cons
+                      "%xmm15"
+                      CompilerRegStringList.Nil)))))))))))
 
 (define (compiler-reg-string-list-count [regs : CompilerRegStringList]) : i64
   (match regs
-    [(CompilerRegStringNil) 0]
-    [(CompilerRegStringCons _ rest)
+    [(CompilerRegStringList.Nil) 0]
+    [(CompilerRegStringList.Cons _ rest)
       (+ 1 (compiler-reg-string-list-count (box-get rest)))]))
 
 (define (compiler-reg-string-list-contains?
   [regs : CompilerRegStringList]
   [want : String]) : bool
   (match regs
-    [(CompilerRegStringNil) false]
-    [(CompilerRegStringCons reg rest)
-      (if (string.string-eq reg want)
+    [(CompilerRegStringList.Nil) false]
+    [(CompilerRegStringList.Cons reg rest)
+      (if (string.eq reg want)
         true
         (compiler-reg-string-list-contains? (box-get rest) want))]))
 
 (define (compiler-reg-float-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyF64) true]
-    [(AstTyF32) true]
+    [(AstType.F64) true]
+    [(AstType.F32) true]
     [_ false]))
 
 (define (compiler-reg-scalar-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
-    [(AstTyI32) true]
-    [(AstTyI16) true]
-    [(AstTyI8) true]
-    [(AstTyU64) true]
-    [(AstTyU32) true]
-    [(AstTyU16) true]
-    [(AstTyU8) true]
-    [(AstTyF64) true]
-    [(AstTyF32) true]
-    [(AstTyBool) true]
-    [(AstTyChar) true]
-    [(AstTyFunc _ _) true]
-    [(AstTyPtr _) true]
-    [(AstTyMutPtr _) true]
-    [(AstTyRef _ _) true]
-    [(AstTyMutRef _ _) true]
+    [(AstType.I64) true]
+    [(AstType.I32) true]
+    [(AstType.I16) true]
+    [(AstType.I8) true]
+    [(AstType.U64) true]
+    [(AstType.U32) true]
+    [(AstType.U16) true]
+    [(AstType.U8) true]
+    [(AstType.F64) true]
+    [(AstType.F32) true]
+    [(AstType.Bool) true]
+    [(AstType.Char) true]
+    [(AstType.Func _ _) true]
+    [(AstType.Ptr _) true]
+    [(AstType.MutPtr _) true]
+    [(AstType.Ref _ _) true]
+    [(AstType.MutRef _ _) true]
     [_ false]))
 
 ;; Aggregate types represented as a single 8-byte handle (an arena/heap pointer
@@ -797,20 +821,20 @@
 ;; pointer — the backend already moves them with a plain movq. Values whose
 ;; address is taken (AddrOf source) or that name a stack object (Alloc) stay on
 ;; the stack via the memory rule, so register homing here is safe. Zero-sized
-;; AstTyExpr/AstTyExprList are excluded.
+;; AstType.Expr/AstType.ExprList are excluded.
 (define (compiler-reg-handle-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyString) true]
-    [(AstTyStr) true]
-    [(AstTyBox _) true]
-    [(AstTyArray _ _) true]
-    [(AstTyDynArray _) true]
-    [(AstTyEnum _) true]
-    [(AstTyEnumArgs _ _) true]
-    [(AstTyStruct _) true]
-    [(AstTyStructArgs _ _) true]
-    [(AstTyVar _) true]
-    [(AstTyVarArgs _ _) true]
+    [(AstType.String) true]
+    [(AstType.Str) true]
+    [(AstType.Box _) true]
+    [(AstType.Array _ _) true]
+    [(AstType.DynArray _) true]
+    [(AstType.Enum _) true]
+    [(AstType.EnumArgs _ _) true]
+    [(AstType.Struct _) true]
+    [(AstType.StructArgs _ _) true]
+    [(AstType.Var _) true]
+    [(AstType.VarArgs _ _) true]
     [_ false]))
 
 (define (compiler-reg-register-eligible-type? [ty : AstType]) : bool
@@ -823,19 +847,21 @@
   [var : i64]
   [ty : AstType]) : CompilerRegVarTypeList
   (match types
-    [(CompilerRegVarTypeNil)
+    [(CompilerRegVarTypeList.Nil)
       (compiler-reg-var-type-cons
-        (CompilerRegVarType var ty)
-        CompilerRegVarTypeNil)]
-    [(CompilerRegVarTypeCons item rest)
+        (CompilerRegVarType.Type var ty)
+        CompilerRegVarTypeList.Nil)]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType id _)
+        [(CompilerRegVarType.Type id _)
           (if (= id var)
             (compiler-reg-var-type-cons
-              (CompilerRegVarType var ty)
+              (CompilerRegVarType.Type var ty)
               (box-get rest))
             (if (> id var)
-              (compiler-reg-var-type-cons (CompilerRegVarType var ty) types)
+              (compiler-reg-var-type-cons
+                (CompilerRegVarType.Type var ty)
+                types)
               (compiler-reg-var-type-cons
                 item
                 (compiler-reg-var-type-insert (box-get rest) var ty))))])]))
@@ -844,14 +870,14 @@
   [types : CompilerRegVarTypeList]
   [var : i64]) : CompilerRegMaybeType
   (match types
-    [(CompilerRegVarTypeNil) CompilerRegNoType]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) CompilerRegMaybeType.No]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType id ty)
+        [(CompilerRegVarType.Type id ty)
           (if (= id var)
-            (CompilerRegSomeType ty)
+            (CompilerRegMaybeType.Some ty)
             (if (> id var)
-              CompilerRegNoType
+              CompilerRegMaybeType.No
               (compiler-reg-var-type-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-var-types-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
@@ -863,71 +889,87 @@
   (let
     [present : (Array i64) (struct-get types present)]
     [items : (Array AstType) (struct-get types items)]
-    (if (or (< var 0) (>= var (array.array-length present)))
-      CompilerRegNoType
-      (if (= (array.array-ref present var) 0)
-        CompilerRegNoType
-        (CompilerRegSomeType (array.array-ref items var))))))
+    (if (or (< var 0) (>= var (array-length present)))
+      CompilerRegMaybeType.No
+      (if (= (array-ref present var) 0)
+        CompilerRegMaybeType.No
+        (CompilerRegMaybeType.Some (array-ref items var))))))
 
 (define (compiler-reg-param-types
   [params : CompilerIrParamList]
   [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (match params
-    [(IrParamNil) types]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) types]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ ty id)
+        [(CompilerIrParam.Param _ ty id)
           (compiler-reg-param-types
             (box-get rest)
             (compiler-reg-var-type-insert types id ty))])]))
 
 (define (compiler-reg-addr-of-result-type) : AstType
-  (ast-ty-mut-ptr (AstTyU8)))
+  (ast-ty-mut-ptr (AstType.U8)))
 
 (define (compiler-reg-instr-def-type
   [types : CompilerRegVarTypeList]
   [instr : CompilerIrInstr]) : CompilerRegVarTypeList
   (match instr
-    [(IrInstrMov dst _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrAddrOf dst _)
+    [(CompilerIrInstr.Mov dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.AddrOf dst _)
       (compiler-reg-var-type-insert
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(IrInstrGep dst _ _ _)
+    [(CompilerIrInstr.Gep dst _ _ _)
       (compiler-reg-var-type-insert
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(IrInstrLoad dst _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
-    [(IrInstrBitcast dst _ _ to-ty)
+    [(CompilerIrInstr.Load dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.Cast dst _ _ to-ty)
       (compiler-reg-var-type-insert types dst to-ty)]
-    [(IrInstrBinOp dst _ _ _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrUnOp dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+    [(CompilerIrInstr.Bitcast dst _ _ to-ty)
+      (compiler-reg-var-type-insert types dst to-ty)]
+    [(CompilerIrInstr.BinOp dst _ _ _ ty)
+      (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.UnOp dst _ _ ty)
+      (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ elem-ty)
       (compiler-reg-var-type-insert types dst elem-ty)]
-    [(IrInstrMaskReduce dst _ _ _)
-      (compiler-reg-var-type-insert types dst (AstTyBool))]
-    [(IrInstrEntryArgc dst) (compiler-reg-var-type-insert types dst (AstTyI64))]
-    [(IrInstrEntryArgv dst)
+    [(CompilerIrInstr.MaskReduce dst _ _ _)
+      (compiler-reg-var-type-insert types dst (AstType.Bool))]
+    [(CompilerIrInstr.EntryArgc dst)
+      (compiler-reg-var-type-insert types dst (AstType.I64))]
+    [(CompilerIrInstr.EntryArgv dst)
       (compiler-reg-var-type-insert
         types
         dst
-        (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
-    [(IrInstrEntryEnvp dst)
+        (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
+    [(CompilerIrInstr.EntryEnvp dst)
       (compiler-reg-var-type-insert
         types
         dst
-        (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
-    [(IrInstrCpuId dst _ _ _)
-      (compiler-reg-var-type-insert types dst (AstTyI64))]
-    [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
-    [(IrInstrSyscall dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
-    [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrPack dst _ ty) (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrWord dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
+        (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
+    [(CompilerIrInstr.CpuId dst _ _ _)
+      (compiler-reg-var-type-insert types dst (AstType.I64))]
+    [(CompilerIrInstr.Xgetbv dst _)
+      (compiler-reg-var-type-insert types dst (AstType.I64))]
+    [(CompilerIrInstr.Syscall dst _)
+      (compiler-reg-var-type-insert types dst (AstType.I64))]
+    [(CompilerIrInstr.Call dst _ _ ty)
+      (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) types]
+            [(IrSpmdCallResultValue dst _ ty)
+              (compiler-reg-var-type-insert types dst ty)])])]
+    [(CompilerIrInstr.Phi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.Pack dst _ ty)
+      (compiler-reg-var-type-insert types dst ty)]
+    [(CompilerIrInstr.Word dst _ _ ty)
+      (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
 
 (define (compiler-reg-var-type-array-set!
@@ -935,21 +977,21 @@
   [types : (Array AstType)]
   [var : i64]
   [ty : AstType]) : unit
-  (if (or (< var 0) (>= var (array.array-length present)))
+  (if (or (< var 0) (>= var (array-length present)))
     unit
     (begin
-      (array.array-set! present var 1)
-      (array.array-set! types var ty))))
+      (array-set! present var 1)
+      (array-set! types var ty))))
 
 (define (compiler-reg-param-types-array!
   [params : CompilerIrParamList]
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ ty id)
+        [(CompilerIrParam.Param _ ty id)
           (begin
             (compiler-reg-var-type-array-set! present types id ty)
             (compiler-reg-param-types-array! (box-get rest) present types))])]))
@@ -959,41 +1001,48 @@
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
   (match instr
-    [(IrInstrMov dst _ ty)
+    [(CompilerIrInstr.Mov dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrAddrOf dst _)
+    [(CompilerIrInstr.AddrOf dst _)
       (compiler-reg-var-type-array-set!
         present
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(IrInstrGep dst _ _ _)
+    [(CompilerIrInstr.Gep dst _ _ _)
       (compiler-reg-var-type-array-set!
         present
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(IrInstrLoad dst _ ty)
+    [(CompilerIrInstr.Load dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrCast dst _ _ to-ty)
+    [(CompilerIrInstr.Cast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(IrInstrBitcast dst _ _ to-ty)
+    [(CompilerIrInstr.Bitcast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(IrInstrBinOp dst _ _ _ ty)
+    [(CompilerIrInstr.BinOp dst _ _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrUnOp dst _ _ ty)
+    [(CompilerIrInstr.UnOp dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+    [(CompilerIrInstr.VectorReduce dst _ _ _ elem-ty)
       (compiler-reg-var-type-array-set! present types dst elem-ty)]
-    [(IrInstrMaskReduce dst _ _ _)
-      (compiler-reg-var-type-array-set! present types dst (AstTyBool))]
-    [(IrInstrCall dst _ _ ty)
+    [(CompilerIrInstr.MaskReduce dst _ _ _)
+      (compiler-reg-var-type-array-set! present types dst (AstType.Bool))]
+    [(CompilerIrInstr.Call dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrPhi dst _ ty)
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) unit]
+            [(IrSpmdCallResultValue dst _ ty)
+              (compiler-reg-var-type-array-set! present types dst ty)])])]
+    [(CompilerIrInstr.Phi dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrPack dst _ ty)
+    [(CompilerIrInstr.Pack dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrWord dst _ _ ty)
+    [(CompilerIrInstr.Word dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [_ unit]))
 
@@ -1009,7 +1058,7 @@
       (while (< index count)
         (begin
           (compiler-reg-instr-def-type-array!
-            (array.array-ref slots index)
+            (array-ref slots index)
             present
             types)
           (set! index (+ index 1))))
@@ -1020,14 +1069,14 @@
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-instr-seq-types-array! instrs present types)
             (compiler-reg-block-list-types-array! (box-get rest) present types))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-block-list-types-array!
         (compiler-ir-block-seq-to-list seq)
         present
@@ -1044,15 +1093,15 @@
       present
       types
       (- index 1)
-      (if (= (array.array-ref present index) 0)
+      (if (= (array-ref present index) 0)
         acc
         (compiler-reg-var-type-cons
-          (CompilerRegVarType index (array.array-ref types index))
+          (CompilerRegVarType.Type index (array-ref types index))
           acc)))))
 
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
-    [(IrFunction _ params _ vars blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (let
         [present : (Array i64) (array.make-array i64 vars)]
         [types : (Array AstType) (array.make-array AstType vars)]
@@ -1065,7 +1114,7 @@
               present
               types
               (- vars 1)
-              CompilerRegVarTypeNil)
+              CompilerRegVarTypeList.Nil)
             present
             types)))]))
 
@@ -1074,10 +1123,10 @@
   [src : i64]
   [dst : i64]) : bool
   (match moves
-    [(CompilerRegMoveNil) false]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) false]
+    [(CompilerRegMoveList.Cons move rest)
       (match move
-        [(CompilerRegMove found-src found-dst _)
+        [(CompilerRegMove.Move found-src found-dst _)
           (if (and (= found-src src) (= found-dst dst))
             true
             (compiler-reg-move-list-contains? (box-get rest) src dst))])]))
@@ -1087,10 +1136,10 @@
   [src : i64]
   [dst : i64]) : bool
   (match moves
-    [(CompilerRegMoveNil) false]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) false]
+    [(CompilerRegMoveList.Cons move rest)
       (match move
-        [(CompilerRegMove found-src found-dst _)
+        [(CompilerRegMove.Move found-src found-dst _)
           (if (or
             (and (= found-src src) (= found-dst dst))
             (and (= found-src dst) (= found-dst src)))
@@ -1099,7 +1148,7 @@
 
 (define (compiler-reg-move-list-empty? [moves : CompilerRegMoveList]) : bool
   (match moves
-    [(CompilerRegMoveNil) true]
+    [(CompilerRegMoveList.Nil) true]
     [_ false]))
 
 (define (compiler-reg-move-list-mark-strict
@@ -1107,18 +1156,18 @@
   [src : i64]
   [dst : i64]) : CompilerRegMoveList
   (match moves
-    [(CompilerRegMoveNil) CompilerRegMoveNil]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) CompilerRegMoveList.Nil]
+    [(CompilerRegMoveList.Cons move rest)
       (match move
-        [(CompilerRegMove found-src found-dst strict)
+        [(CompilerRegMove.Move found-src found-dst strict)
           (if (or
             (and (= found-src src) (= found-dst dst))
             (and (= found-src dst) (= found-dst src)))
             (compiler-reg-move-cons
-              (CompilerRegMove found-src found-dst true)
+              (CompilerRegMove.Move found-src found-dst true)
               (box-get rest))
             (compiler-reg-move-cons
-              (CompilerRegMove found-src found-dst strict)
+              (CompilerRegMove.Move found-src found-dst strict)
               (compiler-reg-move-list-mark-strict (box-get rest) src dst)))])]))
 
 (define (compiler-reg-move-list-add
@@ -1135,7 +1184,7 @@
       (if strict
         (compiler-reg-move-list-mark-strict moves src dst)
         moves)
-      (compiler-reg-move-cons (CompilerRegMove src dst strict) moves))))
+      (compiler-reg-move-cons (CompilerRegMove.Move src dst strict) moves))))
 
 (define (compiler-reg-phi-input-moves
   [dst : i64]
@@ -1143,13 +1192,13 @@
   [moves : CompilerRegMoveList]
   [strict-pairs : bool]) : CompilerRegMoveList
   (match inputs
-    [(IrPhiInputNil) moves]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) moves]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (let
         [tail : CompilerRegMoveList
           (compiler-reg-phi-input-moves dst (box-get rest) moves strict-pairs)]
         (match value
-          [(IrValueVar src)
+          [(CompilerIrValue.Var src)
             (compiler-reg-move-list-add tail src dst strict-pairs strict-pairs)]
           [_ tail]))]))
 
@@ -1158,12 +1207,12 @@
   [moves : CompilerRegMoveList]
   [strict-pairs : bool]) : CompilerRegMoveList
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar var)
+        [(CompilerIrValue.Var var)
           (compiler-reg-move-list-add moves var dst false strict-pairs)]
         [_ moves])]
-    [(IrInstrPhi dst inputs _)
+    [(CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-phi-input-moves dst inputs moves strict-pairs)]
     [_ moves]))
 
@@ -1180,10 +1229,7 @@
         (begin
           (set!
             out
-            (compiler-reg-instr-moves
-              (array.array-ref slots index)
-              out
-              strict-pairs))
+            (compiler-reg-instr-moves (array-ref slots index) out strict-pairs))
           (set! index (- index 1))))
       out)))
 
@@ -1192,15 +1238,15 @@
   [moves : CompilerRegMoveList]
   [strict-pairs : bool]) : CompilerRegMoveList
   (match blocks
-    [(IrBlockNil) moves]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) moves]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-block-list-moves
             (box-get rest)
             (compiler-reg-instr-seq-moves instrs moves strict-pairs)
             strict-pairs)])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-block-list-moves
         (compiler-ir-block-seq-to-list seq)
         moves
@@ -1210,8 +1256,11 @@
   [func : CompilerIrFunction]
   [strict-pairs : bool]) : CompilerRegMoveList
   (match func
-    [(IrFunction _ _ _ _ blocks)
-      (compiler-reg-block-list-moves blocks CompilerRegMoveNil strict-pairs)]))
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-block-list-moves
+        blocks
+        CompilerRegMoveList.Nil
+        strict-pairs)]))
 
 ;; M-C (part 1): a 64-bit-width integer cast (i64 <-> u64) is a pure register
 ;; copy -- the optimizer deliberately KEEPS same-width sign-reinterpreting casts
@@ -1224,8 +1273,8 @@
 ;; so those pairs are not same-valued at the 64-bit register level.
 (define (compiler-reg-int-width-64? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
-    [(AstTyU64) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
     [_ false]))
 
 (define (compiler-reg-cast-copy-64? [from-ty : AstType] [to-ty : AstType]) : bool
@@ -1240,9 +1289,9 @@
   [instr : CompilerIrInstr]
   [moves : CompilerRegMoveList]) : CompilerRegMoveList
   (match instr
-    [(IrInstrCast dst src from-ty to-ty)
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (match src
-        [(IrValueVar var)
+        [(CompilerIrValue.Var var)
           (if (compiler-reg-cast-copy-64? from-ty to-ty)
             (compiler-reg-move-list-add moves var dst false false)
             moves)]
@@ -1261,7 +1310,7 @@
         (begin
           (set!
             out
-            (compiler-reg-cast-move-instr (array.array-ref slots index) out))
+            (compiler-reg-cast-move-instr (array-ref slots index) out))
           (set! index (- index 1))))
       out)))
 
@@ -1269,14 +1318,14 @@
   [blocks : CompilerIrBlockList]
   [moves : CompilerRegMoveList]) : CompilerRegMoveList
   (match blocks
-    [(IrBlockNil) moves]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) moves]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-cast-moves-blocks
             (box-get rest)
             (compiler-reg-cast-moves-seq instrs moves))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-cast-moves-blocks (compiler-ir-block-seq-to-list seq) moves)]))
 
 ;; function-moves with the width-64 cast copies appended at the TAIL (the cast
@@ -1287,20 +1336,20 @@
   [func : CompilerIrFunction]
   [strict-pairs : bool]) : CompilerRegMoveList
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-block-list-moves
         blocks
-        (compiler-reg-cast-moves-blocks blocks CompilerRegMoveNil)
+        (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
         strict-pairs)]))
 
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
-    [count : i64 (array.array-length items)]
+    [count : i64 (array-length items)]
     (begin
       (while (< index count)
         (begin
-          (array.array-set! items index value)
+          (array-set! items index value)
           (set! index (+ index 1))))
       unit)))
 
@@ -1308,13 +1357,13 @@
   [instr : CompilerIrInstr]
   [preferences : (Array i64)]) : unit
   (match instr
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst _ _ false-value _ _)
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ false-value _ _)
           (match false-value
-            [(IrValueVar false-var)
-              (if (and (>= dst 0) (< dst (array.array-length preferences)))
-                (array.array-set! preferences dst false-var)
+            [(CompilerIrValue.Var false-var)
+              (if (and (>= dst 0) (< dst (array-length preferences)))
+                (array-set! preferences dst false-var)
                 unit)]
             [_ unit])])]
     [_ unit]))
@@ -1330,7 +1379,7 @@
       (while (< index count)
         (begin
           (compiler-reg-select-false-preference-instr!
-            (array.array-ref slots index)
+            (array-ref slots index)
             preferences)
           (set! index (+ index 1))))
       unit)))
@@ -1339,16 +1388,16 @@
   [blocks : CompilerIrBlockList]
   [preferences : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-select-false-preference-seq! instrs preferences)])
         (compiler-reg-select-false-preference-blocks!
           (box-get rest)
           preferences))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-select-false-preference-blocks!
         (compiler-ir-block-seq-to-list seq)
         preferences)]))
@@ -1361,7 +1410,7 @@
     (begin
       (compiler-reg-fill-i64-array preferences -1)
       (match func
-        [(IrFunction _ _ _ _ blocks)
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
           (compiler-reg-select-false-preference-blocks! blocks preferences)])
       preferences)))
 
@@ -1370,11 +1419,11 @@
   [value : CompilerRegLocation]) : unit
   (let
     [index : i64 0]
-    [count : i64 (array.array-length items)]
+    [count : i64 (array-length items)]
     (begin
       (while (< index count)
         (begin
-          (array.array-set! items index value)
+          (array-set! items index value)
           (set! index (+ index 1))))
       unit)))
 
@@ -1383,19 +1432,19 @@
   [present : (Array i64)]
   [items : (Array CompilerRegLocation)]) : unit
   (match assignments
-    [(CompilerRegAssignmentNil) unit]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) unit]
+    [(CompilerRegAssignmentList.Cons item rest)
       (begin
         (match item
-          [(CompilerRegAssignment var location)
+          [(CompilerRegAssignment.Assignment var location)
             (if (or
               (< var 0)
-              (>= var (array.array-length present))
-              (not (= (array.array-ref present var) 0)))
+              (>= var (array-length present))
+              (not (= (array-ref present var) 0)))
               unit
               (begin
-                (array.array-set! present var 1)
-                (array.array-set! items var location)))])
+                (array-set! present var 1)
+                (array-set! items var location)))])
         (compiler-reg-assignment-index-fill! (box-get rest) present items))]))
 
 (define (compiler-reg-assignment-index-build
@@ -1407,7 +1456,7 @@
       (array.make-array CompilerRegLocation vars)]
     (begin
       (compiler-reg-fill-i64-array present 0)
-      (compiler-reg-fill-location-array items (CompilerRegSpill 0))
+      (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-assignment-index-fill! assignments present items)
       (CompilerRegAssignmentIndex present items))))
 
@@ -1417,11 +1466,11 @@
   (let
     [present : (Array i64) (struct-get index present)]
     [items : (Array CompilerRegLocation) (struct-get index items)]
-    (if (or (< var 0) (>= var (array.array-length present)))
-      CompilerRegNoLocation
-      (if (= (array.array-ref present var) 0)
-        CompilerRegNoLocation
-        (CompilerRegSomeLocation (array.array-ref items var))))))
+    (if (or (< var 0) (>= var (array-length present)))
+      CompilerRegMaybeLocation.No
+      (if (= (array-ref present var) 0)
+        CompilerRegMaybeLocation.No
+        (CompilerRegMaybeLocation.Some (array-ref items var))))))
 
 (define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
   (let
@@ -1434,7 +1483,7 @@
       (array.make-array CompilerRegLocation n)]
     (begin
       (compiler-reg-fill-i64-array present 0)
-      (compiler-reg-fill-location-array items (CompilerRegSpill 0))
+      (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (CompilerRegAssignmentTable present items))))
 
 (define (compiler-reg-assignment-table-insert
@@ -1445,11 +1494,11 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (begin
-      (if (or (< var 0) (>= var (array.array-length present)))
+      (if (or (< var 0) (>= var (array-length present)))
         unit
         (begin
-          (array.array-set! present var 1)
-          (array.array-set! items var location)))
+          (array-set! present var 1)
+          (array-set! items var location)))
       assignments)))
 
 ;; RAGreedy Component 1: drop a var's current assignment (present[var]=0) without
@@ -1463,9 +1512,9 @@
   (let
     [present : (Array i64) (struct-get assignments present)]
     (begin
-      (if (or (< var 0) (>= var (array.array-length present)))
+      (if (or (< var 0) (>= var (array-length present)))
         unit
-        (array.array-set! present var 0))
+        (array-set! present var 0))
       assignments)))
 
 (define (compiler-reg-assignment-table-lookup
@@ -1474,11 +1523,11 @@
   (let
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
-    (if (or (< var 0) (>= var (array.array-length present)))
-      CompilerRegNoLocation
-      (if (= (array.array-ref present var) 0)
-        CompilerRegNoLocation
-        (CompilerRegSomeLocation (array.array-ref items var))))))
+    (if (or (< var 0) (>= var (array-length present)))
+      CompilerRegMaybeLocation.No
+      (if (= (array-ref present var) 0)
+        CompilerRegMaybeLocation.No
+        (CompilerRegMaybeLocation.Some (array-ref items var))))))
 
 (define (compiler-reg-assignment-table-has-spill-from?
   [assignments : CompilerRegAssignmentTable]
@@ -1487,12 +1536,12 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array.array-length present)) false]
-      [(= (array.array-ref present index) 0)
+      [(>= index (array-length present)) false]
+      [(= (array-ref present index) 0)
         (compiler-reg-assignment-table-has-spill-from? assignments (+ index 1))]
       [else
-        (match (array.array-ref items index)
-          [(CompilerRegSpill _) true]
+        (match (array-ref items index)
+          [(CompilerRegLocation.Spill _) true]
           [_
             (compiler-reg-assignment-table-has-spill-from?
               assignments
@@ -1514,37 +1563,37 @@
       (compiler-reg-assignment-table-to-list-from
         assignments
         (- index 1)
-        (if (= (array.array-ref present index) 0)
+        (if (= (array-ref present index) 0)
           out
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment index (array.array-ref items index))
+            (CompilerRegAssignment.Assignment index (array-ref items index))
             out))))))
 
 (define (compiler-reg-assignment-table-to-list
   [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentList
   (compiler-reg-assignment-table-to-list-from
     assignments
-    (- (array.array-length (struct-get assignments present)) 1)
-    CompilerRegAssignmentNil))
+    (- (array-length (struct-get assignments present)) 1)
+    CompilerRegAssignmentList.Nil))
 
 (define (compiler-reg-interval-index-fill!
   [intervals : CompilerRegIntervalList]
   [starts : (Array i64)]
   [ends : (Array i64)]) : unit
   (match intervals
-    [(CompilerRegIntervalNil) unit]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons interval rest)
       (begin
         (match interval
-          [(CompilerRegInterval var start end)
+          [(CompilerRegInterval.Interval var start end)
             (if (or
               (< var 0)
-              (>= var (array.array-length starts))
-              (>= (array.array-ref starts var) 0))
+              (>= var (array-length starts))
+              (>= (array-ref starts var) 0))
               unit
               (begin
-                (array.array-set! starts var start)
-                (array.array-set! ends var end)))])
+                (array-set! starts var start)
+                (array-set! ends var end)))])
         (compiler-reg-interval-index-fill! (box-get rest) starts ends))]))
 
 (define (compiler-reg-interval-index-build
@@ -1567,19 +1616,19 @@
   (let
     [starts : (Array i64) (struct-get index starts)]
     [ends : (Array i64) (struct-get index ends)]
-    (if (or (< var 0) (>= var (array.array-length starts)))
-      CompilerRegNoInterval
-      (if (< (array.array-ref starts var) 0)
-        CompilerRegNoInterval
-        (CompilerRegSomeInterval
-          (CompilerRegInterval
+    (if (or (< var 0) (>= var (array-length starts)))
+      CompilerRegMaybeInterval.No
+      (if (< (array-ref starts var) 0)
+        CompilerRegMaybeInterval.No
+        (CompilerRegMaybeInterval.Some
+          (CompilerRegInterval.Interval
             var
-            (array.array-ref starts var)
-            (array.array-ref ends var)))))))
+            (array-ref starts var)
+            (array-ref ends var)))))))
 
 (define (compiler-reg-interval-list-empty? [segments : CompilerRegIntervalList]) : bool
   (match segments
-    [(CompilerRegIntervalNil) true]
+    [(CompilerRegIntervalList.Nil) true]
     [_ false]))
 
 (define (compiler-reg-extend-interval
@@ -1589,22 +1638,22 @@
   [point : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array.array-length starts))
+    (if (>= var (array-length starts))
       unit
       (let
-        [start : i64 (array.array-ref starts var)]
-        [end : i64 (array.array-ref ends var)]
+        [start : i64 (array-ref starts var)]
+        [end : i64 (array-ref ends var)]
         (begin
           (if (< start 0)
             (begin
-              (array.array-set! starts var point)
-              (array.array-set! ends var point))
+              (array-set! starts var point)
+              (array-set! ends var point))
             (begin
               (if (< point start)
-                (array.array-set! starts var point)
+                (array-set! starts var point)
                 unit)
               (if (> point end)
-                (array.array-set! ends var point)
+                (array-set! ends var point)
                 unit)))
           unit)))))
 
@@ -1647,23 +1696,20 @@
   [starts : (Array i64)]
   [ends : (Array i64)]
   [var : i64]) : unit
-  (if (or
-    (< var 0)
-    (>= var (array.array-length starts))
-    (< (array.array-ref starts var) 0))
+  (if (or (< var 0) (>= var (array-length starts)) (< (array-ref starts var) 0))
     unit
     (begin
-      (array.array-set!
+      (array-set!
         segments
         var
         (compiler-reg-interval-cons
-          (CompilerRegInterval
+          (CompilerRegInterval.Interval
             var
-            (array.array-ref starts var)
-            (array.array-ref ends var))
-          (array.array-ref segments var)))
-      (array.array-set! starts var -1)
-      (array.array-set! ends var -1)
+            (array-ref starts var)
+            (array-ref ends var))
+          (array-ref segments var)))
+      (array-set! starts var -1)
+      (array-set! ends var -1)
       unit)))
 
 (define (compiler-reg-segment-note-point!
@@ -1672,22 +1718,22 @@
   [ends : (Array i64)]
   [var : i64]
   [point : i64]) : unit
-  (if (or (< var 0) (>= var (array.array-length starts)))
+  (if (or (< var 0) (>= var (array-length starts)))
     unit
-    (if (< (array.array-ref starts var) 0)
+    (if (< (array-ref starts var) 0)
       (begin
-        (array.array-set! starts var point)
-        (array.array-set! ends var point))
+        (array-set! starts var point)
+        (array-set! ends var point))
       (let
-        [end : i64 (array.array-ref ends var)]
+        [end : i64 (array-ref ends var)]
         (if (<= point (+ end 1))
           (if (> point end)
-            (array.array-set! ends var point)
+            (array-set! ends var point)
             unit)
           (begin
             (compiler-reg-segment-flush-var! segments starts ends var)
-            (array.array-set! starts var point)
-            (array.array-set! ends var point)))))))
+            (array-set! starts var point)
+            (array-set! ends var point)))))))
 
 (define (compiler-reg-extend-segment-set-word-bits!
   [starts : (Array i64)]
@@ -1927,8 +1973,8 @@
       (while (< index count)
         (let
           [live-after : CompilerLiveI64Set
-            (if (< index (array.array-length after-items))
-              (array.array-ref after-items index)
+            (if (< index (array-length after-items))
+              (array-ref after-items index)
               (compiler-live-set-empty))]
           (begin
             (compiler-reg-extend-instr
@@ -1936,7 +1982,7 @@
               ends
               live-after
               out-point
-              (array.array-ref slots index))
+              (array-ref slots index))
             (set! out-point (+ out-point 2))
             (set! index (+ index 1)))))
       out-point)))
@@ -1945,9 +1991,9 @@
   [liveness : CompilerFunctionLiveness]
   [label : String]) : CompilerLiveInstrSetVec
   (match (compiler-live-function-find-block liveness label)
-    [(CompilerLiveSomeBlock live-block)
+    [(CompilerLiveMaybeBlock.Some live-block)
       (compiler-live-block-instr-after live-block)]
-    [(CompilerLiveNoBlock) (compiler-live-instr-set-vec-empty)]))
+    [(CompilerLiveMaybeBlock.No) (compiler-live-instr-set-vec-empty)]))
 
 (define (compiler-reg-live-intervals-blocks-with-live
   [blocks : CompilerIrBlockList]
@@ -1956,10 +2002,10 @@
   [starts : (Array i64)]
   [ends : (Array i64)]) : i64
   (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [live-afters : CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
@@ -1974,7 +2020,7 @@
                 ends)
               starts
               ends))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-live-intervals-blocks-with-live
         (compiler-ir-block-seq-to-list seq)
         liveness
@@ -1990,21 +2036,23 @@
   (if (< index 0)
     acc
     (let
-      [start : i64 (array.array-ref starts index)]
-      [end : i64 (array.array-ref ends index)]
+      [start : i64 (array-ref starts index)]
+      [end : i64 (array-ref ends index)]
       (if (< start 0)
         (compiler-reg-interval-arrays-to-list starts ends (- index 1) acc)
         (compiler-reg-interval-arrays-to-list
           starts
           ends
           (- index 1)
-          (compiler-reg-interval-cons (CompilerRegInterval index start end) acc))))))
+          (compiler-reg-interval-cons
+            (CompilerRegInterval.Interval index start end)
+            acc))))))
 
 (define (compiler-reg-live-intervals
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalList
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [starts : (Array i64) (array.make-array i64 vars)]
         [ends : (Array i64) (array.make-array i64 vars)]
@@ -2021,7 +2069,7 @@
             starts
             ends
             (- vars 1)
-            CompilerRegIntervalNil)))]))
+            CompilerRegIntervalList.Nil)))]))
 
 (define (compiler-reg-live-interval-selection-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -2042,10 +2090,10 @@
       (while (< index count)
         (let
           [live-after : CompilerLiveI64Set
-            (if (< index (array.array-length after-items))
-              (array.array-ref after-items index)
+            (if (< index (array-length after-items))
+              (array-ref after-items index)
               (compiler-live-set-empty))]
-          [instr : CompilerIrInstr (array.array-ref slots index)]
+          [instr : CompilerIrInstr (array-ref slots index)]
           (begin
             (compiler-reg-extend-segment-instr!
               starts
@@ -2070,10 +2118,10 @@
   [segment-starts : (Array i64)]
   [segment-ends : (Array i64)]) : i64
   (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [live-afters : CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
@@ -2094,7 +2142,7 @@
               segments
               segment-starts
               segment-ends))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-live-interval-selection-blocks
         (compiler-ir-block-seq-to-list seq)
         liveness
@@ -2109,7 +2157,7 @@
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalSelection
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [starts : (Array i64) (array.make-array i64 vars)]
         [ends : (Array i64) (array.make-array i64 vars)]
@@ -2141,12 +2189,12 @@
                   segment-ends
                   index)
                 (set! index (+ index 1)))))
-          (CompilerRegIntervalSelection
+          (CompilerRegIntervalSelection.Selection
             (compiler-reg-interval-arrays-to-list
               starts
               ends
               (- vars 1)
-              CompilerRegIntervalNil)
+              CompilerRegIntervalList.Nil)
             (CompilerRegIntervalIndex starts ends segments))))]))
 
 ;; ---------------------------------------------------------------------------
@@ -2178,7 +2226,7 @@
       0
       point)
     (match instr
-      [(IrInstrPhi _ _ _) unit]
+      [(CompilerIrInstr.Phi _ _ _) unit]
       [_
         (compiler-reg-extend-segment-set-words!
           starts
@@ -2225,10 +2273,10 @@
       (while (< index count)
         (let
           [live-after : CompilerLiveI64Set
-            (if (< index (array.array-length after-items))
-              (array.array-ref after-items index)
+            (if (< index (array-length after-items))
+              (array-ref after-items index)
               (compiler-live-set-empty))]
-          [instr : CompilerIrInstr (array.array-ref slots index)]
+          [instr : CompilerIrInstr (array-ref slots index)]
           (begin
             (compiler-reg-extend-segment-instr-ep!
               starts
@@ -2253,10 +2301,10 @@
   [segment-starts : (Array i64)]
   [segment-ends : (Array i64)]) : i64
   (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [live-afters : CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
@@ -2277,7 +2325,7 @@
               segments
               segment-starts
               segment-ends))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-live-interval-selection-ep-blocks
         (compiler-ir-block-seq-to-list seq)
         liveness
@@ -2292,7 +2340,7 @@
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalIndex
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [starts : (Array i64) (array.make-array i64 vars)]
         [ends : (Array i64) (array.make-array i64 vars)]
@@ -2347,11 +2395,11 @@
   [inputs : CompilerIrPhiInputList]
   [mask : (Array i64)]) : unit
   (match inputs
-    [(IrPhiInputNil) unit]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (match value
-          [(IrValueVar v) (compiler-reg-mark-phi-def! mask v)]
+          [(CompilerIrValue.Var v) (compiler-reg-mark-phi-def! mask v)]
           [_ unit])
         (compiler-reg-phi-touched-add-inputs! (box-get rest) mask))]))
 
@@ -2365,8 +2413,8 @@
     (begin
       (while (< index count)
         (begin
-          (match (array.array-ref slots index)
-            [(IrInstrPhi dst inputs _)
+          (match (array-ref slots index)
+            [(CompilerIrInstr.Phi dst inputs _)
               (begin
                 (compiler-reg-mark-phi-def! mask dst)
                 (compiler-reg-phi-touched-add-inputs! inputs mask))]
@@ -2378,14 +2426,14 @@
   [blocks : CompilerIrBlockList]
   [mask : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-phi-touched-seq! instrs mask)
             (compiler-reg-phi-touched-blocks! (box-get rest) mask))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-phi-touched-blocks!
         (compiler-ir-block-seq-to-list seq)
         mask)]))
@@ -2393,7 +2441,7 @@
 (define (compiler-reg-function-phi-touched [func : CompilerIrFunction]) : (Array
     i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [mask : (Array i64) (array.make-array i64 vars)]
         (begin
@@ -2425,19 +2473,19 @@
   [liveness : CompilerFunctionLiveness]
   [label : String]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
-    [(CompilerLiveSomeBlock lb)
+    [(CompilerLiveMaybeBlock.Some lb)
       (match lb
-        [(CompilerLiveBlock _ _ _ _ live-out _ _) live-out])]
-    [(CompilerLiveNoBlock) (compiler-live-set-empty)]))
+        [(CompilerLiveBlock.Block _ _ _ _ live-out _ _) live-out])]
+    [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
 
 (define (compiler-reg-phi-inputs-any-live-out?
   [inputs : CompilerIrPhiInputList]
   [live-out : CompilerLiveI64Set]) : bool
   (match inputs
-    [(IrPhiInputNil) false]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (if (match value
-        [(IrValueVar v) (compiler-live-set-contains? live-out v)]
+        [(CompilerIrValue.Var v) (compiler-live-set-contains? live-out v)]
         [_ false])
         true
         (compiler-reg-phi-inputs-any-live-out? (box-get rest) live-out))]))
@@ -2453,8 +2501,8 @@
     (begin
       (while (< index count)
         (begin
-          (match (array.array-ref slots index)
-            [(IrInstrPhi dst inputs _)
+          (match (array-ref slots index)
+            [(CompilerIrInstr.Phi dst inputs _)
               (if (compiler-reg-phi-inputs-any-live-out? inputs live-out)
                 unit
                 (begin
@@ -2469,17 +2517,17 @@
   [liveness : CompilerFunctionLiveness]
   [mask : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (begin
             (compiler-reg-phi-touched-safe-seq!
               instrs
               (compiler-reg-block-live-out-by-label liveness label)
               mask)
             (compiler-reg-phi-touched-safe-blocks! (box-get rest) liveness mask))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-phi-touched-safe-blocks!
         (compiler-ir-block-seq-to-list seq)
         liveness
@@ -2489,7 +2537,7 @@
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]) : (Array i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [mask : (Array i64) (array.make-array i64 vars)]
         (begin
@@ -2508,25 +2556,25 @@
     [cons-segs : (Array CompilerRegIntervalList)
       (struct-get cons-index segments)]
     [ep-segs : (Array CompilerRegIntervalList) (struct-get ep-index segments)]
-    [n : i64 (array.array-length cons-starts)]
+    [n : i64 (array-length cons-starts)]
     [hybrid-segs : (Array CompilerRegIntervalList)
       (array.make-array CompilerRegIntervalList n)]
     [v : i64 0]
     (begin
       (while (< v n)
         (begin
-          (array.array-set!
+          (array-set!
             hybrid-segs
             v
-            (if (if (< v (array.array-length mask))
-              (= (array.array-ref mask v) 1)
+            (if (if (< v (array-length mask))
+              (= (array-ref mask v) 1)
               false)
-              (if (< v (array.array-length ep-segs))
-                (array.array-ref ep-segs v)
-                CompilerRegIntervalNil)
-              (if (< v (array.array-length cons-segs))
-                (array.array-ref cons-segs v)
-                CompilerRegIntervalNil)))
+              (if (< v (array-length ep-segs))
+                (array-ref ep-segs v)
+                CompilerRegIntervalList.Nil)
+              (if (< v (array-length cons-segs))
+                (array-ref cons-segs v)
+                CompilerRegIntervalList.Nil)))
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex cons-starts cons-ends hybrid-segs))))
 
@@ -2550,7 +2598,7 @@
 (define (compiler-reg-bits-set! [row : (Array i64)] [base : i64] [var : i64]) : unit
   (let
     [w : i64 (+ base (/ var 63))]
-    (array.array-set! row w (bit-or (array.array-ref row w) (shl 1 (% var 63))))))
+    (array-set! row w (bit-or (array-ref row w) (shl 1 (% var 63))))))
 
 (define (compiler-reg-chunk->row!
   [row : (Array i64)]
@@ -2588,12 +2636,12 @@
 
 (define (compiler-reg-live-block-succs [block : CompilerLiveBlock]) : CompilerLiveLabelSet
   (match block
-    [(CompilerLiveBlock _ _ _ _ _ succs _) succs]))
+    [(CompilerLiveBlock.Block _ _ _ _ _ succs _) succs]))
 
 (define (compiler-reg-live-block-list-count [blocks : CompilerLiveBlockList]) : i64
   (match blocks
-    [(CompilerLiveBlockNil) 0]
-    [(CompilerLiveBlockCons _ rest)
+    [(CompilerLiveBlockList.Nil) 0]
+    [(CompilerLiveBlockList.Cons _ rest)
       (+ 1 (compiler-reg-live-block-list-count (box-get rest)))]))
 
 (define (compiler-reg-bits-build-rows!
@@ -2605,12 +2653,12 @@
   [words : i64]
   [index : i64]) : hashmap.StringI64Map
   (match blocks
-    [(CompilerLiveBlockNil) idmap]
-    [(CompilerLiveBlockCons block rest)
+    [(CompilerLiveBlockList.Nil) idmap]
+    [(CompilerLiveBlockList.Cons block rest)
       (match block
-        [(CompilerLiveBlock label uses defs _ _ _ _)
+        [(CompilerLiveBlock.Block label uses defs _ _ _ _)
           (begin
-            (array.array-set! arr index block)
+            (array-set! arr index block)
             (compiler-reg-set->row! uses use-rows (* index words))
             (compiler-reg-set->row! defs def-rows (* index words))
             (compiler-reg-bits-build-rows!
@@ -2631,7 +2679,7 @@
     (begin
       (while (< w words)
         (begin
-          (array.array-set! row (+ base w) 0)
+          (array-set! row (+ base w) 0)
           (set! w (+ w 1))))
       unit)))
 
@@ -2646,12 +2694,10 @@
     (begin
       (while (< w words)
         (begin
-          (array.array-set!
+          (array-set!
             dst
             (+ dbase w)
-            (bit-or
-              (array.array-ref dst (+ dbase w))
-              (array.array-ref src (+ sbase w))))
+            (bit-or (array-ref dst (+ dbase w)) (array-ref src (+ sbase w))))
           (set! w (+ w 1))))
       unit)))
 
@@ -2663,8 +2709,8 @@
   [b : i64]
   [words : i64]) : unit
   (match succs
-    [(CompilerLiveLabelNil) unit]
-    [(CompilerLiveLabelCons label rest)
+    [(CompilerLiveLabelSet.Nil) unit]
+    [(CompilerLiveLabelSet.Cons label rest)
       (begin
         (match (hashmap.string-i64-map-get idmap label)
           [(hashmap.StringI64MapFound idx)
@@ -2699,15 +2745,15 @@
           [idx : i64 (+ base w)]
           [next : i64
             (bit-or
-              (array.array-ref use-rows idx)
+              (array-ref use-rows idx)
               (bit-and
-                (array.array-ref live-out idx)
-                (bit-xor (array.array-ref def-rows idx) -1)))]
+                (array-ref live-out idx)
+                (bit-xor (array-ref def-rows idx) -1)))]
           (begin
-            (if (= next (array.array-ref live-in idx))
+            (if (= next (array-ref live-in idx))
               unit
               (begin
-                (array.array-set! live-in idx next)
+                (array-set! live-in idx next)
                 (set! changed true)))
             (set! w (+ w 1)))))
       changed)))
@@ -2729,7 +2775,7 @@
       (compiler-reg-bits-or-succs!
         live-out
         live-in
-        (compiler-reg-live-block-succs (array.array-ref arr b))
+        (compiler-reg-live-block-succs (array-ref arr b))
         idmap
         b
         words)
@@ -2817,7 +2863,7 @@
       (while (< w words)
         (begin
           (compiler-reg-bits-extend-word!
-            (array.array-ref row (+ base w))
+            (array-ref row (+ base w))
             (* w 63)
             starts
             ends
@@ -2843,7 +2889,7 @@
             ends
             (compiler-live-set-empty)
             out-point
-            (array.array-ref slots index))
+            (array-ref slots index))
           (set! out-point (+ out-point 2))
           (set! index (+ index 1))))
       out-point)))
@@ -2858,10 +2904,10 @@
   [starts : (Array i64)]
   [ends : (Array i64)]) : i64
   (match ir-blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-bits-extend-row!
               live-in
@@ -2890,7 +2936,7 @@
                   end-point
                   starts
                   ends))))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-bits-intervals-walk
         (compiler-ir-block-seq-to-list seq)
         live-in
@@ -2908,7 +2954,7 @@
 
 (define (compiler-reg-block-intervals [func : CompilerIrFunction]) : CompilerRegIntervalList
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [live-blocks : CompilerLiveBlockList
           (compiler-live-build-blocks blocks)]
@@ -2964,7 +3010,7 @@
                 starts
                 ends
                 (- vars 1)
-                CompilerRegIntervalNil)))))]))
+                CompilerRegIntervalList.Nil)))))]))
 
 ;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
 ;; eligible; when false (SIMD/AVX path, unchanged) only CPU scalars/pointers are.
@@ -2973,10 +3019,10 @@
   [set : CompilerLiveI64Set]
   [handles-ok? : bool]) : CompilerLiveI64Set
   (match types
-    [(CompilerRegVarTypeNil) set]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) set]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType var ty)
+        [(CompilerRegVarType.Type var ty)
           (compiler-reg-ineligible-non-scalars
             (box-get rest)
             (if (if handles-ok?
@@ -2990,10 +3036,10 @@
   [params : CompilerIrParamList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match params
-    [(IrParamNil) set]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) set]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ _ var)
+        [(CompilerIrParam.Param _ _ var)
           (compiler-reg-ineligible-params
             (box-get rest)
             (compiler-live-set-insert set var))])]))
@@ -3038,27 +3084,27 @@
   (let
     [idx : i64
       (match abi
-        [(CompilerRegAbiLinux) int-idx]
-        [(CompilerRegAbiWindows) position])]
+        [(CompilerRegTargetAbi.Linux) int-idx]
+        [(CompilerRegTargetAbi.Windows) position])]
     (match abi
-      [(CompilerRegAbiLinux)
+      [(CompilerRegTargetAbi.Linux)
         (cond
-          [(= idx 0) (CompilerRegSomeString "%rdi")]
-          [(= idx 1) (CompilerRegSomeString "%rsi")]
-          [(= idx 2) (CompilerRegSomeString "%rdx")]
-          [(= idx 3) (CompilerRegSomeString "%rcx")]
-          ;; Skip Linux arg4 (%r8) in this legacy zero-call pin set; the unified
-          ;; greedy pool owns %r8 behind the clobber filter.
-          [(= idx 5) (CompilerRegSomeString "%r9")]
-          [else CompilerRegNoString])]
-      [(CompilerRegAbiWindows)
+          [(= idx 0) (CompilerRegMaybeString.Some "%rdi")]
+          [(= idx 1) (CompilerRegMaybeString.Some "%rsi")]
+          [(= idx 2) (CompilerRegMaybeString.Some "%rdx")]
+          [(= idx 3) (CompilerRegMaybeString.Some "%rcx")]
+          ;; %r8 is the backend's integer scratch register. %r9 is safe for
+          ;; clobber-free leaf ranges and the zero-call extension now checks
+          ;; preassigned conflicts before reusing it.
+          [(= idx 5) (CompilerRegMaybeString.Some "%r9")]
+          [else CompilerRegMaybeString.No])]
+      [(CompilerRegTargetAbi.Windows)
         (cond
-          [(= idx 0) (CompilerRegSomeString "%rcx")]
-          [(= idx 1) (CompilerRegSomeString "%rdx")]
-          ;; Skip Win64 arg2 (%r8) in this legacy zero-call pin set; the unified
-          ;; greedy pool owns %r8 behind the clobber filter.
-          [(= idx 3) (CompilerRegSomeString "%r9")]
-          [else CompilerRegNoString])])))
+          [(= idx 0) (CompilerRegMaybeString.Some "%rcx")]
+          [(= idx 1) (CompilerRegMaybeString.Some "%rdx")]
+          ;; Windows arg2 is %r8, the backend's integer scratch register.
+          [(= idx 3) (CompilerRegMaybeString.Some "%r9")]
+          [else CompilerRegMaybeString.No])])))
 
 ;; GAP3c: inclusive-START point-range spanning test for the pin gate. A param
 ;; is defined by the PROLOGUE (before point 0) and its interval is
@@ -3118,13 +3164,13 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    (if (and (>= var 0) (< var (array.array-length starts)))
-      (if (< (array.array-ref starts var) 0)
+    (if (and (>= var 0) (< var (array-length starts)))
+      (if (< (array-ref starts var) 0)
         false
         (compiler-reg-param-pin-set-in-range-words?
           clobber-points
-          (array.array-ref starts var)
-          (array.array-ref ends var)
+          (array-ref starts var)
+          (array-ref ends var)
           0))
       true)))
 
@@ -3183,7 +3229,7 @@
     (not (compiler-reg-param-pin-spans-clobber? interval-index call-points var))
     (not (compiler-reg-param-pin-spans-clobber? interval-index div-points var))
     (or
-      (not (string.string-eq reg "%rcx"))
+      (not (string.eq reg "%rcx"))
       (not
         (compiler-reg-param-pin-spans-clobber? interval-index shift-points var)))))
 
@@ -3196,17 +3242,17 @@
   (and
     (not (compiler-live-set-contains? base-ineligible var))
     (match (compiler-reg-interval-index-lookup interval-index var)
-      [(CompilerRegSomeInterval interval)
+      [(CompilerRegMaybeInterval.Some interval)
         (match interval
-          [(CompilerRegInterval _ start end)
+          [(CompilerRegInterval.Interval _ start end)
             (not
               (compiler-reg-assignment-table-location-conflicts?
                 assignments
                 interval-index
                 var
                 (- 0 1)
-                (CompilerRegRegister reg)))])]
-      [(CompilerRegNoInterval) false])))
+                (CompilerRegLocation.Register reg)))])]
+      [(CompilerRegMaybeInterval.No) false])))
 
 (define (compiler-reg-param-assign-walk
   [abi : CompilerRegTargetAbi]
@@ -3222,10 +3268,11 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
   (match params
-    [(IrParamNil) (CompilerRegParamAssignPlan assignments ineligible blocked)]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil)
+      (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ ty var-id)
+        [(CompilerIrParam.Param _ ty var-id)
           (let
             [is-float : bool (compiler-reg-float-type? ty)]
             [is-group : bool (compiler-reg-type-register-group? ty)]
@@ -3244,9 +3291,9 @@
                 (not is-group)
                 (compiler-reg-integer-param-type? ty))
                 (compiler-reg-param-int-reg abi int-idx position)
-                CompilerRegNoString)]
+                CompilerRegMaybeString.No)]
             (match reg
-              [(CompilerRegSomeString home)
+              [(CompilerRegMaybeString.Some home)
                 ;; GAP3c: the pin gate is PER-INTERVAL and per-register (the
                 ;; old function-global backend-clobber-point? gate revoked
                 ;; every pin on any call/div/shift anywhere -- apply_op's div
@@ -3277,7 +3324,7 @@
                     (compiler-reg-assignment-table-insert
                       assignments
                       var-id
-                      (CompilerRegRegister home))
+                      (CompilerRegLocation.Register home))
                     ineligible
                     blocked
                     next-int
@@ -3302,7 +3349,7 @@
                     call-points
                     div-points
                     shift-points))]
-              [(CompilerRegNoString)
+              [(CompilerRegMaybeString.No)
                 ;; No ABI pin available (skipped arg register, stack-passed
                 ;; position, post-group position, or non-pinnable type). A
                 ;; greedy-eligible param stays unblocked (M-A candidate);
@@ -3344,14 +3391,14 @@
   [base-ineligible : CompilerLiveI64Set]
   [vars : i64]) : CompilerRegParamAssignPlan
   (match func
-    [(IrFunction _ params _ _ _)
+    [(CompilerIrFunction.Function _ params _ _ _)
       (match params
-        [(IrParamNil)
-          (CompilerRegParamAssignPlan
+        [(CompilerIrParamList.Nil)
+          (CompilerRegParamAssignPlan.Plan
             (compiler-reg-assignment-table-make vars)
             base-ineligible
             base-ineligible)]
-        [(IrParamCons _ _)
+        [(CompilerIrParamList.Cons _ _)
           (let
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
@@ -3387,8 +3434,8 @@
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrAlloc dst _) (compiler-live-set-insert set dst)]
-    [(IrInstrAddrOf _ src) (compiler-live-set-insert set src)]
+    [(CompilerIrInstr.Alloc dst _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.AddrOf _ src) (compiler-live-set-insert set src)]
     ;; A GEP result is a computed scalar pointer (mut-ptr U8); like an AddrOf
     ;; *destination* it is register-eligible. It only needs a memory home if its
     ;; own address is taken, which the AddrOf arm above already covers (it marks
@@ -3410,9 +3457,7 @@
     (begin
       (while (< index count)
         (begin
-          (set!
-            out
-            (compiler-reg-ineligible-instr (array.array-ref slots index) out))
+          (set! out (compiler-reg-ineligible-instr (array-ref slots index) out))
           (set! index (+ index 1))))
       out)))
 
@@ -3420,14 +3465,14 @@
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-ineligible-memory
             (box-get rest)
             (compiler-reg-ineligible-instr-seq instrs set))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-ineligible-memory (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (compiler-reg-call-live-instr-seq
@@ -3447,28 +3492,38 @@
         (begin
           (set!
             out
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ _ _)
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ _ _)
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
-              [(IrInstrCallCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
                     (compiler-live-set-union
                       out
                       (compiler-live-after liveness label instr-index))])]
-              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+                      _
+                      _
+                      _
+                      _)
                     (compiler-live-set-union
                       out
                       (compiler-live-after liveness label instr-index))])]
-              [(IrInstrTailCall _ _ _)
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-after liveness label instr-index))])]
+              [(CompilerIrInstr.TailCall _ _ _)
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
-              [(IrInstrTailCallIndirect _ _ _)
+              [(CompilerIrInstr.TailCallIndirect _ _ _)
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
@@ -3482,15 +3537,15 @@
   [liveness : CompilerFunctionLiveness]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (compiler-reg-call-live-blocks
             (box-get rest)
             liveness
             (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-call-live-blocks
         (compiler-ir-block-seq-to-list seq)
         liveness
@@ -3509,22 +3564,26 @@
         (begin
           (set!
             out
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ args _)
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-call-args-vars args))]
-              [(IrInstrCallCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
+                      base
+                      _
+                      args
+                      _)
                     (compiler-live-set-union
                       out
                       (compiler-live-value-vars-into
                         (compiler-live-call-args-vars args)
                         base))])]
-              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
                       base
                       func
                       args
@@ -3536,11 +3595,19 @@
                           (compiler-live-call-args-vars args)
                           base)
                         func))])]
-              [(IrInstrTailCall _ args _)
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-spmd-call-args-vars args)
+                        active-mask))])]
+              [(CompilerIrInstr.TailCall _ args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-call-args-vars args))]
-              [(IrInstrTailCallIndirect func args _)
+              [(CompilerIrInstr.TailCallIndirect func args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-value-vars-into
@@ -3554,14 +3621,14 @@
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks
             (box-get rest)
             (compiler-reg-call-arg-vars-instr-seq instrs set))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-call-arg-vars-blocks
         (compiler-ir-block-seq-to-list seq)
         set)]))
@@ -3585,8 +3652,8 @@
 ;; backend at compiler-backend-call-args-gp-parallel? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegAbiLinux) 6]
-    [(CompilerRegAbiWindows) 4]))
+    [(CompilerRegTargetAbi.Linux) 6]
+    [(CompilerRegTargetAbi.Windows) 4]))
 
 ;; A call arg is passed in a SINGLE general-purpose arg register on both ABIs iff it
 ;; is neither a float nor a register-group value. Handle values (string/box/array/
@@ -3598,15 +3665,15 @@
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]) : bool
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (match (compiler-reg-var-type-lookup types id)
-        [(CompilerRegSomeType ty)
+        [(CompilerRegMaybeType.Some ty)
           (and
             (not (compiler-reg-float-type? ty))
             (not (compiler-reg-type-register-group? ty)))]
-        [(CompilerRegNoType) false])]
-    [(IrValueF64 _) false]
-    [(IrValueUnit) false]
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerIrValue.F64 _) false]
+    [(CompilerIrValue.Unit) false]
     [_ true]))
 
 (define (compiler-reg-call-args-array-gp-class?
@@ -3617,7 +3684,7 @@
   (if (>= index count)
     true
     (and
-      (compiler-reg-call-arg-gp-class? (array.array-ref values index) types)
+      (compiler-reg-call-arg-gp-class? (array-ref values index) types)
       (compiler-reg-call-args-array-gp-class? values types (+ index 1) count))))
 
 ;; A call whose args are ALL single-GP-register passed (and within the per-ABI
@@ -3631,20 +3698,20 @@
   [types : CompilerRegVarTypeList]
   [limit : i64]) : bool
   (match args
-    [(IrCallArgsNil) false]
-    [(IrCallArgsOne v) (compiler-reg-call-arg-gp-class? v types)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Nil) false]
+    [(CompilerIrCallArgs.One v) (compiler-reg-call-arg-gp-class? v types)]
+    [(CompilerIrCallArgs.Two a b)
       (and
         (compiler-reg-call-arg-gp-class? a types)
         (compiler-reg-call-arg-gp-class? b types))]
-    [(IrCallArgsArray values)
-      (if (> (array.array-length values) limit)
+    [(CompilerIrCallArgs.Array values)
+      (if (> (array-length values) limit)
         false
         (compiler-reg-call-args-array-gp-class?
           values
           types
           0
-          (array.array-length values)))]))
+          (array-length values)))]))
 
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
@@ -3661,8 +3728,8 @@
         (begin
           (set!
             out
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ args _)
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ args _)
                 ;; GP-parallel call (every arg passed in ONE GP arg register,
                 ;; within the per-ABI arity): scalars and 8-byte handles are the
                 ;; same register class to the backend, whose marshalling resolves
@@ -3678,17 +3745,17 @@
                   (compiler-live-set-union
                     out
                     (compiler-live-call-args-vars args)))]
-              [(IrInstrCallCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
                     (compiler-live-set-union
                       out
                       (compiler-live-value-vars-into
                         (compiler-live-call-args-vars args)
                         base))])]
-              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
                       base
                       func
                       args
@@ -3715,7 +3782,7 @@
               ;; call. Float / register-group / over-arity tail calls keep the
               ;; naive ascending (frame-staged) marshalling -> args stay
               ;; ineligible.
-              [(IrInstrTailCall _ args _)
+              [(CompilerIrInstr.TailCall _ args _)
                 (if (compiler-reg-call-gp-parallel? args types limit)
                   out
                   (compiler-live-set-union
@@ -3725,7 +3792,7 @@
               ;; ABI arg-register 0) but the parallel-move builder is base-0
               ;; only, so their arg vars must stay memory-sourced (the naive
               ;; base-correct path handles them; no register cycle can form).
-              [(IrInstrTailCallIndirect func args _)
+              [(CompilerIrInstr.TailCallIndirect func args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-value-vars-into
@@ -3737,13 +3804,13 @@
               ;; (base-correct) marshalling handles them and no register cycle forms.
               ;; (Follow-up: a base-aware + cap-aware parallel move could re-enable
               ;; register-homed indirect-call args.)
-              [(IrInstrCallIndirect _ func args _)
+              [(CompilerIrInstr.CallIndirect _ func args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-value-vars-into
                     (compiler-live-call-args-vars args)
                     func))]
-              [(IrInstrCallIndirectC _ func args _)
+              [(CompilerIrInstr.CallIndirectC _ func args _)
                 (compiler-live-set-union
                   out
                   (compiler-live-value-vars-into
@@ -3759,16 +3826,16 @@
   [types : CompilerRegVarTypeList]
   [limit : i64]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks-scalar
             (box-get rest)
             (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types limit)
             types
             limit)])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-call-arg-vars-blocks-scalar
         (compiler-ir-block-seq-to-list seq)
         set
@@ -3787,7 +3854,7 @@
   [types : CompilerRegVarTypeList]
   [limit : i64]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-ineligible-memory
         blocks
         (compiler-reg-call-arg-vars-blocks-scalar
@@ -3826,7 +3893,7 @@
   [types : CompilerRegVarTypeList]
   [intervals : CompilerRegIntervalList]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ params _ _ blocks)
+    [(CompilerIrFunction.Function _ params _ _ blocks)
       ;; #107 (case c): besides call-spanning floats, call-spanning VECTOR and
       ;; MASK vars must also stay ineligible -- their register classes
       ;; (%ymm/%zmm, %k) are caller-saved-only with no SIMD save/restore rewrite,
@@ -3839,7 +3906,7 @@
       ;; vectorised leaf loops (the only shape the auto-vectorizer emits), so real
       ;; AVX codegen is unchanged.
       (match (compiler-reg-function-vector-mask-defs func)
-        [(CompilerLiveUseDef vector-set mask-set)
+        [(CompilerLiveUseDef.Def vector-set mask-set)
           (let
             [call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
             (compiler-reg-mark-spanning-in-set
@@ -3869,9 +3936,9 @@
   [left : CompilerRegInterval]
   [right : CompilerRegInterval]) : bool
   (match left
-    [(CompilerRegInterval left-var left-start left-end)
+    [(CompilerRegInterval.Interval left-var left-start left-end)
       (match right
-        [(CompilerRegInterval right-var right-start right-end)
+        [(CompilerRegInterval.Interval right-var right-start right-end)
           (cond
             [(< left-start right-start) true]
             [(> left-start right-start) false]
@@ -3883,9 +3950,9 @@
   [candidates : CompilerRegIntervalList]
   [interval : CompilerRegInterval]) : CompilerRegIntervalList
   (match candidates
-    [(CompilerRegIntervalNil)
-      (compiler-reg-interval-cons interval CompilerRegIntervalNil)]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil)
+      (compiler-reg-interval-cons interval CompilerRegIntervalList.Nil)]
+    [(CompilerRegIntervalList.Cons head rest)
       (if (compiler-reg-interval-before? interval head)
         (compiler-reg-interval-cons interval candidates)
         (compiler-reg-interval-cons
@@ -3898,10 +3965,10 @@
   [ineligible : CompilerLiveI64Set]
   [want-float : bool]) : CompilerRegIntervalList
   (match intervals
-    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) CompilerRegIntervalList.Nil]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var _ _)
+        [(CompilerRegInterval.Interval var _ _)
           (let
             [tail : CompilerRegIntervalList
               (compiler-reg-candidates
@@ -3912,13 +3979,13 @@
             (if (compiler-live-set-contains? ineligible var)
               tail
               (match (compiler-reg-var-types-lookup types var)
-                [(CompilerRegSomeType ty)
+                [(CompilerRegMaybeType.Some ty)
                   (if (if want-float
                     (compiler-reg-float-type? ty)
                     (not (compiler-reg-float-type? ty)))
                     (compiler-reg-candidate-insert tail interval)
                     tail)]
-                [(CompilerRegNoType) tail])))])]))
+                [(CompilerRegMaybeType.No) tail])))])]))
 
 (define (compiler-reg-interval-list-more-than?
   [intervals : CompilerRegIntervalList]
@@ -3926,30 +3993,31 @@
   (if (< limit 0)
     true
     (match intervals
-      [(CompilerRegIntervalNil) false]
-      [(CompilerRegIntervalCons _ rest)
+      [(CompilerRegIntervalList.Nil) false]
+      [(CompilerRegIntervalList.Cons _ rest)
         (compiler-reg-interval-list-more-than? (box-get rest) (- limit 1))])))
 
 (define (compiler-reg-vector-defs-instr
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.LaneId dst _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.Splat dst _ _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (compiler-live-set-insert set dst)])]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
           (compiler-live-set-insert set dst)])]
-    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
+      (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ elem-ty)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ elem-ty)
           (match elem-ty
-            [(AstTyBool) set]
+            [(AstType.Bool) set]
             [_ (compiler-live-set-insert set dst)])])]
     [_ set]))
 
@@ -3957,19 +4025,19 @@
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+        [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
           (compiler-live-set-insert set dst)])]
-    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.MaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ elem-ty)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ elem-ty)
           (match elem-ty
-            [(AstTyBool) (compiler-live-set-insert set dst)]
+            [(AstType.Bool) (compiler-live-set-insert set dst)]
             [_ set])])]
-    [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
 (define (compiler-reg-vector-mask-defs-instr-seq
@@ -3987,36 +4055,32 @@
         (begin
           (set!
             out-vector
-            (compiler-reg-vector-defs-instr
-              (array.array-ref slots index)
-              out-vector))
+            (compiler-reg-vector-defs-instr (array-ref slots index) out-vector))
           (set!
             out-mask
-            (compiler-reg-mask-defs-instr
-              (array.array-ref slots index)
-              out-mask))
+            (compiler-reg-mask-defs-instr (array-ref slots index) out-mask))
           (set! index (+ index 1))))
-      (CompilerLiveUseDef out-vector out-mask))))
+      (CompilerLiveUseDef.Def out-vector out-mask))))
 
 (define (compiler-reg-vector-mask-defs-blocks
   [blocks : CompilerIrBlockList]
   [vector-set : CompilerLiveI64Set]
   [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
   (match blocks
-    [(IrBlockNil) (CompilerLiveUseDef vector-set mask-set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerLiveUseDef.Def vector-set mask-set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-vector-mask-defs-instr-seq
             instrs
             vector-set
             mask-set)
-            [(CompilerLiveUseDef next-vector next-mask)
+            [(CompilerLiveUseDef.Def next-vector next-mask)
               (compiler-reg-vector-mask-defs-blocks
                 (box-get rest)
                 next-vector
                 next-mask)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-vector-mask-defs-blocks
         (compiler-ir-block-seq-to-list seq)
         vector-set
@@ -4024,7 +4088,7 @@
 
 (define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-vector-mask-defs-blocks
         blocks
         (compiler-live-set-empty)
@@ -4035,10 +4099,10 @@
   [vars : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]) : CompilerRegIntervalList
   (match intervals
-    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) CompilerRegIntervalList.Nil]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var _ _)
+        [(CompilerRegInterval.Interval var _ _)
           (let
             [tail : CompilerRegIntervalList
               (compiler-reg-special-candidates (box-get rest) vars blocked)]
@@ -4050,19 +4114,19 @@
 
 (define (compiler-reg-active-count [active : CompilerRegActiveList]) : i64
   (match active
-    [(CompilerRegActiveNil) 0]
-    [(CompilerRegActiveCons _ rest)
+    [(CompilerRegActiveList.Nil) 0]
+    [(CompilerRegActiveList.Cons _ rest)
       (+ 1 (compiler-reg-active-count (box-get rest)))]))
 
 (define (compiler-reg-active-contains-register?
   [active : CompilerRegActiveList]
   [reg : String]) : bool
   (match active
-    [(CompilerRegActiveNil) false]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) false]
+    [(CompilerRegActiveList.Cons item rest)
       (match item
-        [(CompilerRegActive _ _ active-reg)
-          (if (string.string-eq reg active-reg)
+        [(CompilerRegActive.Active _ _ active-reg)
+          (if (string.eq reg active-reg)
             true
             (compiler-reg-active-contains-register? (box-get rest) reg))])]))
 
@@ -4071,13 +4135,11 @@
   [reg : String]
   [except-var : i64]) : bool
   (match active
-    [(CompilerRegActiveNil) false]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) false]
+    [(CompilerRegActiveList.Cons item rest)
       (match item
-        [(CompilerRegActive active-var _ active-reg)
-          (if (and
-            (string.string-eq reg active-reg)
-            (not (= active-var except-var)))
+        [(CompilerRegActive.Active active-var _ active-reg)
+          (if (and (string.eq reg active-reg) (not (= active-var except-var)))
             true
             (compiler-reg-active-register-conflicts-except?
               (box-get rest)
@@ -4088,9 +4150,9 @@
   [left : CompilerRegActive]
   [right : CompilerRegActive]) : bool
   (match left
-    [(CompilerRegActive left-var left-end _)
+    [(CompilerRegActive.Active left-var left-end _)
       (match right
-        [(CompilerRegActive right-var right-end _)
+        [(CompilerRegActive.Active right-var right-end _)
           (if (< left-end right-end)
             true
             (if (> left-end right-end)
@@ -4101,9 +4163,9 @@
   [active : CompilerRegActiveList]
   [item : CompilerRegActive]) : CompilerRegActiveList
   (match active
-    [(CompilerRegActiveNil)
-      (compiler-reg-active-cons item CompilerRegActiveNil)]
-    [(CompilerRegActiveCons head rest)
+    [(CompilerRegActiveList.Nil)
+      (compiler-reg-active-cons item CompilerRegActiveList.Nil)]
+    [(CompilerRegActiveList.Cons head rest)
       (if (compiler-reg-active-before? item head)
         (compiler-reg-active-cons item active)
         (compiler-reg-active-cons
@@ -4114,10 +4176,10 @@
   [active : CompilerRegActiveList]
   [start : i64]) : CompilerRegActiveList
   (match active
-    [(CompilerRegActiveNil) CompilerRegActiveNil]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) CompilerRegActiveList.Nil]
+    [(CompilerRegActiveList.Cons item rest)
       (match item
-        [(CompilerRegActive _ end _)
+        [(CompilerRegActive.Active _ end _)
           (if (<= end start)
             (compiler-reg-expire-active (box-get rest) start)
             (compiler-reg-active-insert
@@ -4128,8 +4190,8 @@
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]) : String
   (match regs
-    [(CompilerRegStringNil) "%r12"]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) "%r12"]
+    [(CompilerRegStringList.Cons reg rest)
       (if (compiler-reg-active-contains-register? active reg)
         (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
@@ -4152,11 +4214,11 @@
   [var : i64]
   [hole-aware-vars : CompilerLiveI64Set]) : bool
   (match active
-    [(CompilerRegActiveNil) false]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) false]
+    [(CompilerRegActiveList.Cons item rest)
       (match item
-        [(CompilerRegActive aid _ areg)
-          (if (string.string-eq reg areg)
+        [(CompilerRegActive.Active aid _ areg)
+          (if (string.eq reg areg)
             (if (not
               (compiler-reg-vars-interfere-segmented-index? index var aid))
               (compiler-reg-active-register-conflicts?
@@ -4174,7 +4236,7 @@
               hole-aware-vars))])]))
 
 ;; #3489 (PR4): first register not in conflict with `var` over its live segments
-;; (CompilerRegNoString if every register is occupied by an interfering value).
+;; (CompilerRegMaybeString.No if every register is occupied by an interfering value).
 (define (compiler-reg-first-free-register-holes
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
@@ -4182,8 +4244,8 @@
   [var : i64]
   [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegMaybeString
   (match regs
-    [(CompilerRegStringNil) (CompilerRegNoString)]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) (CompilerRegMaybeString.No)]
+    [(CompilerRegStringList.Cons reg rest)
       (if (compiler-reg-active-register-conflicts?
         active
         reg
@@ -4196,18 +4258,18 @@
           index
           var
           hole-aware-vars)
-        (CompilerRegSomeString reg))]))
+        (CompilerRegMaybeString.Some reg))]))
 
 (define (compiler-reg-active-max [active : CompilerRegActiveList]) : CompilerRegMaybeActive
   (match active
-    [(CompilerRegActiveNil) CompilerRegNoActive]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) CompilerRegMaybeActive.No]
+    [(CompilerRegActiveList.Cons item rest)
       (match (compiler-reg-active-max (box-get rest))
-        [(CompilerRegNoActive) (CompilerRegSomeActive item)]
-        [(CompilerRegSomeActive other)
+        [(CompilerRegMaybeActive.No) (CompilerRegMaybeActive.Some item)]
+        [(CompilerRegMaybeActive.Some other)
           (if (compiler-reg-active-before? item other)
-            (CompilerRegSomeActive other)
-            (CompilerRegSomeActive item))])]))
+            (CompilerRegMaybeActive.Some other)
+            (CompilerRegMaybeActive.Some item))])]))
 
 ;; #2386: furthest-ending active var that is NOT a 2-word register-group var.
 ;; Spilling is only ever applied to scalar (single-register) vars; a group var
@@ -4219,30 +4281,30 @@
   [active : CompilerRegActiveList]
   [group-vars : CompilerLiveI64Set]) : CompilerRegMaybeActive
   (match active
-    [(CompilerRegActiveNil) CompilerRegNoActive]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) CompilerRegMaybeActive.No]
+    [(CompilerRegActiveList.Cons item rest)
       (let
         [rest-max : CompilerRegMaybeActive
           (compiler-reg-active-max-non-group (box-get rest) group-vars)]
         (match item
-          [(CompilerRegActive id _ _)
+          [(CompilerRegActive.Active id _ _)
             (if (compiler-live-set-contains? group-vars id)
               rest-max
               (match rest-max
-                [(CompilerRegNoActive) (CompilerRegSomeActive item)]
-                [(CompilerRegSomeActive other)
+                [(CompilerRegMaybeActive.No) (CompilerRegMaybeActive.Some item)]
+                [(CompilerRegMaybeActive.Some other)
                   (if (compiler-reg-active-before? item other)
-                    (CompilerRegSomeActive other)
-                    (CompilerRegSomeActive item))]))]))]))
+                    (CompilerRegMaybeActive.Some other)
+                    (CompilerRegMaybeActive.Some item))]))]))]))
 
 (define (compiler-reg-active-remove-var
   [active : CompilerRegActiveList]
   [var : i64]) : CompilerRegActiveList
   (match active
-    [(CompilerRegActiveNil) CompilerRegActiveNil]
-    [(CompilerRegActiveCons item rest)
+    [(CompilerRegActiveList.Nil) CompilerRegActiveList.Nil]
+    [(CompilerRegActiveList.Cons item rest)
       (match item
-        [(CompilerRegActive id _ _)
+        [(CompilerRegActive.Active id _ _)
           (if (= id var)
             (compiler-reg-active-remove-var (box-get rest) var)
             (compiler-reg-active-cons
@@ -4254,20 +4316,20 @@
   [var : i64]
   [location : CompilerRegLocation]) : CompilerRegAssignmentList
   (match assignments
-    [(CompilerRegAssignmentNil)
+    [(CompilerRegAssignmentList.Nil)
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment var location)
-        CompilerRegAssignmentNil)]
-    [(CompilerRegAssignmentCons item rest)
+        (CompilerRegAssignment.Assignment var location)
+        CompilerRegAssignmentList.Nil)]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment id _)
+        [(CompilerRegAssignment.Assignment id _)
           (if (= id var)
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment var location)
+              (CompilerRegAssignment.Assignment var location)
               (box-get rest))
             (if (> id var)
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment var location)
+                (CompilerRegAssignment.Assignment var location)
                 assignments)
               (compiler-reg-assignment-cons
                 item
@@ -4277,60 +4339,59 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerRegMaybeLocation
   (match assignments
-    [(CompilerRegAssignmentNil) CompilerRegNoLocation]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) CompilerRegMaybeLocation.No]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment id location)
+        [(CompilerRegAssignment.Assignment id location)
           (if (= id var)
-            (CompilerRegSomeLocation location)
+            (CompilerRegMaybeLocation.Some location)
             (if (> id var)
-              CompilerRegNoLocation
+              CompilerRegMaybeLocation.No
               (compiler-reg-assignment-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-location-eq?
   [left : CompilerRegLocation]
   [right : CompilerRegLocation]) : bool
   (match left
-    [(CompilerRegRegister left-reg)
+    [(CompilerRegLocation.Register left-reg)
       (match right
-        [(CompilerRegRegister right-reg) (string.string-eq left-reg right-reg)]
+        [(CompilerRegLocation.Register right-reg)
+          (string.eq left-reg right-reg)]
         [_ false])]
-    [(CompilerRegRegisterPair left-a left-b)
+    [(CompilerRegLocation.RegisterPair left-a left-b)
       (match right
-        [(CompilerRegRegisterPair right-a right-b)
-          (and
-            (string.string-eq left-a right-a)
-            (string.string-eq left-b right-b))]
+        [(CompilerRegLocation.RegisterPair right-a right-b)
+          (and (string.eq left-a right-a) (string.eq left-b right-b))]
         [_ false])]
-    [(CompilerRegSpill left-offset)
+    [(CompilerRegLocation.Spill left-offset)
       (match right
-        [(CompilerRegSpill right-offset) (= left-offset right-offset)]
+        [(CompilerRegLocation.Spill right-offset) (= left-offset right-offset)]
         [_ false])]
     ;; Conservative: distinct rematerialised values never alias, and treating two
     ;; equal ones as different only forgoes a copy elision (never unsound).
-    [(CompilerRegRemat _) false]))
+    [(CompilerRegLocation.Remat _) false]))
 
 (define (compiler-reg-interval-lookup
   [intervals : CompilerRegIntervalList]
   [var : i64]) : CompilerRegMaybeInterval
   (match intervals
-    [(CompilerRegIntervalNil) CompilerRegNoInterval]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) CompilerRegMaybeInterval.No]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval id _ _)
+        [(CompilerRegInterval.Interval id _ _)
           (if (= id var)
-            (CompilerRegSomeInterval interval)
+            (CompilerRegMaybeInterval.Some interval)
             (if (> id var)
-              CompilerRegNoInterval
+              CompilerRegMaybeInterval.No
               (compiler-reg-interval-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-interval-overlap?
   [left : CompilerRegInterval]
   [right : CompilerRegInterval]) : bool
   (match left
-    [(CompilerRegInterval _ left-start left-end)
+    [(CompilerRegInterval.Interval _ left-start left-end)
       (match right
-        [(CompilerRegInterval _ right-start right-end)
+        [(CompilerRegInterval.Interval _ right-start right-end)
           ;; Half-open boundary touch (X.end == Y.start): X's last read happens
           ;; before Y's same-point def writes, so the pair may share a register
           ;; -- EXCEPT when the touch point is 0 (M-A RC1). A value live at
@@ -4349,8 +4410,8 @@
   [segments : CompilerRegIntervalList]
   [interval : CompilerRegInterval]) : bool
   (match segments
-    [(CompilerRegIntervalNil) false]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) false]
+    [(CompilerRegIntervalList.Cons head rest)
       (if (compiler-reg-interval-overlap? head interval)
         true
         (compiler-reg-interval-list-overlaps-one? (box-get rest) interval))]))
@@ -4359,8 +4420,8 @@
   [left : CompilerRegIntervalList]
   [right : CompilerRegIntervalList]) : bool
   (match left
-    [(CompilerRegIntervalNil) false]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) false]
+    [(CompilerRegIntervalList.Cons head rest)
       (if (compiler-reg-interval-list-overlaps-one? right head)
         true
         (compiler-reg-interval-list-overlaps? (box-get rest) right))]))
@@ -4371,11 +4432,11 @@
   [start : i64]
   [end : i64]) : bool
   (match (compiler-reg-interval-lookup intervals var)
-    [(CompilerRegSomeInterval interval)
+    [(CompilerRegMaybeInterval.Some interval)
       (match interval
-        [(CompilerRegInterval _ got-start got-end)
+        [(CompilerRegInterval.Interval _ got-start got-end)
           (and (= got-start start) (= got-end end))])]
-    [(CompilerRegNoInterval) false]))
+    [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-vars-interfere?
   [intervals : CompilerRegIntervalList]
@@ -4384,12 +4445,12 @@
   (if (= left right)
     true
     (match (compiler-reg-interval-lookup intervals left)
-      [(CompilerRegSomeInterval left-interval)
+      [(CompilerRegMaybeInterval.Some left-interval)
         (match (compiler-reg-interval-lookup intervals right)
-          [(CompilerRegSomeInterval right-interval)
+          [(CompilerRegMaybeInterval.Some right-interval)
             (compiler-reg-interval-overlap? left-interval right-interval)]
-          [(CompilerRegNoInterval) true])]
-      [(CompilerRegNoInterval) true])))
+          [(CompilerRegMaybeInterval.No) true])]
+      [(CompilerRegMaybeInterval.No) true])))
 
 (define (compiler-reg-vars-interfere-index?
   [intervals : CompilerRegIntervalIndex]
@@ -4398,12 +4459,12 @@
   (if (= left right)
     true
     (match (compiler-reg-interval-index-lookup intervals left)
-      [(CompilerRegSomeInterval left-interval)
+      [(CompilerRegMaybeInterval.Some left-interval)
         (match (compiler-reg-interval-index-lookup intervals right)
-          [(CompilerRegSomeInterval right-interval)
+          [(CompilerRegMaybeInterval.Some right-interval)
             (compiler-reg-interval-overlap? left-interval right-interval)]
-          [(CompilerRegNoInterval) true])]
-      [(CompilerRegNoInterval) true])))
+          [(CompilerRegMaybeInterval.No) true])]
+      [(CompilerRegMaybeInterval.No) true])))
 
 ;; #3486 infrastructure: answer interference from per-var live segments when both
 ;; sides have segment data, with the old coarse interval as the conservative
@@ -4419,13 +4480,13 @@
       [segments : (Array CompilerRegIntervalList)
         (struct-get intervals segments)]
       [left-segments : CompilerRegIntervalList
-        (if (or (< left 0) (>= left (array.array-length segments)))
-          CompilerRegIntervalNil
-          (array.array-ref segments left))]
+        (if (or (< left 0) (>= left (array-length segments)))
+          CompilerRegIntervalList.Nil
+          (array-ref segments left))]
       [right-segments : CompilerRegIntervalList
-        (if (or (< right 0) (>= right (array.array-length segments)))
-          CompilerRegIntervalNil
-          (array.array-ref segments right))]
+        (if (or (< right 0) (>= right (array-length segments)))
+          CompilerRegIntervalList.Nil
+          (array-ref segments right))]
       (if (and
         (not (compiler-reg-interval-list-empty? left-segments))
         (not (compiler-reg-interval-list-empty? right-segments)))
@@ -4447,17 +4508,17 @@
   [left : i64]
   [right : i64]) : bool
   (match (compiler-reg-var-types-lookup types left)
-    [(CompilerRegSomeType left-ty)
+    [(CompilerRegMaybeType.Some left-ty)
       (match (compiler-reg-var-types-lookup types right)
-        [(CompilerRegSomeType right-ty)
+        [(CompilerRegMaybeType.Some right-ty)
           (and
             (compiler-reg-register-eligible-type? left-ty)
             (compiler-reg-register-eligible-type? right-ty)
             (if (compiler-reg-float-type? left-ty)
               (compiler-reg-float-type? right-ty)
               (not (compiler-reg-float-type? right-ty))))]
-        [(CompilerRegNoType) false])]
-    [(CompilerRegNoType) false]))
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerRegMaybeType.No) false]))
 
 ;; M-C2: the overlap waiver admits every REGISTER-ELIGIBLE non-group value,
 ;; not just CPU scalars. The scalar-type? restriction predated handle register
@@ -4474,17 +4535,17 @@
   [left : i64]
   [right : i64]) : bool
   (match (compiler-reg-var-types-lookup types left)
-    [(CompilerRegSomeType left-ty)
+    [(CompilerRegMaybeType.Some left-ty)
       (match (compiler-reg-var-types-lookup types right)
-        [(CompilerRegSomeType right-ty)
+        [(CompilerRegMaybeType.Some right-ty)
           (and
             (compiler-reg-register-eligible-type? left-ty)
             (compiler-reg-register-eligible-type? right-ty)
             (if (compiler-reg-float-type? left-ty)
               (compiler-reg-float-type? right-ty)
               (not (compiler-reg-float-type? right-ty))))]
-        [(CompilerRegNoType) false])]
-    [(CompilerRegNoType) false]))
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerRegMaybeType.No) false]))
 
 (define (compiler-reg-location-conflicts?
   [assignments : CompilerRegAssignmentList]
@@ -4493,10 +4554,10 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) false]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment assigned-var assigned-location)
+        [(CompilerRegAssignment.Assignment assigned-var assigned-location)
           (if (or (= assigned-var var) (= assigned-var ignore-var))
             (compiler-reg-location-conflicts?
               (box-get rest)
@@ -4526,8 +4587,8 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array.array-length present)) false]
-      [(= (array.array-ref present index) 0)
+      [(>= index (array-length present)) false]
+      [(= (array-ref present index) 0)
         (compiler-reg-assignment-table-location-conflicts-from?
           assignments
           intervals
@@ -4544,7 +4605,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array.array-ref items index) location)
+          (compiler-reg-location-eq? (array-ref items index) location)
           (compiler-reg-vars-interfere-index? intervals var index))
         true]
       [else
@@ -4581,8 +4642,8 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array.array-length present)) false]
-      [(= (array.array-ref present index) 0)
+      [(>= index (array-length present)) false]
+      [(= (array-ref present index) 0)
         (compiler-reg-assignment-table-location-conflicts-segmented-from?
           assignments
           intervals
@@ -4599,7 +4660,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array.array-ref items index) location)
+          (compiler-reg-location-eq? (array-ref items index) location)
           (compiler-reg-vars-interfere-segmented-index? intervals var index))
         true]
       [else
@@ -4635,18 +4696,18 @@
     (= var other)
     (not (compiler-reg-compatible-types? types var other))
     (compiler-reg-vars-interfere-index? intervals var other))
-    CompilerRegNoLocation
+    CompilerRegMaybeLocation.No
     (match (compiler-reg-assignment-table-lookup assignments other)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (if (compiler-reg-assignment-table-location-conflicts?
           assignments
           intervals
           var
           other
           location)
-          CompilerRegNoLocation
-          (CompilerRegSomeLocation location))]
-      [(CompilerRegNoLocation) CompilerRegNoLocation])))
+          CompilerRegMaybeLocation.No
+          (CompilerRegMaybeLocation.Some location))]
+      [(CompilerRegMaybeLocation.No) CompilerRegMaybeLocation.No])))
 
 (define (compiler-reg-coalesce-location-legacy
   [moves : CompilerRegMoveList]
@@ -4655,10 +4716,10 @@
   [types : CompilerRegVarTypes]
   [var : i64]) : CompilerRegMaybeLocation
   (match moves
-    [(CompilerRegMoveNil) CompilerRegNoLocation]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) CompilerRegMaybeLocation.No]
+    [(CompilerRegMoveList.Cons move rest)
       (match move
-        [(CompilerRegMove src dst _)
+        [(CompilerRegMove.Move src dst _)
           (if (= dst var)
             (match (compiler-reg-coalesce-location-legacy-from-var
               assignments
@@ -4666,9 +4727,9 @@
               types
               var
               src)
-              [(CompilerRegSomeLocation location)
-                (CompilerRegSomeLocation location)]
-              [(CompilerRegNoLocation)
+              [(CompilerRegMaybeLocation.Some location)
+                (CompilerRegMaybeLocation.Some location)]
+              [(CompilerRegMaybeLocation.No)
                 (compiler-reg-coalesce-location-legacy
                   (box-get rest)
                   assignments
@@ -4682,9 +4743,9 @@
                 types
                 var
                 dst)
-                [(CompilerRegSomeLocation location)
-                  (CompilerRegSomeLocation location)]
-                [(CompilerRegNoLocation)
+                [(CompilerRegMaybeLocation.Some location)
+                  (CompilerRegMaybeLocation.Some location)]
+                [(CompilerRegMaybeLocation.No)
                   (compiler-reg-coalesce-location-legacy
                     (box-get rest)
                     assignments
@@ -4709,7 +4770,7 @@
 ;; into one register is sound regardless of overlap -- LLVM's
 ;; valuesIdentical/CR_Erase case (RegisterCoalescer.cpp:2799/3008).
 ;;
-;; SOUNDNESS: only DIRECT `IrInstrMov dst (IrValueVar src)` copies with
+;; SOUNDNESS: only DIRECT `CompilerIrInstr.Mov dst (CompilerIrValue.Var src)` copies with
 ;; def-count[dst]==def-count[src]==1 enter the same-value relation. Phi inputs
 ;; (path-dependent) and multi-def vars -- the loop-carried set!/back-edge values
 ;; that are the #3489 fibonacci/four_acc/bce_sum miscompile class -- are EXCLUDED
@@ -4723,52 +4784,58 @@
 ;; site would understate a multi-def var and is the one unsound failure mode).
 (define (compiler-reg-instr-def-var [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrMov dst _ _) dst]
-    [(IrInstrAlloc dst _) dst]
-    [(IrInstrAddrOf dst _) dst]
-    [(IrInstrGep dst _ _ _) dst]
-    [(IrInstrLoad dst _ _) dst]
-    [(IrInstrCast dst _ _ _) dst]
-    [(IrInstrBitcast dst _ _ _) dst]
-    [(IrInstrBinOp dst _ _ _ _) dst]
-    [(IrInstrUnOp dst _ _ _) dst]
-    [(IrInstrLaneId dst _ _) dst]
-    [(IrInstrSplat dst _ _ _) dst]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Alloc dst _) dst]
+    [(CompilerIrInstr.AddrOf dst _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.LaneId dst _ _) dst]
+    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) dst])]
-    [(IrInstrVectorReduce dst _ _ _ _) dst]
-    [(IrInstrVectorCompare payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) dst])]
-    [(IrInstrMaskBinOp dst _ _ _ _) dst]
-    [(IrInstrMaskNot dst _ _) dst]
-    [(IrInstrMaskReduce dst _ _ _) dst]
-    [(IrInstrSelect payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.MaskNot dst _ _) dst]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) dst])]
-    [(IrInstrVectorLoad dst _ _ _ _) dst]
-    [(IrInstrPredicatedLoad payload-box)
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) dst])]
-    [(IrInstrTailMask dst _ _ _) dst]
-    [(IrInstrEntryArgc dst) dst]
-    [(IrInstrEntryArgv dst) dst]
-    [(IrInstrEntryEnvp dst) dst]
-    [(IrInstrCpuId dst _ _ _) dst]
-    [(IrInstrXgetbv dst _) dst]
-    [(IrInstrSyscall dst _) dst]
-    [(IrInstrCall dst _ _ _) dst]
-    [(IrInstrCallIndirect dst _ _ _) dst]
-    [(IrInstrCallIndirectC dst _ _ _) dst]
-    [(IrInstrPhi dst _ _) dst]
-    [(IrInstrPack dst _ _) dst]
-    [(IrInstrWord dst _ _ _) dst]
+        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(CompilerIrInstr.EntryArgc dst) dst]
+    [(CompilerIrInstr.EntryArgv dst) dst]
+    [(CompilerIrInstr.EntryEnvp dst) dst]
+    [(CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(CompilerIrInstr.Xgetbv dst _) dst]
+    [(CompilerIrInstr.Syscall dst _) dst]
+    [(CompilerIrInstr.Call dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (- 0 1)]
+            [(IrSpmdCallResultValue dst _ _) dst])])]
+    [(CompilerIrInstr.Phi dst _ _) dst]
+    [(CompilerIrInstr.Pack dst _ _) dst]
+    [(CompilerIrInstr.Word dst _ _ _) dst]
     [_ (- 0 1)]))
 
 (define (compiler-reg-count-def! [counts : (Array i64)] [var : i64]) : unit
-  (if (and (>= var 0) (< var (array.array-length counts)))
-    (array.array-set! counts var (+ (array.array-ref counts var) 1))
+  (if (and (>= var 0) (< var (array-length counts)))
+    (array-set! counts var (+ (array-ref counts var) 1))
     unit))
 
 (define (compiler-reg-count-seq-defs!
@@ -4783,7 +4850,7 @@
         (begin
           (compiler-reg-count-def!
             counts
-            (compiler-reg-instr-def-var (array.array-ref slots index)))
+            (compiler-reg-instr-def-var (array-ref slots index)))
           (set! index (+ index 1))))
       unit)))
 
@@ -4791,21 +4858,21 @@
   [blocks : CompilerIrBlockList]
   [counts : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-count-seq-defs! instrs counts)
             (compiler-reg-count-block-defs! (box-get rest) counts))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-count-block-defs!
         (compiler-ir-block-seq-to-list seq)
         counts)]))
 
 (define (compiler-reg-mark-phi-def! [phi-defs : (Array i64)] [var : i64]) : unit
-  (if (and (>= var 0) (< var (array.array-length phi-defs)))
-    (array.array-set! phi-defs var 1)
+  (if (and (>= var 0) (< var (array-length phi-defs)))
+    (array-set! phi-defs var 1)
     unit))
 
 (define (compiler-reg-mark-phi-defs-seq!
@@ -4818,8 +4885,9 @@
     (begin
       (while (< index count)
         (begin
-          (match (array.array-ref slots index)
-            [(IrInstrPhi dst _ _) (compiler-reg-mark-phi-def! phi-defs dst)]
+          (match (array-ref slots index)
+            [(CompilerIrInstr.Phi dst _ _)
+              (compiler-reg-mark-phi-def! phi-defs dst)]
             [_ unit])
           (set! index (+ index 1))))
       unit)))
@@ -4828,14 +4896,14 @@
   [blocks : CompilerIrBlockList]
   [phi-defs : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-mark-phi-defs-seq! instrs phi-defs)
             (compiler-reg-mark-phi-defs-blocks! (box-get rest) phi-defs))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-mark-phi-defs-blocks!
         (compiler-ir-block-seq-to-list seq)
         phi-defs)]))
@@ -4844,10 +4912,10 @@
   [params : CompilerIrParamList]
   [counts : (Array i64)]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ _ id)
+        [(CompilerIrParam.Param _ _ id)
           (begin
             (compiler-reg-count-def! counts id)
             (compiler-reg-param-count-defs! (box-get rest) counts))])]))
@@ -4855,7 +4923,7 @@
 (define (compiler-reg-function-def-counts [func : CompilerIrFunction]) : (Array
     i64)
   (match func
-    [(IrFunction _ params _ vars blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (let
         [counts : (Array i64) (array.make-array i64 vars)]
         (begin
@@ -4866,16 +4934,16 @@
 
 ;; Same-value union-find, path-compressed; the class root is its min member id.
 (define (compiler-reg-sv-find [parents : (Array i64)] [x : i64]) : i64
-  (if (or (< x 0) (>= x (array.array-length parents)))
+  (if (or (< x 0) (>= x (array-length parents)))
     (- 0 1)
     (let
-      [p : i64 (array.array-ref parents x)]
+      [p : i64 (array-ref parents x)]
       (if (= p x)
         x
         (let
           [r : i64 (compiler-reg-sv-find parents p)]
           (begin
-            (array.array-set! parents x r)
+            (array-set! parents x r)
             r))))))
 
 (define (compiler-reg-sv-union! [parents : (Array i64)] [a : i64] [b : i64]) : unit
@@ -4885,14 +4953,11 @@
     (if (or (< ra 0) (< rb 0) (= ra rb))
       unit
       (if (< ra rb)
-        (array.array-set! parents rb ra)
-        (array.array-set! parents ra rb)))))
+        (array-set! parents rb ra)
+        (array-set! parents ra rb)))))
 
 (define (compiler-reg-sv-single-def? [counts : (Array i64)] [var : i64]) : bool
-  (and
-    (>= var 0)
-    (< var (array.array-length counts))
-    (= (array.array-ref counts var) 1)))
+  (and (>= var 0) (< var (array-length counts)) (= (array-ref counts var) 1)))
 
 (define (compiler-reg-sv-single-def-non-phi?
   [counts : (Array i64)]
@@ -4900,17 +4965,15 @@
   [var : i64]) : bool
   (and
     (compiler-reg-sv-single-def? counts var)
-    (or
-      (>= var (array.array-length phi-defs))
-      (= (array.array-ref phi-defs var) 0))))
+    (or (>= var (array-length phi-defs)) (= (array-ref phi-defs var) 0))))
 
 (define (compiler-reg-sv-eligible? [eligible : (Array i64)] [var : i64]) : bool
-  (if (= (array.array-length eligible) 0)
+  (if (= (array-length eligible) 0)
     true
     (and
       (>= var 0)
-      (< var (array.array-length eligible))
-      (= (array.array-ref eligible var) 1))))
+      (< var (array-length eligible))
+      (= (array-ref eligible var) 1))))
 
 (define (compiler-reg-sv-add-instr!
   [instr : CompilerIrInstr]
@@ -4919,9 +4982,9 @@
   [eligible : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar svar)
+        [(CompilerIrValue.Var svar)
           (if (and
             (compiler-reg-sv-single-def-non-phi? counts phi-defs dst)
             (compiler-reg-sv-single-def-non-phi? counts phi-defs svar)
@@ -4946,7 +5009,7 @@
       (while (< index count)
         (begin
           (compiler-reg-sv-add-instr!
-            (array.array-ref slots index)
+            (array-ref slots index)
             counts
             phi-defs
             eligible
@@ -4961,10 +5024,10 @@
   [eligible : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)
             (compiler-reg-sv-blocks!
@@ -4973,7 +5036,7 @@
               phi-defs
               eligible
               parents))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-sv-blocks!
         (compiler-ir-block-seq-to-list seq)
         counts
@@ -4985,7 +5048,7 @@
   [func : CompilerIrFunction]
   [eligible : (Array i64)]) : (Array i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (Array i64) (compiler-reg-function-def-counts func)]
         [phi-defs : (Array i64) (array.make-array i64 vars)]
@@ -4996,7 +5059,7 @@
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (while (< index vars)
             (begin
-              (array.array-set! parents index index)
+              (array-set! parents index index)
               (set! index (+ index 1))))
           (compiler-reg-sv-blocks! blocks counts phi-defs eligible parents)
           parents))]))
@@ -5013,20 +5076,20 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    [eligible : (Array i64) (array.make-array i64 (array.array-length starts))]
+    [eligible : (Array i64) (array.make-array i64 (array-length starts))]
     [var : i64 0]
     (begin
       (compiler-reg-fill-i64-array eligible 0)
-      (while (< var (array.array-length starts))
+      (while (< var (array-length starts))
         (begin
           (if (and
-            (>= (array.array-ref starts var) 0)
+            (>= (array-ref starts var) 0)
             (not
               (compiler-reg-call-set-in-range?
                 clobber-points
-                (array.array-ref starts var)
-                (array.array-ref ends var))))
-            (array.array-set! eligible var 1)
+                (array-ref starts var)
+                (array-ref ends var))))
+            (array-set! eligible var 1)
             unit)
           (set! var (+ var 1))))
       eligible)))
@@ -5101,15 +5164,15 @@
       (while (< index count)
         (begin
           (let
-            [v : i64 (compiler-reg-instr-def-var (array.array-ref slots index))]
-            (if (and (>= v 0) (< v (array.array-length cursor)))
+            [v : i64 (compiler-reg-instr-def-var (array-ref slots index))]
+            (if (and (>= v 0) (< v (array-length cursor)))
               (let
-                [slot : i64 (array.array-ref cursor v)]
+                [slot : i64 (array-ref cursor v)]
                 (begin
-                  (if (and (>= slot 0) (< slot (array.array-length pts)))
-                    (array.array-set! pts slot p)
+                  (if (and (>= slot 0) (< slot (array-length pts)))
+                    (array-set! pts slot p)
                     unit)
-                  (array.array-set! cursor v (+ slot 1))))
+                  (array-set! cursor v (+ slot 1))))
               unit))
           (set! p (+ p 2))
           (set! index (+ index 1))))
@@ -5121,16 +5184,16 @@
   [cursor : (Array i64)]
   [pts : (Array i64)]) : i64
   (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-sv-def-points-fill-blocks
             (box-get rest)
             (compiler-reg-sv-def-points-fill-seq instrs point cursor pts)
             cursor
             pts)])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-sv-def-points-fill-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -5141,10 +5204,10 @@
   [segs : CompilerRegIntervalList]
   [p : i64]) : bool
   (match segs
-    [(CompilerRegIntervalNil) false]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) false]
+    [(CompilerRegIntervalList.Cons head rest)
       (match head
-        [(CompilerRegInterval _ s e)
+        [(CompilerRegInterval.Interval _ s e)
           (if (and (<= s p) (<= p e))
             true
             (compiler-reg-sv-point-in-segments? (box-get rest) p))])]))
@@ -5162,16 +5225,16 @@
     [starts : (Array i64) (struct-get ctx starts)]
     [ends : (Array i64) (struct-get ctx ends)]
     [segs : CompilerRegIntervalList
-      (if (and (>= v 0) (< v (array.array-length segments)))
-        (array.array-ref segments v)
-        CompilerRegIntervalNil)]
+      (if (and (>= v 0) (< v (array-length segments)))
+        (array-ref segments v)
+        CompilerRegIntervalList.Nil)]
     (match segs
-      [(CompilerRegIntervalNil)
-        (if (and (>= v 0) (< v (array.array-length starts)))
+      [(CompilerRegIntervalList.Nil)
+        (if (and (>= v 0) (< v (array-length starts)))
           (and
-            (>= (array.array-ref starts v) 0)
-            (<= (array.array-ref starts v) p)
-            (<= p (array.array-ref ends v)))
+            (>= (array-ref starts v) 0)
+            (<= (array-ref starts v) p)
+            (<= p (array-ref ends v)))
           false)]
       [_ (compiler-reg-sv-point-in-segments? segs p)])))
 
@@ -5183,11 +5246,11 @@
   (let
     [def-off : (Array i64) (struct-get ctx def-off)]
     [def-pts : (Array i64) (struct-get ctx def-pts)]
-    (if (or (< m 0) (>= (+ m 1) (array.array-length def-off)))
+    (if (or (< m 0) (>= (+ m 1) (array-length def-off)))
       true
       (let
-        [i : i64 (array.array-ref def-off m)]
-        [stop : i64 (array.array-ref def-off (+ m 1))]
+        [i : i64 (array-ref def-off m)]
+        [stop : i64 (array-ref def-off (+ m 1))]
         [hit : bool false]
         (begin
           (while (< i stop)
@@ -5197,8 +5260,8 @@
                 (compiler-reg-sv-point-in-var-live?
                   ctx
                   v
-                  (if (and (>= i 0) (< i (array.array-length def-pts)))
-                    (array.array-ref def-pts i)
+                  (if (and (>= i 0) (< i (array-length def-pts)))
+                    (array-ref def-pts i)
                     (- 0 1))))
                 (set! hit true)
                 unit)
@@ -5215,7 +5278,7 @@
     [parents : (Array i64) (struct-get ctx parents)]
     [counts : (Array i64) (struct-get ctx counts)]
     [phi-defs : (Array i64) (struct-get ctx phi-defs)]
-    [n : i64 (array.array-length parents)]
+    [n : i64 (array-length parents)]
     [v : i64 0]
     [hit : bool false]
     (begin
@@ -5247,12 +5310,12 @@
       unit
       (let
         [ma : i64
-          (if (< ra (array.array-length class-multi))
-            (array.array-ref class-multi ra)
+          (if (< ra (array-length class-multi))
+            (array-ref class-multi ra)
             (- 0 1))]
         [mb : i64
-          (if (< rb (array.array-length class-multi))
-            (array.array-ref class-multi rb)
+          (if (< rb (array-length class-multi))
+            (array-ref class-multi rb)
             (- 0 1))]
         (if (and (>= ma 0) (>= mb 0))
           unit
@@ -5274,15 +5337,15 @@
                 (compiler-reg-sv-union! parents a b)
                 (let
                   [r : i64 (compiler-reg-sv-find parents a)]
-                  (if (and (>= r 0) (< r (array.array-length class-multi)))
-                    (array.array-set! class-multi r m)
+                  (if (and (>= r 0) (< r (array-length class-multi)))
+                    (array-set! class-multi r m)
                     unit))))))))))
 
 (define (compiler-reg-sv-int-ok? [int-ok : (Array i64)] [v : i64]) : bool
   (and
     (>= v 0)
-    (< v (array.array-length int-ok))
-    (= (array.array-ref int-ok v) 1)))
+    (< v (array-length int-ok))
+    (= (array-ref int-ok v) 1)))
 
 ;; One copy pair (Mov, or width-64 int Cast). The single-def-src path mirrors
 ;; the original relation (no type restriction); the mutable-src path is the
@@ -5313,13 +5376,13 @@
   [instr : CompilerIrInstr]
   [ctx : CompilerRegSvMultiCtx]) : unit
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar svar) (compiler-reg-sv-multi-pair! ctx svar dst)]
+        [(CompilerIrValue.Var svar) (compiler-reg-sv-multi-pair! ctx svar dst)]
         [_ unit])]
-    [(IrInstrCast dst src from-ty to-ty)
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (match src
-        [(IrValueVar svar)
+        [(CompilerIrValue.Var svar)
           (if (compiler-reg-cast-copy-64? from-ty to-ty)
             (compiler-reg-sv-multi-pair! ctx svar dst)
             unit)]
@@ -5336,7 +5399,7 @@
     (begin
       (while (< index count)
         (begin
-          (compiler-reg-sv-multi-add-instr! (array.array-ref slots index) ctx)
+          (compiler-reg-sv-multi-add-instr! (array-ref slots index) ctx)
           (set! index (+ index 1))))
       unit)))
 
@@ -5344,13 +5407,13 @@
   [blocks : CompilerIrBlockList]
   [ctx : CompilerRegSvMultiCtx]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs) (compiler-reg-sv-multi-seq! instrs ctx)])
+          [(CompilerIrBlock.Block _ instrs) (compiler-reg-sv-multi-seq! instrs ctx)])
         (compiler-reg-sv-multi-blocks! (box-get rest) ctx))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-sv-multi-blocks! (compiler-ir-block-seq-to-list seq) ctx)]))
 
 ;; Build the extended same-value relation (scalar-opt2 plan path only).
@@ -5360,7 +5423,7 @@
   [type-info : CompilerRegVarTypes]
   [interval-index : CompilerRegIntervalIndex]) : (Array i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (Array i64) (compiler-reg-function-def-counts func)]
         [phi-defs : (Array i64) (array.make-array i64 vars)]
@@ -5375,19 +5438,19 @@
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (compiler-reg-fill-i64-array bucket 0)
           (compiler-reg-count-block-defs! blocks bucket)
-          (array.array-set! def-off 0 0)
+          (array-set! def-off 0 0)
           (while (< index vars)
             (begin
-              (array.array-set!
+              (array-set!
                 def-off
                 (+ index 1)
                 (+
-                  (array.array-ref def-off index)
-                  (array.array-ref bucket index)))
+                  (array-ref def-off index)
+                  (array-ref bucket index)))
               (set! index (+ index 1))))
           (set! index 0)
           (let
-            [total : i64 (array.array-ref def-off vars)]
+            [total : i64 (array-ref def-off vars)]
             [def-pts : (Array i64)
               (array.make-array
                 i64
@@ -5398,12 +5461,12 @@
             (begin
               (while (< index vars)
                 (begin
-                  (array.array-set! parents index index)
-                  (array.array-set!
+                  (array-set! parents index index)
+                  (array-set!
                     cursor
                     index
-                    (array.array-ref def-off index))
-                  (array.array-set!
+                    (array-ref def-off index))
+                  (array-set!
                     class-multi
                     index
                     (if (compiler-reg-sv-single-def-non-phi?
@@ -5412,17 +5475,17 @@
                       index)
                       (- 0 1)
                       index))
-                  (array.array-set!
+                  (array-set!
                     int-ok
                     index
                     (match (compiler-reg-var-types-lookup type-info index)
-                      [(CompilerRegSomeType ty)
+                      [(CompilerRegMaybeType.Some ty)
                         (if (and
                           (compiler-reg-scalar-type? ty)
                           (not (compiler-reg-float-type? ty)))
                           1
                           0)]
-                      [(CompilerRegNoType) 0]))
+                      [(CompilerRegMaybeType.No) 0]))
                   (set! index (+ index 1))))
               (let
                 [_fill : i64
@@ -5452,7 +5515,7 @@
   [parents : (Array i64)]
   [left : i64]
   [right : i64]) : bool
-  (if (= (array.array-length parents) 0)
+  (if (= (array-length parents) 0)
     false
     (let
       [rl : i64 (compiler-reg-sv-find parents left)]
@@ -5463,19 +5526,19 @@
   [parents : (Array i64)]
   [sizes : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array.array-length parents))
+  (if (>= index (array-length parents))
     unit
     (begin
-      (array.array-set! parents index index)
-      (array.array-set! sizes index 1)
+      (array-set! parents index index)
+      (array-set! sizes index 1)
       (compiler-reg-coalesce-map-init! parents sizes (+ index 1)))))
 
 (define (compiler-reg-coalesce-map-root-from-parents
   [parents : (Array i64)]
   [var : i64]) : i64
-  (if (or (< var 0) (>= var (array.array-length parents)))
+  (if (or (< var 0) (>= var (array-length parents)))
     (- 0 1)
-    (array.array-ref parents var)))
+    (array-ref parents var)))
 
 (define (compiler-reg-coalesce-vars-compatible?
   [intervals : CompilerRegIntervalIndex]
@@ -5513,8 +5576,8 @@
   [index : i64]
   [sv-parents : (Array i64)]) : bool
   (cond
-    [(>= index (array.array-length parents)) true]
-    [(= (array.array-ref parents index) root)
+    [(>= index (array-length parents)) true]
+    [(= (array-ref parents index) root)
       (if (compiler-reg-coalesce-vars-compatible?
         intervals
         types
@@ -5557,8 +5620,8 @@
   [index : i64]
   [sv-parents : (Array i64)]) : bool
   (cond
-    [(>= index (array.array-length parents)) true]
-    [(= (array.array-ref parents index) left-root)
+    [(>= index (array-length parents)) true]
+    [(= (array-ref parents index) left-root)
       (if (compiler-reg-coalesce-map-var-compatible-with-root?
         parents
         intervals
@@ -5617,11 +5680,11 @@
   [winner : i64]
   [loser : i64]
   [index : i64]) : unit
-  (if (>= index (array.array-length parents))
+  (if (>= index (array-length parents))
     unit
     (begin
-      (if (= (array.array-ref parents index) loser)
-        (array.array-set! parents index winner)
+      (if (= (array-ref parents index) loser)
+        (array-set! parents index winner)
         unit)
       (compiler-reg-coalesce-map-merge-root-parents-into!
         parents
@@ -5645,20 +5708,20 @@
   [src-start : (Array i64)]
   [src-end : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array.array-length root-start))
+  (if (>= index (array-length root-start))
     unit
     (begin
-      (array.array-set!
+      (array-set!
         root-start
         index
-        (if (< index (array.array-length src-start))
-          (array.array-ref src-start index)
+        (if (< index (array-length src-start))
+          (array-ref src-start index)
           (- 0 1)))
-      (array.array-set!
+      (array-set!
         root-end
         index
-        (if (< index (array.array-length src-end))
-          (array.array-ref src-end index)
+        (if (< index (array-length src-end))
+          (array-ref src-end index)
           (- 0 1)))
       (compiler-reg-coalesce-init-coarse!
         root-start
@@ -5673,10 +5736,10 @@
   [a : i64]
   [b : i64]) : bool
   (let
-    [a-start : i64 (array.array-ref root-start a)]
-    [a-end : i64 (array.array-ref root-end a)]
-    [b-start : i64 (array.array-ref root-start b)]
-    [b-end : i64 (array.array-ref root-end b)]
+    [a-start : i64 (array-ref root-start a)]
+    [a-end : i64 (array-ref root-end a)]
+    [b-start : i64 (array-ref root-start b)]
+    [b-end : i64 (array-ref root-end b)]
     (if (or (< a-start 0) (< a-end 0) (< b-start 0) (< b-end 0))
       false
       (or (<= a-end b-start) (<= b-end a-start)))))
@@ -5689,26 +5752,26 @@
   [winner : i64]
   [loser : i64]) : unit
   (begin
-    (array.array-set!
+    (array-set!
       sizes
       winner
-      (+ (array.array-ref sizes winner) (array.array-ref sizes loser)))
-    (array.array-set! sizes loser 0)
+      (+ (array-ref sizes winner) (array-ref sizes loser)))
+    (array-set! sizes loser 0)
     (let
-      [loser-start : i64 (array.array-ref root-start loser)]
-      [loser-end : i64 (array.array-ref root-end loser)]
-      [winner-start : i64 (array.array-ref root-start winner)]
-      [winner-end : i64 (array.array-ref root-end winner)]
+      [loser-start : i64 (array-ref root-start loser)]
+      [loser-end : i64 (array-ref root-end loser)]
+      [winner-start : i64 (array-ref root-start winner)]
+      [winner-end : i64 (array-ref root-end winner)]
       (begin
         (if (< winner-start 0)
-          (array.array-set! root-start winner loser-start)
+          (array-set! root-start winner loser-start)
           (if (if (< loser-start 0)
             false
             (< loser-start winner-start))
-            (array.array-set! root-start winner loser-start)
+            (array-set! root-start winner loser-start)
             unit))
         (if (> loser-end winner-end)
-          (array.array-set! root-end winner loser-end)
+          (array-set! root-end winner loser-end)
           unit)))
     (compiler-reg-coalesce-map-merge-root-parents-into! parents winner loser 0)))
 
@@ -5742,8 +5805,8 @@
         false]
       [(or
           (and
-            (= (array.array-ref sizes left-root) 1)
-            (= (array.array-ref sizes right-root) 1))
+            (= (array-ref sizes left-root) 1)
+            (= (array-ref sizes right-root) 1))
           ;; per-pair join fast path: disjoint merged extents => trivially legal.
           (compiler-reg-coalesce-coarse-disjoint?
             root-start
@@ -5791,10 +5854,10 @@
   [changed : bool]
   [sv-parents : (Array i64)]) : bool
   (match moves
-    [(CompilerRegMoveNil) changed]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) changed]
+    [(CompilerRegMoveList.Cons move rest)
       (match move
-        [(CompilerRegMove src dst strict)
+        [(CompilerRegMove.Move src dst strict)
           (let
             [did-merge : bool
               (compiler-reg-coalesce-map-try-merge!
@@ -5893,8 +5956,8 @@
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
     (cond
-      [(>= index (array.array-length parents)) CompilerRegNoLocation]
-      [(or (= index var) (not (= (array.array-ref parents index) root)))
+      [(>= index (array-length parents)) CompilerRegMaybeLocation.No]
+      [(or (= index var) (not (= (array-ref parents index) root)))
         (compiler-reg-coalesce-location-from-class-from
           coalesce
           assignments
@@ -5904,7 +5967,7 @@
           (+ index 1))]
       [else
         (match (compiler-reg-assignment-table-lookup assignments index)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (if (compiler-reg-assignment-table-location-conflicts-segmented?
               assignments
               intervals
@@ -5918,8 +5981,8 @@
                 var
                 root
                 (+ index 1))
-              (CompilerRegSomeLocation location))]
-          [(CompilerRegNoLocation)
+              (CompilerRegMaybeLocation.Some location))]
+          [(CompilerRegMaybeLocation.No)
             (compiler-reg-coalesce-location-from-class-from
               coalesce
               assignments
@@ -5937,7 +6000,7 @@
     [parents : (Array i64) (struct-get coalesce parents)]
     [root : i64 (compiler-reg-coalesce-map-root-from-parents parents var)]
     (if (< root 0)
-      CompilerRegNoLocation
+      CompilerRegMaybeLocation.No
       (compiler-reg-coalesce-location-from-class-from
         coalesce
         assignments
@@ -5949,18 +6012,18 @@
 (define (compiler-reg-assignment-count
   [assignments : CompilerRegAssignmentList]) : i64
   (match assignments
-    [(CompilerRegAssignmentNil) 0]
-    [(CompilerRegAssignmentCons _ rest)
+    [(CompilerRegAssignmentList.Nil) 0]
+    [(CompilerRegAssignmentList.Cons _ rest)
       (+ 1 (compiler-reg-assignment-count (box-get rest)))]))
 
 (define (compiler-reg-spill-count [assignments : CompilerRegAssignmentList]) : i64
   (match assignments
-    [(CompilerRegAssignmentNil) 0]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) 0]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment _ location)
+        [(CompilerRegAssignment.Assignment _ location)
           (match location
-            [(CompilerRegSpill _)
+            [(CompilerRegLocation.Spill _)
               (+ 1 (compiler-reg-spill-count (box-get rest)))]
             [_ (compiler-reg-spill-count (box-get rest))])])]))
 
@@ -5968,8 +6031,8 @@
 ;; loop-depth-weighted counts; unweighted/empty arrays still keep the old
 ;; deterministic policy for other stages. Out-of-range vars score 0.
 (define (compiler-reg-spill-weight [ref-counts : (Array i64)] [var : i64]) : i64
-  (if (and (>= var 0) (< var (array.array-length ref-counts)))
-    (array.array-ref ref-counts var)
+  (if (and (>= var 0) (< var (array-length ref-counts)))
+    (array-ref ref-counts var)
     0))
 
 ;; Does `var` already hold a hard register (single or pair) in the table? Used to
@@ -5978,12 +6041,12 @@
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
   (match (compiler-reg-assignment-table-lookup assignments var)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister _) true]
-        [(CompilerRegRegisterPair _ _) true]
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
         [_ false])]
-    [(CompilerRegNoLocation) false]))
+    [(CompilerRegMaybeLocation.No) false]))
 
 (define (compiler-reg-copy-hints-add-move!
   [hints : (Array i64)]
@@ -5991,18 +6054,18 @@
   [src : i64]
   [dst : i64]) : unit
   (let
-    [n : i64 (array.array-length hints)]
+    [n : i64 (array-length hints)]
     [root-src : i64
       (if (if (>= src 0)
-        (< src (array.array-length parents))
+        (< src (array-length parents))
         false)
-        (array.array-ref parents src)
+        (array-ref parents src)
         src)]
     [root-dst : i64
       (if (if (>= dst 0)
-        (< dst (array.array-length parents))
+        (< dst (array-length parents))
         false)
-        (array.array-ref parents dst)
+        (array-ref parents dst)
         dst)]
     (if (or
       (= root-src root-dst)
@@ -6012,11 +6075,11 @@
       (>= root-dst n))
       unit
       (begin
-        (if (< (array.array-ref hints root-src) 0)
-          (array.array-set! hints root-src root-dst)
+        (if (< (array-ref hints root-src) 0)
+          (array-set! hints root-src root-dst)
           unit)
-        (if (< (array.array-ref hints root-dst) 0)
-          (array.array-set! hints root-dst root-src)
+        (if (< (array-ref hints root-dst) 0)
+          (array-set! hints root-dst root-src)
           unit)
         unit))))
 
@@ -6025,11 +6088,11 @@
   [parents : (Array i64)]
   [moves : CompilerRegMoveList]) : unit
   (match moves
-    [(CompilerRegMoveNil) unit]
-    [(CompilerRegMoveCons move rest)
+    [(CompilerRegMoveList.Nil) unit]
+    [(CompilerRegMoveList.Cons move rest)
       (begin
         (match move
-          [(CompilerRegMove src dst _)
+          [(CompilerRegMove.Move src dst _)
             (compiler-reg-copy-hints-add-move! hints parents src dst)])
         (compiler-reg-copy-hints-from-moves! hints parents (box-get rest)))]))
 
@@ -6042,21 +6105,21 @@
 ;; only (never forces a spill/evict).
 (define (compiler-reg-binop-two-address? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinDiv) false]
-    [(IrBinMod) false]
-    [(IrBinSafeDiv) false]
-    [(IrBinSafeMod) false]
+    [(CompilerIrBinOp.Div) false]
+    [(CompilerIrBinOp.Mod) false]
+    [(CompilerIrBinOp.SafeDiv) false]
+    [(CompilerIrBinOp.SafeMod) false]
     [_ true]))
 
 (define (compiler-reg-binop-commutative? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinAdd) true]
-    [(IrBinMul) true]
-    [(IrBinAnd) true]
-    [(IrBinOr) true]
-    [(IrBinBitAnd) true]
-    [(IrBinBitOr) true]
-    [(IrBinBitXor) true]
+    [(CompilerIrBinOp.Add) true]
+    [(CompilerIrBinOp.Mul) true]
+    [(CompilerIrBinOp.And) true]
+    [(CompilerIrBinOp.Or) true]
+    [(CompilerIrBinOp.BitAnd) true]
+    [(CompilerIrBinOp.BitOr) true]
+    [(CompilerIrBinOp.BitXor) true]
     [_ false]))
 
 (define (compiler-reg-copy-hints-from-binops-instr!
@@ -6064,16 +6127,16 @@
   [hints : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
-    [(IrInstrBinOp dst op lhs rhs _)
+    [(CompilerIrInstr.BinOp dst op lhs rhs _)
       (if (compiler-reg-binop-two-address? op)
         (begin
           (match lhs
-            [(IrValueVar lhs-var)
+            [(CompilerIrValue.Var lhs-var)
               (compiler-reg-copy-hints-add-move! hints parents lhs-var dst)]
             [_ unit])
           (if (compiler-reg-binop-commutative? op)
             (match rhs
-              [(IrValueVar rhs-var)
+              [(CompilerIrValue.Var rhs-var)
                 (compiler-reg-copy-hints-add-move! hints parents rhs-var dst)]
               [_ unit])
             unit))
@@ -6092,7 +6155,7 @@
       (while (< index count)
         (begin
           (compiler-reg-copy-hints-from-binops-instr!
-            (array.array-ref slots index)
+            (array-ref slots index)
             hints
             parents)
           (set! index (+ index 1))))
@@ -6103,17 +6166,17 @@
   [hints : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-copy-hints-from-binops-seq! instrs hints parents)])
         (compiler-reg-copy-hints-from-binops-blocks!
           (box-get rest)
           hints
           parents))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-copy-hints-from-binops-blocks!
         (compiler-ir-block-seq-to-list seq)
         hints
@@ -6124,7 +6187,7 @@
   [hints : (Array i64)]
   [parents : (Array i64)]) : unit
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-copy-hints-from-binops-blocks! blocks hints parents)]))
 
 ;; Build per-root copy hints from the move list + two-address binops, mapping each
@@ -6151,28 +6214,28 @@
   [interval-index : CompilerRegIntervalIndex]
   [var : i64]
   [start : i64]) : CompilerRegMaybeString
-  (if (or (< var 0) (>= var (array.array-length preferences)))
-    (CompilerRegNoString)
+  (if (or (< var 0) (>= var (array-length preferences)))
+    (CompilerRegMaybeString.No)
     (let
-      [preferred : i64 (array.array-ref preferences var)]
+      [preferred : i64 (array-ref preferences var)]
       [ends : (Array i64) (struct-get interval-index ends)]
       (if (or
         (< preferred 0)
-        (>= preferred (array.array-length ends))
-        (> (array.array-ref ends preferred) start))
-        (CompilerRegNoString)
+        (>= preferred (array-length ends))
+        (> (array-ref ends preferred) start))
+        (CompilerRegMaybeString.No)
         (match (compiler-reg-assignment-table-lookup assignments preferred)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister reg)
+              [(CompilerRegLocation.Register reg)
                 (if (compiler-reg-active-register-conflicts-except?
                   active
                   reg
                   preferred)
-                  (CompilerRegNoString)
-                  (CompilerRegSomeString reg))]
-              [_ (CompilerRegNoString)])]
-          [(CompilerRegNoLocation) (CompilerRegNoString)])))))
+                  (CompilerRegMaybeString.No)
+                  (CompilerRegMaybeString.Some reg))]
+              [_ (CompilerRegMaybeString.No)])]
+          [(CompilerRegMaybeLocation.No) (CompilerRegMaybeString.No)])))))
 
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
@@ -6182,10 +6245,11 @@
   [preferences : (Array i64)]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegAssignState
   (match candidates
-    [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil)
+      (CompilerRegAssignState.State active assignments)]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var start end)
+        [(CompilerRegInterval.Interval var start end)
           (let
             [expired : CompilerRegActiveList
               (compiler-reg-expire-active active start)]
@@ -6198,20 +6262,20 @@
                 var
                 start)]
             (match preferred
-              [(CompilerRegSomeString reg)
+              [(CompilerRegMaybeString.Some reg)
                 (compiler-reg-assign-fixed-candidates
                   (box-get rest)
                   regs
                   (compiler-reg-active-insert
                     expired
-                    (CompilerRegActive var end reg))
+                    (CompilerRegActive.Active var end reg))
                   (compiler-reg-assignment-table-insert
                     assignments
                     var
-                    (CompilerRegRegister reg))
+                    (CompilerRegLocation.Register reg))
                   preferences
                   interval-index)]
-              [(CompilerRegNoString)
+              [(CompilerRegMaybeString.No)
                 (if (=
                   (compiler-reg-active-count expired)
                   (compiler-reg-string-list-count regs))
@@ -6230,11 +6294,11 @@
                       regs
                       (compiler-reg-active-insert
                         expired
-                        (CompilerRegActive var end reg))
+                        (CompilerRegActive.Active var end reg))
                       (compiler-reg-assignment-table-insert
                         assignments
                         var
-                        (CompilerRegRegister reg))
+                        (CompilerRegLocation.Register reg))
                       preferences
                       interval-index)))]))])]))
 
@@ -6249,7 +6313,7 @@
 ;; mark any float-typed value whose interval strictly spans a call point
 ;; ineligible. Integers are unaffected here (their primary pool is call-safe).
 (defenum CompilerRegCallScan
-  (CompilerRegCallScan i64 CompilerLiveI64Set))
+  (Scan i64 CompilerLiveI64Set))
 
 (define (compiler-reg-call-points-seq
   [instrs : CompilerIrInstrSeq]
@@ -6266,38 +6330,50 @@
         (begin
           (set!
             out
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrCallCAbiStoreResult payload-box)
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ _ _) (compiler-live-set-insert out p)]
+              [(CompilerIrInstr.CallIndirect _ _ _ _)
+                (compiler-live-set-insert out p)]
+              [(CompilerIrInstr.CallIndirectC _ _ _ _)
+                (compiler-live-set-insert out p)]
+              [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
                     (compiler-live-set-insert out p)])]
-              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+              [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+                      _
+                      _
+                      _
+                      _)
                     (compiler-live-set-insert out p)])]
-              [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrTailCallIndirect _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-insert out p)])]
+              [(CompilerIrInstr.TailCall _ _ _)
+                (compiler-live-set-insert out p)]
+              [(CompilerIrInstr.TailCallIndirect _ _ _)
+                (compiler-live-set-insert out p)]
               [_ out]))
           (set! p (+ p 2))
           (set! index (+ index 1))))
-      (CompilerRegCallScan p out))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-call-points-blocks
   [blocks : CompilerIrBlockList]
   [point : i64]
   [set : CompilerLiveI64Set]) : CompilerRegCallScan
   (match blocks
-    [(IrBlockNil) (CompilerRegCallScan point set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-call-points-seq instrs point set)
-            [(CompilerRegCallScan p2 s2)
+            [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-call-points-blocks (box-get rest) p2 s2)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-call-points-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -6305,12 +6381,12 @@
 
 (define (compiler-reg-call-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-call-points-blocks
         blocks
         0
         (compiler-live-set-empty))
-        [(CompilerRegCallScan _ set) set])]))
+        [(CompilerRegCallScan.Scan _ set) set])]))
 
 ;; SplitKit M3: the WIDE caller-clobber points (2-per-instruction coords). Marks
 ;; every instruction point where compiler-reg-backend-caller-clobber-instr? holds
@@ -6331,26 +6407,26 @@
       (while (< index count)
         (begin
           (if (compiler-reg-backend-caller-clobber-instr?
-            (array.array-ref slots index))
+            (array-ref slots index))
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
           (set! index (+ index 1))))
-      (CompilerRegCallScan p out))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-wide-clobber-points-blocks
   [blocks : CompilerIrBlockList]
   [point : i64]
   [set : CompilerLiveI64Set]) : CompilerRegCallScan
   (match blocks
-    [(IrBlockNil) (CompilerRegCallScan point set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-wide-clobber-points-seq instrs point set)
-            [(CompilerRegCallScan p2 s2)
+            [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-wide-clobber-points-blocks (box-get rest) p2 s2)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-wide-clobber-points-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -6358,42 +6434,47 @@
 
 (define (compiler-reg-wide-clobber-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-wide-clobber-points-blocks
         blocks
         0
         (compiler-live-set-empty))
-        [(CompilerRegCallScan _ set) set])]))
+        [(CompilerRegCallScan.Scan _ set) set])]))
 
 (define (compiler-reg-backend-clobber-binop? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinDiv) true]
-    [(IrBinMod) true]
-    [(IrBinSafeDiv) true]
-    [(IrBinSafeMod) true]
-    [(IrBinShl) true]
-    [(IrBinShr) true]
+    [(CompilerIrBinOp.Div) true]
+    [(CompilerIrBinOp.Mod) true]
+    [(CompilerIrBinOp.SafeDiv) true]
+    [(CompilerIrBinOp.SafeMod) true]
+    [(CompilerIrBinOp.Shl) true]
+    [(CompilerIrBinOp.Shr) true]
     [_ false]))
 
 (define (compiler-reg-backend-caller-clobber-instr? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrCall _ _ _ _) true]
-    [(IrInstrCallIndirect _ _ _ _) true]
-    [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.Call _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _) true])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
-    [(IrInstrTailCall _ _ _) true]
-    [(IrInstrTailCallIndirect _ _ _) true]
-    [(IrInstrSyscall _ _) true]
-    [(IrInstrBoundsCheck _ _ _) true]
-    [(IrInstrCpuId _ _ _ _) true]
-    [(IrInstrXgetbv _ _) true]
-    [(IrInstrPack _ _ _) true]
-    [(IrInstrBinOp _ op _ _ _) (compiler-reg-backend-clobber-binop? op)]
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
+          true])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.TailCall _ _ _) true]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(CompilerIrInstr.Syscall _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.CpuId _ _ _ _) true]
+    [(CompilerIrInstr.Xgetbv _ _) true]
+    [(CompilerIrInstr.Pack _ _ _) true]
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
 ;; Clobber-POINT predicate for the register-search restriction + same-value
@@ -6428,8 +6509,8 @@
 ;; stays true for Pack (remat conservatism), same split as bounds checks.
 (define (compiler-reg-backend-clobber-point-instr? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrBoundsCheck _ _ _) false]
-    [(IrInstrPack _ _ _) false]
+    [(CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(CompilerIrInstr.Pack _ _ _) false]
     ;; GAP3a: a shift by an in-range CONSTANT count is emitted as `shlq $imm, reg`
     ;; (compiler-backend-binop-immediate-shift-asm) and never reads or writes
     ;; %rcx/%cl, so it is NOT a clobber point. Only variable-count shifts (or
@@ -6443,11 +6524,94 @@
     ;; (crc_update shape). Divisions keep their rax:rdx clobber classification.
     ;; compiler-reg-backend-caller-clobber-instr? intentionally stays
     ;; conservative (remat-use-site-ok? / splitkit range proofs).
-    [(IrInstrBinOp _ op _ rhs ty)
+    [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (or
         (compiler-reg-clobber-binop-div? op)
         (compiler-reg-clobber-binop-shift? op rhs ty))]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
+
+(define (compiler-reg-backend-win64-extra-clobber-instr?
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.AddrOf _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.LaneId _ _ _) true]
+    [(CompilerIrInstr.Splat _ _ _ _) true]
+    [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorCompare _) true]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.MaskNot _ _ _) true]
+    [(CompilerIrInstr.MaskReduce _ _ _ _) true]
+    [(CompilerIrInstr.Select _) true]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [(CompilerIrInstr.PredicatedLoad _) true]
+    [(CompilerIrInstr.TailMask _ _ _ _) true]
+    [(CompilerIrInstr.EntryArgc _) true]
+    [(CompilerIrInstr.EntryArgv _) true]
+    [(CompilerIrInstr.EntryEnvp _) true]
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Return _) true]
+    [(CompilerIrInstr.Pack _ _ _) true]
+    [(CompilerIrInstr.Word _ _ _ _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-backend-caller-clobber-instr-for-abi?
+  [abi : CompilerRegTargetAbi]
+  [instr : CompilerIrInstr]) : bool
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-instr? instr)]
+    [(CompilerRegTargetAbi.Windows)
+      (or
+        (compiler-reg-backend-caller-clobber-instr? instr)
+        (compiler-reg-backend-win64-extra-clobber-instr? instr))]))
+
+(define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (set!
+            found
+            (compiler-reg-backend-caller-clobber-instr? (array-ref slots index)))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-backend-caller-clobber-blocks?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (compiler-reg-backend-caller-clobber-seq? instrs)
+            true
+            (compiler-reg-backend-caller-clobber-blocks? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-blocks?
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-reg-backend-caller-clobber? [func : CompilerIrFunction]) : bool
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-backend-caller-clobber-blocks? blocks)]))
 
 ;; Backend caller-clobber points include ordinary calls plus non-call IR that
 ;; emits caller-clobbering machine instructions or helper calls. The zero-call
@@ -6466,32 +6630,32 @@
       (while (< index count)
         (begin
           (if (compiler-reg-backend-clobber-point-instr?
-            (array.array-ref slots index))
+            (array-ref slots index))
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
           (set! index (+ index 1))))
-      (CompilerRegCallScan p out))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-backend-caller-clobber-points-blocks
   [blocks : CompilerIrBlockList]
   [point : i64]
   [set : CompilerLiveI64Set]) : CompilerRegCallScan
   (match blocks
-    [(IrBlockNil) (CompilerRegCallScan point set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-backend-caller-clobber-points-seq
             instrs
             point
             set)
-            [(CompilerRegCallScan p2 s2)
+            [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-backend-caller-clobber-points-blocks
                 (box-get rest)
                 p2
                 s2)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-backend-caller-clobber-points-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -6499,12 +6663,79 @@
 
 (define (compiler-reg-backend-caller-clobber-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-backend-caller-clobber-points-blocks
         blocks
         0
         (compiler-live-set-empty))
-        [(CompilerRegCallScan _ set) set])]))
+        [(CompilerRegCallScan.Scan _ set) set])]))
+
+(define (compiler-reg-backend-caller-clobber-points-seq-for-abi
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
+            abi
+            (array-ref slots index))
+            (set! out (compiler-live-set-insert out p))
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan.Scan p out))))
+
+(define (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (compiler-reg-backend-caller-clobber-points-seq-for-abi
+            abi
+            instrs
+            point
+            set)
+            [(CompilerRegCallScan.Scan p2 s2)
+              (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+                abi
+                (box-get rest)
+                p2
+                s2)])])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+        abi
+        (compiler-ir-block-seq-to-list seq)
+        point
+        set)]))
+
+(define (compiler-reg-backend-caller-clobber-points-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-points func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (match (compiler-reg-backend-caller-clobber-points-blocks-for-abi
+            abi
+            blocks
+            0
+            (compiler-live-set-empty))
+            [(CompilerRegCallScan.Scan _ set) set])])]))
 
 ;; Per-register clobber model (15c). The merged caller-clobber set above is too
 ;; coarse for the greedy: it treats a div/shift exactly like a call (all
@@ -6514,10 +6745,10 @@
 ;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv   kind 2 = shift
 (define (compiler-reg-clobber-binop-div? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinDiv) true]
-    [(IrBinMod) true]
-    [(IrBinSafeDiv) true]
-    [(IrBinSafeMod) true]
+    [(CompilerIrBinOp.Div) true]
+    [(CompilerIrBinOp.Mod) true]
+    [(CompilerIrBinOp.SafeDiv) true]
+    [(CompilerIrBinOp.SafeMod) true]
     [_ false]))
 
 ;; A shift binop clobbers %rcx ONLY when its count is emitted through the %cl
@@ -6537,14 +6768,14 @@
 ;; %cl would surface as a %rcx clobber of a live value.
 (define (compiler-reg-clobber-shift-width [ty : AstType]) : i64
   (match ty
-    [(AstTyI64) 64]
-    [(AstTyU64) 64]
-    [(AstTyI32) 32]
-    [(AstTyU32) 32]
-    [(AstTyI16) 16]
-    [(AstTyU16) 16]
-    [(AstTyI8) 8]
-    [(AstTyU8) 8]
+    [(AstType.I64) 64]
+    [(AstType.U64) 64]
+    [(AstType.I32) 32]
+    [(AstType.U32) 32]
+    [(AstType.I16) 16]
+    [(AstType.U16) 16]
+    [(AstType.I8) 8]
+    [(AstType.U8) 8]
     [_ 0]))
 
 ;; True when rhs is a constant shift count the backend emits as an immediate
@@ -6556,7 +6787,7 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
   (match rhs
-    [(IrValueI64 n) (and (>= n 0) (< n (compiler-reg-clobber-shift-width ty)))]
+    [(CompilerIrValue.I64 n) (and (>= n 0) (< n (compiler-reg-clobber-shift-width ty)))]
     [_ false]))
 
 (define (compiler-reg-clobber-binop-shift?
@@ -6564,15 +6795,15 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
   (match op
-    [(IrBinShl) (not (compiler-reg-shift-const-in-range? rhs ty))]
-    [(IrBinShr) (not (compiler-reg-shift-const-in-range? rhs ty))]
+    [(CompilerIrBinOp.Shl) (not (compiler-reg-shift-const-in-range? rhs ty))]
+    [(CompilerIrBinOp.Shr) (not (compiler-reg-shift-const-in-range? rhs ty))]
     [_ false]))
 
 (define (compiler-reg-clobber-instr-kind?
   [instr : CompilerIrInstr]
   [kind : i64]) : bool
   (match instr
-    [(IrInstrBinOp _ op _ rhs ty)
+    [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (if (= kind 1)
         (compiler-reg-clobber-binop-div? op)
         (if (= kind 2)
@@ -6584,7 +6815,7 @@
     ;; restore lands AFTER the jmp = unreachable (the GAP2b vm_run finding),
     ;; so occupancy added at a dispatch by an ABI pin must be refused until
     ;; that emitter is fixed).
-    [(IrInstrSwitch _ _ _ _) (= kind 3)]
+    [(CompilerIrInstr.Switch _ _ _ _) (= kind 3)]
     [_
       (if (= kind 0)
         (compiler-reg-backend-clobber-point-instr? instr)
@@ -6605,13 +6836,13 @@
       (while (< index count)
         (begin
           (if (compiler-reg-clobber-instr-kind?
-            (array.array-ref slots index)
+            (array-ref slots index)
             kind)
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
           (set! index (+ index 1))))
-      (CompilerRegCallScan p out))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-clobber-kind-points-blocks
   [blocks : CompilerIrBlockList]
@@ -6619,18 +6850,18 @@
   [set : CompilerLiveI64Set]
   [kind : i64]) : CompilerRegCallScan
   (match blocks
-    [(IrBlockNil) (CompilerRegCallScan point set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-clobber-kind-points-seq instrs point set kind)
-            [(CompilerRegCallScan p2 s2)
+            [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-clobber-kind-points-blocks
                 (box-get rest)
                 p2
                 s2
                 kind)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-clobber-kind-points-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -6641,13 +6872,13 @@
   [func : CompilerIrFunction]
   [kind : i64]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-clobber-kind-points-blocks
         blocks
         0
         (compiler-live-set-empty)
         kind)
-        [(CompilerRegCallScan _ set) set])]))
+        [(CompilerRegCallScan.Scan _ set) set])]))
 
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
@@ -6776,26 +7007,30 @@
         (begin
           (set!
             out
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-insert out p)])]
               [_ out]))
           (set! p (+ p 2))
           (set! index (+ index 1))))
-      (CompilerRegCallScan p out))))
+      (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-direct-call-points-blocks
   [blocks : CompilerIrBlockList]
   [point : i64]
   [set : CompilerLiveI64Set]) : CompilerRegCallScan
   (match blocks
-    [(IrBlockNil) (CompilerRegCallScan point set)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-direct-call-points-seq instrs point set)
-            [(CompilerRegCallScan p2 s2)
+            [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-direct-call-points-blocks (box-get rest) p2 s2)])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-direct-call-points-blocks
         (compiler-ir-block-seq-to-list seq)
         point
@@ -6803,12 +7038,12 @@
 
 (define (compiler-reg-direct-call-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-direct-call-points-blocks
         blocks
         0
         (compiler-live-set-empty))
-        [(CompilerRegCallScan _ set) set])]))
+        [(CompilerRegCallScan.Scan _ set) set])]))
 
 (define (compiler-reg-clobber-instr-vars [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (compiler-live-set-union
@@ -6827,12 +7062,12 @@
       (while (< index count)
         (begin
           (if (compiler-reg-backend-caller-clobber-instr?
-            (array.array-ref slots index))
+            (array-ref slots index))
             (set!
               out
               (compiler-live-set-union
                 out
-                (compiler-reg-clobber-instr-vars (array.array-ref slots index))))
+                (compiler-reg-clobber-instr-vars (array-ref slots index))))
             unit)
           (set! index (+ index 1))))
       out)))
@@ -6841,24 +7076,84 @@
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-backend-caller-clobber-vars-blocks
             (box-get rest)
             (compiler-reg-backend-caller-clobber-vars-seq instrs set))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-backend-caller-clobber-vars-blocks
         (compiler-ir-block-seq-to-list seq)
         set)]))
 
 (define (compiler-reg-backend-caller-clobber-vars [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-backend-caller-clobber-vars-blocks
         blocks
         (compiler-live-set-empty))]))
+
+(define (compiler-reg-backend-caller-clobber-vars-seq-for-abi
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-backend-caller-clobber-instr-for-abi?
+            abi
+            (array-ref slots index))
+            (set!
+              out
+              (compiler-live-set-union
+                out
+                (compiler-reg-clobber-instr-vars (array-ref slots index))))
+            unit)
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [blocks : CompilerIrBlockList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+            abi
+            (box-get rest)
+            (compiler-reg-backend-caller-clobber-vars-seq-for-abi
+              abi
+              instrs
+              set))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+        abi
+        (compiler-ir-block-seq-to-list seq)
+        set)]))
+
+(define (compiler-reg-backend-caller-clobber-vars-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match abi
+    [(CompilerRegTargetAbi.Linux)
+      (compiler-reg-backend-caller-clobber-vars func)]
+    [(CompilerRegTargetAbi.Windows)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
+            abi
+            blocks
+            (compiler-live-set-empty))])]))
 
 (define (compiler-reg-loop-depth-max) : i64
   8)
@@ -6876,15 +7171,15 @@
   [ids : hashmap.StringI64Map]
   [index : i64]) : hashmap.StringI64Map
   (match blocks
-    [(IrBlockNil) ids]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) ids]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label _)
+        [(CompilerIrBlock.Block label _)
           (compiler-reg-loop-depth-block-ids
             (box-get rest)
             (hashmap.string-i64-map-put ids label index)
             (+ index 1))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids
         (compiler-ir-block-seq-to-list seq)
         ids
@@ -6898,8 +7193,8 @@
   (match (hashmap.string-i64-map-get ids label)
     [(hashmap.StringI64MapFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
-        (if (> source-id (array.array-ref loop-ends target-id))
-          (array.array-set! loop-ends target-id source-id)
+        (if (> source-id (array-ref loop-ends target-id))
+          (array-set! loop-ends target-id source-id)
           unit)
         unit)]
     [(hashmap.StringI64MapMissing) unit]))
@@ -6910,8 +7205,8 @@
   [source-id : i64]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
-    [(CompilerLiveLabelNil) unit]
-    [(CompilerLiveLabelCons label rest)
+    [(CompilerLiveLabelSet.Nil) unit]
+    [(CompilerLiveLabelSet.Cons label rest)
       (begin
         (compiler-reg-loop-depth-record-succ! loop-ends ids source-id label)
         (compiler-reg-loop-depth-record-succs!
@@ -6926,8 +7221,8 @@
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (compiler-reg-loop-depth-record-succs!
           loop-ends
@@ -6939,7 +7234,7 @@
           ids
           loop-ends
           (+ index 1)))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-record-blocks!
         (compiler-ir-block-seq-to-list seq)
         ids
@@ -6950,11 +7245,11 @@
   [depths : (Array i64)]
   [index : i64]
   [end : i64]) : unit
-  (if (or (>= index (array.array-length depths)) (> index end))
+  (if (or (>= index (array-length depths)) (> index end))
     unit
     (begin
-      (if (< (array.array-ref depths index) (compiler-reg-loop-depth-max))
-        (array.array-set! depths index (+ (array.array-ref depths index) 1))
+      (if (< (array-ref depths index) (compiler-reg-loop-depth-max))
+        (array-set! depths index (+ (array-ref depths index) 1))
         unit)
       (compiler-reg-loop-depth-bump-range! depths (+ index 1) end))))
 
@@ -6962,14 +7257,14 @@
   [loop-ends : (Array i64)]
   [depths : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array.array-length loop-ends))
+  (if (>= index (array-length loop-ends))
     unit
     (begin
-      (if (>= (array.array-ref loop-ends index) index)
+      (if (>= (array-ref loop-ends index) index)
         (compiler-reg-loop-depth-bump-range!
           depths
           index
-          (array.array-ref loop-ends index))
+          (array-ref loop-ends index))
         unit)
       (compiler-reg-loop-depths-from-ends! loop-ends depths (+ index 1)))))
 
@@ -7003,8 +7298,8 @@
       [i : i64 (compiler-reg-low-bit-index bits)]
       [var : i64 (+ var-base i)]
       (begin
-        (if (and (>= var 0) (< var (array.array-length counts)))
-          (array.array-set! counts var (+ (array.array-ref counts var) weight))
+        (if (and (>= var 0) (< var (array-length counts)))
+          (array-set! counts var (+ (array-ref counts var) weight))
           unit)
         (compiler-reg-ref-counts-add-word-weighted!
           counts
@@ -7091,9 +7386,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (compiler-reg-ref-counts-add-instr!
-          counts
-          (array.array-ref slots index))
+        (compiler-reg-ref-counts-add-instr! counts (array-ref slots index))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-ref-counts-seq-weighted!
@@ -7108,7 +7401,7 @@
       (begin
         (compiler-reg-ref-counts-add-instr-weighted!
           counts
-          (array.array-ref slots index)
+          (array-ref slots index)
           weight)
         (set! index (+ index 1))))))
 
@@ -7116,13 +7409,14 @@
   [counts : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs) (compiler-reg-ref-counts-seq! counts instrs)])
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-reg-ref-counts-seq! counts instrs)])
         (compiler-reg-ref-counts-blocks! counts (box-get rest)))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-ref-counts-blocks!
         counts
         (compiler-ir-block-seq-to-list seq))]))
@@ -7133,22 +7427,21 @@
   [depths : (Array i64)]
   [block-index : i64]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-ref-counts-seq-weighted!
               counts
               instrs
-              (compiler-reg-loop-depth-weight
-                (array.array-ref depths block-index)))])
+              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
         (compiler-reg-ref-counts-blocks-weighted!
           counts
           (box-get rest)
           depths
           (+ block-index 1)))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-ref-counts-blocks-weighted!
         counts
         (compiler-ir-block-seq-to-list seq)
@@ -7157,27 +7450,27 @@
 
 (define (compiler-reg-remat-value? [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueI64 _) true]
-    [(IrValueBool _) true]
-    [(IrValueChar _) true]
-    [(IrValueF64 _) true]
-    [(IrValueGlobalAddr _) true]
+    [(CompilerIrValue.I64 _) true]
+    [(CompilerIrValue.Bool _) true]
+    [(CompilerIrValue.Char _) true]
+    [(CompilerIrValue.F64 _) true]
+    [(CompilerIrValue.GlobalAddr _) true]
     [_ false]))
 
 (define (compiler-reg-remat-mov-value?
   [value : CompilerIrValue]
   [allow-invariant-loads : bool]) : bool
   (match value
-    [(IrValueGlobal _) allow-invariant-loads]
+    [(CompilerIrValue.Global _) allow-invariant-loads]
     [_ (compiler-reg-remat-value? value)]))
 
 (define (compiler-reg-remat-gep?
   [base : CompilerIrValue]
   [offset : CompilerIrValue]) : bool
   (match base
-    [(IrValueGlobalAddr _)
+    [(CompilerIrValue.GlobalAddr _)
       (match offset
-        [(IrValueI64 _) true]
+        [(CompilerIrValue.I64 _) true]
         [_ false])]
     [_ false]))
 
@@ -7186,7 +7479,7 @@
   [allow-invariant-loads : bool]) : bool
   (if allow-invariant-loads
     (match src
-      [(IrValueGlobalAddr _) true]
+      [(CompilerIrValue.GlobalAddr _) true]
       [_ false])
     false))
 
@@ -7194,10 +7487,12 @@
   [instr : CompilerIrInstr]
   [allow-invariant-loads : bool]) : bool
   (match instr
-    [(IrInstrMov _ value _)
+    [(CompilerIrInstr.Mov _ value _)
       (compiler-reg-remat-mov-value? value allow-invariant-loads)]
-    [(IrInstrGep _ base offset _) (compiler-reg-remat-gep? base offset)]
-    [(IrInstrLoad _ src _) (compiler-reg-remat-load? src allow-invariant-loads)]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (compiler-reg-remat-gep? base offset)]
+    [(CompilerIrInstr.Load _ src _)
+      (compiler-reg-remat-load? src allow-invariant-loads)]
     [_ false]))
 
 (define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
@@ -7221,14 +7516,14 @@
 ;; them directly into their uses (so an optimised function never carries a constant
 ;; in a spillable vreg), making constant remat moot on real code; addresses cannot
 ;; always be folded into an instruction's immediate, so they are the case that
-;; genuinely benefits. IrValueGlobal (a LOAD of a mutable global) and IrValueF64
+;; genuinely benefits. CompilerIrValue.Global (a LOAD of a mutable global) and CompilerIrValue.F64
 ;; (no scalar backend support) must never be rematerialised.
 (define (compiler-reg-remat-recompute-value? [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueGlobalAddr _) true]
-    [(IrValueFunction _) true]
-    [(IrValueString _) true]
-    [(IrValueBytes _) true]
+    [(CompilerIrValue.GlobalAddr _) true]
+    [(CompilerIrValue.Function _) true]
+    [(CompilerIrValue.String _) true]
+    [(CompilerIrValue.Bytes _) true]
     [_ false]))
 
 (define (compiler-reg-remat-init-vals!
@@ -7238,7 +7533,7 @@
     [i : i64 0]
     (while (< i vars)
       (begin
-        (array.array-set! vals i (IrValueUnit))
+        (array-set! vals i (CompilerIrValue.Unit))
         (set! i (+ i 1))))))
 
 ;; Record var -> rematerialisable value for every var whose SOLE definition is a
@@ -7254,32 +7549,32 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (match (array.array-ref slots index)
-          [(IrInstrMov dst value _)
+        (match (array-ref slots index)
+          [(CompilerIrInstr.Mov dst value _)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
             (if (if (if (compiler-reg-remat-recompute-value? value)
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
-                (if (< dst (array.array-length flags))
-                  (not (= (array.array-ref flags dst) 2))
+                (if (< dst (array-length flags))
+                  (not (= (array-ref flags dst) 2))
                   false)
                 false)
               false)
               (begin
-                (array.array-set! flags dst 1)
-                (array.array-set! vals dst value)
+                (array-set! flags dst 1)
+                (array-set! vals dst value)
                 unit)
               unit)]
           ;; Taking a var's address needs its real storage; poison it so it is
           ;; never rematerialised (its slot must hold the value).
-          [(IrInstrAddrOf _ src)
+          [(CompilerIrInstr.AddrOf _ src)
             (if (if (>= src 0)
-              (< src (array.array-length flags))
+              (< src (array-length flags))
               false)
               (begin
-                (array.array-set! flags src 2)
+                (array-set! flags src 2)
                 unit)
               unit)]
           [_ unit])
@@ -7291,18 +7586,18 @@
   [flags : (Array i64)]
   [vals : (Array CompilerIrValue)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
         (compiler-reg-collect-remat-blocks!
           (box-get rest)
           def-counts
           flags
           vals))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-collect-remat-blocks!
         (compiler-ir-block-seq-to-list seq)
         def-counts
@@ -7310,7 +7605,7 @@
         vals)]))
 
 ;; Post-allocation rewrite: a singleton (non-coalesced) rematerialisable var that
-;; the allocator chose to SPILL is converted to CompilerRegRemat instead -- its
+;; the allocator chose to SPILL is converted to CompilerRegLocation.Remat instead -- its
 ;; uses recompute the value and its def store is dropped (backend). Coalesced
 ;; members are excluded so a class never half-remats. The already-reserved spill
 ;; slot is simply left unused.
@@ -7332,7 +7627,7 @@
       (compiler-reg-fill-i64-array flags 0)
       (compiler-reg-remat-init-vals! vals vars)
       (match func
-        [(IrFunction _ _ _ _ blocks)
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
           (compiler-reg-collect-remat-blocks!
             (compiler-ir-block-list-force-cons blocks)
             def-counts
@@ -7342,8 +7637,8 @@
         (begin
           ;; Skip vars the call-spanning saver shadows: those keep a real slot to
           ;; restore from around calls, so they must not lose it to remat.
-          (if (if (< v (array.array-length flags))
-            (if (= (array.array-ref flags v) 1)
+          (if (if (< v (array-length flags))
+            (if (= (array-ref flags v) 1)
               (if (compiler-live-set-contains? shadows v)
                 false
                 (not
@@ -7354,17 +7649,17 @@
               false)
             false)
             (match (compiler-reg-assignment-table-lookup assignments v)
-              [(CompilerRegSomeLocation loc)
+              [(CompilerRegMaybeLocation.Some loc)
                 (match loc
-                  [(CompilerRegSpill _)
+                  [(CompilerRegLocation.Spill _)
                     (begin
                       (compiler-reg-assignment-table-insert
                         assignments
                         v
-                        (CompilerRegRemat (array.array-ref vals v)))
+                        (CompilerRegLocation.Remat (array-ref vals v)))
                       unit)]
                   [_ unit])]
-              [(CompilerRegNoLocation) unit])
+              [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
       assignments)))
@@ -7373,12 +7668,12 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [var : i64]) : bool
-  (if (or (< var 0) (>= var (array.array-length parents)))
+  (if (or (< var 0) (>= var (array-length parents)))
     false
     (let
-      [root : i64 (array.array-ref parents var)]
+      [root : i64 (array-ref parents var)]
       [mapped : i64
-        (if (and (>= root 0) (< root (array.array-length parents)))
+        (if (and (>= root 0) (< root (array-length parents)))
           root
           var)]
       (compiler-live-set-contains? merged-roots mapped))))
@@ -7392,29 +7687,29 @@
     [merged-roots : CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
     [var : i64 0]
-    (while (< var (array.array-length weights))
+    (while (< var (array-length weights))
       (begin
         (let
           [status : i64
-            (if (< var (array.array-length def-status))
-              (array.array-ref def-status var)
+            (if (< var (array-length def-status))
+              (array-ref def-status var)
               0)]
           (if (and
             (= (bit-and status 1) 1)
             (= (/ status 2) 1)
             (not
               (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
-            (array.array-set!
+            (array-set!
               weights
               var
-              (compiler-reg-remat-discount-weight (array.array-ref weights var)))
+              (compiler-reg-remat-discount-weight (array-ref weights var)))
             unit))
         (set! var (+ var 1))))))
 
 (define (compiler-reg-remat-instr-mutates-memory? [instr : CompilerIrInstr]) : bool
   (match (compiler-ir-instr-effect instr)
-    [(IrEffectMemoryWrite) true]
-    [(IrEffectUnknown) true]
+    [(CompilerIrEffect.MemoryWrite) true]
+    [(CompilerIrEffect.Unknown) true]
     [_ false]))
 
 (define (compiler-reg-remat-instrs-mutates-memory?
@@ -7429,28 +7724,27 @@
         (begin
           (set!
             found
-            (compiler-reg-remat-instr-mutates-memory?
-              (array.array-ref slots index)))
+            (compiler-reg-remat-instr-mutates-memory? (array-ref slots index)))
           (set! index (+ index 1))))
       found)))
 
 (define (compiler-reg-remat-blocks-mutates-memory?
   [blocks : CompilerIrBlockList]) : bool
   (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (or
             (compiler-reg-remat-instrs-mutates-memory? instrs)
             (compiler-reg-remat-blocks-mutates-memory? (box-get rest)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-remat-blocks-mutates-memory?
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-reg-remat-invariant-loads-ok? [func : CompilerIrFunction]) : bool
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (not (compiler-reg-remat-blocks-mutates-memory? blocks))]))
 
 (define (compiler-reg-remat-status-candidate-add-instr!
@@ -7458,35 +7752,26 @@
   [instr : CompilerIrInstr]
   [allow-invariant-loads : bool]) : unit
   (match instr
-    [(IrInstrMov dst value _)
+    [(CompilerIrInstr.Mov dst value _)
       (if (and
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
-        (< dst (array.array-length def-status)))
-        (array.array-set!
-          def-status
-          dst
-          (bit-or (array.array-ref def-status dst) 1))
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
         unit)]
-    [(IrInstrGep dst base offset _)
+    [(CompilerIrInstr.Gep dst base offset _)
       (if (and
         (compiler-reg-remat-gep? base offset)
         (>= dst 0)
-        (< dst (array.array-length def-status)))
-        (array.array-set!
-          def-status
-          dst
-          (bit-or (array.array-ref def-status dst) 1))
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
         unit)]
-    [(IrInstrLoad dst src _)
+    [(CompilerIrInstr.Load dst src _)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
-        (< dst (array.array-length def-status)))
-        (array.array-set!
-          def-status
-          dst
-          (bit-or (array.array-ref def-status dst) 1))
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
         unit)]
     [_ unit]))
 
@@ -7524,7 +7809,7 @@
           (compiler-reg-ref-counts-add-instr-weighted-remat!
             counts
             def-status
-            (array.array-ref slots index)
+            (array-ref slots index)
             weight
             allow-invariant-loads)
           (set! index (+ index 1))))
@@ -7538,17 +7823,16 @@
   [block-index : i64]
   [allow-invariant-loads : bool]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-ref-counts-seq-weighted-remat!
               counts
               def-status
               instrs
-              (compiler-reg-loop-depth-weight
-                (array.array-ref depths block-index))
+              (compiler-reg-loop-depth-weight (array-ref depths block-index))
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
@@ -7557,7 +7841,7 @@
           depths
           (+ block-index 1)
           allow-invariant-loads))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-ref-counts-blocks-weighted-remat!
         counts
         def-status
@@ -7569,7 +7853,7 @@
 (define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
     i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (Array i64) (array.make-array i64 vars)]
         (begin
@@ -7580,7 +7864,7 @@
 (define (compiler-reg-function-spill-weights [func : CompilerIrFunction]) : (Array
     i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (Array i64) (array.make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
@@ -7593,7 +7877,7 @@
   [func : CompilerIrFunction]
   [coalesce : CompilerRegCoalesceMap]) : (Array i64)
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (Array i64) (array.make-array i64 vars)]
         [def-status : (Array i64) (array.make-array i64 vars)]
@@ -7627,7 +7911,7 @@
 
 (define (compiler-reg-interval-index-has-segment-table?
   [index : CompilerRegIntervalIndex]) : bool
-  (> (array.array-length (struct-get index segments)) 0))
+  (> (array-length (struct-get index segments)) 0))
 
 (define (compiler-reg-interval-index-var-has-segments?
   [index : CompilerRegIntervalIndex]
@@ -7636,15 +7920,15 @@
     [segments : (Array CompilerRegIntervalList) (struct-get index segments)]
     (and
       (>= var 0)
-      (< var (array.array-length segments))
-      (not (compiler-reg-interval-list-empty? (array.array-ref segments var))))))
+      (< var (array-length segments))
+      (not (compiler-reg-interval-list-empty? (array-ref segments var))))))
 
 (define (compiler-reg-call-split-boundary-vars-blocks
   [blocks : CompilerLiveBlockList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(CompilerLiveBlockNil) set]
-    [(CompilerLiveBlockCons block rest)
+    [(CompilerLiveBlockList.Nil) set]
+    [(CompilerLiveBlockList.Cons block rest)
       (compiler-reg-call-split-boundary-vars-blocks
         (box-get rest)
         (compiler-live-set-union
@@ -7660,24 +7944,24 @@
   [copies : CompilerRegEdgeCopyList]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
   (match copies
-    [(CompilerRegEdgeCopyNil) acc]
-    [(CompilerRegEdgeCopyCons copy rest)
+    [(CompilerRegEdgeCopyList.Nil) acc]
+    [(CompilerRegEdgeCopyList.Cons copy rest)
       (compiler-reg-edge-copy-list-reverse-onto
         (box-get rest)
         (compiler-reg-edge-copy-cons copy acc))]))
 
 (define (compiler-reg-edge-copy-list-count [copies : CompilerRegEdgeCopyList]) : i64
   (match copies
-    [(CompilerRegEdgeCopyNil) 0]
-    [(CompilerRegEdgeCopyCons _ rest)
+    [(CompilerRegEdgeCopyList.Nil) 0]
+    [(CompilerRegEdgeCopyList.Cons _ rest)
       (+ 1 (compiler-reg-edge-copy-list-count (box-get rest)))]))
 
 (define (compiler-reg-region-label-map-from
   [labels : CompilerRegStringList]
   [out : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match labels
-    [(CompilerRegStringNil) out]
-    [(CompilerRegStringCons label rest)
+    [(CompilerRegStringList.Nil) out]
+    [(CompilerRegStringList.Cons label rest)
       (compiler-reg-region-label-map-from
         (box-get rest)
         (hashmap.string-i64-map-put out label 1))]))
@@ -7697,7 +7981,7 @@
 
 (define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : String
   (match block
-    [(CompilerLiveBlock label _ _ _ _ _ _) label]))
+    [(CompilerLiveBlock.Block label _ _ _ _ _ _) label]))
 
 (define (compiler-reg-edge-copy-increment-pred!
   [ids : hashmap.StringI64Map]
@@ -7705,10 +7989,7 @@
   [label : String]) : unit
   (match (hashmap.string-i64-map-get ids label)
     [(hashmap.StringI64MapFound index)
-      (array.array-set!
-        pred-counts
-        index
-        (+ (array.array-ref pred-counts index) 1))]
+      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))]
     [(hashmap.StringI64MapMissing) unit]))
 
 (define (compiler-reg-edge-copy-count-preds-succs!
@@ -7716,8 +7997,8 @@
   [pred-counts : (Array i64)]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
-    [(CompilerLiveLabelNil) unit]
-    [(CompilerLiveLabelCons label rest)
+    [(CompilerLiveLabelSet.Nil) unit]
+    [(CompilerLiveLabelSet.Cons label rest)
       (begin
         (compiler-reg-edge-copy-increment-pred! ids pred-counts label)
         (compiler-reg-edge-copy-count-preds-succs!
@@ -7730,13 +8011,13 @@
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array.array-length blocks))
+  (if (>= index (array-length blocks))
     unit
     (begin
       (compiler-reg-edge-copy-count-preds-succs!
         ids
         pred-counts
-        (compiler-reg-live-block-succs (array.array-ref blocks index)))
+        (compiler-reg-live-block-succs (array-ref blocks index)))
       (compiler-reg-edge-copy-count-preds-blocks!
         ids
         blocks
@@ -7747,8 +8028,7 @@
   [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]) : (Array i64)
   (let
-    [pred-counts : (Array i64)
-      (array.make-array i64 (array.array-length blocks))]
+    [pred-counts : (Array i64) (array.make-array i64 (array-length blocks))]
     (begin
       (compiler-reg-fill-i64-array pred-counts 0)
       (compiler-reg-edge-copy-count-preds-blocks! ids blocks pred-counts 0)
@@ -7757,7 +8037,7 @@
 (define (compiler-reg-edge-copy-refusal
   [from-label : String]
   [to-label : String]) : String
-  (str_cat.str-cat
+  (string.concat5
     "regalloc: edge copy from "
     from-label
     " to "
@@ -7771,11 +8051,13 @@
   [to-preds : i64]) : CompilerRegEdgeCopyPlacementResult
   (cond
     [(= from-succs 1)
-      (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopyPredEnd)]
+      (CompilerRegEdgeCopyPlacementResult.Ok
+        CompilerRegEdgeCopyPlacement.PredEnd)]
     [(= to-preds 1)
-      (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopySuccEntry)]
+      (CompilerRegEdgeCopyPlacementResult.Ok
+        CompilerRegEdgeCopyPlacement.SuccEntry)]
     [else
-      (CompilerRegEdgeCopyPlacementRefused
+      (CompilerRegEdgeCopyPlacementResult.Refused
         (compiler-reg-edge-copy-refusal from-label to-label))]))
 
 (define (compiler-reg-edge-copy-live-on-edge?
@@ -7822,7 +8104,7 @@
   (match (hashmap.string-i64-map-get ids to-label)
     [(hashmap.StringI64MapFound to-index)
       (let
-        [to-block : CompilerLiveBlock (array.array-ref blocks to-index)]
+        [to-block : CompilerLiveBlock (array-ref blocks to-index)]
         [to-inside : bool (compiler-reg-region-label? region to-label)]
         (if (or
           (= from-inside to-inside)
@@ -7840,43 +8122,44 @@
                 from-block
                 to-block
                 members))))
-          (CompilerRegEdgeCopyPlan acc)
+          (CompilerRegEdgeCopyPlan.Plan acc)
           (match (compiler-reg-edge-copy-placement-for
             from-label
             to-label
             from-succs
-            (array.array-ref pred-counts to-index))
-            [(CompilerRegEdgeCopyPlacementOk placement)
+            (array-ref pred-counts to-index))
+            [(CompilerRegEdgeCopyPlacementResult.Ok placement)
               (if to-inside
-                (CompilerRegEdgeCopyPlan
+                (CompilerRegEdgeCopyPlan.Plan
                   (compiler-reg-edge-copy-cons
-                    (CompilerRegEdgeCopy
+                    (CompilerRegEdgeCopy.Copy
                       from-label
                       to-label
                       stack-var
                       region-var
                       ty
-                      CompilerRegEdgeCopyIntoRegion
+                      CompilerRegEdgeCopyDirection.IntoRegion
                       placement)
                     acc))
-                (CompilerRegEdgeCopyPlan
+                (CompilerRegEdgeCopyPlan.Plan
                   (compiler-reg-edge-copy-cons
-                    (CompilerRegEdgeCopy
+                    (CompilerRegEdgeCopy.Copy
                       from-label
                       to-label
                       region-var
                       stack-var
                       ty
-                      CompilerRegEdgeCopyOutOfRegion
+                      CompilerRegEdgeCopyDirection.OutOfRegion
                       placement)
                     acc)))]
-            [(CompilerRegEdgeCopyPlacementRefused message)
-              (CompilerRegEdgeCopyRefused message)])))]
+            [(CompilerRegEdgeCopyPlacementResult.Refused message)
+              (CompilerRegEdgeCopyPlan.Refused message)])))]
     [(hashmap.StringI64MapMissing)
-      (CompilerRegEdgeCopyRefused
-        (str_cat.str-cat
+      (CompilerRegEdgeCopyPlan.Refused
+        (string.concat3
           "regalloc: edge copy target block not found: "
-          to-label))]))
+          to-label
+          ""))]))
 
 (define (compiler-reg-edge-copy-boundary-succs
   [ids : hashmap.StringI64Map]
@@ -7894,8 +8177,8 @@
   [succs : CompilerLiveLabelSet]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
   (match succs
-    [(CompilerLiveLabelNil) (CompilerRegEdgeCopyPlan acc)]
-    [(CompilerLiveLabelCons to-label rest)
+    [(CompilerLiveLabelSet.Nil) (CompilerRegEdgeCopyPlan.Plan acc)]
+    [(CompilerLiveLabelSet.Cons to-label rest)
       (match (compiler-reg-edge-copy-boundary-one
         ids
         blocks
@@ -7911,7 +8194,7 @@
         members
         to-label
         acc)
-        [(CompilerRegEdgeCopyPlan next)
+        [(CompilerRegEdgeCopyPlan.Plan next)
           (compiler-reg-edge-copy-boundary-succs
             ids
             blocks
@@ -7927,8 +8210,8 @@
             members
             (box-get rest)
             next)]
-        [(CompilerRegEdgeCopyRefused message)
-          (CompilerRegEdgeCopyRefused message)])]))
+        [(CompilerRegEdgeCopyPlan.Refused message)
+          (CompilerRegEdgeCopyPlan.Refused message)])]))
 
 (define (compiler-reg-edge-copy-boundary-blocks
   [ids : hashmap.StringI64Map]
@@ -7941,11 +8224,11 @@
   [members : CompilerLiveI64Set]
   [index : i64]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
-  (if (>= index (array.array-length blocks))
-    (CompilerRegEdgeCopyPlan
-      (compiler-reg-edge-copy-list-reverse-onto acc CompilerRegEdgeCopyNil))
+  (if (>= index (array-length blocks))
+    (CompilerRegEdgeCopyPlan.Plan
+      (compiler-reg-edge-copy-list-reverse-onto acc CompilerRegEdgeCopyList.Nil))
     (let
-      [block : CompilerLiveBlock (array.array-ref blocks index)]
+      [block : CompilerLiveBlock (array-ref blocks index)]
       [label : String (compiler-reg-edge-copy-live-block-label block)]
       [succs : CompilerLiveLabelSet (compiler-reg-live-block-succs block)]
       (match (compiler-reg-edge-copy-boundary-succs
@@ -7963,7 +8246,7 @@
         members
         succs
         acc)
-        [(CompilerRegEdgeCopyPlan next)
+        [(CompilerRegEdgeCopyPlan.Plan next)
           (compiler-reg-edge-copy-boundary-blocks
             ids
             blocks
@@ -7975,8 +8258,8 @@
             members
             (+ index 1)
             next)]
-        [(CompilerRegEdgeCopyRefused message)
-          (CompilerRegEdgeCopyRefused message)]))))
+        [(CompilerRegEdgeCopyPlan.Refused message)
+          (CompilerRegEdgeCopyPlan.Refused message)]))))
 
 (define (compiler-reg-edge-copy-plan-for-region
   [func : CompilerIrFunction]
@@ -8019,7 +8302,7 @@
   [ty : AstType]
   [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
   (match (compiler-live-analyze-function func)
-    [(CompilerFunctionLiveness ids blocks)
+    [(CompilerFunctionLiveness.Liveness ids blocks)
       (let
         [pred-counts : (Array i64)
           (compiler-reg-edge-copy-pred-counts ids blocks)]
@@ -8033,35 +8316,36 @@
           ty
           members
           0
-          CompilerRegEdgeCopyNil))]))
+          CompilerRegEdgeCopyList.Nil))]))
 
 (define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : CompilerIrInstr
   (match copy
-    [(CompilerRegEdgeCopy _ _ src dst ty _ _)
-      (IrInstrMov dst (IrValueVar src) ty)]))
+    [(CompilerRegEdgeCopy.Copy _ _ src dst ty _ _)
+      (CompilerIrInstr.Mov dst (CompilerIrValue.Var src) ty)]))
 
 (define (compiler-reg-edge-copy-target-label [copy : CompilerRegEdgeCopy]) : String
   (match copy
-    [(CompilerRegEdgeCopy from-label to-label _ _ _ _ placement)
+    [(CompilerRegEdgeCopy.Copy from-label to-label _ _ _ _ placement)
       (match placement
-        [(CompilerRegEdgeCopyPredEnd) from-label]
-        [(CompilerRegEdgeCopySuccEntry) to-label])]))
+        [(CompilerRegEdgeCopyPlacement.PredEnd) from-label]
+        [(CompilerRegEdgeCopyPlacement.SuccEntry) to-label])]))
 
 (define (compiler-reg-edge-copy-placement [copy : CompilerRegEdgeCopy]) : CompilerRegEdgeCopyPlacement
   (match copy
-    [(CompilerRegEdgeCopy _ _ _ _ _ _ placement) placement]))
+    [(CompilerRegEdgeCopy.Copy _ _ _ _ _ _ placement) placement]))
 
 (define (compiler-reg-edge-copy-insert-before-last
   [instrs : CompilerIrInstrList]
   [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) (compiler-ir-instr-cons copy-instr IrInstrNil)]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil)
+      (compiler-ir-instr-cons copy-instr CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
       (match (box-get rest)
-        [(IrInstrNil)
+        [(CompilerIrInstrList.Nil)
           (compiler-ir-instr-cons
             copy-instr
-            (compiler-ir-instr-cons instr IrInstrNil))]
+            (compiler-ir-instr-cons instr CompilerIrInstrList.Nil))]
         [_
           (compiler-ir-instr-cons
             instr
@@ -8073,10 +8357,11 @@
   [instrs : CompilerIrInstrList]
   [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) (compiler-ir-instr-cons copy-instr IrInstrNil)]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil)
+      (compiler-ir-instr-cons copy-instr CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrPhi _ _ _)
+        [(CompilerIrInstr.Phi _ _ _)
           (compiler-ir-instr-cons
             instr
             (compiler-reg-edge-copy-insert-after-phis (box-get rest) copy-instr))]
@@ -8086,43 +8371,45 @@
   [block : CompilerIrBlock]
   [copy : CompilerRegEdgeCopy]) : CompilerIrBlock
   (match block
-    [(IrBlock label instrs)
+    [(CompilerIrBlock.Block label instrs)
       (let
         [copy-instr : CompilerIrInstr (compiler-reg-edge-copy-instr copy)]
         [items : CompilerIrInstrList (compiler-ir-instr-seq-to-list instrs)]
         [rewritten : CompilerIrInstrList
           (match (compiler-reg-edge-copy-placement copy)
-            [(CompilerRegEdgeCopyPredEnd)
+            [(CompilerRegEdgeCopyPlacement.PredEnd)
               (compiler-reg-edge-copy-insert-before-last items copy-instr)]
-            [(CompilerRegEdgeCopySuccEntry)
+            [(CompilerRegEdgeCopyPlacement.SuccEntry)
               (compiler-reg-edge-copy-insert-after-phis items copy-instr)])]
-        (IrBlock label (compiler-ir-instr-seq-from-list rewritten)))]))
+        (CompilerIrBlock.Block
+          label
+          (compiler-ir-instr-seq-from-list rewritten)))]))
 
 (define (compiler-reg-edge-copy-insert-one
   [blocks : CompilerIrBlockList]
   [copy : CompilerRegEdgeCopy]) : CompilerRegEdgeCopyRewrite
   (match blocks
-    [(IrBlockNil)
-      (CompilerRegEdgeCopyRewriteRefused
-        (str_cat.str-cat
+    [(CompilerIrBlockList.Nil)
+      (CompilerRegEdgeCopyRewrite.Refused
+        (string.concat3
           "regalloc: edge copy insertion block not found: "
-          (compiler-reg-edge-copy-target-label copy)))]
-    [(IrBlockCons block rest)
+          (compiler-reg-edge-copy-target-label copy)
+          ""))]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label _)
-          (if (string.string-eq
-            label
-            (compiler-reg-edge-copy-target-label copy))
-            (CompilerRegEdgeCopyRewrite
+        [(CompilerIrBlock.Block label _)
+          (if (string.eq label (compiler-reg-edge-copy-target-label copy))
+            (CompilerRegEdgeCopyRewrite.Rewrite
               (compiler-ir-block-cons
                 (compiler-reg-edge-copy-insert-in-block block copy)
                 (box-get rest)))
             (match (compiler-reg-edge-copy-insert-one (box-get rest) copy)
-              [(CompilerRegEdgeCopyRewrite tail)
-                (CompilerRegEdgeCopyRewrite (compiler-ir-block-cons block tail))]
-              [(CompilerRegEdgeCopyRewriteRefused message)
-                (CompilerRegEdgeCopyRewriteRefused message)]))])]
-    [(IrBlockArray seq)
+              [(CompilerRegEdgeCopyRewrite.Rewrite tail)
+                (CompilerRegEdgeCopyRewrite.Rewrite
+                  (compiler-ir-block-cons block tail))]
+              [(CompilerRegEdgeCopyRewrite.Refused message)
+                (CompilerRegEdgeCopyRewrite.Refused message)]))])]
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-edge-copy-insert-one
         (compiler-ir-block-seq-to-list seq)
         copy)]))
@@ -8131,35 +8418,35 @@
   [blocks : CompilerIrBlockList]
   [copies : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyRewrite
   (match copies
-    [(CompilerRegEdgeCopyNil) (CompilerRegEdgeCopyRewrite blocks)]
-    [(CompilerRegEdgeCopyCons copy rest)
+    [(CompilerRegEdgeCopyList.Nil) (CompilerRegEdgeCopyRewrite.Rewrite blocks)]
+    [(CompilerRegEdgeCopyList.Cons copy rest)
       (match (compiler-reg-edge-copy-insert-one blocks copy)
-        [(CompilerRegEdgeCopyRewrite rewritten)
+        [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
           (compiler-reg-edge-copy-apply rewritten (box-get rest))]
-        [(CompilerRegEdgeCopyRewriteRefused message)
-          (CompilerRegEdgeCopyRewriteRefused message)])]))
+        [(CompilerRegEdgeCopyRewrite.Refused message)
+          (CompilerRegEdgeCopyRewrite.Refused message)])]))
 
 (define (compiler-reg-loop-split-noop
   [blocks : CompilerIrBlockList]
   [vars : i64]) : CompilerRegCallSaveRewrite
-  (CompilerRegCallSaveRewrite
+  (CompilerRegCallSaveRewrite.Rewrite
     blocks
     vars
     vars
-    CompilerRegAssignmentNil
-    CompilerRegVarTypeNil))
+    CompilerRegAssignmentList.Nil
+    CompilerRegVarTypeList.Nil))
 
 (define (compiler-reg-loop-split-direction-present?
   [copies : CompilerRegEdgeCopyList]
   [want-into : bool]) : bool
   (match copies
-    [(CompilerRegEdgeCopyNil) false]
-    [(CompilerRegEdgeCopyCons copy rest)
+    [(CompilerRegEdgeCopyList.Nil) false]
+    [(CompilerRegEdgeCopyList.Cons copy rest)
       (match copy
-        [(CompilerRegEdgeCopy _ _ _ _ _ direction _)
+        [(CompilerRegEdgeCopy.Copy _ _ _ _ _ direction _)
           (if (match direction
-            [(CompilerRegEdgeCopyIntoRegion) want-into]
-            [(CompilerRegEdgeCopyOutOfRegion) (not want-into)])
+            [(CompilerRegEdgeCopyDirection.IntoRegion) want-into]
+            [(CompilerRegEdgeCopyDirection.OutOfRegion) (not want-into)])
             true
             (compiler-reg-loop-split-direction-present?
               (box-get rest)
@@ -8174,10 +8461,10 @@
 (define (compiler-reg-loop-split-instr-list-has-phi?
   [instrs : CompilerIrInstrList]) : bool
   (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) false]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrPhi _ _ _) true]
+        [(CompilerIrInstr.Phi _ _ _) true]
         [_ (compiler-reg-loop-split-instr-list-has-phi? (box-get rest))])]))
 
 (define (compiler-reg-loop-split-instr-seq-has-phi?
@@ -8196,10 +8483,10 @@
   [instrs : CompilerIrInstrList]
   [var : i64]) : bool
   (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) false]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrPhi dst _ _)
+        [(CompilerIrInstr.Phi dst _ _)
           (if (= dst var)
             true
             (compiler-reg-loop-split-phi-defines-var-list? (box-get rest) var))]
@@ -8235,9 +8522,9 @@
 (define (compiler-reg-loop-split-coalesce-root?
   [parents : (Array i64)]
   [var : i64]) : bool
-  (if (or (< var 0) (>= var (array.array-length parents)))
+  (if (or (< var 0) (>= var (array-length parents)))
     true
-    (= (array.array-ref parents var) var)))
+    (= (array-ref parents var) var)))
 
 ;; SplitKit step 1. Point every coalesced member of `root` (every v with
 ;; parents[v] == root, including root itself) at `new-var` in the region remap. The
@@ -8252,14 +8539,14 @@
   [root : i64]
   [new-var : i64]) : unit
   (let
-    [n : i64 (array.array-length remap)]
+    [n : i64 (array-length remap)]
     [v : i64 0]
     (while (< v n)
       (begin
         (if (and
-          (< v (array.array-length parents))
-          (= (array.array-ref parents v) root))
-          (array.array-set! remap v new-var)
+          (< v (array-length parents))
+          (= (array-ref parents v) root))
+          (array-set! remap v new-var)
           unit)
         (set! v (+ v 1))))))
 
@@ -8274,15 +8561,15 @@
   [vars : i64]) : CompilerLiveI64Set
   (let
     [n : i64
-      (if (< vars (array.array-length parents))
+      (if (< vars (array-length parents))
         vars
-        (array.array-length parents))]
+        (array-length parents))]
     [set : CompilerLiveI64Set (compiler-live-set-empty)]
     [v : i64 0]
     (begin
       (while (< v n)
         (begin
-          (if (= (array.array-ref parents v) root)
+          (if (= (array-ref parents v) root)
             (set! set (compiler-live-set-insert set v))
             unit)
           (set! v (+ v 1))))
@@ -8297,14 +8584,14 @@
   [parents : (Array i64)]
   [root : i64]) : bool
   (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) false]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrPhi dst _ _)
+        [(CompilerIrInstr.Phi dst _ _)
           (if (and
             (>= dst 0)
-            (< dst (array.array-length parents))
-            (= (array.array-ref parents dst) root))
+            (< dst (array-length parents))
+            (= (array-ref parents dst) root))
             true
             (compiler-reg-loop-split-phi-group-defined-list?
               (box-get rest)
@@ -8329,15 +8616,15 @@
   [parents : (Array i64)]
   [root : i64]) : bool
   (match inputs
-    [(IrPhiInputNil) true]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (and
         (match value
-          [(IrValueVar src)
+          [(CompilerIrValue.Var src)
             (and
               (>= src 0)
-              (< src (array.array-length parents))
-              (= (array.array-ref parents src) root))]
+              (< src (array-length parents))
+              (= (array-ref parents src) root))]
           [_ false])
         (compiler-reg-loop-split-phi-inputs-all-in-group?
           (box-get rest)
@@ -8351,15 +8638,15 @@
   [parents : (Array i64)]
   [root : i64]) : bool
   (match instrs
-    [(IrInstrNil) true]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) true]
+    [(CompilerIrInstrList.Cons instr rest)
       (and
         (match instr
-          [(IrInstrPhi dst inputs _)
+          [(CompilerIrInstr.Phi dst inputs _)
             (if (and
               (>= dst 0)
-              (< dst (array.array-length parents))
-              (= (array.array-ref parents dst) root))
+              (< dst (array-length parents))
+              (= (array-ref parents dst) root))
               (compiler-reg-loop-split-phi-inputs-all-in-group?
                 inputs
                 parents
@@ -8425,8 +8712,8 @@
   [instrs : CompilerIrInstrList]
   [members : CompilerLiveI64Set]) : i64
   (match instrs
-    [(IrInstrNil) 0]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
       (+
         (if (compiler-reg-loop-split-instr-mentions-group? instr members)
           1
@@ -8446,8 +8733,8 @@
   [instrs : CompilerIrInstrList]
   [var : i64]) : i64
   (match instrs
-    [(IrInstrNil) 0]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
       (+
         (if (compiler-reg-loop-split-instr-mentions-var? instr var)
           1
@@ -8466,8 +8753,8 @@
   [start : i64]
   [end : i64]) : CompilerRegIntervalList
   (compiler-reg-interval-cons
-    (CompilerRegInterval region-var start end)
-    CompilerRegIntervalNil))
+    (CompilerRegInterval.Interval region-var start end)
+    CompilerRegIntervalList.Nil))
 
 (define (compiler-reg-loop-split-var-overlaps-region?
   [intervals : CompilerRegIntervalIndex]
@@ -8476,15 +8763,15 @@
   (let
     [segments : (Array CompilerRegIntervalList) (struct-get intervals segments)]
     [var-segments : CompilerRegIntervalList
-      (if (or (< var 0) (>= var (array.array-length segments)))
-        CompilerRegIntervalNil
-        (array.array-ref segments var))]
+      (if (or (< var 0) (>= var (array-length segments)))
+        CompilerRegIntervalList.Nil
+        (array-ref segments var))]
     (if (not (compiler-reg-interval-list-empty? var-segments))
       (compiler-reg-interval-list-overlaps? var-segments region-intervals)
       (match (compiler-reg-interval-index-lookup intervals var)
-        [(CompilerRegSomeInterval interval)
+        [(CompilerRegMaybeInterval.Some interval)
           (compiler-reg-interval-list-overlaps-one? region-intervals interval)]
-        [(CompilerRegNoInterval) true]))))
+        [(CompilerRegMaybeInterval.No) true]))))
 
 (define (compiler-reg-loop-split-location-conflicts-region?
   [assignments : CompilerRegAssignmentList]
@@ -8493,10 +8780,10 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) false]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment assigned-var assigned-location)
+        [(CompilerRegAssignment.Assignment assigned-var assigned-location)
           (if (or
             (= assigned-var ignore-var)
             (not (compiler-reg-location-eq? assigned-location location)))
@@ -8525,21 +8812,21 @@
   [region-intervals : CompilerRegIntervalList]
   [ignore-var : i64]) : CompilerRegMaybeString
   (match regs
-    [(CompilerRegStringNil) CompilerRegNoString]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) CompilerRegMaybeString.No]
+    [(CompilerRegStringList.Cons reg rest)
       (if (compiler-reg-loop-split-location-conflicts-region?
         assignments
         intervals
         region-intervals
         ignore-var
-        (CompilerRegRegister reg))
+        (CompilerRegLocation.Register reg))
         (compiler-reg-loop-split-first-register
           (box-get rest)
           assignments
           intervals
           region-intervals
           ignore-var)
-        (CompilerRegSomeString reg))]))
+        (CompilerRegMaybeString.Some reg))]))
 
 ;; Return the single assigned var (other than ignore-var) that holds `location`
 ;; and overlaps the region, or -1 if zero -- or more than one -- such var exists.
@@ -8553,10 +8840,10 @@
   [location : CompilerRegLocation]
   [acc : i64]) : i64
   (match assignments
-    [(CompilerRegAssignmentNil) acc]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) acc]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment assigned-var assigned-location)
+        [(CompilerRegAssignment.Assignment assigned-var assigned-location)
           (if (or
             (= acc (- 0 1))
             (= assigned-var ignore-var)
@@ -8604,8 +8891,8 @@
   [weights : (Array i64)]
   [inv-weight : i64]) : CompilerRegLoopSplitEvict
   (match regs
-    [(CompilerRegStringNil) (CompilerRegLoopSplitEvictNone)]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) (CompilerRegLoopSplitEvictNone)]
+    [(CompilerRegStringList.Cons reg rest)
       (let
         [occ : i64
           (compiler-reg-loop-split-region-occupant
@@ -8613,12 +8900,12 @@
             intervals
             region-intervals
             ignore-var
-            (CompilerRegRegister reg)
+            (CompilerRegLocation.Register reg)
             (- 0 2))]
         (if (and
           (>= occ 0)
-          (< occ (array.array-length weights))
-          (< (array.array-ref weights occ) inv-weight))
+          (< occ (array-length weights))
+          (< (array-ref weights occ) inv-weight))
           (CompilerRegLoopSplitEvict reg occ)
           (compiler-reg-loop-split-first-register-evict
             (box-get rest)
@@ -8634,15 +8921,15 @@
   [group-vars : CompilerLiveI64Set]
   [var : i64]) : CompilerRegMaybeType
   (if (compiler-live-set-contains? group-vars var)
-    CompilerRegNoType
+    CompilerRegMaybeType.No
     (match (compiler-reg-var-types-lookup type-info var)
-      [(CompilerRegSomeType ty)
+      [(CompilerRegMaybeType.Some ty)
         (if (and
           (compiler-reg-register-eligible-type? ty)
           (not (compiler-reg-float-type? ty)))
-          (CompilerRegSomeType ty)
-          CompilerRegNoType)]
-      [(CompilerRegNoType) CompilerRegNoType])))
+          (CompilerRegMaybeType.Some ty)
+          CompilerRegMaybeType.No)]
+      [(CompilerRegMaybeType.No) CompilerRegMaybeType.No])))
 
 (define (compiler-reg-loop-split-hot-benefit?
   [mentions : i64]
@@ -8658,8 +8945,8 @@
   [source-index : i64]
   [succs : CompilerLiveLabelSet]) : bool
   (match succs
-    [(CompilerLiveLabelNil) false]
-    [(CompilerLiveLabelCons label rest)
+    [(CompilerLiveLabelSet.Nil) false]
+    [(CompilerLiveLabelSet.Cons label rest)
       (match (hashmap.string-i64-map-get ids label)
         [(hashmap.StringI64MapFound target-index)
           (if (<= target-index source-index)
@@ -8679,14 +8966,14 @@
   [region : hashmap.StringI64Map]
   [remap : (Array i64)]) : CompilerIrBlockList
   (match blocks
-    [(IrBlockNil) IrBlockNil]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [rewritten-block : CompilerIrBlock
               (if (compiler-reg-region-label? region label)
-                (IrBlock
+                (CompilerIrBlock.Block
                   label
                   (compiler-ir-instr-seq-from-list
                     (compiler-reg-remap-instr-list
@@ -8699,7 +8986,7 @@
                 (box-get rest)
                 region
                 remap)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-region-remap-blocks
         (compiler-ir-block-seq-to-list seq)
         region
@@ -8724,15 +9011,15 @@
         (begin
           (set!
             found
-            (match (array.array-ref slots index)
-              [(IrInstrCall _ _ _ _) true]
-              [(IrInstrCallIndirect _ _ _ _) true]
-              [(IrInstrCallIndirectC _ _ _ _) true]
-              [(IrInstrCallCAbiStoreResult _) true]
-              [(IrInstrCallIndirectCAbiStoreResult _) true]
-              [(IrInstrTailCall _ _ _) true]
-              [(IrInstrTailCallIndirect _ _ _) true]
-              [(IrInstrSyscall _ _) true]
+            (match (array-ref slots index)
+              [(CompilerIrInstr.Call _ _ _ _) true]
+              [(CompilerIrInstr.CallIndirect _ _ _ _) true]
+              [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+              [(CompilerIrInstr.CallCAbiStoreResult _) true]
+              [(CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+              [(CompilerIrInstr.TailCall _ _ _) true]
+              [(CompilerIrInstr.TailCallIndirect _ _ _) true]
+              [(CompilerIrInstr.Syscall _ _) true]
               [_ false]))
           (set! index (+ index 1))))
       found)))
@@ -8772,7 +9059,7 @@
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-preheader-block-label [block : CompilerIrBlock]) : String
   (match block
-    [(IrBlock label _) label]))
+    [(CompilerIrBlock.Block label _) label]))
 
 (define (compiler-reg-preheader-succ-count [block : CompilerIrBlock]) : i64
   (compiler-live-label-set-count (compiler-live-block-successors block)))
@@ -8789,13 +9076,13 @@
 ;; successor, so it is never a critical edge).
 (define (compiler-reg-preheader-terminator-branch? [block : CompilerIrBlock]) : bool
   (match block
-    [(IrBlock _ instrs)
+    [(CompilerIrBlock.Block _ instrs)
       (let
         [c : i64 (compiler-ir-instr-seq-count instrs)]
         (if (<= c 0)
           false
           (match (compiler-ir-instr-seq-ref instrs (- c 1))
-            [(IrInstrBranch _ _ _) true]
+            [(CompilerIrInstr.Branch _ _ _) true]
             [_ false])))]))
 
 ;; loop-ends[h] = highest block index with a back-edge to block h (-1 if none).
@@ -8842,7 +9129,7 @@
         (if (and
           (or (< p h) (> p le))
           (compiler-reg-preheader-succ-contains?
-            (array.array-ref orig p)
+            (array-ref orig p)
             h-label))
           (if (= found (- 0 1))
             p
@@ -8859,15 +9146,15 @@
   [h-label : String]) : i64
   (if (or
     (<= h 0)
-    (>= h (array.array-length loop-ends))
-    (< (array.array-ref loop-ends h) h)
+    (>= h (array-length loop-ends))
+    (< (array-ref loop-ends h) h)
     (hashmap.string-i64-map-contains?
       ids
       (str_cat.str-cat h-label ".preheader")))
     (- 0 1)
     (let
-      [le : i64 (array.array-ref loop-ends h)]
-      [n : i64 (array.array-length orig)]
+      [le : i64 (array-ref loop-ends h)]
+      [n : i64 (array-length orig)]
       [pred : i64
         (compiler-reg-preheader-scan-outside-preds
           orig
@@ -8880,9 +9167,9 @@
       (if (< pred 0)
         (- 0 1)
         (if (and
-          (> (compiler-reg-preheader-succ-count (array.array-ref orig pred)) 1)
+          (> (compiler-reg-preheader-succ-count (array-ref orig pred)) 1)
           (compiler-reg-preheader-terminator-branch?
-            (array.array-ref orig pred)))
+            (array-ref orig pred)))
           pred
           (- 0 1))))))
 
@@ -8897,8 +9184,8 @@
   (match (hashmap.string-i64-map-get ids s)
     [(hashmap.StringI64MapFound h-idx)
       (if (and
-        (< h-idx (array.array-length header-pred))
-        (= (array.array-ref header-pred h-idx) pred-index))
+        (< h-idx (array-length header-pred))
+        (= (array-ref header-pred h-idx) pred-index))
         (str_cat.str-cat s ".preheader")
         s)]
     [(hashmap.StringI64MapMissing) s]))
@@ -8907,10 +9194,10 @@
   [instrs : CompilerIrInstrList]
   [new-last : CompilerIrInstr]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) IrInstrNil]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrInstrList.Cons instr rest)
       (match (box-get rest)
-        [(IrInstrNil) (compiler-ir-instr-cons new-last IrInstrNil)]
+        [(CompilerIrInstrList.Nil) (compiler-ir-instr-cons new-last CompilerIrInstrList.Nil)]
         [_
           (compiler-ir-instr-cons
             instr
@@ -8925,26 +9212,26 @@
   [block : CompilerIrBlock]
   [index : i64]) : CompilerIrBlock
   (match block
-    [(IrBlock label instrs)
+    [(CompilerIrBlock.Block label instrs)
       (let
         [c : i64 (compiler-ir-instr-seq-count instrs)]
         (if (<= c 0)
           block
           (match (compiler-ir-instr-seq-ref instrs (- c 1))
-            [(IrInstrBranch cond t f)
+            [(CompilerIrInstr.Branch cond t f)
               (let
                 [nt : String
                   (compiler-reg-preheader-subst-label ids header-pred index t)]
                 [nf : String
                   (compiler-reg-preheader-subst-label ids header-pred index f)]
-                (if (and (string.string-eq nt t) (string.string-eq nf f))
+                (if (and (string.eq nt t) (string.eq nf f))
                   block
-                  (IrBlock
+                  (CompilerIrBlock.Block
                     label
                     (compiler-ir-instr-seq-from-list
                       (compiler-reg-preheader-list-replace-last
                         (compiler-ir-instr-seq-to-list instrs)
-                        (IrInstrBranch cond nt nf))))))]
+                        (CompilerIrInstr.Branch cond nt nf))))))]
             [_ block])))]))
 
 ;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
@@ -8954,11 +9241,11 @@
   [pred-label : String]
   [ph-label : String]) : CompilerIrPhiInputList
   (match inputs
-    [(IrPhiInputNil) IrPhiInputNil]
-    [(IrPhiInputCons value label rest)
+    [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         value
-        (if (string.string-eq label pred-label)
+        (if (string.eq label pred-label)
           ph-label
           label)
         (compiler-reg-preheader-relabel-phi-inputs
@@ -8971,12 +9258,12 @@
   [pred-label : String]
   [ph-label : String]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) IrInstrNil]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrInstrList.Cons instr rest)
       (compiler-ir-instr-cons
         (match instr
-          [(IrInstrPhi dst inputs ty)
-            (IrInstrPhi
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
               dst
               (compiler-reg-preheader-relabel-phi-inputs
                 inputs
@@ -8994,8 +9281,8 @@
   [pred-label : String]
   [ph-label : String]) : CompilerIrBlock
   (match block
-    [(IrBlock label instrs)
-      (IrBlock
+    [(CompilerIrBlock.Block label instrs)
+      (CompilerIrBlock.Block
         label
         (compiler-ir-instr-seq-from-list
           (compiler-reg-preheader-relabel-instr-list
@@ -9013,8 +9300,8 @@
   [blocks : CompilerIrBlockList]
   [index : i64]) : CompilerIrBlockList
   (match blocks
-    [(IrBlockNil) IrBlockNil]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
       (let
         [tail : CompilerIrBlockList
           (compiler-reg-preheader-rewrite
@@ -9026,19 +9313,19 @@
         [redirected : CompilerIrBlock
           (compiler-reg-preheader-redirect-block ids header-pred block index)]
         [pred : i64
-          (if (< index (array.array-length header-pred))
-            (array.array-ref header-pred index)
+          (if (< index (array-length header-pred))
+            (array-ref header-pred index)
             (- 0 1))]
         (if (>= pred 0)
           (let
             [h-label : String (compiler-reg-preheader-block-label block)]
             [ph-label : String (str_cat.str-cat h-label ".preheader")]
             [pred-label : String
-              (compiler-reg-preheader-block-label (array.array-ref orig pred))]
+              (compiler-reg-preheader-block-label (array-ref orig pred))]
             (compiler-ir-block-cons
               (compiler-ir-block
                 ph-label
-                (compiler-ir-instr-cons (IrInstrJump h-label) IrInstrNil))
+                (compiler-ir-instr-cons (CompilerIrInstr.Jump h-label) CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-reg-preheader-relabel-header
                   redirected
@@ -9046,7 +9333,7 @@
                   ph-label)
                 tail)))
           (compiler-ir-block-cons redirected tail)))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-preheader-rewrite
         orig
         ids
@@ -9095,7 +9382,7 @@
                     header-label)]
                 (if (>= pred 0)
                   (begin
-                    (array.array-set! header-pred h pred)
+                    (array-set! header-pred h pred)
                     (compiler-reg-preheader-rewrite
                       orig
                       ids
@@ -9106,6 +9393,7 @@
             [(hashmap.StringI64MapMissing) blocks]))))))
 
 (define (compiler-reg-loop-split-try-var
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [region-label : String]
   [block : CompilerLiveBlock]
@@ -9179,16 +9467,16 @@
           (not
             (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
       (match (compiler-reg-assignment-lookup assignments var)
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegSpill _)
+            [(CompilerRegLocation.Spill _)
               (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
-                [(CompilerRegSomeType ty)
+                [(CompilerRegMaybeType.Some ty)
                   (let
                     [labels : CompilerRegStringList
                       (compiler-reg-string-cons
                         region-label
-                        CompilerRegStringNil)]
+                        CompilerRegStringList.Nil)]
                     [mentions : i64
                       (if phi-carried?
                         (compiler-reg-loop-split-mention-count-group
@@ -9214,7 +9502,7 @@
                         var
                         vars
                         ty))
-                      [(CompilerRegEdgeCopyPlan copies)
+                      [(CompilerRegEdgeCopyPlan.Plan copies)
                         (let
                           [copy-count : i64
                             (compiler-reg-edge-copy-list-count copies)]
@@ -9266,15 +9554,15 @@
                                 intervals
                                 region-intervals
                                 var)
-                                [(CompilerRegSomeString reg)
-                                  (CompilerRegLoopSplitCandidate
+                                [(CompilerRegMaybeString.Some reg)
+                                  (CompilerRegLoopSplitCandidate.Candidate
                                     var
                                     labels
                                     ty
                                     reg
                                     copies
                                     (- 0 1))]
-                                [(CompilerRegNoString)
+                                [(CompilerRegMaybeString.No)
                                   (match (compiler-reg-loop-split-first-register-evict
                                     cregs
                                     assignments
@@ -9282,11 +9570,11 @@
                                     region-intervals
                                     var
                                     weights
-                                    (if (< var (array.array-length weights))
-                                      (array.array-ref weights var)
+                                    (if (< var (array-length weights))
+                                      (array-ref weights var)
                                       0))
                                     [(CompilerRegLoopSplitEvict ereg evar)
-                                      (CompilerRegLoopSplitCandidate
+                                      (CompilerRegLoopSplitCandidate.Candidate
                                         var
                                         labels
                                         ty
@@ -9294,16 +9582,17 @@
                                         copies
                                         evar)]
                                     [(CompilerRegLoopSplitEvictNone)
-                                      (CompilerRegLoopSplitNoCandidate)])]))
-                            (CompilerRegLoopSplitNoCandidate)))]
-                      [(CompilerRegEdgeCopyRefused _)
-                        (CompilerRegLoopSplitNoCandidate)]))]
-                [(CompilerRegNoType) (CompilerRegLoopSplitNoCandidate)])]
-            [_ (CompilerRegLoopSplitNoCandidate)])]
-        [(CompilerRegNoLocation) (CompilerRegLoopSplitNoCandidate)])
-      (CompilerRegLoopSplitNoCandidate))))
+                                      (CompilerRegLoopSplitCandidate.NoCandidate)])]))
+                            (CompilerRegLoopSplitCandidate.NoCandidate)))]
+                      [(CompilerRegEdgeCopyPlan.Refused _)
+                        (CompilerRegLoopSplitCandidate.NoCandidate)]))]
+                [(CompilerRegMaybeType.No) (CompilerRegLoopSplitCandidate.NoCandidate)])]
+            [_ (CompilerRegLoopSplitCandidate.NoCandidate)])]
+        [(CompilerRegMaybeLocation.No) (CompilerRegLoopSplitCandidate.NoCandidate)])
+      (CompilerRegLoopSplitCandidate.NoCandidate))))
 
 (define (compiler-reg-loop-split-select-var
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [region-label : String]
   [block : CompilerLiveBlock]
@@ -9321,8 +9610,9 @@
   [merged-roots : CompilerLiveI64Set]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (if (>= var vars)
-    (CompilerRegLoopSplitNoCandidate)
+    (CompilerRegLoopSplitCandidate.NoCandidate)
     (match (compiler-reg-loop-split-try-var
+      abi
       func
       region-label
       block
@@ -9339,8 +9629,9 @@
       parents
       merged-roots
       weights)
-      [(CompilerRegLoopSplitNoCandidate)
+      [(CompilerRegLoopSplitCandidate.NoCandidate)
         (compiler-reg-loop-split-select-var
+          abi
           func
           region-label
           block
@@ -9357,10 +9648,11 @@
           parents
           merged-roots
           weights)]
-      [(CompilerRegLoopSplitCandidate stack-var label ty reg copies evicted)
-        (CompilerRegLoopSplitCandidate stack-var label ty reg copies evicted)])))
+      [(CompilerRegLoopSplitCandidate.Candidate stack-var label ty reg copies evicted)
+        (CompilerRegLoopSplitCandidate.Candidate stack-var label ty reg copies evicted)])))
 
 (define (compiler-reg-loop-split-select-blocks
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [ids : hashmap.StringI64Map]
@@ -9377,19 +9669,19 @@
   [merged-roots : CompilerLiveI64Set]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (match blocks
-    [(IrBlockNil) (CompilerRegLoopSplitNoCandidate)]
-    [(IrBlockCons ir-block rest)
+    [(CompilerIrBlockList.Nil) (CompilerRegLoopSplitCandidate.NoCandidate)]
+    [(CompilerIrBlockList.Cons ir-block rest)
       (match ir-block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [next-point : i64
               (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
             [depth : i64
-              (if (< block-index (array.array-length depths))
-                (array.array-ref depths block-index)
+              (if (< block-index (array-length depths))
+                (array-ref depths block-index)
                 0)]
             (if (and
-              (< block-index (array.array-length live-blocks))
+              (< block-index (array-length live-blocks))
               (> depth 0)
               ;; phi-blocks allowed: the not-defined-in-block gate in try-var
               ;; restricts to read-only invariants (a phi-defined var IS defined
@@ -9400,11 +9692,12 @@
                 ids
                 block-index
                 (compiler-reg-live-block-succs
-                  (array.array-ref live-blocks block-index))))
+                  (array-ref live-blocks block-index))))
               (match (compiler-reg-loop-split-select-var
+                abi
                 func
                 label
-                (array.array-ref live-blocks block-index)
+                (array-ref live-blocks block-index)
                 instrs
                 point
                 next-point
@@ -9418,8 +9711,9 @@
                 parents
                 merged-roots
                 weights)
-                [(CompilerRegLoopSplitNoCandidate)
+                [(CompilerRegLoopSplitCandidate.NoCandidate)
                   (compiler-reg-loop-split-select-blocks
+                    abi
                     func
                     (box-get rest)
                     ids
@@ -9435,14 +9729,14 @@
                     parents
                     merged-roots
                     weights)]
-                [(CompilerRegLoopSplitCandidate
+                [(CompilerRegLoopSplitCandidate.Candidate
                     stack-var
                     region
                     ty
                     reg
                     copies
                     evicted)
-                  (CompilerRegLoopSplitCandidate
+                  (CompilerRegLoopSplitCandidate.Candidate
                     stack-var
                     region
                     ty
@@ -9450,6 +9744,7 @@
                     copies
                     evicted)])
               (compiler-reg-loop-split-select-blocks
+                abi
                 func
                 (box-get rest)
                 ids
@@ -9465,8 +9760,9 @@
                 parents
                 merged-roots
                 weights)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-select-blocks
+        abi
         func
         (compiler-ir-block-seq-to-list seq)
         ids
@@ -9508,17 +9804,17 @@
     [extra-assignments : CompilerRegAssignmentList
       (if (>= evicted-var 0)
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment vars (CompilerRegRegister reg))
+          (CompilerRegAssignment.Assignment vars (CompilerRegLocation.Register reg))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment
+            (CompilerRegAssignment.Assignment
               evicted-var
-              (CompilerRegSpill (compiler-reg-stack-slot-offset evicted-var)))
-            CompilerRegAssignmentNil))
+              (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset evicted-var)))
+            CompilerRegAssignmentList.Nil))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment vars (CompilerRegRegister reg))
-          CompilerRegAssignmentNil))]
+          (CompilerRegAssignment.Assignment vars (CompilerRegLocation.Register reg))
+          CompilerRegAssignmentList.Nil))]
     (begin
-      (array.array-set! remap stack-var vars)
+      (array-set! remap stack-var vars)
       ;; Home the whole coalesced group (move-related members of `stack-var`), not
       ;; just the root, so a redefined carried value's every alias inside the region
       ;; resolves to the homed register. For a singleton root this re-sets exactly
@@ -9531,16 +9827,16 @@
       (match (compiler-reg-edge-copy-apply
         (compiler-reg-loop-split-region-remap-blocks blocks region-map remap)
         copies)
-        [(CompilerRegEdgeCopyRewrite rewritten-blocks)
-          (CompilerRegCallSaveRewrite
+        [(CompilerRegEdgeCopyRewrite.Rewrite rewritten-blocks)
+          (CompilerRegCallSaveRewrite.Rewrite
             rewritten-blocks
             vars
             (+ vars 1)
             extra-assignments
             (compiler-reg-var-type-cons
-              (CompilerRegVarType vars ty)
-              CompilerRegVarTypeNil))]
-        [(CompilerRegEdgeCopyRewriteRefused _)
+              (CompilerRegVarType.Type vars ty)
+              CompilerRegVarTypeList.Nil))]
+        [(CompilerRegEdgeCopyRewrite.Refused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
 
 ;; ===========================================================================
@@ -9569,33 +9865,33 @@
 (define (compiler-reg-loop-phi-mb-block-points
   [block-array : (Array CompilerIrBlock)]) : (Array i64)
   (let
-    [n : i64 (array.array-length block-array)]
+    [n : i64 (array-length block-array)]
     [points : (Array i64) (array.make-array i64 (+ n 1))]
     [i : i64 0]
     [acc : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array.array-set! points i acc)
+          (array-set! points i acc)
           (set!
             acc
             (+
               acc
-              (match (array.array-ref block-array i)
-                [(IrBlock _ instrs) (* 2 (compiler-ir-instr-seq-count instrs))])))
+              (match (array-ref block-array i)
+                [(CompilerIrBlock.Block _ instrs) (* 2 (compiler-ir-instr-seq-count instrs))])))
           (set! i (+ i 1))))
-      (array.array-set! points n acc)
+      (array-set! points n acc)
       points)))
 
 (define (compiler-reg-loop-phi-mb-region-labels
   [block-array : (Array CompilerIrBlock)]
   [idx : i64]
   [end-idx : i64]) : CompilerRegStringList
-  (if (or (> idx end-idx) (>= idx (array.array-length block-array)))
-    CompilerRegStringNil
+  (if (or (> idx end-idx) (>= idx (array-length block-array)))
+    CompilerRegStringList.Nil
     (compiler-reg-string-cons
-      (match (array.array-ref block-array idx)
-        [(IrBlock label _) label])
+      (match (array-ref block-array idx)
+        [(CompilerIrBlock.Block label _) label])
       (compiler-reg-loop-phi-mb-region-labels block-array (+ idx 1) end-idx))))
 
 ;; Any call/syscall in region blocks [s..e]? (caller-saved candidates are only safe
@@ -9604,11 +9900,11 @@
   [block-array : (Array CompilerIrBlock)]
   [s : i64]
   [e : i64]) : bool
-  (if (or (> s e) (>= s (array.array-length block-array)))
+  (if (or (> s e) (>= s (array-length block-array)))
     false
     (or
-      (match (array.array-ref block-array s)
-        [(IrBlock _ instrs)
+      (match (array-ref block-array s)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)])
       (compiler-reg-loop-phi-mb-region-has-call? block-array (+ s 1) e))))
 
@@ -9618,11 +9914,11 @@
   [s : i64]
   [e : i64]
   [members : CompilerLiveI64Set]) : i64
-  (if (or (> s e) (>= s (array.array-length block-array)))
+  (if (or (> s e) (>= s (array-length block-array)))
     0
     (+
-      (match (array.array-ref block-array s)
-        [(IrBlock _ instrs)
+      (match (array-ref block-array s)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-loop-split-mention-count-group instrs members)])
       (compiler-reg-loop-phi-mb-region-mentions block-array (+ s 1) e members))))
 
@@ -9651,11 +9947,11 @@
     (compiler-reg-loop-split-phi-carried-group? header-instrs parents var)
     (compiler-reg-interval-index-var-has-segments? intervals var))
     (match (compiler-reg-assignment-lookup assignments var)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegSpill _)
+          [(CompilerRegLocation.Spill _)
             (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
-              [(CompilerRegSomeType ty)
+              [(CompilerRegMaybeType.Some ty)
                 (let
                   [members : CompilerLiveI64Set
                     (compiler-reg-loop-split-group-member-set parents var vars)]
@@ -9677,7 +9973,7 @@
                     vars
                     ty
                     members)
-                    [(CompilerRegEdgeCopyPlan copies)
+                    [(CompilerRegEdgeCopyPlan.Plan copies)
                       (if (and
                         ;; INTO present + non-refused => every live exit edge already
                         ;; carries its OUT write-back (the planner refuses otherwise),
@@ -9698,15 +9994,15 @@
                             intervals
                             region-intervals
                             var)
-                            [(CompilerRegSomeString reg)
-                              (CompilerRegLoopSplitCandidate
+                            [(CompilerRegMaybeString.Some reg)
+                              (CompilerRegLoopSplitCandidate.Candidate
                                 var
                                 region-labels
                                 ty
                                 reg
                                 copies
                                 (- 0 1))]
-                            [(CompilerRegNoString)
+                            [(CompilerRegMaybeString.No)
                               (match (compiler-reg-loop-split-first-register-evict
                                 cregs
                                 assignments
@@ -9714,11 +10010,11 @@
                                 region-intervals
                                 var
                                 weights
-                                (if (< var (array.array-length weights))
-                                  (array.array-ref weights var)
+                                (if (< var (array-length weights))
+                                  (array-ref weights var)
                                   0))
                                 [(CompilerRegLoopSplitEvict ereg evar)
-                                  (CompilerRegLoopSplitCandidate
+                                  (CompilerRegLoopSplitCandidate.Candidate
                                     var
                                     region-labels
                                     ty
@@ -9726,14 +10022,14 @@
                                     copies
                                     evar)]
                                 [(CompilerRegLoopSplitEvictNone)
-                                  (CompilerRegLoopSplitNoCandidate)])]))
-                        (CompilerRegLoopSplitNoCandidate))]
-                    [(CompilerRegEdgeCopyRefused _)
-                      (CompilerRegLoopSplitNoCandidate)]))]
-              [(CompilerRegNoType) (CompilerRegLoopSplitNoCandidate)])]
-          [_ (CompilerRegLoopSplitNoCandidate)])]
-      [(CompilerRegNoLocation) (CompilerRegLoopSplitNoCandidate)])
-    (CompilerRegLoopSplitNoCandidate)))
+                                  (CompilerRegLoopSplitCandidate.NoCandidate)])]))
+                        (CompilerRegLoopSplitCandidate.NoCandidate))]
+                    [(CompilerRegEdgeCopyPlan.Refused _)
+                      (CompilerRegLoopSplitCandidate.NoCandidate)]))]
+              [(CompilerRegMaybeType.No) (CompilerRegLoopSplitCandidate.NoCandidate)])]
+          [_ (CompilerRegLoopSplitCandidate.NoCandidate)])]
+      [(CompilerRegMaybeLocation.No) (CompilerRegLoopSplitCandidate.NoCandidate)])
+    (CompilerRegLoopSplitCandidate.NoCandidate)))
 
 (define (compiler-reg-loop-phi-mb-select-var
   [func : CompilerIrFunction]
@@ -9755,7 +10051,7 @@
   [parents : (Array i64)]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (if (>= var vars)
-    (CompilerRegLoopSplitNoCandidate)
+    (CompilerRegLoopSplitCandidate.NoCandidate)
     (match (compiler-reg-loop-phi-mb-try-var
       func
       block-array
@@ -9775,7 +10071,7 @@
       group-vars
       parents
       weights)
-      [(CompilerRegLoopSplitNoCandidate)
+      [(CompilerRegLoopSplitCandidate.NoCandidate)
         (compiler-reg-loop-phi-mb-select-var
           func
           block-array
@@ -9795,8 +10091,8 @@
           group-vars
           parents
           weights)]
-      [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
-        (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])))
+      [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
+        (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])))
 
 ;; Scan block indices for a 2-block natural-loop header (loop-ends[h]==h+1) whose
 ;; body B=h+1 is entered ONLY from h (pred-count 1) and at loop depth>0, then try
@@ -9816,32 +10112,32 @@
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
-  (if (>= h (array.array-length block-array))
-    (CompilerRegLoopSplitNoCandidate)
+  (if (>= h (array-length block-array))
+    (CompilerRegLoopSplitCandidate.NoCandidate)
     (let
       [end-idx : i64
-        (if (< h (array.array-length loop-ends))
-          (array.array-ref loop-ends h)
+        (if (< h (array-length loop-ends))
+          (array-ref loop-ends h)
           (- 0 1))]
       [body : i64 (+ h 1)]
       (if (and
         (= end-idx body)
-        (< body (array.array-length block-array))
-        (< h (array.array-length depths))
-        (> (array.array-ref depths h) 0)
-        (< body (array.array-length pred-counts))
-        (= (array.array-ref pred-counts body) 1))
+        (< body (array-length block-array))
+        (< h (array-length depths))
+        (> (array-ref depths h) 0)
+        (< body (array-length pred-counts))
+        (= (array-ref pred-counts body) 1))
         (match (compiler-reg-loop-phi-mb-select-var
           func
           block-array
           h
           end-idx
-          (match (array.array-ref block-array h)
-            [(IrBlock _ instrs) instrs])
+          (match (array-ref block-array h)
+            [(CompilerIrBlock.Block _ instrs) instrs])
           (compiler-reg-loop-phi-mb-region-labels block-array h end-idx)
-          (array.array-ref points h)
-          (array.array-ref points (+ end-idx 1))
-          (array.array-ref depths h)
+          (array-ref points h)
+          (array-ref points (+ end-idx 1))
+          (array-ref depths h)
           (not
             (compiler-reg-loop-phi-mb-region-has-call? block-array h end-idx))
           vars
@@ -9852,7 +10148,7 @@
           group-vars
           parents
           weights)
-          [(CompilerRegLoopSplitNoCandidate)
+          [(CompilerRegLoopSplitCandidate.NoCandidate)
             (compiler-reg-loop-phi-mb-select-headers
               func
               block-array
@@ -9868,8 +10164,8 @@
               group-vars
               parents
               weights)]
-          [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
-            (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])
+          [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
+            (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])
         (compiler-reg-loop-phi-mb-select-headers
           func
           block-array
@@ -9908,9 +10204,9 @@
       (compiler-ir-block-list-force-cons blocks)]
     [block-array : (Array CompilerIrBlock)
       (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
-    [count : i64 (array.array-length block-array)]
+    [count : i64 (array-length block-array)]
     (if (<= count 1)
-      (CompilerRegLoopSplitNoCandidate)
+      (CompilerRegLoopSplitCandidate.NoCandidate)
       (compiler-reg-loop-phi-mb-select-headers
         func
         block-array
@@ -9939,6 +10235,7 @@
 ;; count) bounds it. With a single candidate this is bit-identical to the old
 ;; one-shot behaviour (merging additions with the empty tail is the identity).
 (define (compiler-reg-loop-split-rewrite-one
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -9947,14 +10244,16 @@
   (if (not (compiler-reg-scalar-full-intervals? func))
     (compiler-reg-loop-split-noop blocks vars)
     (compiler-reg-loop-split-rewrite-fueled
+      abi
       func
       blocks
       vars
       type-info
       plan
-      (compiler-reg-sysv-integer-register-count))))
+      (compiler-reg-callee-saved-integer-register-count-for-abi abi))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -9975,7 +10274,7 @@
         (compiler-reg-function-group-vars func types)]
       [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
       (match selection
-        [(CompilerRegIntervalSelection _ intervals)
+        [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
             [coalesce : CompilerRegCoalesceMap
               (compiler-reg-coalesce-map-build
@@ -9989,8 +10288,9 @@
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
-              [(CompilerFunctionLiveness ids live-blocks)
+              [(CompilerFunctionLiveness.Liveness ids live-blocks)
                 (match (match (compiler-reg-loop-split-select-blocks
+                  abi
                   func
                   blocks
                   ids
@@ -10011,7 +10311,7 @@
                   ;; MULTI-BLOCK phi-carried homing (the dominant 607 population).
                   ;; As a fallback it leaves every single-block decision -- and so
                   ;; all non-phi / read-only codegen -- byte-identical.
-                  [(CompilerRegLoopSplitNoCandidate)
+                  [(CompilerRegLoopSplitCandidate.NoCandidate)
                     (compiler-reg-loop-phi-mb-select
                       func
                       blocks
@@ -10025,11 +10325,11 @@
                       group-vars
                       parents
                       (compiler-reg-function-spill-weights func))]
-                  [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
-                    (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])
-                  [(CompilerRegLoopSplitNoCandidate)
+                  [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
+                    (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])
+                  [(CompilerRegLoopSplitCandidate.NoCandidate)
                     (compiler-reg-loop-split-noop blocks vars)]
-                  [(CompilerRegLoopSplitCandidate
+                  [(CompilerRegLoopSplitCandidate.Candidate
                       stack-var
                       region-label
                       ty
@@ -10049,17 +10349,22 @@
                           evicted
                           parents)]
                       (match applied
-                        [(CompilerRegCallSaveRewrite
+                        [(CompilerRegCallSaveRewrite.Rewrite
                             new-blocks
                             _
                             new-vars
                             split-assignments
                             split-types)
                           (match func
-                            [(IrFunction name params ret-ty _ _)
+                            [(CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                _
+                                _)
                               (let
                                 [new-func : CompilerIrFunction
-                                  (IrFunction
+                                  (CompilerIrFunction.Function
                                     name
                                     params
                                     ret-ty
@@ -10071,6 +10376,7 @@
                                     applied)]
                                 [rest : CompilerRegCallSaveRewrite
                                   (compiler-reg-loop-split-rewrite-fueled
+                                    abi
                                     new-func
                                     new-blocks
                                     new-vars
@@ -10078,13 +10384,13 @@
                                     new-plan
                                     (- fuel 1))]
                                 (match rest
-                                  [(CompilerRegCallSaveRewrite
+                                  [(CompilerRegCallSaveRewrite.Rewrite
                                       final-blocks
                                       _
                                       final-vars
                                       rest-assignments
                                       rest-types)
-                                    (CompilerRegCallSaveRewrite
+                                    (CompilerRegCallSaveRewrite.Rewrite
                                       final-blocks
                                       vars
                                       final-vars
@@ -10146,16 +10452,16 @@
         (compiler-reg-interval-index-var-has-segments? intervals var)
         (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))))
       (match (compiler-reg-assignment-lookup assignments var)
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegSpill _)
+            [(CompilerRegLocation.Spill _)
               (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
-                [(CompilerRegSomeType ty)
+                [(CompilerRegMaybeType.Some ty)
                   (let
                     [labels : CompilerRegStringList
                       (compiler-reg-string-cons
                         region-label
-                        CompilerRegStringNil)]
+                        CompilerRegStringList.Nil)]
                     [region-intervals : CompilerRegIntervalList
                       (compiler-reg-loop-split-region-interval
                         vars
@@ -10177,10 +10483,10 @@
                         ty))
                       ;; A plan (not refused) means the existing rounds already
                       ;; handle this var -- not a preheader case.
-                      [(CompilerRegEdgeCopyPlan _) ""]
+                      [(CompilerRegEdgeCopyPlan.Plan _) ""]
                       ;; Refused = critical entry edge. Homeable iff a register is
                       ;; free over the region; if so a preheader unblocks it.
-                      [(CompilerRegEdgeCopyRefused _)
+                      [(CompilerRegEdgeCopyPlan.Refused _)
                         (match (compiler-reg-loop-split-first-register
                           (compiler-reg-loop-split-candidate-regs
                             (not
@@ -10190,11 +10496,11 @@
                           intervals
                           region-intervals
                           var)
-                          [(CompilerRegSomeString _) region-label]
-                          [(CompilerRegNoString) ""])]))]
-                [(CompilerRegNoType) ""])]
+                          [(CompilerRegMaybeString.Some _) region-label]
+                          [(CompilerRegMaybeString.No) ""])]))]
+                [(CompilerRegMaybeType.No) ""])]
             [_ ""])]
-        [(CompilerRegNoLocation) ""])
+        [(CompilerRegMaybeLocation.No) ""])
       "")))
 
 (define (compiler-reg-loop-split-refused-select-var
@@ -10233,7 +10539,7 @@
           group-vars
           parents
           merged-roots)]
-      (if (string.string-eq r "")
+      (if (string.eq r "")
         (compiler-reg-loop-split-refused-select-var
           func
           region-label
@@ -10268,31 +10574,31 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]) : String
   (match blocks
-    [(IrBlockNil) ""]
-    [(IrBlockCons ir-block rest)
+    [(CompilerIrBlockList.Nil) ""]
+    [(CompilerIrBlockList.Cons ir-block rest)
       (match ir-block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [next-point : i64
               (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
             [depth : i64
-              (if (< block-index (array.array-length depths))
-                (array.array-ref depths block-index)
+              (if (< block-index (array-length depths))
+                (array-ref depths block-index)
                 0)]
             (if (and
-              (< block-index (array.array-length live-blocks))
+              (< block-index (array-length live-blocks))
               (> depth 0)
               (compiler-reg-loop-split-succs-has-backedge?
                 ids
                 block-index
                 (compiler-reg-live-block-succs
-                  (array.array-ref live-blocks block-index))))
+                  (array-ref live-blocks block-index))))
               (let
                 [r : String
                   (compiler-reg-loop-split-refused-select-var
                     func
                     label
-                    (array.array-ref live-blocks block-index)
+                    (array-ref live-blocks block-index)
                     instrs
                     point
                     next-point
@@ -10305,7 +10611,7 @@
                     group-vars
                     parents
                     merged-roots)]
-                (if (string.string-eq r "")
+                (if (string.eq r "")
                   (compiler-reg-loop-split-refused-select-blocks
                     func
                     (box-get rest)
@@ -10337,7 +10643,7 @@
                 group-vars
                 parents
                 merged-roots)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-refused-select-blocks
         func
         (compiler-ir-block-seq-to-list seq)
@@ -10376,7 +10682,7 @@
         (compiler-reg-function-group-vars func types)]
       [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
       (match selection
-        [(CompilerRegIntervalSelection _ intervals)
+        [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
             [coalesce : CompilerRegCoalesceMap
               (compiler-reg-coalesce-map-build
@@ -10390,7 +10696,7 @@
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
-              [(CompilerFunctionLiveness ids live-blocks)
+              [(CompilerFunctionLiveness.Liveness ids live-blocks)
                 (compiler-reg-loop-split-refused-select-blocks
                   func
                   blocks
@@ -10410,9 +10716,18 @@
 (define (compiler-reg-loop-split-max-rounds) : i64
   ;; 5 callee-saved + the 4 caller-saved (r8/r9/rsi/rdi) the rescue may use in
   ;; clobber-free regions; extra rounds stop early when no free candidate remains.
-  (+ (compiler-reg-sysv-integer-register-count) 4))
+  (compiler-reg-loop-split-max-rounds-for-abi CompilerRegTargetAbi.Linux))
+
+(define (compiler-reg-loop-split-max-rounds-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  ;; Campaign: +4 for the caller-saved rescue rounds (r8/r9/rsi/rdi) in
+  ;; clobber-free regions; extra rounds stop early when no free candidate remains.
+  (+
+    (compiler-reg-callee-saved-integer-register-count-for-abi abi)
+    4))
 
 (define (compiler-reg-loop-split-rewrite-rounds
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [in-vars : i64]
@@ -10422,7 +10737,7 @@
   [extra-types : CompilerRegVarTypeList]
   [rounds-left : i64]) : CompilerRegCallSaveRewrite
   (if (<= rounds-left 0)
-    (CompilerRegCallSaveRewrite
+    (CompilerRegCallSaveRewrite.Rewrite
       blocks
       in-vars
       current-vars
@@ -10432,7 +10747,7 @@
       [round-plan : CompilerRegPlan
         (compiler-reg-plan-with-call-save-rewrite
           plan
-          (CompilerRegCallSaveRewrite
+          (CompilerRegCallSaveRewrite.Rewrite
             blocks
             in-vars
             current-vars
@@ -10441,12 +10756,13 @@
       [round-type-info : CompilerRegVarTypes
         (compiler-reg-function-var-types func)]
       (match (compiler-reg-loop-split-rewrite-one
+        abi
         func
         blocks
         current-vars
         round-type-info
         round-plan)
-        [(CompilerRegCallSaveRewrite
+        [(CompilerRegCallSaveRewrite.Rewrite
             next-blocks
             _
             next-vars
@@ -10466,8 +10782,8 @@
                   current-vars
                   round-type-info
                   round-plan)]
-              (if (string.string-eq refused-header "")
-                (CompilerRegCallSaveRewrite
+              (if (string.eq refused-header "")
+                (CompilerRegCallSaveRewrite.Rewrite
                   blocks
                   in-vars
                   current-vars
@@ -10482,9 +10798,15 @@
                     (compiler-ir-block-list-count spliced)
                     (compiler-ir-block-list-count blocks))
                     (match func
-                      [(IrFunction name params ret-ty _ _)
+                      [(CompilerIrFunction.Function name params ret-ty _ _)
                         (compiler-reg-loop-split-rewrite-rounds
-                          (IrFunction name params ret-ty current-vars spliced)
+                          abi
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            current-vars
+                            spliced)
                           spliced
                           in-vars
                           current-vars
@@ -10492,14 +10814,14 @@
                           extra-assignments
                           extra-types
                           (- rounds-left 1))])
-                    (CompilerRegCallSaveRewrite
+                    (CompilerRegCallSaveRewrite.Rewrite
                       blocks
                       in-vars
                       current-vars
                       extra-assignments
                       extra-types)))))
             (match func
-              [(IrFunction name params ret-ty _ _)
+              [(CompilerIrFunction.Function name params ret-ty _ _)
                 (let
                   [merged-assignments : CompilerRegAssignmentList
                     (compiler-reg-assignment-list-merge
@@ -10508,8 +10830,14 @@
                   [merged-types : CompilerRegVarTypeList
                     (compiler-reg-var-type-list-merge next-types extra-types)]
                   [next-func : CompilerIrFunction
-                    (IrFunction name params ret-ty next-vars next-blocks)]
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      next-vars
+                      next-blocks)]
                   (compiler-reg-loop-split-rewrite-rounds
+                    abi
                     next-func
                     next-blocks
                     in-vars
@@ -10525,15 +10853,31 @@
   [vars : i64]
   [_type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (compiler-reg-loop-split-rewrite-blocks-for-abi
+    CompilerRegTargetAbi.Linux
+    func
+    blocks
+    vars
+    _type-info
+    plan))
+
+(define (compiler-reg-loop-split-rewrite-blocks-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [_type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (compiler-reg-loop-split-rewrite-rounds
+    abi
     func
     blocks
     vars
     vars
     plan
-    CompilerRegAssignmentNil
-    CompilerRegVarTypeNil
-    (compiler-reg-loop-split-max-rounds)))
+    CompilerRegAssignmentList.Nil
+    CompilerRegVarTypeList.Nil
+    (compiler-reg-loop-split-max-rounds-for-abi abi)))
 
 ;; ===========================================================================
 ;; SplitKit M3 -- REALIZATION (design section 4). Consume the greedy-recorded
@@ -10569,13 +10913,13 @@
   [split-plan : CompilerRegSplitPlan]) : bool
   (let
     [piece-of : (Array i64) (struct-get split-plan piece-of)]
-    [n : i64 (array.array-length piece-of)]
+    [n : i64 (array-length piece-of)]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (begin
-          (if (>= (array.array-ref piece-of i) 0)
+          (if (>= (array-ref piece-of i) 0)
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -10596,15 +10940,15 @@
     (begin
       (while (< b nblocks)
         (begin
-          (array.array-set! bases b acc)
+          (array-set! bases b acc)
           (set!
             acc
             (+
               acc
-              (match (array.array-ref block-slots b)
-                [(IrBlock _ instrs) (compiler-ir-instr-seq-count instrs)])))
+              (match (array-ref block-slots b)
+                [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)])))
           (set! b (+ b 1))))
-      (array.array-set! bases nblocks acc)
+      (array-set! bases nblocks acc)
       bases)))
 
 ;; The block bases of a CompilerIrBlockList (same numbering the greedy's live-
@@ -10637,10 +10981,10 @@
   [b : i64]) : bool
   (and
     (>= b 0)
-    (< (+ b 1) (array.array-length orig-bases))
-    (< (+ b 1) (array.array-length cur-bases))
-    (= (array.array-ref orig-bases b) (array.array-ref cur-bases b))
-    (= (array.array-ref orig-bases (+ b 1)) (array.array-ref cur-bases (+ b 1)))))
+    (< (+ b 1) (array-length orig-bases))
+    (< (+ b 1) (array-length cur-bases))
+    (= (array-ref orig-bases b) (array-ref cur-bases b))
+    (= (array-ref orig-bases (+ b 1)) (array-ref cur-bases (+ b 1)))))
 
 (define (compiler-reg-splitkit-block-of-index
   [bases : (Array i64)]
@@ -10650,8 +10994,8 @@
   (if (>= b nblocks)
     (- 0 1)
     (if (and
-      (>= g (array.array-ref bases b))
-      (< g (array.array-ref bases (+ b 1))))
+      (>= g (array-ref bases b))
+      (< g (array-ref bases (+ b 1))))
       b
       (compiler-reg-splitkit-block-of-index bases nblocks g (+ b 1)))))
 
@@ -10672,9 +11016,9 @@
         (begin
           (if (or
             (compiler-reg-backend-caller-clobber-instr?
-              (array.array-ref slots i))
-            (match (array.array-ref slots i)
-              [(IrInstrPhi _ _ _) true]
+              (array-ref slots i))
+            (match (array-ref slots i)
+              [(CompilerIrInstr.Phi _ _ _) true]
               [_ false]))
             (set! ok false)
             unit)
@@ -10691,14 +11035,14 @@
   [out : (Array i64)]
   [vars : i64]) : unit
   (match assignments
-    [(CompilerRegAssignmentNil) unit]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) unit]
+    [(CompilerRegAssignmentList.Cons item rest)
       (begin
         (match item
-          [(CompilerRegAssignment id location)
+          [(CompilerRegAssignment.Assignment id location)
             (if (and (>= id 0) (< id vars))
               (match location
-                [(CompilerRegSpill off) (array.array-set! out id off)]
+                [(CompilerRegLocation.Spill off) (array-set! out id off)]
                 [_ unit])
               unit)])
         (compiler-reg-splitkit-slot-owners-fill! (box-get rest) out vars))]))
@@ -10736,9 +11080,9 @@
       (while (and (< x vars) (not found))
         (begin
           (if (and
-            (= (array.array-ref slot-owner x) target)
-            (< x (array.array-length remat-cands))
-            (= (array.array-ref remat-cands x) 1))
+            (= (array-ref slot-owner x) target)
+            (< x (array-length remat-cands))
+            (= (array-ref remat-cands x) 1))
             (set! found true)
             unit)
           (set! x (+ x 1))))
@@ -10756,7 +11100,7 @@
     (begin
       (while (< x vars)
         (begin
-          (if (= (array.array-ref slot-owner x) target)
+          (if (= (array-ref slot-owner x) target)
             (set! set (compiler-live-set-insert set x))
             unit)
           (set! x (+ x 1))))
@@ -10779,10 +11123,10 @@
     (begin
       (while (< x vars)
         (begin
-          (array.array-set!
+          (array-set!
             out
             x
-            (if (= (array.array-ref slot-owner x) target)
+            (if (= (array-ref slot-owner x) target)
               w
               x))
           (set! x (+ x 1))))
@@ -10806,21 +11150,21 @@
   [ps : i64]
   [pe : i64]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) true]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) true]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment id location)
+        [(CompilerRegAssignment.Assignment id location)
           (if (and
             (match location
-              [(CompilerRegRegister r) (string.string-eq r reg)]
+              [(CompilerRegLocation.Register r) (string.eq r reg)]
               [_ false])
             (not (compiler-live-set-contains? members id))
             (>= id 0)
-            (< id (array.array-length cur-starts))
-            (>= (array.array-ref cur-starts id) 0)
+            (< id (array-length cur-starts))
+            (>= (array-ref cur-starts id) 0)
             ;; overlap [start,end] with [ps,pe]
-            (<= (array.array-ref cur-starts id) pe)
-            (>= (array.array-ref cur-ends id) ps))
+            (<= (array-ref cur-starts id) pe)
+            (>= (array-ref cur-ends id) ps))
             false
             (compiler-reg-splitkit-reg-free-over?
               (box-get rest)
@@ -10848,7 +11192,7 @@
     (begin
       (while (<= i hi)
         (let
-          [instr : CompilerIrInstr (array.array-ref slots i)]
+          [instr : CompilerIrInstr (array-ref slots i)]
           [uses? : bool
             (compiler-live-set-intersects?
               (compiler-live-instr-uses instr)
@@ -10883,13 +11227,13 @@
 ;; hazard the clobber-free gate cannot see.
 (define (compiler-reg-splitkit-safe-register? [reg : String]) : bool
   (or
-    (string.string-eq reg "%rbx")
-    (string.string-eq reg "%r12")
-    (string.string-eq reg "%r13")
-    (string.string-eq reg "%r14")
-    (string.string-eq reg "%r15")
-    (string.string-eq reg "%r8")
-    (string.string-eq reg "%r9")))
+    (string.eq reg "%rbx")
+    (string.eq reg "%r12")
+    (string.eq reg "%r13")
+    (string.eq reg "%r14")
+    (string.eq reg "%r15")
+    (string.eq reg "%r8")
+    (string.eq reg "%r9")))
 
 ;; The safe-register pool the realization DISCOVERS a home from (M4 record-only
 ;; pieces carry no allocator-chosen register). Order: the two clean caller-saved
@@ -10902,13 +11246,13 @@
   (let
     [pool : (Array String) (array.make-array String 7)]
     (begin
-      (array.array-set! pool 0 "%r8")
-      (array.array-set! pool 1 "%r9")
-      (array.array-set! pool 2 "%rbx")
-      (array.array-set! pool 3 "%r12")
-      (array.array-set! pool 4 "%r13")
-      (array.array-set! pool 5 "%r14")
-      (array.array-set! pool 6 "%r15")
+      (array-set! pool 0 "%r8")
+      (array-set! pool 1 "%r9")
+      (array-set! pool 2 "%rbx")
+      (array-set! pool 3 "%r12")
+      (array-set! pool 4 "%r13")
+      (array-set! pool 5 "%r14")
+      (array-set! pool 6 "%r15")
       pool)))
 
 ;; Choose the register to home a piece in over point range [ps,pe]. `given` is the
@@ -10925,10 +11269,10 @@
   [members : CompilerLiveI64Set]
   [ps : i64]
   [pe : i64]) : String
-  (if (>= i (array.array-length pool))
+  (if (>= i (array-length pool))
     ""
     (let
-      [reg : String (array.array-ref pool i)]
+      [reg : String (array-ref pool i)]
       (if (compiler-reg-splitkit-reg-free-over?
         assignments
         cur-starts
@@ -10957,7 +11301,7 @@
   [ps : i64]
   [pe : i64]) : String
   (if (and
-    (not (string.string-eq given ""))
+    (not (string.eq given ""))
     (compiler-reg-splitkit-safe-register? given)
     (compiler-reg-splitkit-reg-free-over?
       assignments
@@ -10985,21 +11329,21 @@
 ;; scavenger regs. This is the pool the CSR-across-the-call piece is homed from.
 (define (compiler-reg-splitkit-callee-saved-register? [reg : String]) : bool
   (or
-    (string.string-eq reg "%rbx")
-    (string.string-eq reg "%r12")
-    (string.string-eq reg "%r13")
-    (string.string-eq reg "%r14")
-    (string.string-eq reg "%r15")))
+    (string.eq reg "%rbx")
+    (string.eq reg "%r12")
+    (string.eq reg "%r13")
+    (string.eq reg "%r14")
+    (string.eq reg "%r15")))
 
 (define (compiler-reg-splitkit-callee-pool) : (Array String)
   (let
     [pool : (Array String) (array.make-array String 5)]
     (begin
-      (array.array-set! pool 0 "%rbx")
-      (array.array-set! pool 1 "%r12")
-      (array.array-set! pool 2 "%r13")
-      (array.array-set! pool 3 "%r14")
-      (array.array-set! pool 4 "%r15")
+      (array-set! pool 0 "%rbx")
+      (array-set! pool 1 "%r12")
+      (array-set! pool 2 "%r13")
+      (array-set! pool 3 "%r14")
+      (array-set! pool 4 "%r15")
       pool)))
 
 ;; Pick a CALLEE-saved register free over point range [ps,pe] (the full range,
@@ -11017,7 +11361,7 @@
   [ps : i64]
   [pe : i64]) : String
   (if (and
-    (not (string.string-eq given ""))
+    (not (string.eq given ""))
     (compiler-reg-splitkit-callee-saved-register? given)
     (compiler-reg-splitkit-reg-free-over?
       assignments
@@ -11047,14 +11391,14 @@
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) false]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
       (if (match item
-        [(CompilerRegAssignment _ location)
+        [(CompilerRegAssignment.Assignment _ location)
           (match location
-            [(CompilerRegRegister r) (string.string-eq r reg)]
-            [(CompilerRegRegisterPair a b)
-              (or (string.string-eq a reg) (string.string-eq b reg))]
+            [(CompilerRegLocation.Register r) (string.eq r reg)]
+            [(CompilerRegLocation.RegisterPair a b)
+              (or (string.eq a reg) (string.eq b reg))]
             [_ false])])
         true
         (compiler-reg-splitkit-reg-used? (box-get rest) reg))]))
@@ -11078,7 +11422,7 @@
     (begin
       (while (>= i lo)
         (let
-          [instr : CompilerIrInstr (array.array-ref slots i)]
+          [instr : CompilerIrInstr (array-ref slots i)]
           (begin
             (if (and
               use-seen
@@ -11106,10 +11450,10 @@
   [members : CompilerLiveI64Set]
   [ps : i64]
   [pe : i64]) : String
-  (if (>= i (array.array-length pool))
+  (if (>= i (array-length pool))
     ""
     (let
-      [reg : String (array.array-ref pool i)]
+      [reg : String (array-ref pool i)]
       (if (and
         (compiler-reg-splitkit-reg-used? assignments reg)
         (compiler-reg-splitkit-reg-free-over?
@@ -11145,8 +11489,8 @@
     (begin
       (while (and (<= i hi) ok)
         (begin
-          (if (match (array.array-ref slots i)
-            [(IrInstrPhi _ _ _) true]
+          (if (match (array-ref slots i)
+            [(CompilerIrInstr.Phi _ _ _) true]
             [_ false])
             (set! ok false)
             unit)
@@ -11157,11 +11501,11 @@
   [assignments : CompilerRegAssignmentList]
   [v : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments v)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegSpill _) true]
+        [(CompilerRegLocation.Spill _) true]
         [_ false])]
-    [(CompilerRegNoLocation) false]))
+    [(CompilerRegMaybeLocation.No) false]))
 
 ;; A candidate sub-range [lo,hi] in block b overlaps an already-accepted
 ;; placement in the same block? (kept non-overlapping so the per-instruction
@@ -11206,23 +11550,23 @@
     [piece-start : (Array i64) (struct-get split-plan piece-start)]
     [piece-end : (Array i64) (struct-get split-plan piece-end)]
     [piece-reg : (Array String) (struct-get split-plan piece-reg)]
-    [np : i64 (array.array-length piece-of)]
-    [nr : i64 (array.array-length piece-reg)]
+    [np : i64 (array-length piece-of)]
+    [nr : i64 (array-length piece-reg)]
     [placements : CompilerRegSplitPlacementList CompilerRegSplitPlacementNil]
-    [extra-assignments : CompilerRegAssignmentList CompilerRegAssignmentNil]
-    [extra-types : CompilerRegVarTypeList CompilerRegVarTypeNil]
+    [extra-assignments : CompilerRegAssignmentList CompilerRegAssignmentList.Nil]
+    [extra-types : CompilerRegVarTypeList CompilerRegVarTypeList.Nil]
     [wcount : i64 0]
     [pid : i64 0]
     (begin
       (while (< pid np)
         (let
-          [v : i64 (array.array-ref piece-of pid)]
+          [v : i64 (array-ref piece-of pid)]
           ;; M4 record-only pieces carry no allocator register (given = ""); the
           ;; realization discovers one below. The splitkit-stress path carries the
           ;; competed register, honoured when still free.
           [given-reg : String
             (if (< pid nr)
-              (array.array-ref piece-reg pid)
+              (array-ref piece-reg pid)
               "")]
           (begin
             (if (and
@@ -11232,8 +11576,8 @@
               (not (compiler-live-set-contains? group-vars v))
               (compiler-reg-splitkit-root-spilled? assignments v))
               (let
-                [ps : i64 (array.array-ref piece-start pid)]
-                [pe : i64 (array.array-ref piece-end pid)]
+                [ps : i64 (array-ref piece-start pid)]
+                [pe : i64 (array-ref piece-end pid)]
                 (if (and (>= ps 0) (>= pe ps))
                   (let
                     [gfirst : i64 (shr ps 1)]
@@ -11246,15 +11590,15 @@
                         0)]
                     (if (and
                       (>= b 0)
-                      (< glast (array.array-ref bases (+ b 1)))
+                      (< glast (array-ref bases (+ b 1)))
                       ;; M4: only realize where caller-save / loop-split left
                       ;; block b byte-identical, so the greedy point coords map
                       ;; directly (soundness on the real path).
                       (compiler-reg-splitkit-block-verbatim? orig-bases bases b))
-                      (match (array.array-ref block-slots b)
-                        [(IrBlock _ instrs)
+                      (match (array-ref block-slots b)
+                        [(CompilerIrBlock.Block _ instrs)
                           (let
-                            [base : i64 (array.array-ref bases b)]
+                            [base : i64 (array-ref bases b)]
                             [slots : (Array CompilerIrInstr)
                               (struct-get instrs slots)]
                             [len : i64 (compiler-ir-instr-seq-count instrs)]
@@ -11280,7 +11624,7 @@
                               ;; would reuse the slot within the loop). Only
                               ;; straight-line (depth-0) sub-ranges are homed --
                               ;; the loop case is loop-split's job.
-                              (= (array.array-ref depths b) 0)
+                              (= (array-ref depths b) 0)
                               (not
                                 (compiler-reg-splitkit-class-has-remat?
                                   slot-owner
@@ -11391,11 +11735,11 @@
                                             (* (+ base lo) 2)
                                             (+ (* (+ base hi) 2) 1))
                                           ""))]
-                                    (if (not (string.string-eq reg ""))
+                                    (if (not (string.eq reg ""))
                                       (match (compiler-reg-var-types-lookup
                                         type-info
                                         v)
-                                        [(CompilerRegSomeType ty)
+                                        [(CompilerRegMaybeType.Some ty)
                                           (let
                                             [w : i64 (+ vars wcount)]
                                             [crmap : (Array i64)
@@ -11423,17 +11767,17 @@
                                               (set!
                                                 extra-assignments
                                                 (compiler-reg-assignment-cons
-                                                  (CompilerRegAssignment
+                                                  (CompilerRegAssignment.Assignment
                                                     w
-                                                    (CompilerRegRegister reg))
+                                                    (CompilerRegLocation.Register reg))
                                                   extra-assignments))
                                               (set!
                                                 extra-types
                                                 (compiler-reg-var-type-cons
-                                                  (CompilerRegVarType w ty)
+                                                  (CompilerRegVarType.Type w ty)
                                                   extra-types))
                                               (set! wcount (+ wcount 1))))]
-                                        [(CompilerRegNoType) unit])
+                                        [(CompilerRegMaybeType.No) unit])
                                       unit))])
                               unit))])
                       unit))
@@ -11486,9 +11830,9 @@
   [i : i64]
   [placements : CompilerRegSplitPlacementList]) : CompilerIrInstrList
   (if (>= i len)
-    IrInstrNil
+    CompilerIrInstrList.Nil
     (let
-      [instr : CompilerIrInstr (array.array-ref slots i)]
+      [instr : CompilerIrInstr (array-ref slots i)]
       (match (compiler-reg-splitkit-find-active placements i)
         [(CompilerRegSplitNoPlacement)
           (compiler-ir-instr-cons
@@ -11523,14 +11867,14 @@
                 [with-writeback : CompilerIrInstrList
                   (if (and (= i phi) (= writeback 1))
                     (compiler-ir-instr-cons
-                      (IrInstrMov v (IrValueVar w) ty)
+                      (CompilerIrInstr.Mov v (CompilerIrValue.Var w) ty)
                       tail)
                     tail)]
                 [with-instr : CompilerIrInstrList
                   (compiler-ir-instr-cons remapped with-writeback)]
                 (if (and (= i plo) (= reload 1))
                   (compiler-ir-instr-cons
-                    (IrInstrMov w (IrValueVar v) ty)
+                    (CompilerIrInstr.Mov w (CompilerIrValue.Var v) ty)
                     with-instr)
                   with-instr))])]))))
 
@@ -11540,17 +11884,17 @@
   [b : i64]
   [placements : CompilerRegSplitPlacementList]) : CompilerIrBlockList
   (if (>= b nblocks)
-    IrBlockNil
-    (match (array.array-ref block-slots b)
-      [(IrBlock label instrs)
+    CompilerIrBlockList.Nil
+    (match (array-ref block-slots b)
+      [(CompilerIrBlock.Block label instrs)
         (let
           [block-placements : CompilerRegSplitPlacementList
             (compiler-reg-splitkit-placements-for-block placements b)]
           [new-block : CompilerIrBlock
             (match block-placements
-              [(CompilerRegSplitPlacementNil) (IrBlock label instrs)]
+              [(CompilerRegSplitPlacementNil) (CompilerIrBlock.Block label instrs)]
               [_
-                (IrBlock
+                (CompilerIrBlock.Block
                   label
                   (compiler-ir-instr-seq-from-list
                     (compiler-reg-splitkit-rewrite-instrs-from
@@ -11672,7 +12016,7 @@
                       nblocks
                       0
                       placements)]
-                  (CompilerRegCallSaveRewrite
+                  (CompilerRegCallSaveRewrite.Rewrite
                     new-blocks
                     vars
                     new-vars
@@ -11746,7 +12090,7 @@
 ;; them).
 (define (compiler-reg-call-region-boundary-instr? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrBinOp _ _ _ _ _) false]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) false]
     [_ (compiler-reg-backend-clobber-point-instr? instr)]))
 
 ;; Shadow register pool: caller-saved registers with NO fixed-use hazard
@@ -11758,21 +12102,21 @@
 (define (compiler-reg-call-region-pool [abi : CompilerRegTargetAbi]) : (Array
     String)
   (match abi
-    [(CompilerRegAbiLinux)
+    [(CompilerRegTargetAbi.Linux)
       (let
         [pool : (Array String) (array.make-array String 4)]
         (begin
-          (array.array-set! pool 0 "%r8")
-          (array.array-set! pool 1 "%r9")
-          (array.array-set! pool 2 "%rsi")
-          (array.array-set! pool 3 "%rdi")
+          (array-set! pool 0 "%r8")
+          (array-set! pool 1 "%r9")
+          (array-set! pool 2 "%rsi")
+          (array-set! pool 3 "%rdi")
           pool))]
-    [(CompilerRegAbiWindows)
+    [(CompilerRegTargetAbi.Windows)
       (let
         [pool : (Array String) (array.make-array String 2)]
         (begin
-          (array.array-set! pool 0 "%r8")
-          (array.array-set! pool 1 "%r9")
+          (array-set! pool 0 "%r8")
+          (array-set! pool 1 "%r9")
           pool))]))
 
 ;; Size guards: at most 4 realized regions per root and 64 per function
@@ -11787,9 +12131,9 @@
   [parents : (Array i64)]
   [n : i64]
   [v : i64]) : i64
-  (if (and (>= v 0) (< v (array.array-length parents)))
+  (if (and (>= v 0) (< v (array-length parents)))
     (let
-      [p : i64 (array.array-ref parents v)]
+      [p : i64 (array-ref parents v)]
       (if (and (>= p 0) (< p n))
         p
         v))
@@ -11808,23 +12152,23 @@
   [cur-depth : (Array i64)]) : unit
   (begin
     (if (and
-      (>= (array.array-ref cur-lo root) 0)
-      (>= (array.array-ref cur-uses root) 2))
-      (array.array-set!
+      (>= (array-ref cur-lo root) 0)
+      (>= (array-ref cur-uses root) 2))
+      (array-set!
         buckets
         root
         (CompilerRegCallRegionStatCons
           (CompilerRegCallRegionStat
             root
-            (array.array-ref cur-lo root)
-            (array.array-ref cur-hi root)
-            (array.array-ref cur-uses root)
-            (array.array-ref cur-defs root)
-            (array.array-ref cur-firstdef root)
-            (array.array-ref cur-depth root))
-          (box (array.array-ref buckets root))))
+            (array-ref cur-lo root)
+            (array-ref cur-hi root)
+            (array-ref cur-uses root)
+            (array-ref cur-defs root)
+            (array-ref cur-firstdef root)
+            (array-ref cur-depth root))
+          (box (array-ref buckets root))))
       unit)
-    (array.array-set! cur-lo root (- 0 1))))
+    (array-set! cur-lo root (- 0 1))))
 
 ;; Attribute one instr's refs (its uses OR defs var set) to the candidates'
 ;; open regions. PER-VAR, deliberately NOT class-merged: storage coloring
@@ -11869,9 +12213,9 @@
               [b : i64 (compiler-reg-low-bit-index bits)]
               [v : i64 (+ (* wi (compiler-live-set-word-bits)) b)]
               (begin
-                (if (and (>= v 0) (< v n) (= (array.array-ref cand v) 1))
+                (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
                   (begin
-                    (if (not (= (array.array-ref cur-region v) rid))
+                    (if (not (= (array-ref cur-region v) rid))
                       (begin
                         (compiler-reg-call-region-flush-root!
                           v
@@ -11882,29 +12226,29 @@
                           cur-defs
                           cur-firstdef
                           cur-depth)
-                        (array.array-set! cur-region v rid)
-                        (array.array-set! cur-lo v p)
-                        (array.array-set! cur-hi v p)
-                        (array.array-set! cur-uses v 0)
-                        (array.array-set! cur-defs v 0)
-                        (array.array-set!
+                        (array-set! cur-region v rid)
+                        (array-set! cur-lo v p)
+                        (array-set! cur-hi v p)
+                        (array-set! cur-uses v 0)
+                        (array-set! cur-defs v 0)
+                        (array-set!
                           cur-firstdef
                           v
                           (if is-def
                             1
                             0))
-                        (array.array-set! cur-depth v depth))
+                        (array-set! cur-depth v depth))
                       unit)
-                    (array.array-set! cur-hi v p)
+                    (array-set! cur-hi v p)
                     (if is-def
-                      (array.array-set!
+                      (array-set!
                         cur-defs
                         v
-                        (+ (array.array-ref cur-defs v) 1))
-                      (array.array-set!
+                        (+ (array-ref cur-defs v) 1))
+                      (array-set!
                         cur-uses
                         v
-                        (+ (array.array-ref cur-uses v) 1))))
+                        (+ (array-ref cur-uses v) 1))))
                   unit)
                 (set! bits (bit-and bits (- bits 1))))))
           (set! wi (+ wi 1)))))))
@@ -11977,24 +12321,24 @@
       (while (< b nblocks)
         (begin
           (set! rid (+ rid 1))
-          (match (array.array-ref bslots b)
-            [(IrBlock _ instrs)
+          (match (array-ref bslots b)
+            [(CompilerIrBlock.Block _ instrs)
               (let
                 [islots : (Array CompilerIrInstr) (struct-get instrs slots)]
                 [ilen : i64 (compiler-ir-instr-seq-count instrs)]
                 [depth : i64
-                  (if (< b (array.array-length depths))
-                    (array.array-ref depths b)
+                  (if (< b (array-length depths))
+                    (array-ref depths b)
                     0)]
                 [i : i64 0]
                 (while (< i ilen)
                   (let
-                    [instr : CompilerIrInstr (array.array-ref islots i)]
+                    [instr : CompilerIrInstr (array-ref islots i)]
                     (begin
                       (if (compiler-reg-call-region-boundary-instr? instr)
                         (set! rid (+ rid 1))
                         (match instr
-                          [(IrInstrPhi _ _ _) unit]
+                          [(CompilerIrInstr.Phi _ _ _) unit]
                           [_
                             (begin
                               (compiler-reg-call-region-note-set!
@@ -12036,7 +12380,7 @@
         [r : i64 0]
         (while (< r n)
           (begin
-            (if (= (array.array-ref cand r) 1)
+            (if (= (array-ref cand r) 1)
               (compiler-reg-call-region-flush-root!
                 r
                 buckets
@@ -12069,8 +12413,8 @@
         0
         (if (and
           (>= var 0)
-          (< var (array.array-length ends))
-          (<= (array.array-ref ends var) (+ hi 1)))
+          (< var (array-length ends))
+          (<= (array-ref ends var) (+ hi 1)))
           0
           1))]))
 
@@ -12113,7 +12457,7 @@
     (begin
       (while (< j k)
         (begin
-          (if (= (array.array-ref picked-lo j) lo)
+          (if (= (array-ref picked-lo j) lo)
             (set! found true)
             unit)
           (set! j (+ j 1))))
@@ -12164,10 +12508,10 @@
   [lo : i64]
   [hi : i64]) : bool
   (match segs
-    [(CompilerRegIntervalNil) false]
-    [(CompilerRegIntervalCons seg rest)
+    [(CompilerRegIntervalList.Nil) false]
+    [(CompilerRegIntervalList.Cons seg rest)
       (match seg
-        [(CompilerRegInterval _ s e)
+        [(CompilerRegInterval.Interval _ s e)
           (if (and (<= s (+ hi 1)) (>= e lo))
             true
             (compiler-reg-call-region-var-overlaps-segs? (box-get rest) lo hi))])]))
@@ -12182,18 +12526,18 @@
       (struct-get interval-index segments)]
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    (if (and (>= v 0) (< v (array.array-length starts)))
+    (if (and (>= v 0) (< v (array-length starts)))
       (let
         [segs : CompilerRegIntervalList
-          (if (< v (array.array-length segments))
-            (array.array-ref segments v)
-            CompilerRegIntervalNil)]
+          (if (< v (array-length segments))
+            (array-ref segments v)
+            CompilerRegIntervalList.Nil)]
         (if (not (compiler-reg-interval-list-empty? segs))
           (compiler-reg-call-region-var-overlaps-segs? segs lo hi)
           (and
-            (>= (array.array-ref starts v) 0)
-            (<= (array.array-ref starts v) (+ hi 1))
-            (>= (array.array-ref ends v) lo))))
+            (>= (array-ref starts v) 0)
+            (<= (array-ref starts v) (+ hi 1))
+            (>= (array-ref ends v) lo))))
       true)))
 
 (define (compiler-reg-call-region-pool-index-of
@@ -12203,9 +12547,9 @@
     [j : i64 0]
     [found : i64 (- 0 1)]
     (begin
-      (while (< j (array.array-length pool))
+      (while (< j (array-length pool))
         (begin
-          (if (and (< found 0) (string.string-eq (array.array-ref pool j) reg))
+          (if (and (< found 0) (string.eq (array-ref pool j) reg))
             (set! found j)
             unit)
           (set! j (+ j 1))))
@@ -12234,10 +12578,10 @@
       (while (and (< j occ-n) (not conflict))
         (begin
           (if (and
-            (= (array.array-ref occ-reg j) pix)
+            (= (array-ref occ-reg j) pix)
             (compiler-reg-call-region-var-overlaps?
               interval-index
-              (array.array-ref occ-var j)
+              (array-ref occ-var j)
               lo
               hi))
             (set! conflict true)
@@ -12261,29 +12605,29 @@
   [order : (Array i64)]
   [count : i64]) : i64
   (match candidates
-    [(CompilerRegIntervalNil) count]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) count]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var start end)
+        [(CompilerRegInterval.Interval var start end)
           ;; lint-allow: single-begin
           (begin
             (if (and
               (>= var 0)
               (< var n)
-              (= (array.array-ref root-has-remat var) 0)
+              (= (array-ref root-has-remat var) 0)
               (compiler-reg-call-set-in-range? kind0 start end)
               (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
-                [(CompilerRegSomeType _) true]
-                [(CompilerRegNoType) false])
+                [(CompilerRegMaybeType.Some _) true]
+                [(CompilerRegMaybeType.No) false])
               (match (compiler-reg-assignment-table-lookup assignments var)
-                [(CompilerRegSomeLocation location)
+                [(CompilerRegMaybeLocation.Some location)
                   (match location
-                    [(CompilerRegSpill _) true]
+                    [(CompilerRegLocation.Spill _) true]
                     [_ false])]
-                [(CompilerRegNoLocation) false]))
+                [(CompilerRegMaybeLocation.No) false]))
               (begin
-                (array.array-set! cand var 1)
-                (array.array-set! order count var)
+                (array-set! cand var 1)
+                (array-set! order count var)
                 (compiler-reg-call-region-mark-candidates
                   (box-get rest)
                   assignments
@@ -12324,7 +12668,7 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    [n : i64 (array.array-length starts)]
+    [n : i64 (array-length starts)]
     [an : i64
       (if (< n 1)
         1
@@ -12339,13 +12683,13 @@
     (begin
       (compiler-reg-fill-i64-array root-has-remat 0)
       (compiler-reg-fill-i64-array cand 0)
-      (while (< v (array.array-length remat-cands))
+      (while (< v (array-length remat-cands))
         (begin
-          (if (= (array.array-ref remat-cands v) 1)
+          (if (= (array-ref remat-cands v) 1)
             (let
               [rr : i64 (compiler-reg-call-region-root parents n v)]
               (if (and (>= rr 0) (< rr n))
-                (array.array-set! root-has-remat rr 1)
+                (array-set! root-has-remat rr 1)
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -12378,19 +12722,19 @@
               (begin
                 (if (and
                   (> root-count 0)
-                  (= (array.array-ref cand v) 0)
+                  (= (array-ref cand v) 0)
                   (let
                     [rr : i64 (compiler-reg-call-region-root parents n v)]
-                    (and (not (= rr v)) (= (array.array-ref cand rr) 1)))
+                    (and (not (= rr v)) (= (array-ref cand rr) 1)))
                   (match (compiler-reg-loop-split-type-ok?
                     type-info
                     group-vars
                     v)
-                    [(CompilerRegSomeType _) true]
-                    [(CompilerRegNoType) false]))
+                    [(CompilerRegMaybeType.Some _) true]
+                    [(CompilerRegMaybeType.No) false]))
                   (begin
-                    (array.array-set! cand v 1)
-                    (array.array-set! order cand-count v)
+                    (array-set! cand v 1)
+                    (array-set! order cand-count v)
                     (set! cand-count (+ cand-count 1)))
                   unit)
                 (set! v (+ v 1)))))
@@ -12400,29 +12744,29 @@
               (begin
                 (let
                   [rr : i64 (compiler-reg-call-region-root parents n v)]
-                  (array.array-set!
+                  (array-set!
                     vend
                     v
                     (if (and
                       (>= rr 0)
-                      (< rr (array.array-length ends))
-                      (>= (array.array-ref ends rr) 0))
-                      (array.array-ref ends rr)
+                      (< rr (array-length ends))
+                      (>= (array-ref ends rr) 0))
+                      (array-ref ends rr)
                       1073741824)))
                 (set! v (+ v 1)))))
           (if (= cand-count 0)
-            (CompilerRegCallSaveAssignState
+            (CompilerRegCallSaveAssignState.State
               assignments
               (compiler-reg-call-split-empty))
             (match func
-              [(IrFunction _ _ _ _ blocks)
+              [(CompilerIrFunction.Function _ _ _ _ blocks)
                 (let
                   [depths : (Array i64)
                     (compiler-reg-function-loop-depths blocks)]
                   [buckets : (Array CompilerRegCallRegionStatList)
                     (array.make-array CompilerRegCallRegionStatList an)]
                   [pool : (Array String) (compiler-reg-call-region-pool abi)]
-                  [pool-count : i64 (array.array-length pool)]
+                  [pool-count : i64 (array-length pool)]
                   [present : (Array i64) (struct-get assignments present)]
                   [items : (Array CompilerRegLocation)
                     (struct-get assignments items)]
@@ -12448,7 +12792,7 @@
                       [bi : i64 0]
                       (while (< bi an)
                         (begin
-                          (array.array-set!
+                          (array-set!
                             buckets
                             bi
                             CompilerRegCallRegionStatNil)
@@ -12462,9 +12806,9 @@
                     ;; index the pool-register occupants once
                     (while (< idx n)
                       (begin
-                        (if (= (array.array-ref present idx) 1)
-                          (match (array.array-ref items idx)
-                            [(CompilerRegRegister r)
+                        (if (= (array-ref present idx) 1)
+                          (match (array-ref items idx)
+                            [(CompilerRegLocation.Register r)
                               (let
                                 [pi : i64
                                   (compiler-reg-call-region-pool-index-of
@@ -12472,11 +12816,11 @@
                                     r)]
                                 (if (>= pi 0)
                                   (begin
-                                    (array.array-set! occ-var occ-n idx)
-                                    (array.array-set! occ-reg occ-n pi)
+                                    (array-set! occ-var occ-n idx)
+                                    (array-set! occ-reg occ-n pi)
                                     (set! occ-n (+ occ-n 1)))
                                   unit))]
-                            [(CompilerRegRegisterPair r0 r1)
+                            [(CompilerRegLocation.RegisterPair r0 r1)
                               (begin
                                 (let
                                   [pi : i64
@@ -12485,8 +12829,8 @@
                                       r0)]
                                   (if (>= pi 0)
                                     (begin
-                                      (array.array-set! occ-var occ-n idx)
-                                      (array.array-set! occ-reg occ-n pi)
+                                      (array-set! occ-var occ-n idx)
+                                      (array-set! occ-reg occ-n pi)
                                       (set! occ-n (+ occ-n 1)))
                                     unit))
                                 (let
@@ -12496,8 +12840,8 @@
                                       r1)]
                                   (if (>= pi 0)
                                     (begin
-                                      (array.array-set! occ-var occ-n idx)
-                                      (array.array-set! occ-reg occ-n pi)
+                                      (array-set! occ-var occ-n idx)
+                                      (array-set! occ-reg occ-n pi)
                                       (set! occ-n (+ occ-n 1)))
                                     unit)))]
                             [_ unit])
@@ -12506,9 +12850,9 @@
                     ;; place candidates in walk order until the budget runs out
                     (while (and (< ci cand-count) (> budget 0))
                       (let
-                        [root : i64 (array.array-ref order ci)]
+                        [root : i64 (array-ref order ci)]
                         [rows : CompilerRegCallRegionStatList
-                          (array.array-ref buckets root)]
+                          (array-ref buckets root)]
                         [k : i64 0]
                         [cap : i64
                           (if (< budget root-cap)
@@ -12531,14 +12875,14 @@
                                 (match stat
                                   [(CompilerRegCallRegionStat _ lo hi _ _ _ _)
                                     (begin
-                                      (array.array-set! picked-lo k lo)
-                                      (array.array-set! picked-hi k hi)
-                                      (array.array-set!
+                                      (array-set! picked-lo k lo)
+                                      (array-set! picked-hi k hi)
+                                      (array-set!
                                         picked-entry
                                         k
                                         (compiler-reg-call-region-stat-entry
                                           stat))
-                                      (array.array-set!
+                                      (array-set!
                                         picked-exit
                                         k
                                         (compiler-reg-call-region-stat-exit
@@ -12564,8 +12908,8 @@
                                             occ-n
                                             interval-index
                                             pix
-                                            (array.array-ref picked-lo j)
-                                            (array.array-ref picked-hi j))
+                                            (array-ref picked-lo j)
+                                            (array-ref picked-hi j))
                                             (set! free false)
                                             unit)
                                           (set! j (+ j 1))))
@@ -12580,10 +12924,10 @@
                                       (set!
                                         shadows
                                         (compiler-live-set-insert shadows root))
-                                      (array.array-set!
+                                      (array-set!
                                         shadow-regs
                                         root
-                                        (array.array-ref pool chosen))
+                                        (array-ref pool chosen))
                                       (while (< j k)
                                         (begin
                                           (set!
@@ -12591,10 +12935,10 @@
                                             (CompilerRegCallRegionCons
                                               (CompilerRegCallRegion
                                                 root
-                                                (array.array-ref picked-lo j)
-                                                (array.array-ref picked-hi j)
-                                                (array.array-ref picked-entry j)
-                                                (array.array-ref picked-exit j))
+                                                (array-ref picked-lo j)
+                                                (array-ref picked-hi j)
+                                                (array-ref picked-entry j)
+                                                (array-ref picked-exit j))
                                               (box regions)))
                                           (set! j (+ j 1))))
                                       ;; occupancy is recorded on the coalesce
@@ -12602,20 +12946,20 @@
                                       ;; segments of their own, and the root's
                                       ;; merged segments conservatively cover
                                       ;; every sibling.
-                                      (array.array-set!
+                                      (array-set!
                                         occ-var
                                         occ-n
                                         (compiler-reg-call-region-root
                                           parents
                                           n
                                           root))
-                                      (array.array-set! occ-reg occ-n chosen)
+                                      (array-set! occ-reg occ-n chosen)
                                       (set! occ-n (+ occ-n 1))
                                       (set! budget (- budget k))))
                                   unit)))
                             unit)
                           (set! ci (+ ci 1)))))
-                    (CompilerRegCallSaveAssignState
+                    (CompilerRegCallSaveAssignState.State
                       assignments
                       (CompilerRegCallSplit shadows shadow-regs regions))))])))))))
 
@@ -12690,7 +13034,7 @@
         (compiler-reg-call-span-census-index
           (compiler-reg-call-span-bucket calls)
           outcome)]
-      (array.array-set! counts index (+ (array.array-ref counts index) 1)))))
+      (array-set! counts index (+ (array-ref counts index) 1)))))
 
 (cfg
   (any regalloc-census test)
@@ -12698,7 +13042,7 @@
     [census : CompilerRegCallSpanCensus]
     [bucket : i64]
     [outcome : i64]) : i64
-    (array.array-ref
+    (array-ref
       (struct-get census counts)
       (compiler-reg-call-span-census-index bucket outcome))))
 
@@ -12711,10 +13055,12 @@
     (if (compiler-live-set-contains? split-vars var)
       (compiler-reg-call-span-outcome-register)
       (match (compiler-reg-assignment-lookup assignments var)
-        [(CompilerRegNoLocation) (compiler-reg-call-span-outcome-unassigned)]
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.No)
+          (compiler-reg-call-span-outcome-unassigned)]
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegSpill _) (compiler-reg-call-span-outcome-spill)]
+            [(CompilerRegLocation.Spill _)
+              (compiler-reg-call-span-outcome-spill)]
             [_ (compiler-reg-call-span-outcome-register)])]))))
 
 (cfg
@@ -12726,10 +13072,10 @@
     [call-points : CompilerLiveI64Set]
     [split-vars : CompilerLiveI64Set]) : unit
     (match intervals
-      [(CompilerRegIntervalNil) unit]
-      [(CompilerRegIntervalCons interval rest)
+      [(CompilerRegIntervalList.Nil) unit]
+      [(CompilerRegIntervalList.Cons interval rest)
         (match interval
-          [(CompilerRegInterval var start end)
+          [(CompilerRegInterval.Interval var start end)
             (begin
               (compiler-reg-call-span-census-add!
                 census
@@ -12760,7 +13106,7 @@
       [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
       (begin
         (match plan
-          [(CompilerRegPlan assignments ineligible intervals _ split-vars _)
+          [(CompilerRegPlan.Plan assignments ineligible intervals _ split-vars _)
             (compiler-reg-call-span-census-intervals!
               census
               (compiler-reg-candidates intervals type-info ineligible false)
@@ -12779,14 +13125,12 @@
       [src-counts : (Array i64) (struct-get src counts)]
       [index : i64 0]
       (begin
-        (while (< index (array.array-length dst-counts))
+        (while (< index (array-length dst-counts))
           (begin
-            (array.array-set!
+            (array-set!
               dst-counts
               index
-              (+
-                (array.array-ref dst-counts index)
-                (array.array-ref src-counts index)))
+              (+ (array-ref dst-counts index) (array-ref src-counts index)))
             (set! index (+ index 1))))
         unit))))
 
@@ -12814,7 +13158,7 @@
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-row [label : String] [bucket : i64]) : String
-    (str_cat.str-cat
+    (string.concat5
       "regalloc-call-span-census|"
       label
       "|"
@@ -12823,19 +13167,20 @@
           compiler-reg-call-span-census-total
           bucket
           (compiler-reg-call-span-outcome-register)))
-      "|"
-      (string.int->string
-        (compiler-reg-call-span-census-count
-          compiler-reg-call-span-census-total
-          bucket
-          (compiler-reg-call-span-outcome-spill)))
-      "|"
-      (string.int->string
-        (compiler-reg-call-span-census-count
-          compiler-reg-call-span-census-total
-          bucket
-          (compiler-reg-call-span-outcome-unassigned)))
-      "\n")))
+      (string.concat5
+        "|"
+        (string.int->string
+          (compiler-reg-call-span-census-count
+            compiler-reg-call-span-census-total
+            bucket
+            (compiler-reg-call-span-outcome-spill)))
+        "|"
+        (string.int->string
+          (compiler-reg-call-span-census-count
+            compiler-reg-call-span-census-total
+            bucket
+            (compiler-reg-call-span-outcome-unassigned)))
+        "\n"))))
 
 (cfg
   regalloc-census
@@ -12875,22 +13220,22 @@
   (define (compiler-reg-move-census-bump! [slot : i64]) : unit
     (if (if (< slot 0)
       true
-      (>= slot (array.array-length compiler-reg-move-census-counts)))
+      (>= slot (array-length compiler-reg-move-census-counts)))
       unit
-      (array.array-set!
+      (array-set!
         compiler-reg-move-census-counts
         slot
-        (+ (array.array-ref compiler-reg-move-census-counts slot) 1)))))
+        (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
 
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-find [parents : (Array i64)] [v : i64]) : i64
     (if (if (< v 0)
       true
-      (>= v (array.array-length parents)))
+      (>= v (array-length parents)))
       v
       (let
-        [p : i64 (array.array-ref parents v)]
+        [p : i64 (array-ref parents v)]
         (if (= p v)
           v
           (compiler-reg-move-census-find parents p))))))
@@ -12906,11 +13251,11 @@
     [group-vars : CompilerLiveI64Set]
     [sv-parents : (Array i64)]) : unit
     (match moves
-      [(CompilerRegMoveNil) unit]
-      [(CompilerRegMoveCons move rest)
+      [(CompilerRegMoveList.Nil) unit]
+      [(CompilerRegMoveList.Cons move rest)
         (begin
           (match move
-            [(CompilerRegMove src dst _)
+            [(CompilerRegMove.Move src dst _)
               (begin
                 (compiler-reg-move-census-bump! 0)
                 (let
@@ -12974,51 +13319,50 @@
 
 (cfg
   regalloc-census
+  (define (compiler-reg-move-census-count-text [index : i64]) : String
+    (string.int->string (array-ref compiler-reg-move-census-counts index))))
+
+(cfg
+  regalloc-census
   (define (compiler-reg-move-census-print!) : unit
     (begin
       (io.print-error
         "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
       (io.print-error
-        (str_cat.str-cat
+        (string.concat5
           "regalloc-move-census|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 0))
+          (compiler-reg-move-census-count-text 0)
           "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 1))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 2))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 3))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 4))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 5))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 6))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 7))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 8))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 9))
-          "|"
-          (string.int->string
-            (array.array-ref compiler-reg-move-census-counts 10))
-          "\n")))))
+          (compiler-reg-move-census-count-text 1)
+          (string.concat5
+            "|"
+            (compiler-reg-move-census-count-text 2)
+            "|"
+            (compiler-reg-move-census-count-text 3)
+            (string.concat5
+              "|"
+              (compiler-reg-move-census-count-text 4)
+              "|"
+              (compiler-reg-move-census-count-text 5)
+              (string.concat5
+                "|"
+                (compiler-reg-move-census-count-text 6)
+                "|"
+                (compiler-reg-move-census-count-text 7)
+                (string.concat5
+                  "|"
+                  (compiler-reg-move-census-count-text 8)
+                  "|"
+                  (compiler-reg-move-census-count-text 9)
+                  (string.concat3
+                    "|"
+                    (compiler-reg-move-census-count-text 10)
+                    "\n"))))))))))
 
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
   (match (compiler-reg-var-types-lookup type-info var)
-    [(CompilerRegSomeType ty) (compiler-reg-float-type? ty)]
-    [(CompilerRegNoType) false]))
+    [(CompilerRegMaybeType.Some ty) (compiler-reg-float-type? ty)]
+    [(CompilerRegMaybeType.No) false]))
 
 (define (compiler-reg-mark-float-spanning
   [intervals : CompilerRegIntervalList]
@@ -13026,10 +13370,10 @@
   [call-points : CompilerLiveI64Set]
   [ineligible : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match intervals
-    [(CompilerRegIntervalNil) ineligible]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) ineligible]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var start end)
+        [(CompilerRegInterval.Interval var start end)
           (compiler-reg-mark-float-spanning
             (box-get rest)
             type-info
@@ -13052,10 +13396,10 @@
   [call-points : CompilerLiveI64Set]
   [ineligible : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match intervals
-    [(CompilerRegIntervalNil) ineligible]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) ineligible]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var start end)
+        [(CompilerRegInterval.Interval var start end)
           (compiler-reg-mark-spanning-in-set
             (box-get rest)
             member-set
@@ -13067,16 +13411,16 @@
               ineligible))])]))
 
 ;; #2386: the set of 2-word register-group vars in a function -- those defined by
-;; IrInstrPack and those read by IrInstrWord (the group value being extracted),
+;; CompilerIrInstr.Pack and those read by CompilerIrInstr.Word (the group value being extracted),
 ;; closed over Mov/Phi copies. These vars need TWO general-purpose registers.
 (define (compiler-reg-group-vars-instr
   [set : CompilerLiveI64Set]
   [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrPack dst _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrWord _ src _ _)
+    [(CompilerIrInstr.Pack dst _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.Word _ src _ _)
       (match src
-        [(IrValueVar v) (compiler-live-set-insert set v)]
+        [(CompilerIrValue.Var v) (compiler-live-set-insert set v)]
         [_ set])]
     [_ set]))
 
@@ -13084,8 +13428,8 @@
   [set : CompilerLiveI64Set]
   [instrs : CompilerIrInstrList]) : CompilerLiveI64Set
   (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) set]
+    [(CompilerIrInstrList.Cons instr rest)
       (compiler-reg-group-vars-instrs
         (compiler-reg-group-vars-instr set instr)
         (box-get rest))]))
@@ -13094,16 +13438,16 @@
   [set : CompilerLiveI64Set]
   [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-vars-blocks
             (compiler-reg-group-vars-instrs
               set
               (compiler-ir-instr-seq-to-list instrs))
             (box-get rest))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-group-vars-blocks set (compiler-ir-block-seq-to-list seq))]))
 
 ;; #2386: a Phi merging group values, or a Mov copying one, must mark its dst (and
@@ -13114,10 +13458,10 @@
   [set : CompilerLiveI64Set]
   [inputs : CompilerIrPhiInputList]) : bool
   (match inputs
-    [(IrPhiInputNil) false]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (match value
-        [(IrValueVar v)
+        [(CompilerIrValue.Var v)
           (if (compiler-live-set-contains? set v)
             true
             (compiler-reg-phi-inputs-any-in-set? set (box-get rest)))]
@@ -13127,12 +13471,12 @@
   [set : CompilerLiveI64Set]
   [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
   (match inputs
-    [(IrPhiInputNil) set]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (let
         [next : CompilerLiveI64Set
           (match value
-            [(IrValueVar v) (compiler-live-set-insert set v)]
+            [(CompilerIrValue.Var v) (compiler-live-set-insert set v)]
             [_ set])]
         (compiler-reg-phi-inputs-insert-all next (box-get rest)))]))
 
@@ -13140,16 +13484,16 @@
   [set : CompilerLiveI64Set]
   [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar v)
+        [(CompilerIrValue.Var v)
           (if (or
             (compiler-live-set-contains? set dst)
             (compiler-live-set-contains? set v))
             (compiler-live-set-insert (compiler-live-set-insert set dst) v)
             set)]
         [_ set])]
-    [(IrInstrPhi dst inputs _)
+    [(CompilerIrInstr.Phi dst inputs _)
       (if (or
         (compiler-live-set-contains? set dst)
         (compiler-reg-phi-inputs-any-in-set? set inputs))
@@ -13183,14 +13527,14 @@
   [set : CompilerLiveI64Set]
   [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-vars-propagate-blocks
             (compiler-reg-group-vars-propagate-seq set instrs 0)
             (box-get rest))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-group-vars-propagate-blocks
         set
         (compiler-ir-block-seq-to-list seq))]))
@@ -13209,7 +13553,7 @@
 ;; CompilerBackendProgramIndex.group-word-counts. The backend sets this once
 ;; before per-function planning (compiler-reg-set-group-counts!). It lets the
 ;; register allocator recognise a 2-word register-group value by its TYPE even
-;; when this function contains no IrInstrPack that produced it -- e.g. the result
+;; when this function contains no CompilerIrInstr.Pack that produced it -- e.g. the result
 ;; of a call returning a group, a group-typed parameter, or a Mov of a group.
 ;; Without it such a var is mis-classified as an 8-byte handle (see
 ;; compiler-reg-handle-type?), gets a single GP register, and emit-group-store
@@ -13232,19 +13576,19 @@
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
 (define (compiler-reg-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) (intern-str name)]
-    [(AstTyStructArgs name _) (intern-str name)]
-    [(AstTyEnum name) (intern-str name)]
-    [(AstTyEnumArgs name _) (intern-str name)]
-    [(AstTyRegion _ inner)
-      (compiler-reg-aggregate-type-name (ty-node-get inner))]
+    [(AstType.Struct name) (intern-str name)]
+    [(AstType.StructArgs name _) (intern-str name)]
+    [(AstType.Enum name) (intern-str name)]
+    [(AstType.EnumArgs name _) (intern-str name)]
+    [(AstType.Region _ inner)
+      (compiler-reg-aggregate-type-name (ast-node-pool-reader-type-get inner))]
     [_ ""]))
 
 ;; True when a var's type is a >=2-word register-group per the program map.
 (define (compiler-reg-type-register-group? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
-    (if (string.string-eq name "")
+    (if (string.eq name "")
       false
       (match (hashmap.string-i64-map-get compiler-reg-group-counts name)
         [(hashmap.StringI64MapFound count) (> count 1)]
@@ -13253,7 +13597,7 @@
 (define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
-    (if (string.string-eq name "")
+    (if (string.eq name "")
       false
       (match (hashmap.string-i64-map-get compiler-reg-group-class-masks name)
         [(hashmap.StringI64MapFound mask) (> mask 0)]
@@ -13263,8 +13607,9 @@
   [types : CompilerRegVarTypes]
   [var : i64]) : bool
   (match (compiler-reg-var-types-lookup types var)
-    [(CompilerRegSomeType ty) (compiler-reg-type-register-group-has-sse? ty)]
-    [(CompilerRegNoType) false]))
+    [(CompilerRegMaybeType.Some ty)
+      (compiler-reg-type-register-group-has-sse? ty)]
+    [(CompilerRegMaybeType.No) false]))
 
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
 ;; vars the structural Pack/Word scan misses).
@@ -13272,10 +13617,10 @@
   [types : CompilerRegVarTypeList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match types
-    [(CompilerRegVarTypeNil) set]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) set]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType var ty)
+        [(CompilerRegVarType.Type var ty)
           (compiler-reg-group-vars-from-types
             (box-get rest)
             (if (compiler-reg-type-register-group? ty)
@@ -13286,7 +13631,7 @@
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-group-vars-fixpoint
         (compiler-reg-group-vars-from-types
           types
@@ -13318,8 +13663,8 @@
   [src : CompilerRegIntervalList]
   [dst : CompilerRegIntervalList]) : CompilerRegIntervalList
   (match src
-    [(CompilerRegIntervalNil) dst]
-    [(CompilerRegIntervalCons s rest)
+    [(CompilerRegIntervalList.Nil) dst]
+    [(CompilerRegIntervalList.Cons s rest)
       (compiler-reg-interval-cons
         s
         (compiler-reg-prepend-segments (box-get rest) dst))]))
@@ -13330,17 +13675,17 @@
   [start : i64]
   [end : i64]) : CompilerRegIntervalList
   (match segments
-    [(CompilerRegIntervalNil)
+    [(CompilerRegIntervalList.Nil)
       (compiler-reg-interval-cons
-        (CompilerRegInterval var start end)
-        CompilerRegIntervalNil)]
-    [(CompilerRegIntervalCons head rest)
+        (CompilerRegInterval.Interval var start end)
+        CompilerRegIntervalList.Nil)]
+    [(CompilerRegIntervalList.Cons head rest)
       (match head
-        [(CompilerRegInterval _ head-start head-end)
+        [(CompilerRegInterval.Interval _ head-start head-end)
           (cond
             [(< end head-start)
               (compiler-reg-interval-cons
-                (CompilerRegInterval var start end)
+                (CompilerRegInterval.Interval var start end)
                 segments)]
             [(< head-end start)
               (compiler-reg-interval-cons
@@ -13366,10 +13711,10 @@
   [root : i64]
   [dst : CompilerRegIntervalList]) : CompilerRegIntervalList
   (match src
-    [(CompilerRegIntervalNil) dst]
-    [(CompilerRegIntervalCons s rest)
+    [(CompilerRegIntervalList.Nil) dst]
+    [(CompilerRegIntervalList.Cons s rest)
       (match s
-        [(CompilerRegInterval _ start end)
+        [(CompilerRegInterval.Interval _ start end)
           (compiler-reg-union-segments
             (box-get rest)
             root
@@ -13384,7 +13729,7 @@
     [orig-segs : (Array CompilerRegIntervalList)
       (struct-get interval-index segments)]
     [parents : (Array i64) (struct-get coalesce parents)]
-    [n : i64 (array.array-length orig-starts)]
+    [n : i64 (array-length orig-starts)]
     [root-starts : (Array i64) (array.make-array i64 n)]
     [root-ends : (Array i64) (array.make-array i64 n)]
     [root-segs : (Array CompilerRegIntervalList)
@@ -13399,16 +13744,16 @@
       ;; later (interference check / call-spanning shadow) dereferences it.
       (while (< v n)
         (begin
-          (array.array-set! root-segs v CompilerRegIntervalNil)
+          (array-set! root-segs v CompilerRegIntervalList.Nil)
           (set! v (+ v 1))))
       (set! v 0)
       (while (< v n)
         (begin
-          (if (>= (array.array-ref orig-starts v) 0)
+          (if (>= (array-ref orig-starts v) 0)
             (let
               [r : i64
-                (if (< v (array.array-length parents))
-                  (array.array-ref parents v)
+                (if (< v (array-length parents))
+                  (array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r n))
@@ -13416,34 +13761,27 @@
                   v)]
               (begin
                 (if (or
-                  (< (array.array-ref root-starts rr) 0)
-                  (<
-                    (array.array-ref orig-starts v)
-                    (array.array-ref root-starts rr)))
-                  (array.array-set!
-                    root-starts
-                    rr
-                    (array.array-ref orig-starts v))
+                  (< (array-ref root-starts rr) 0)
+                  (< (array-ref orig-starts v) (array-ref root-starts rr)))
+                  (array-set! root-starts rr (array-ref orig-starts v))
                   unit)
-                (if (>
-                  (array.array-ref orig-ends v)
-                  (array.array-ref root-ends rr))
-                  (array.array-set! root-ends rr (array.array-ref orig-ends v))
+                (if (> (array-ref orig-ends v) (array-ref root-ends rr))
+                  (array-set! root-ends rr (array-ref orig-ends v))
                   unit)
                 ;; #3489 (PR4) + #3788: the root carries the UNION of its
                 ;; members' segments. Normal coalescing only merges
                 ;; non-interfering members, but same-value coalescing deliberately
                 ;; admits overlapping members, so keep the root segment list
                 ;; sorted and non-overlapping while preserving genuine holes.
-                (array.array-set!
+                (array-set!
                   root-segs
                   rr
                   (compiler-reg-union-segments
-                    (if (< v (array.array-length orig-segs))
-                      (array.array-ref orig-segs v)
-                      CompilerRegIntervalNil)
+                    (if (< v (array-length orig-segs))
+                      (array-ref orig-segs v)
+                      CompilerRegIntervalList.Nil)
                     rr
-                    (array.array-ref root-segs rr)))))
+                    (array-ref root-segs rr)))))
             unit)
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex root-starts root-ends root-segs))))
@@ -13455,16 +13793,16 @@
   [parents : (Array i64)]
   [index : i64]
   [out : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index (array.array-length parents))
+  (if (>= index (array-length parents))
     out
     (let
-      [root : i64 (array.array-ref parents index)]
+      [root : i64 (array-ref parents index)]
       (compiler-reg-coalesce-merged-root-set-from
         parents
         (+ index 1)
         (if (and
           (>= root 0)
-          (< root (array.array-length parents))
+          (< root (array-length parents))
           (not (= root index)))
           (compiler-live-set-insert out root)
           out)))))
@@ -13481,12 +13819,12 @@
   [source : CompilerLiveI64Set]
   [index : i64]
   [out : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index (array.array-length parents))
+  (if (>= index (array-length parents))
     out
     (let
-      [root : i64 (array.array-ref parents index)]
+      [root : i64 (array-ref parents index)]
       [mapped : i64
-        (if (and (>= root 0) (< root (array.array-length parents)))
+        (if (and (>= root 0) (< root (array-length parents)))
           root
           index)]
       (compiler-reg-coalesce-root-set-from-vars-from
@@ -13502,7 +13840,7 @@
   [source : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
-    (if (= (array.array-length parents) 0)
+    (if (= (array-length parents) 0)
       source
       (compiler-reg-coalesce-root-set-from-vars-from
         parents
@@ -13528,23 +13866,23 @@
       (while (< v vars)
         (begin
           (if (and
-            (< v (array.array-length orig-starts))
-            (>= (array.array-ref orig-starts v) 0))
+            (< v (array-length orig-starts))
+            (>= (array-ref orig-starts v) 0))
             (let
               [r : i64
-                (if (< v (array.array-length parents))
-                  (array.array-ref parents v)
+                (if (< v (array-length parents))
+                  (array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r vars))
                   r
                   v)]
               (match (compiler-reg-assignment-table-lookup assignments rr)
-                [(CompilerRegSomeLocation loc)
+                [(CompilerRegMaybeLocation.Some loc)
                   (begin
                     (compiler-reg-assignment-table-insert out v loc)
                     unit)]
-                [(CompilerRegNoLocation) unit]))
+                [(CompilerRegMaybeLocation.No) unit]))
             unit)
           (set! v (+ v 1))))
       out)))
@@ -13554,8 +13892,8 @@
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-interval-list-count [segments : CompilerRegIntervalList]) : i64
   (match segments
-    [(CompilerRegIntervalNil) 0]
-    [(CompilerRegIntervalCons _ rest)
+    [(CompilerRegIntervalList.Nil) 0]
+    [(CompilerRegIntervalList.Cons _ rest)
       (+ 1 (compiler-reg-interval-list-count (box-get rest)))]))
 
 (define (compiler-reg-splitkit-empty) : CompilerRegSplitKit
@@ -13596,7 +13934,7 @@
   (let
     [np : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set!
+      (array-set!
         np
         0
         (if (< orig-vars 0)
@@ -13652,7 +13990,7 @@
         cap)]
     [np : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set! np 0 ov)
+      (array-set! np 0 ov)
       (CompilerRegSplitCtx
         ov
         cap
@@ -13672,7 +14010,7 @@
   [extra : i64]
   [fill : i64]) : (Array i64)
   (let
-    [old-n : i64 (array.array-length src)]
+    [old-n : i64 (array-length src)]
     [new-n : i64
       (+
         old-n
@@ -13688,11 +14026,11 @@
     (begin
       (while (< i nn)
         (begin
-          (array.array-set!
+          (array-set!
             out
             i
             (if (< i old-n)
-              (array.array-ref src i)
+              (array-ref src i)
               fill))
           (set! i (+ i 1))))
       out)))
@@ -13707,7 +14045,7 @@
     [starts : (Array i64) (struct-get index starts)]
     [ends : (Array i64) (struct-get index ends)]
     [segs : (Array CompilerRegIntervalList) (struct-get index segments)]
-    [old-n : i64 (array.array-length starts)]
+    [old-n : i64 (array-length starts)]
     [new-n : i64
       (+
         old-n
@@ -13726,24 +14064,24 @@
     (begin
       (while (< i nn)
         (begin
-          (array.array-set!
+          (array-set!
             new-starts
             i
             (if (< i old-n)
-              (array.array-ref starts i)
+              (array-ref starts i)
               (- 0 1)))
-          (array.array-set!
+          (array-set!
             new-ends
             i
             (if (< i old-n)
-              (array.array-ref ends i)
+              (array-ref ends i)
               (- 0 1)))
-          (array.array-set!
+          (array-set!
             new-segs
             i
-            (if (< i (array.array-length segs))
-              (array.array-ref segs i)
-              CompilerRegIntervalNil))
+            (if (< i (array-length segs))
+              (array-ref segs i)
+              CompilerRegIntervalList.Nil))
           (set! i (+ i 1))))
       (CompilerRegIntervalIndex new-starts new-ends new-segs))))
 
@@ -13754,7 +14092,7 @@
   (let
     [present : (Array i64) (struct-get table present)]
     [items : (Array CompilerRegLocation) (struct-get table items)]
-    [old-n : i64 (array.array-length present)]
+    [old-n : i64 (array-length present)]
     [new-n : i64
       (+
         old-n
@@ -13772,18 +14110,18 @@
     (begin
       (while (< i nn)
         (begin
-          (array.array-set!
+          (array-set!
             new-present
             i
             (if (< i old-n)
-              (array.array-ref present i)
+              (array-ref present i)
               0))
-          (array.array-set!
+          (array-set!
             new-items
             i
             (if (< i old-n)
-              (array.array-ref items i)
-              (CompilerRegSpill 0)))
+              (array-ref items i)
+              (CompilerRegLocation.Spill 0)))
           (set! i (+ i 1))))
       (CompilerRegAssignmentTable new-present new-items))))
 
@@ -13816,7 +14154,7 @@
   [assignments : CompilerRegAssignmentTable]) : CompilerRegSplitPlan
   (let
     [piece-of : (Array i64) (struct-get ctx piece-of)]
-    [n : i64 (array.array-length piece-of)]
+    [n : i64 (array-length piece-of)]
     [piece-reg : (Array String)
       (array.make-array
         String
@@ -13827,16 +14165,16 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set!
+          (array-set!
             piece-reg
             i
-            (if (>= (array.array-ref piece-of i) 0)
+            (if (>= (array-ref piece-of i) 0)
               (match (compiler-reg-assignment-table-lookup assignments i)
-                [(CompilerRegSomeLocation location)
+                [(CompilerRegMaybeLocation.Some location)
                   (match location
-                    [(CompilerRegRegister reg) reg]
+                    [(CompilerRegLocation.Register reg) reg]
                     [_ ""])]
-                [(CompilerRegNoLocation) ""])
+                [(CompilerRegMaybeLocation.No) ""])
               ""))
           (set! i (+ i 1))))
       (CompilerRegSplitPlan
@@ -13879,7 +14217,7 @@
       ;; PR4 note); initialise every slot before use. group-roots[v] = class root.
       (while (< v n)
         (begin
-          (array-set! segments v CompilerRegIntervalNil)
+          (array-set! segments v CompilerRegIntervalList.Nil)
           (array-set! spilled v 0)
           (let
             [r : i64
@@ -13902,9 +14240,9 @@
             (< v (array-length eff-starts))
             (>= (array-ref eff-starts v) 0))
             (match (compiler-reg-assignment-table-lookup assignments v)
-              [(CompilerRegSomeLocation location)
+              [(CompilerRegMaybeLocation.Some location)
                 (match location
-                  [(CompilerRegSpill _)
+                  [(CompilerRegLocation.Spill _)
                     (begin
                       (array-set! spilled v 1)
                       (array-set!
@@ -13912,9 +14250,9 @@
                         v
                         (if (< v (array-length eff-segs))
                           (array-ref eff-segs v)
-                          CompilerRegIntervalNil)))]
+                          CompilerRegIntervalList.Nil)))]
                   [_ unit])]
-              [(CompilerRegNoLocation) unit])
+              [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
       (CompilerRegSplitKit group-roots spilled segments))))
@@ -13954,7 +14292,7 @@
       (>= root 0)
       (< root (array-length segs)))
       (array-ref segs root)
-      CompilerRegIntervalNil)))
+      CompilerRegIntervalList.Nil)))
 
 ;; #3489 (PR2): the spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
@@ -13976,19 +14314,19 @@
       (compiler-reg-fill-i64-array out 0)
       (while (< v vars)
         (begin
-          (if (< v (array.array-length ref-counts))
+          (if (< v (array-length ref-counts))
             (let
               [r : i64
-                (if (< v (array.array-length parents))
-                  (array.array-ref parents v)
+                (if (< v (array-length parents))
+                  (array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r vars))
                   r
                   v)]
-              [w : i64 (array.array-ref ref-counts v)]
-              (if (> w (array.array-ref out rr))
-                (array.array-set! out rr w)
+              [w : i64 (array-ref ref-counts v)]
+              (if (> w (array-ref out rr))
+                (array-set! out rr w)
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -13996,9 +14334,10 @@
 
 ;; ============================================================================
 ;; LLVM-style per-vreg Greedy register allocator (RAGreedy). The single allocation
-;; algorithm across the whole compiler: integer (all 8 registers, caller/callee-
-;; saved with call-clobber as interference), SIMD/AVX integer (the 5 callee-saved),
-;; and float->XMM (all caller-saved). For each register class one selectOrSplit
+;; algorithm across the whole compiler: scalar integer (ABI-specific
+;; caller/callee-saved pools with call-clobber as interference), SIMD/AVX integer
+;; (the Linux callee-saved pool), and float->XMM (all caller-saved). For each
+;; register class one selectOrSplit
 ;; pass over the coalesced ROOTS:
 ;;   * spill-weight PRIORITY ORDER (remat-discounted ref-counts desc, var asc) --
 ;;     the LLVM enqueue priority;
@@ -14019,11 +14358,11 @@
   [out : (Array String)]
   [i : i64]) : unit
   (match regs
-    [(CompilerRegStringNil) unit]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) unit]
+    [(CompilerRegStringList.Cons reg rest)
       (begin
-        (if (< i (array.array-length out))
-          (array.array-set! out i reg)
+        (if (< i (array-length out))
+          (array-set! out i reg)
           unit)
         (compiler-reg-greedy-string-list-to-array (box-get rest) out (+ i 1)))]))
 
@@ -14032,14 +14371,14 @@
   [w : i64]
   [reg : String]) : bool
   (match (compiler-reg-assignment-table-lookup assignments w)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister r) (string.string-eq r reg)]
-        [(CompilerRegRegisterPair a b)
-          (or (string.string-eq a reg) (string.string-eq b reg))]
-        [(CompilerRegSpill _) false]
-        [(CompilerRegRemat _) false])]
-    [(CompilerRegNoLocation) false]))
+        [(CompilerRegLocation.Register r) (string.eq r reg)]
+        [(CompilerRegLocation.RegisterPair a b)
+          (or (string.eq a reg) (string.eq b reg))]
+        [(CompilerRegLocation.Spill _) false]
+        [(CompilerRegLocation.Remat _) false])]
+    [(CompilerRegMaybeLocation.No) false]))
 
 ;; Max ref-count among vars holding `reg` that interfere with `var`; -1 if none.
 (define (compiler-reg-greedy-interferer-max
@@ -14067,8 +14406,8 @@
         (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
         (let
           [w : i64
-            (if (< idx (array.array-length ref-counts))
-              (array.array-ref ref-counts idx)
+            (if (< idx (array-length ref-counts))
+              (array-ref ref-counts idx)
               0)]
           (if (> w acc)
             w
@@ -14102,7 +14441,7 @@
 (define (compiler-reg-greedy-div-clobber-registers) : CompilerRegStringList
   (compiler-reg-string-cons
     "%rax"
-    (compiler-reg-string-cons "%rdx" CompilerRegStringNil)))
+    (compiler-reg-string-cons "%rdx" CompilerRegStringList.Nil)))
 
 ;; Caller-saved registers a div/shift-spanning (but NOT call-spanning) var may not
 ;; use: div-span -> {rax,rdx}, shift-span -> {rcx}, unioned. The call-span case is
@@ -14114,7 +14453,7 @@
     [div-part : CompilerRegStringList
       (if spans-div
         (compiler-reg-greedy-div-clobber-registers)
-        CompilerRegStringNil)]
+        CompilerRegStringList.Nil)]
     (if spans-shift
       (compiler-reg-string-cons "%rcx" div-part)
       div-part)))
@@ -14132,7 +14471,7 @@
   (if (>= ridx rcount)
     ""
     (let
-      [reg : String (array.array-ref reg-arr ridx)]
+      [reg : String (array-ref reg-arr ridx)]
       (if (and
         (not (compiler-reg-string-list-contains? forbidden reg))
         (compiler-reg-greedy-reg-free?
@@ -14165,16 +14504,16 @@
   [var : i64]
   [n : i64]
   [forbidden : CompilerRegStringList]) : String
-  (if (or (< var 0) (>= var (array.array-length copy-hints)))
+  (if (or (< var 0) (>= var (array-length copy-hints)))
     ""
     (let
-      [nb : i64 (array.array-ref copy-hints var)]
+      [nb : i64 (array-ref copy-hints var)]
       (if (< nb 0)
         ""
         (match (compiler-reg-assignment-table-lookup assignments nb)
-          [(CompilerRegSomeLocation loc)
+          [(CompilerRegMaybeLocation.Some loc)
             (match loc
-              [(CompilerRegRegister r)
+              [(CompilerRegLocation.Register r)
                 (if (and
                   (not (compiler-reg-string-list-contains? forbidden r))
                   (compiler-reg-string-list-contains? regs r)
@@ -14187,10 +14526,10 @@
                     n))
                   r
                   "")]
-              [(CompilerRegRegisterPair _ _) ""]
-              [(CompilerRegSpill _) ""]
-              [(CompilerRegRemat _) ""])]
-          [(CompilerRegNoLocation) ""])))))
+              [(CompilerRegLocation.RegisterPair _ _) ""]
+              [(CompilerRegLocation.Spill _) ""]
+              [(CompilerRegLocation.Remat _) ""])]
+          [(CompilerRegMaybeLocation.No) ""])))))
 
 ;; RAGreedy Component 1 cascade cap (LLVM canEvictInterference / cascade number).
 ;; A resident may be evicted+requeued at most this many times; once its
@@ -14233,12 +14572,12 @@
           (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
           (let
             [ec : i64
-              (if (< idx (array.array-length evict-count))
-                (array.array-ref evict-count idx)
+              (if (< idx (array-length evict-count))
+                (array-ref evict-count idx)
                 0)]
             [w : i64
-              (if (< idx (array.array-length ref-counts))
-                (array.array-ref ref-counts idx)
+              (if (< idx (array-length ref-counts))
+                (array-ref ref-counts idx)
                 0)]
             (if (>= ec (compiler-reg-greedy-evict-cascade-cap))
               (compiler-reg-greedy-evict-inf)
@@ -14275,7 +14614,7 @@
   (if (>= ridx rcount)
     ""
     (let
-      [reg : String (array.array-ref reg-arr ridx)]
+      [reg : String (array-ref reg-arr ridx)]
       [m : i64
         (compiler-reg-greedy-interferer-max-capped
           assignments
@@ -14283,7 +14622,7 @@
           ref-counts
           evict-count
           var
-          (array.array-ref reg-arr ridx)
+          (array-ref reg-arr ridx)
           0
           n
           (- 0 1))]
@@ -14331,14 +14670,14 @@
         (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
         (begin
           (compiler-reg-assignment-table-unassign assignments idx)
-          (if (and (>= idx 0) (< idx (array.array-length pending)))
-            (array.array-set! pending idx 1)
+          (if (and (>= idx 0) (< idx (array-length pending)))
+            (array-set! pending idx 1)
             unit)
-          (if (and (>= idx 0) (< idx (array.array-length evict-count)))
-            (array.array-set!
+          (if (and (>= idx 0) (< idx (array-length evict-count)))
+            (array-set!
               evict-count
               idx
-              (+ (array.array-ref evict-count idx) 1))
+              (+ (array-ref evict-count idx) 1))
             unit)
           unit)
         unit)
@@ -14356,8 +14695,8 @@
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
   (match (compiler-reg-assignment-table-lookup assignments var)
-    [(CompilerRegSomeLocation _) true]
-    [(CompilerRegNoLocation) false]))
+    [(CompilerRegMaybeLocation.Some _) true]
+    [(CompilerRegMaybeLocation.No) false]))
 
 ;; RS_* stage machine (LLVM RAGreedy selectOrSplit, made explicit on the per-vreg
 ;; base). alloc-one! pops one root in priority order and returns its terminal
@@ -14415,14 +14754,14 @@
   [n : i64]
   [forbidden : CompilerRegStringList]
   [spans-call : bool]) : String
-  (if (or spans-call (< var 0) (>= var (array.array-length arg-prefs)))
+  (if (or spans-call (< var 0) (>= var (array-length arg-prefs)))
     ""
     (let
-      [idx : i64 (array.array-ref arg-prefs var)]
+      [idx : i64 (array-ref arg-prefs var)]
       (if (or (< idx 0) (>= idx rcount))
         ""
         (let
-          [reg : String (array.array-ref reg-arr idx)]
+          [reg : String (array-ref reg-arr idx)]
           (if (and
             (not (compiler-reg-string-list-contains? forbidden reg))
             (compiler-reg-string-list-contains? regs reg)
@@ -14439,12 +14778,12 @@
 (define (compiler-reg-split-done? [split-done : (Array i64)] [var : i64]) : bool
   (and
     (>= var 0)
-    (< var (array.array-length split-done))
-    (= (array.array-ref split-done var) 1)))
+    (< var (array-length split-done))
+    (= (array-ref split-done var) 1)))
 
 (define (compiler-reg-split-done-set! [split-done : (Array i64)] [var : i64]) : unit
-  (if (and (>= var 0) (< var (array.array-length split-done)))
-    (array.array-set! split-done var 1)
+  (if (and (>= var 0) (< var (array-length split-done)))
+    (array-set! split-done var 1)
     unit))
 
 ;; Write a minted piece's interval into the (grown) index. A piece is a call-free
@@ -14461,14 +14800,14 @@
     [ends : (Array i64) (struct-get index ends)]
     [segments : (Array CompilerRegIntervalList) (struct-get index segments)]
     (begin
-      (if (and (>= pid 0) (< pid (array.array-length starts)))
-        (array.array-set! starts pid s)
+      (if (and (>= pid 0) (< pid (array-length starts)))
+        (array-set! starts pid s)
         unit)
-      (if (and (>= pid 0) (< pid (array.array-length ends)))
-        (array.array-set! ends pid e)
+      (if (and (>= pid 0) (< pid (array-length ends)))
+        (array-set! ends pid e)
         unit)
-      (if (and (>= pid 0) (< pid (array.array-length segments)))
-        (array.array-set! segments pid CompilerRegIntervalNil)
+      (if (and (>= pid 0) (< pid (array-length segments)))
+        (array-set! segments pid CompilerRegIntervalList.Nil)
         unit))))
 
 ;; Record one minted piece's geometry into the split plan arrays (design 1.2).
@@ -14485,17 +14824,17 @@
     [pe : (Array i64) (struct-get ctx piece-end)]
     [pw : (Array i64) (struct-get ctx piece-writeback)]
     (begin
-      (if (and (>= pid 0) (< pid (array.array-length po)))
-        (array.array-set! po pid root)
+      (if (and (>= pid 0) (< pid (array-length po)))
+        (array-set! po pid root)
         unit)
-      (if (and (>= pid 0) (< pid (array.array-length ps)))
-        (array.array-set! ps pid s)
+      (if (and (>= pid 0) (< pid (array-length ps)))
+        (array-set! ps pid s)
         unit)
-      (if (and (>= pid 0) (< pid (array.array-length pe)))
-        (array.array-set! pe pid e)
+      (if (and (>= pid 0) (< pid (array-length pe)))
+        (array-set! pe pid e)
         unit)
-      (if (and (>= pid 0) (< pid (array.array-length pw)))
-        (array.array-set! pw pid wb)
+      (if (and (>= pid 0) (< pid (array-length pw)))
+        (array-set! pw pid wb)
         unit))))
 
 ;; Mint ONE call-free/clobber-free piece for the instruction run [lo-g, hi-g]
@@ -14528,7 +14867,7 @@
   (let
     [next-piece : (Array i64) (struct-get split-ctx next-piece)]
     [split-cap : i64 (struct-get split-ctx split-cap)]
-    [pid : i64 (array.array-ref next-piece 0)]
+    [pid : i64 (array-ref next-piece 0)]
     [s : i64 (* lo-g 2)]
     [e : i64 (* hi-g 2)]
     ;; `pid < split-cap` bounds the split-ctx geometry arrays (sized orig+budget);
@@ -14543,15 +14882,15 @@
         (if (and compete (< pid n))
           (begin
             (compiler-reg-index-set-piece! interval-index pid s e)
-            (if (< pid (array.array-length ref-counts))
-              (array.array-set! ref-counts pid weight)
+            (if (< pid (array-length ref-counts))
+              (array-set! ref-counts pid weight)
               unit)
-            (if (< pid (array.array-length pending))
-              (array.array-set! pending pid 1)
+            (if (< pid (array-length pending))
+              (array-set! pending pid 1)
               unit))
           unit)
         (compiler-reg-split-plan-record! split-ctx pid root s e 0)
-        (array.array-set! next-piece 0 (+ pid 1)))
+        (array-set! next-piece 0 (+ pid 1)))
       unit)))
 
 ;; Walk the instruction indices [g, g-end] of one segment, cutting at WIDE clobber
@@ -14646,11 +14985,11 @@
   [segs : CompilerRegIntervalList]
   [n : i64]) : unit
   (match segs
-    [(CompilerRegIntervalNil) unit]
-    [(CompilerRegIntervalCons seg rest)
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons seg rest)
       (begin
         (match seg
-          [(CompilerRegInterval _ seg-start seg-end)
+          [(CompilerRegInterval.Interval _ seg-start seg-end)
             (if (and (>= seg-start 0) (<= seg-start seg-end))
               (compiler-reg-greedy-mint-segment-runs!
                 interval-index
@@ -14695,23 +15034,23 @@
     [split-cap : i64 (struct-get split-ctx split-cap)]
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    [pid : i64 (array.array-ref next-piece 0)]
+    [pid : i64 (array-ref next-piece 0)]
     (if (and
       (< pid split-cap)
       (>= root 0)
-      (< root (array.array-length starts))
-      (< root (array.array-length ends))
-      (>= (array.array-ref starts root) 0)
-      (>= (array.array-ref ends root) (array.array-ref starts root)))
+      (< root (array-length starts))
+      (< root (array-length ends))
+      (>= (array-ref starts root) 0)
+      (>= (array-ref ends root) (array-ref starts root)))
       (begin
         (compiler-reg-split-plan-record!
           split-ctx
           pid
           root
-          (array.array-ref starts root)
-          (array.array-ref ends root)
+          (array-ref starts root)
+          (array-ref ends root)
           0)
-        (array.array-set! next-piece 0 (+ pid 1)))
+        (array-set! next-piece 0 (+ pid 1)))
       unit)))
 
 ;; trySplit (design 2.2/2.3), inserted between tryEvict and spill in alloc-one!.
@@ -14764,18 +15103,18 @@
     (if (or
       (< var 0)
       (>= var orig-vars)
-      (>= (array.array-ref next-piece 0) split-cap)
+      (>= (array-ref next-piece 0) split-cap)
       (not spans-call)
       (not (compiler-reg-interval-index-var-has-segments? interval-index var))
       (compiler-reg-split-done? split-done var))
       (- 0 1)
       (let
         [weight : i64
-          (if (< var (array.array-length ref-counts))
-            (array.array-ref ref-counts var)
+          (if (< var (array-length ref-counts))
+            (array-ref ref-counts var)
             0)]
         [segs : CompilerRegIntervalList
-          (array.array-ref (struct-get interval-index segments) var)]
+          (array-ref (struct-get interval-index segments) var)]
         (begin
           (compiler-reg-split-done-set! split-done var)
           (if compete
@@ -14794,7 +15133,7 @@
           (compiler-reg-assignment-table-insert
             assignments
             var
-            (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
+            (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset var)))
           (compiler-reg-greedy-stage-rs-split))))))
 
 (define (compiler-reg-greedy-alloc-one!
@@ -14853,7 +15192,7 @@
           regs)]
       [forbidden : CompilerRegStringList
         (if csr-only
-          CompilerRegStringNil
+          CompilerRegStringList.Nil
           (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
       ;; Highest-priority bias: if this var is an outgoing call argument, try its
       ;; ABI arg register first (free-only, never evicting). Falls through to the
@@ -14887,15 +15226,15 @@
       ;; are free-only picks (no eviction), so a single non-empty test assigns
       ;; whichever applies and otherwise falls through to first-free/evict/spill.
       [chosen : String
-        (if (not (string-eq pref ""))
+        (if (not (string.eq pref ""))
           pref
           hint)]
-      (if (not (string-eq chosen ""))
+      (if (not (string.eq chosen ""))
         (begin
           (compiler-reg-assignment-table-insert
             assignments
             var
-            (CompilerRegRegister chosen))
+            (CompilerRegLocation.Register chosen))
           (compiler-reg-greedy-stage-rs-assign))
         (let
           [free : String
@@ -14909,17 +15248,17 @@
               rcount
               n
               forbidden)]
-          (if (not (string-eq free ""))
+          (if (not (string.eq free ""))
             (begin
               (compiler-reg-assignment-table-insert
                 assignments
                 var
-                (CompilerRegRegister free))
+                (CompilerRegLocation.Register free))
               (compiler-reg-greedy-stage-rs-assign))
             (let
               [weight : i64
-                (if (< var (array.array-length ref-counts))
-                  (array.array-ref ref-counts var)
+                (if (< var (array-length ref-counts))
+                  (array-ref ref-counts var)
                   0)]
               [ev : String
                 (compiler-reg-greedy-first-evictable
@@ -14934,7 +15273,7 @@
                   rcount
                   n
                   forbidden)]
-              (if (not (string-eq ev ""))
+              (if (not (string.eq ev ""))
                 (begin
                   (compiler-reg-greedy-evict-requeue!
                     assignments
@@ -14948,7 +15287,7 @@
                   (compiler-reg-assignment-table-insert
                     assignments
                     var
-                    (CompilerRegRegister ev))
+                    (CompilerRegLocation.Register ev))
                   (compiler-reg-greedy-stage-rs-assign))
                 ;; trySplit (design 2.2), between tryEvict and spill: mint call-
                 ;; free sub-range pieces of a spilled call-spanning V and re-queue
@@ -14971,7 +15310,7 @@
                       (compiler-reg-assignment-table-insert
                         assignments
                         var
-                        (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
+                        (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset var)))
                       (if (compiler-reg-interval-index-var-has-segments?
                         interval-index
                         var)
@@ -14983,13 +15322,13 @@
   [out : (Array i64)]
   [i : i64]) : i64
   (match candidates
-    [(CompilerRegIntervalNil) i]
-    [(CompilerRegIntervalCons interval rest)
+    [(CompilerRegIntervalList.Nil) i]
+    [(CompilerRegIntervalList.Cons interval rest)
       (match interval
-        [(CompilerRegInterval var _ _)
+        [(CompilerRegInterval.Interval var _ _)
           (begin
-            (if (< i (array.array-length out))
-              (array.array-set! out i var)
+            (if (< i (array-length out))
+              (array-set! out i var)
               unit)
             (compiler-reg-greedy-collect-vars (box-get rest) out (+ i 1)))])]))
 
@@ -14999,12 +15338,12 @@
   [b : i64]) : bool
   (let
     [wa : i64
-      (if (< a (array.array-length ref-counts))
-        (array.array-ref ref-counts a)
+      (if (< a (array-length ref-counts))
+        (array-ref ref-counts a)
         0)]
     [wb : i64
-      (if (< b (array.array-length ref-counts))
-        (array.array-ref ref-counts b)
+      (if (< b (array-length ref-counts))
+        (array-ref ref-counts b)
         0)]
     (if (> wa wb)
       true
@@ -15019,12 +15358,12 @@
   (if (<= j 0)
     unit
     (let
-      [cur : i64 (array.array-ref arr j)]
-      [prev : i64 (array.array-ref arr (- j 1))]
+      [cur : i64 (array-ref arr j)]
+      [prev : i64 (array-ref arr (- j 1))]
       (if (compiler-reg-greedy-weight-before? ref-counts cur prev)
         (begin
-          (array.array-set! arr j prev)
-          (array.array-set! arr (- j 1) cur)
+          (array-set! arr j prev)
+          (array-set! arr (- j 1) cur)
           (compiler-reg-greedy-sort-insert! arr ref-counts (- j 1)))
         unit))))
 
@@ -15055,7 +15394,7 @@
   [discounted : (Array i64)]
   [raw : (Array i64)]) : (Array i64)
   (let
-    [n : i64 (array.array-length discounted)]
+    [n : i64 (array-length discounted)]
     [out : (Array i64) (array.make-array i64 n)]
     [max-raw : i64 0]
     [v : i64 0]
@@ -15064,8 +15403,8 @@
         (begin
           (let
             [r : i64
-              (if (< v (array.array-length raw))
-                (array.array-ref raw v)
+              (if (< v (array-length raw))
+                (array-ref raw v)
                 0)]
             (if (> r max-raw)
               (set! max-raw r)
@@ -15075,12 +15414,12 @@
       (while (< v n)
         (begin
           (let
-            [d : i64 (array.array-ref discounted v)]
+            [d : i64 (array-ref discounted v)]
             [r : i64
-              (if (< v (array.array-length raw))
-                (array.array-ref raw v)
+              (if (< v (array-length raw))
+                (array-ref raw v)
                 0)]
-            (array.array-set! out v (+ (* d (+ max-raw 1)) r)))
+            (array-set! out v (+ (* d (+ max-raw 1)) r)))
           (set! v (+ v 1))))
       out)))
 
@@ -15095,9 +15434,9 @@
     unit
     (begin
       (let
-        [v : i64 (array.array-ref arr i)]
-        (if (and (>= v 0) (< v (array.array-length pending)))
-          (array.array-set! pending v 1)
+        [v : i64 (array-ref arr i)]
+        (if (and (>= v 0) (< v (array-length pending)))
+          (array-set! pending v 1)
           unit))
       (compiler-reg-greedy-worklist-seed! arr (+ i 1) count pending))))
 
@@ -15116,12 +15455,12 @@
   (if (>= idx n)
     best
     (if (and
-      (< idx (array.array-length pending))
-      (= (array.array-ref pending idx) 1))
+      (< idx (array-length pending))
+      (= (array-ref pending idx) 1))
       (let
         [w : i64
-          (if (< idx (array.array-length ref-counts))
-            (array.array-ref ref-counts idx)
+          (if (< idx (array-length ref-counts))
+            (array-ref ref-counts idx)
             0)]
         (if (or (< best 0) (> w best-w))
           (compiler-reg-greedy-worklist-pick!
@@ -15187,8 +15526,8 @@
     (if (< v 0)
       unit
       (begin
-        (if (and (>= v 0) (< v (array.array-length pending)))
-          (array.array-set! pending v 0)
+        (if (and (>= v 0) (< v (array-length pending)))
+          (array-set! pending v 0)
           unit)
         (let
           [stg : i64
@@ -15213,8 +15552,8 @@
               pending
               evict-count
               split-ctx)]
-          (if (and (>= v 0) (< v (array.array-length stages)))
-            (array.array-set! stages v stg)
+          (if (and (>= v 0) (< v (array-length stages)))
+            (array-set! stages v stg)
             unit))
         (compiler-reg-greedy-worklist-run!
           pending
@@ -15354,7 +15693,7 @@
     ;; boundary stays 9 -- compiler-reg-greedy-caller-saved-count is derived
     ;; from the base pool, unchanged). Functions needing <= 5 CSRs keep their
     ;; previous homes.
-    [(CompilerRegAbiLinux)
+    [(CompilerRegTargetAbi.Linux)
       (if compiler-reg-rbp-pool-enabled
         (compiler-reg-string-cons
           "%rax"
@@ -15376,7 +15715,7 @@
                           "%r8"
                           (compiler-reg-sysv-integer-registers-with-rbp))))))))))
         (compiler-reg-greedy-integer-pool))]
-    [(CompilerRegAbiWindows)
+    [(CompilerRegTargetAbi.Windows)
       ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
       ;; epilogue (compiler-backend-emit-save-callee-regs) saves only the SysV
       ;; callee set (r12-r15,rbx), so -- to stay sound WITHOUT a Win64-specific
@@ -15405,8 +15744,8 @@
 (define (compiler-reg-greedy-caller-saved-count-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegAbiLinux) (compiler-reg-greedy-caller-saved-count)]
-    [(CompilerRegAbiWindows)
+    [(CompilerRegTargetAbi.Linux) (compiler-reg-greedy-caller-saved-count)]
+    [(CompilerRegTargetAbi.Windows)
       ;; Win64 pool = 7 caller-saved + the 5 backend-saved callee regs (r12-r15,rbx);
       ;; %rsi/%rdi are excluded (see pool-for-abi). 12 - 5 = 7 caller-saved.
       (-
@@ -15425,11 +15764,11 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    (if (and (>= var 0) (< var (array.array-length starts)))
+    (if (and (>= var 0) (< var (array-length starts)))
       (compiler-reg-call-set-in-range?
         clobber-points
-        (array.array-ref starts var)
-        (array.array-ref ends var))
+        (array-ref starts var)
+        (array-ref ends var))
       true)))
 
 ;; SysV integer call-argument registers by position (mirrors
@@ -15451,9 +15790,9 @@
   [want : String]
   [i : i64]) : i64
   (match regs
-    [(CompilerRegStringNil) -1]
-    [(CompilerRegStringCons reg rest)
-      (if (string.string-eq reg want)
+    [(CompilerRegStringList.Nil) -1]
+    [(CompilerRegStringList.Cons reg rest)
+      (if (string.eq reg want)
         i
         (compiler-reg-string-list-index-of (box-get rest) want (+ i 1)))]))
 
@@ -15463,7 +15802,7 @@
 (define (compiler-reg-greedy-arg-pool-index [pos : i64]) : i64
   (let
     [reg : String (compiler-reg-sysv-arg-reg pos)]
-    (if (string.string-eq reg "")
+    (if (string.eq reg "")
       -1
       (compiler-reg-string-list-index-of
         (compiler-reg-greedy-integer-pool)
@@ -15480,7 +15819,7 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match value
-    [(IrValueVar v)
+    [(CompilerIrValue.Var v)
       (let
         [idx : i64 (compiler-reg-greedy-arg-pool-index pos)]
         (if (< idx 0)
@@ -15488,16 +15827,16 @@
           (let
             [root : i64
               (if (if (>= v 0)
-                (< v (array.array-length parents))
+                (< v (array-length parents))
                 false)
-                (array.array-ref parents v)
+                (array-ref parents v)
                 v)]
             (if (if (>= root 0)
-              (< root (array.array-length prefs))
+              (< root (array-length prefs))
               false)
-              (if (< (array.array-ref prefs root) 0)
+              (if (< (array-ref prefs root) 0)
                 (begin
-                  (array.array-set! prefs root idx)
+                  (array-set! prefs root idx)
                   unit)
                 unit)
               unit))))]
@@ -15508,10 +15847,10 @@
   [i : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
-  (if (>= i (array.array-length values))
+  (if (>= i (array-length values))
     unit
     (begin
-      (compiler-reg-arg-pref-value! (array.array-ref values i) i prefs parents)
+      (compiler-reg-arg-pref-value! (array-ref values i) i prefs parents)
       (compiler-reg-arg-pref-array! values (+ i 1) prefs parents))))
 
 (define (compiler-reg-arg-pref-args!
@@ -15519,13 +15858,13 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match args
-    [(IrCallArgsNil) unit]
-    [(IrCallArgsOne a) (compiler-reg-arg-pref-value! a 0 prefs parents)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One a) (compiler-reg-arg-pref-value! a 0 prefs parents)]
+    [(CompilerIrCallArgs.Two a b)
       (begin
         (compiler-reg-arg-pref-value! a 0 prefs parents)
         (compiler-reg-arg-pref-value! b 1 prefs parents))]
-    [(IrCallArgsArray values)
+    [(CompilerIrCallArgs.Array values)
       (compiler-reg-arg-pref-array! values 0 prefs parents)]))
 
 ;; Outgoing call instructions whose integer args are marshalled through the SysV
@@ -15537,21 +15876,21 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
-    [(IrInstrCall _ _ args _) (compiler-reg-arg-pref-args! args prefs parents)]
+    [(CompilerIrInstr.Call _ _ args _) (compiler-reg-arg-pref-args! args prefs parents)]
     ;; Indirect/closure calls: arg vars are ineligible (see
     ;; compiler-reg-call-arg-vars-instr-seq-scalar) so no arg-reg preference
     ;; applies; the base-0 pref was also wrong for the closure base-1 marshalling.
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
           (compiler-reg-arg-pref-args! args prefs parents)])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
           (compiler-reg-arg-pref-args! args prefs parents)])]
-    [(IrInstrTailCall _ args _)
+    [(CompilerIrInstr.TailCall _ args _)
       (compiler-reg-arg-pref-args! args prefs parents)]
-    [(IrInstrTailCallIndirect _ args _)
+    [(CompilerIrInstr.TailCallIndirect _ args _)
       (compiler-reg-arg-pref-args! args prefs parents)]
     [_ unit]))
 
@@ -15580,16 +15919,16 @@
     (let
       [root : i64
         (if (if (>= dst 0)
-          (< dst (array.array-length parents))
+          (< dst (array-length parents))
           false)
-          (array.array-ref parents dst)
+          (array-ref parents dst)
           dst)]
       (if (if (>= root 0)
-        (< root (array.array-length prefs))
+        (< root (array-length prefs))
         false)
-        (if (< (array.array-ref prefs root) 0)
+        (if (< (array-ref prefs root) 0)
           (begin
-            (array.array-set! prefs root rax-idx)
+            (array-set! prefs root rax-idx)
             unit)
           unit)
         unit))))
@@ -15600,19 +15939,19 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
-    [(IrInstrCall dst _ _ ty)
+    [(CompilerIrInstr.Call dst _ _ ty)
       (if (compiler-reg-float-type? ty)
         unit
         (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
-    [(IrInstrCallIndirect dst _ _ ty)
+    [(CompilerIrInstr.CallIndirect dst _ _ ty)
       (if (compiler-reg-float-type? ty)
         unit
         (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
-    [(IrInstrCallIndirectC dst _ _ ty)
+    [(CompilerIrInstr.CallIndirectC dst _ _ ty)
       (if (compiler-reg-float-type? ty)
         unit
         (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
-    [(IrInstrSyscall dst _)
+    [(CompilerIrInstr.Syscall dst _)
       (compiler-reg-result-pref-var! dst rax-idx prefs parents)]
     [_ unit]))
 
@@ -15629,7 +15968,7 @@
       (while (< index count)
         (begin
           (compiler-reg-result-pref-instr!
-            (array.array-ref slots index)
+            (array-ref slots index)
             rax-idx
             prefs
             parents)
@@ -15642,14 +15981,14 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])
         (compiler-reg-result-pref-blocks! (box-get rest) rax-idx prefs parents))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-result-pref-blocks!
         (compiler-ir-block-seq-to-list seq)
         rax-idx
@@ -15668,7 +16007,7 @@
       (while (< index count)
         (begin
           (compiler-reg-arg-pref-instr!
-            (array.array-ref slots index)
+            (array-ref slots index)
             prefs
             parents)
           (set! index (+ index 1))))
@@ -15679,13 +16018,13 @@
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs) (compiler-reg-arg-pref-seq! instrs prefs parents)])
+          [(CompilerIrBlock.Block _ instrs) (compiler-reg-arg-pref-seq! instrs prefs parents)])
         (compiler-reg-arg-pref-blocks! (box-get rest) prefs parents))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-arg-pref-blocks!
         (compiler-ir-block-seq-to-list seq)
         prefs
@@ -15710,9 +16049,9 @@
       ;; wrong and counterproductive there; skip it (empty preference) on Win64
       ;; until a Win64 arg-coalescing pass lands. SysV is unchanged.
       (match abi
-        [(CompilerRegAbiLinux)
+        [(CompilerRegTargetAbi.Linux)
           (match func
-            [(IrFunction _ _ _ _ blocks)
+            [(CompilerIrFunction.Function _ _ _ _ blocks)
               (begin
                 (compiler-reg-arg-pref-blocks! blocks prefs parents)
                 ;; M-C (part 2): call-result %rax bias fills roots the arg walk
@@ -15726,7 +16065,7 @@
                     0)
                   prefs
                   parents))])]
-        [(CompilerRegAbiWindows) unit])
+        [(CompilerRegTargetAbi.Windows) unit])
       prefs)))
 
 (define (compiler-reg-greedy-state
@@ -15746,7 +16085,7 @@
   [caller-saved-count : i64]
   [split-ctx : CompilerRegSplitCtx]) : CompilerRegAssignState
   (let
-    [n : i64 (array.array-length (struct-get assignments present))]
+    [n : i64 (array-length (struct-get assignments present))]
     [rcount : i64 (compiler-reg-string-list-count regs)]
     [reg-arr : (Array String)
       (array.make-array
@@ -15757,17 +16096,17 @@
     [order : (Array i64)
       (array.make-array
         i64
-        (if (< (array.array-length (struct-get assignments present)) 1)
+        (if (< (array-length (struct-get assignments present)) 1)
           1
-          (array.array-length (struct-get assignments present))))]
+          (array-length (struct-get assignments present))))]
     ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
     ;; split rescues the RS_Split entries.
     [stages : (Array i64)
       (array.make-array
         i64
-        (if (< (array.array-length (struct-get assignments present)) 1)
+        (if (< (array-length (struct-get assignments present)) 1)
           1
-          (array.array-length (struct-get assignments present))))]
+          (array-length (struct-get assignments present))))]
     (begin
       (compiler-reg-greedy-string-list-to-array regs reg-arr 0)
       (let
@@ -15796,7 +16135,7 @@
             callee-regs
             caller-saved-count
             split-ctx)
-          (CompilerRegAssignState CompilerRegActiveNil assignments))))))
+          (CompilerRegAssignState.State CompilerRegActiveList.Nil assignments))))))
 
 ;; ============================================================================
 ;; GAP2b: register-PAIR homing for 16-byte group values -- v1 CSR-only sound
@@ -15842,15 +16181,15 @@
   [set : CompilerLiveI64Set]
   [value : CompilerIrValue]) : CompilerLiveI64Set
   (match value
-    [(IrValueVar id) (compiler-live-set-insert set id)]
+    [(CompilerIrValue.Var id) (compiler-live-set-insert set id)]
     [_ set]))
 
 (define (compiler-reg-group-pair-add-phi-inputs
   [set : CompilerLiveI64Set]
   [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
   (match inputs
-    [(IrPhiInputNil) set]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-reg-group-pair-add-phi-inputs
         (compiler-reg-group-pair-add-value-var set value)
         (box-get rest))]))
@@ -15859,15 +16198,15 @@
   [set : CompilerLiveI64Set]
   [args : CompilerIrCallArgs]) : CompilerLiveI64Set
   (match args
-    [(IrCallArgsNil) set]
-    [(IrCallArgsOne a) (compiler-reg-group-pair-add-value-var set a)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Nil) set]
+    [(CompilerIrCallArgs.One a) (compiler-reg-group-pair-add-value-var set a)]
+    [(CompilerIrCallArgs.Two a b)
       (compiler-reg-group-pair-add-value-var
         (compiler-reg-group-pair-add-value-var set a)
         b)]
-    [(IrCallArgsArray arr)
+    [(CompilerIrCallArgs.Array arr)
       (let
-        [n : i64 (array.array-length arr)]
+        [n : i64 (array-length arr)]
         [i : i64 0]
         [acc : CompilerLiveI64Set set]
         (begin
@@ -15877,7 +16216,7 @@
                 acc
                 (compiler-reg-group-pair-add-value-var
                   acc
-                  (array.array-ref arr i)))
+                  (array-ref arr i)))
               (set! i (+ i 1))))
           acc))]))
 
@@ -15886,13 +16225,13 @@
   [instr : CompilerIrInstr]
   [group-vars : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrPhi dst inputs _)
+    [(CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-group-pair-add-phi-inputs
         (compiler-live-set-insert set dst)
         inputs)]
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar _) set]
+        [(CompilerIrValue.Var _) set]
         [_
           ;; a group Mov from a NON-var source (constant materialisation)
           ;; writes the dst through the group return regs; keep the dst out
@@ -15900,9 +16239,9 @@
           (if (compiler-live-set-contains? group-vars dst)
             (compiler-live-set-insert set dst)
             set)])]
-    [(IrInstrTailCall _ args _)
+    [(CompilerIrInstr.TailCall _ args _)
       (compiler-reg-group-pair-add-call-args set args)]
-    [(IrInstrTailCallIndirect target args _)
+    [(CompilerIrInstr.TailCallIndirect target args _)
       (compiler-reg-group-pair-add-value-var
         (compiler-reg-group-pair-add-call-args set args)
         target)]
@@ -15913,8 +16252,8 @@
   [instrs : CompilerIrInstrList]
   [group-vars : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) set]
+    [(CompilerIrInstrList.Cons instr rest)
       (compiler-reg-group-pair-excluded-instrs
         (compiler-reg-group-pair-excluded-instr set instr group-vars)
         (box-get rest)
@@ -15925,10 +16264,10 @@
   [blocks : CompilerIrBlockList]
   [group-vars : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match blocks
-    [(IrBlockNil) set]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-pair-excluded-blocks
             (compiler-reg-group-pair-excluded-instrs
               set
@@ -15936,7 +16275,7 @@
               group-vars)
             (box-get rest)
             group-vars)])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-group-pair-excluded-blocks
         set
         (compiler-ir-block-seq-to-list seq)
@@ -15996,8 +16335,8 @@
       from)))
 
 (define (compiler-reg-group-pair-weight [weights : (Array i64)] [v : i64]) : i64
-  (if (and (>= v 0) (< v (array.array-length weights)))
-    (array.array-ref weights v)
+  (if (and (>= v 0) (< v (array-length weights)))
+    (array-ref weights v)
     0))
 
 ;; Union-find root with full-path compression (iterative).
@@ -16005,15 +16344,15 @@
   (let
     [root : i64 v]
     (begin
-      (while (not (= (array.array-ref parents root) root))
-        (set! root (array.array-ref parents root)))
+      (while (not (= (array-ref parents root) root))
+        (set! root (array-ref parents root)))
       (let
         [cur : i64 v]
-        (while (not (= (array.array-ref parents cur) root))
+        (while (not (= (array-ref parents cur) root))
           (let
-            [next : i64 (array.array-ref parents cur)]
+            [next : i64 (array-ref parents cur)]
             (begin
-              (array.array-set! parents cur root)
+              (array-set! parents cur root)
               (set! cur next)))))
       root)))
 
@@ -16035,13 +16374,13 @@
   [parents : (Array i64)]
   [poisoned : (Array bool)]) : unit
   (match instrs
-    [(IrInstrNil) unit]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil) unit]
+    [(CompilerIrInstrList.Cons instr rest)
       (begin
         (match instr
-          [(IrInstrMov dst src _)
+          [(CompilerIrInstr.Mov dst src _)
             (match src
-              [(IrValueVar src-var)
+              [(CompilerIrValue.Var src-var)
                 (if (or
                   (compiler-live-set-contains? group-vars dst)
                   (compiler-live-set-contains? group-vars src-var))
@@ -16050,27 +16389,27 @@
                     (compiler-live-set-contains? group-vars src-var)
                     (not (= dst src-var))
                     (>= dst 0)
-                    (< dst (array.array-length parents))
+                    (< dst (array-length parents))
                     (>= src-var 0)
-                    (< src-var (array.array-length parents))
+                    (< src-var (array-length parents))
                     (not (compiler-live-set-contains? excluded dst))
                     (not (compiler-live-set-contains? excluded src-var))
-                    (>= (array.array-ref starts dst) 0)
-                    (>= (array.array-ref starts src-var) 0)
+                    (>= (array-ref starts dst) 0)
+                    (>= (array-ref starts src-var) 0)
                     (compiler-reg-sv-single-def? def-counts dst)
                     (compiler-reg-sv-single-def? def-counts src-var))
                     (let
                       [rd : i64 (compiler-reg-group-pair-find parents dst)]
                       [rs : i64 (compiler-reg-group-pair-find parents src-var)]
-                      (array.array-set! parents rd rs))
+                      (array-set! parents rd rs))
                     (begin
-                      (if (and (>= dst 0) (< dst (array.array-length poisoned)))
-                        (array.array-set! poisoned dst true)
+                      (if (and (>= dst 0) (< dst (array-length poisoned)))
+                        (array-set! poisoned dst true)
                         unit)
                       (if (and
                         (>= src-var 0)
-                        (< src-var (array.array-length poisoned)))
-                        (array.array-set! poisoned src-var true)
+                        (< src-var (array-length poisoned)))
+                        (array-set! poisoned src-var true)
                         unit)))
                   unit)]
               [_ unit])]
@@ -16093,10 +16432,10 @@
   [parents : (Array i64)]
   [poisoned : (Array bool)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-group-pair-mov-edges-instrs
               (compiler-ir-instr-seq-to-list instrs)
@@ -16114,7 +16453,7 @@
               def-counts
               parents
               poisoned))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-group-pair-mov-edges-blocks
         (compiler-ir-block-seq-to-list seq)
         group-vars
@@ -16140,12 +16479,12 @@
   (and
     (compiler-live-set-contains? group-vars v)
     (not (compiler-live-set-contains? excluded v))
-    (not (array.array-ref poisoned v))
+    (not (array-ref poisoned v))
     (not (compiler-reg-var-register-group-has-sse? type-info v))
-    (>= (array.array-ref starts v) 0)
+    (>= (array-ref starts v) 0)
     (match (compiler-reg-assignment-table-lookup assignments v)
-      [(CompilerRegSomeLocation _) false]
-      [(CompilerRegNoLocation) true])))
+      [(CompilerRegMaybeLocation.Some _) false]
+      [(CompilerRegMaybeLocation.No) true])))
 
 (define (compiler-reg-assign-group-pairs
   [func : CompilerIrFunction]
@@ -16155,11 +16494,11 @@
   [assignments : CompilerRegAssignmentTable]
   [weights : (Array i64)]) : CompilerRegAssignmentTable
   (match func
-    [(IrFunction _ params _ _ blocks)
+    [(CompilerIrFunction.Function _ params _ _ blocks)
       (let
         [starts : (Array i64) (struct-get interval-index starts)]
         [ends : (Array i64) (struct-get interval-index ends)]
-        [vars : i64 (array.array-length starts)]
+        [vars : i64 (array-length starts)]
         [excluded : CompilerLiveI64Set
           (compiler-reg-group-pair-excluded-blocks
             (compiler-reg-ineligible-memory
@@ -16175,8 +16514,8 @@
         (begin
           (while (< v vars)
             (begin
-              (array.array-set! parents v v)
-              (array.array-set! poisoned v false)
+              (array-set! parents v v)
+              (array-set! poisoned v false)
               (set! v (+ v 1))))
           (compiler-reg-group-pair-mov-edges-blocks
             blocks
@@ -16257,7 +16596,7 @@
                 poisoned
                 assignments)
                 (begin
-                  (array.array-set! members count w)
+                  (array-set! members count w)
                   (set! count (+ count 1)))
                 (set! ok false))
               (if (> (compiler-reg-group-pair-weight weights w) 0)
@@ -16297,7 +16636,7 @@
               (if (>= i1 0)
                 (let
                   [pair : CompilerRegLocation
-                    (CompilerRegRegisterPair
+                    (CompilerRegLocation.RegisterPair
                       (compiler-reg-group-pair-csr i0)
                       (compiler-reg-group-pair-csr i1))]
                   [m : i64 0]
@@ -16322,7 +16661,7 @@
                         [_ins : CompilerRegAssignmentTable
                           (compiler-reg-assignment-table-insert
                             assignments
-                            (array.array-ref members m)
+                            (array-ref members m)
                             pair)]
                         (set! m (+ m 1))))))
                 unit))
@@ -16370,7 +16709,7 @@
           (if (compiler-reg-group-pair-reg-conflicts?
             assignments
             interval-index
-            (array.array-ref members m)
+            (array-ref members m)
             reg
             vars)
             (set! hit true)
@@ -16401,21 +16740,21 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (begin
         (match param
-          [(IrParam _ _ var-id)
+          [(CompilerIrParam.Param _ _ var-id)
             (match (compiler-reg-assignment-table-lookup assignments var-id)
-              [(CompilerRegSomeLocation location)
+              [(CompilerRegMaybeLocation.Some location)
                 (match location
-                  [(CompilerRegRegister home)
+                  [(CompilerRegLocation.Register home)
                     (let
                       [root : i64
                         (if (and
                           (>= var-id 0)
-                          (< var-id (array.array-length parents)))
-                          (array.array-ref parents var-id)
+                          (< var-id (array-length parents)))
+                          (array-ref parents var-id)
                           var-id)]
                       (if (and
                         (= root var-id)
@@ -16433,7 +16772,7 @@
                             var-id)
                           unit)))]
                   [_ unit])]
-              [(CompilerRegNoLocation) unit])])
+              [(CompilerRegMaybeLocation.No) unit])])
         (compiler-reg-param-pins-demote-walk!
           (box-get rest)
           assignments
@@ -16452,7 +16791,7 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]) : unit
   (match func
-    [(IrFunction _ params _ _ _)
+    [(CompilerIrFunction.Function _ params _ _ _)
       (compiler-reg-param-pins-demote-walk!
         params
         assignments
@@ -16549,7 +16888,7 @@
           coalesce-index
           type-info
           group-vars
-          (array.array-length (struct-get coalesce-index starts))
+          (array-length (struct-get coalesce-index starts))
           sv-parents)
         (CompilerRegCoalesceMap (array.make-array i64 0)))]
     ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run
@@ -16606,8 +16945,8 @@
         (compiler-reg-interval-arrays-to-list
           (struct-get eff-index starts)
           (struct-get eff-index ends)
-          (- (array.array-length (struct-get eff-index starts)) 1)
-          CompilerRegIntervalNil)
+          (- (array-length (struct-get eff-index starts)) 1)
+          CompilerRegIntervalList.Nil)
         intervals)]
     ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
     [copy-hints
@@ -16621,7 +16960,7 @@
       (compiler-reg-function-copy-hints
         moves
         coalesce
-        (array.array-length (struct-get interval-index starts))
+        (array-length (struct-get interval-index starts))
         func)]
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
     ;; var biased toward the SysV register it will be marshalled into, so the
@@ -16634,7 +16973,7 @@
         abi
         func
         coalesce
-        (array.array-length (struct-get interval-index starts)))]
+        (array-length (struct-get interval-index starts)))]
     ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -16657,13 +16996,13 @@
         (compiler-reg-coalesce-root-set-from-vars
           coalesce
           (match func
-            [(IrFunction _ params _ _ _)
+            [(CompilerIrFunction.Function _ params _ _ _)
               (compiler-reg-ineligible-params params (compiler-live-set-empty))]))
         (compiler-live-set-empty))]
     [integer-candidates : CompilerRegIntervalList
       (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
     [integer-registers : CompilerRegStringList
-      (compiler-reg-sysv-integer-registers)]
+      (compiler-reg-callee-saved-integer-registers-for-abi abi)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -16676,8 +17015,8 @@
         ;; order (LLVM RAGreedy always computes spill weights). The old
         ;; remat-weight-needed gate compared total candidates to the full
         ;; (8-register) pool, so a call-spanning function -- whose values may only
-        ;; use the 5 callee-saved registers and so oversubscribe even with < 8
-        ;; total candidates -- got an empty weight array and fell back to var-id
+        ;; use only the ABI callee-saved suffix and so oversubscribe even below
+        ;; the full scalar pool size -- got an empty weight array and fell back to var-id
         ;; order, keeping the rematerialisable constant in a register and spilling
         ;; a more expensive non-remat value. Always scoring fixes that (#3489 PR2:
         ;; each coalesced class scored by its hottest member). The discounted
@@ -16688,11 +17027,11 @@
           (compiler-reg-merge-ref-counts
             coalesce
             (compiler-reg-function-spill-weights-remat func coalesce)
-            (array.array-length (struct-get interval-index starts)))
+            (array-length (struct-get interval-index starts)))
           (compiler-reg-merge-ref-counts
             coalesce
             (compiler-reg-function-spill-weights func)
-            (array.array-length (struct-get interval-index starts))))
+            (array-length (struct-get interval-index starts))))
         (array.make-array i64 0))]
     ;; The greedy's per-register clobber restriction (15c) reuses the kind
     ;; point sets bound above: `clobber-points` IS the kind-0 set, and
@@ -16704,9 +17043,9 @@
     ;; already excluded pre-allocation.
     [call-points : CompilerLiveI64Set clobber-points]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
-    ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
-    ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
-    ;; The incoming table flows straight in; integer-candidates is borrowed directly.
+    ;; non-call-spanning scratch in the ABI caller-saved prefix itself, so the old
+    ;; scalar prepass-partition + caller-saved-overflow passes are gone. The
+    ;; incoming table flows straight in; integer-candidates is borrowed directly.
     [prepass-assignments : CompilerRegAssignmentTable assignment-table]
     ;; SplitKit M2 budget + array growth (design 2.4). On the COMMITTED self-host
     ;; path split-budget = 0 (no splitkit-stress cfg): every split-* binding aliases
@@ -16717,7 +17056,7 @@
     ;; + recorded plan geometry, exercising the mint/re-queue/termination substrate.
     ;; Only the integer greedy splits; the SIMD/float passes get an inert ctx.
     [split-orig-vars : i64
-      (array.array-length (struct-get interval-index starts))]
+      (array-length (struct-get interval-index starts))]
     ;; SplitKit M4: turn the split budget ON on the REAL self-host path (was
     ;; splitkit-stress-only in M2/M3). budget > 0 makes trySplit RECORD call-free
     ;; sub-range pieces of a spilled call-spanning root V into the split-ctx.
@@ -16776,8 +17115,8 @@
       : CompilerRegAssignState
       ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
       ;; selectOrSplit, per-physreg LiveIntervalUnion, call-clobber as interference).
-      ;; Scalar-opt2 (true) uses all 14 integer registers + coalescing; the SIMD/AVX
-      ;; branch below (false) uses the 5 callee-saved (the old SIMD pool) with no
+      ;; Scalar-opt2 (true) uses the ABI-specific integer pool + coalescing; the
+      ;; SIMD/AVX branch below (false) uses the Linux callee-saved pool with no
       ;; coalescing -- the same algorithm, a conservative config.
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
@@ -16821,11 +17160,11 @@
           split-ctx))]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
-        [(CompilerRegAssignState _ assignments) assignments])]
+        [(CompilerRegAssignState.State _ assignments) assignments])]
     ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
-    ;; allocates the caller-saved zero-call pool (%r9/%rcx/%rdx) itself, so retrying
-    ;; the same registers here was redundant. The call-spanning save/restore rescue
-    ;; (a real spill-avoidance, not a register-allocation pass) is kept and fed the
+    ;; allocates the caller-saved zero-call prefix itself, so retrying the same
+    ;; registers here was redundant. The call-spanning save/restore rescue (a
+    ;; real spill-avoidance, not a register-allocation pass) is kept and fed the
     ;; greedy's assignments directly.
     [integer-with-call-save-state : CompilerRegCallSaveAssignState
       (if (and
@@ -16840,15 +17179,15 @@
           type-info
           group-vars
           (struct-get coalesce parents))
-        (CompilerRegCallSaveAssignState
+        (CompilerRegCallSaveAssignState.State
           integer-assignments
           (compiler-reg-call-split-empty)))]
     [integer-call-assignments : CompilerRegAssignmentTable
       (match integer-with-call-save-state
-        [(CompilerRegCallSaveAssignState assignments _) assignments])]
+        [(CompilerRegCallSaveAssignState.State assignments _) assignments])]
     [call-save-split : CompilerRegCallSplit
       (match integer-with-call-save-state
-        [(CompilerRegCallSaveAssignState _ split) split])]
+        [(CompilerRegCallSaveAssignState.State _ split) split])]
     [call-save-shadows : CompilerLiveI64Set
       (compiler-reg-call-split-shadows call-save-split)]
     [scalar-state
@@ -16874,45 +17213,45 @@
         call-points
         div-points
         shift-points
-        CompilerRegStringNil
+        CompilerRegStringList.Nil
         (compiler-reg-string-list-count (compiler-reg-xmm-registers))
         ;; floats never split -> a guaranteed-inert ctx (split-cap = next-piece)
         (compiler-reg-split-ctx-empty split-orig-vars))]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
-        [(CompilerRegAssignState _ assignments) assignments])]
+        [(CompilerRegAssignState.State _ assignments) assignments])]
     [vector-vars : CompilerLiveI64Set
       (match vector-mask-defs
-        [(CompilerLiveUseDef vars _) vars])]
+        [(CompilerLiveUseDef.Def vars _) vars])]
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
-        [(CompilerLiveUseDef _ vars) vars])]
+        [(CompilerLiveUseDef.Def _ vars) vars])]
     [vector-preferences : (Array i64)
       (compiler-reg-function-select-false-preferences
         func
-        (array.array-length (struct-get interval-index starts)))]
+        (array-length (struct-get interval-index starts)))]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
         (compiler-reg-special-candidates intervals vector-vars blocked)
         (compiler-reg-vector-registers)
-        CompilerRegActiveNil
+        CompilerRegActiveList.Nil
         scalar-assignments
         vector-preferences
         interval-index)]
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
-        [(CompilerRegAssignState _ assignments) assignments])]
+        [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
         (compiler-reg-special-candidates intervals mask-vars blocked)
         (compiler-reg-mask-registers)
-        CompilerRegActiveNil
+        CompilerRegActiveList.Nil
         vector-assignments
         (array.make-array i64 0)
         interval-index)]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
-        [(CompilerRegAssignState _ found) found])]
+        [(CompilerRegAssignState.State _ found) found])]
     ;; SplitKit step 0 (M1): build the per-sub-range kit on the REAL allocation
     ;; path, at the last point `assignments` still holds coalesce-class ROOTS with
     ;; their merged segments intact -- compiler-reg-expand-class-assignments below
@@ -16927,7 +17266,7 @@
           assignments
           coalesce
           eff-index
-          (array.array-length (struct-get interval-index starts)))
+          (array-length (struct-get interval-index starts)))
         (compiler-reg-splitkit-empty))]
     ;; SplitKit M2: carry the trySplit-recorded piece geometry in the plan. On the
     ;; committed path split-budget = 0, so no piece was minted and every piece-of
@@ -16946,11 +17285,11 @@
             assignments
             coalesce
             (struct-get interval-index starts)
-            (array.array-length (struct-get interval-index starts)))
+            (array-length (struct-get interval-index starts)))
           func
           coalesce
           call-save-shadows
-          (array.array-length (struct-get interval-index starts)))
+          (array-length (struct-get interval-index starts)))
         assignments)]
     ;; GAP2b: register-pair homing for group values (v1 CSR-only sound subset;
     ;; see the pass header above). Runs LAST, when every scalar home is final,
@@ -16960,7 +17299,7 @@
     [pair-assignments : CompilerRegAssignmentTable
       (if allow-caller-saved-zero-call
         (match abi
-          [(CompilerRegAbiLinux)
+          [(CompilerRegTargetAbi.Linux)
             (compiler-reg-assign-group-pairs
               func
               type-info
@@ -16968,9 +17307,9 @@
               interval-index
               final-assignments
               eviction-ref-counts)]
-          [(CompilerRegAbiWindows) final-assignments])
+          [(CompilerRegTargetAbi.Windows) final-assignments])
         final-assignments)]
-    (CompilerRegPlan
+    (CompilerRegPlan.Plan
       (compiler-reg-assignment-table-to-list pair-assignments)
       ineligible
       intervals
@@ -16992,7 +17331,7 @@
       (compiler-reg-ineligible-vars-simd func type-info types intervals)]
     [vars : i64
       (match func
-        [(IrFunction _ _ _ function-vars _) function-vars])]
+        [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
       func
       type-info
@@ -17003,7 +17342,7 @@
       ineligible
       ineligible
       false
-      CompilerRegAbiLinux)))
+      CompilerRegTargetAbi.Linux)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
 ;; ALL functions, structural ineligibility that keeps call-spanning
@@ -17046,7 +17385,7 @@
 ;; compiler-backend-emit-load-from-gep-pair / compiler-backend-emit-load-load.
 (define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
   (match func
-    [(IrFunction _ _ _ _ _) true]))
+    [(CompilerIrFunction.Function _ _ _ _ _) true]))
 
 ;; M-A (RC1) correctness requirement: a register-homed param's home register is
 ;; WRITTEN by the backend's entry copy in the prologue, before the first
@@ -17063,13 +17402,13 @@
   [segs : CompilerRegIntervalList]
   [min-start : i64]) : CompilerRegIntervalList
   (match segs
-    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
-    [(CompilerRegIntervalCons seg rest)
+    [(CompilerRegIntervalList.Nil) CompilerRegIntervalList.Nil]
+    [(CompilerRegIntervalList.Cons seg rest)
       (match seg
-        [(CompilerRegInterval var start end)
+        [(CompilerRegInterval.Interval var start end)
           (if (= start min-start)
             (compiler-reg-interval-cons
-              (CompilerRegInterval var 0 end)
+              (CompilerRegInterval.Interval var 0 end)
               (box-get rest))
             (compiler-reg-interval-cons
               seg
@@ -17081,10 +17420,10 @@
   [segs : CompilerRegIntervalList]
   [best : i64]) : i64
   (match segs
-    [(CompilerRegIntervalNil) best]
-    [(CompilerRegIntervalCons seg rest)
+    [(CompilerRegIntervalList.Nil) best]
+    [(CompilerRegIntervalList.Cons seg rest)
       (match seg
-        [(CompilerRegInterval _ start _)
+        [(CompilerRegInterval.Interval _ start _)
           (compiler-reg-param-segments-min-start
             (box-get rest)
             (if (or (< best 0) (< start best))
@@ -17095,10 +17434,10 @@
   [params : CompilerIrParamList]
   [interval-index : CompilerRegIntervalIndex]) : unit
   (match params
-    [(IrParamNil) unit]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ _ var)
+        [(CompilerIrParam.Param _ _ var)
           (let
             [starts : (Array i64) (struct-get interval-index starts)]
             [segments : (Array CompilerRegIntervalList)
@@ -17106,19 +17445,19 @@
             (begin
               (if (and
                 (>= var 0)
-                (< var (array.array-length starts))
-                (> (array.array-ref starts var) 0))
+                (< var (array-length starts))
+                (> (array-ref starts var) 0))
                 (begin
-                  (array.array-set! starts var 0)
-                  (if (< var (array.array-length segments))
+                  (array-set! starts var 0)
+                  (if (< var (array-length segments))
                     (let
                       [segs : CompilerRegIntervalList
-                        (array.array-ref segments var)]
+                        (array-ref segments var)]
                       [min-start : i64
                         (compiler-reg-param-segments-min-start segs (- 0 1))]
                       (if (> min-start 0)
                         (begin
-                          (array.array-set!
+                          (array-set!
                             segments
                             var
                             (compiler-reg-param-segments-extend-entry
@@ -17140,7 +17479,7 @@
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [vars : i64
       (match func
-        [(IrFunction _ _ _ function-vars _) function-vars])]
+        [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     [interval-selection : CompilerRegIntervalSelection
       (if (compiler-reg-scalar-full-intervals? func)
         (compiler-reg-live-interval-selection
@@ -17149,11 +17488,11 @@
         (let
           [block-intervals : CompilerRegIntervalList
             (compiler-reg-block-intervals func)]
-          (CompilerRegIntervalSelection
+          (CompilerRegIntervalSelection.Selection
             block-intervals
             (compiler-reg-interval-index-build block-intervals vars))))]
     (match interval-selection
-      [(CompilerRegIntervalSelection _ interval-index)
+      [(CompilerRegIntervalSelection.Selection _ interval-index)
         (let
           ;; M-A (RC1): reserve every used param's interval from function entry
           ;; (mutates the index arrays), then rebuild the interval LIST from the
@@ -17161,7 +17500,7 @@
           ;; builder's list when no param moved.
           [_param-extend : unit
             (match func
-              [(IrFunction _ params _ _ _)
+              [(CompilerIrFunction.Function _ params _ _ _)
                 (compiler-reg-param-intervals-extend-entry!
                   params
                   interval-index)])]
@@ -17170,7 +17509,7 @@
               (struct-get interval-index starts)
               (struct-get interval-index ends)
               (- vars 1)
-              CompilerRegIntervalNil)]
+              CompilerRegIntervalList.Nil)]
           [base-ineligible : CompilerLiveI64Set
             (compiler-reg-mark-float-spanning
               intervals
@@ -17188,7 +17527,7 @@
               base-ineligible
               vars)]
           (match param-plan
-            [(CompilerRegParamAssignPlan preassignments ineligible blocked)
+            [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
               (compiler-reg-plan-from
                 func
                 type-info
@@ -17202,7 +17541,7 @@
                 abi)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-scalar-for-abi CompilerRegAbiLinux func))
+  (compiler-reg-plan-function-scalar-for-abi CompilerRegTargetAbi.Linux func))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
@@ -17210,10 +17549,10 @@
 (define (compiler-reg-plan-function-stack-only [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
-    (CompilerRegPlan
-      CompilerRegAssignmentNil
+    (CompilerRegPlan.Plan
+      CompilerRegAssignmentList.Nil
       (compiler-live-set-empty)
-      CompilerRegIntervalNil
+      CompilerRegIntervalList.Nil
       (compiler-reg-var-types-list type-info)
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
@@ -17231,8 +17570,8 @@
 ;; path skips liveness) pass through unchanged. The result's slot count replaces
 ;; the raw var count in the backend's frame layout.
 (defenum CompilerRegColoring
-  (CompilerRegColoringNone)
-  (CompilerRegColoringRemap (Array i64) i64))
+  (None)
+  (Remap (Array i64) i64))
 
 ;; Per-var slot-colorability flags: only values the register allocator could
 ;; legally home in one 64-bit register (scalars and 8-byte handles) are known
@@ -17243,13 +17582,13 @@
   [types : CompilerRegVarTypeList]
   [flags : (Array bool)]) : unit
   (match types
-    [(CompilerRegVarTypeNil) unit]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) unit]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType var ty)
+        [(CompilerRegVarType.Type var ty)
           (begin
-            (if (< var (array.array-length flags))
-              (array.array-set!
+            (if (< var (array-length flags))
+              (array-set!
                 flags
                 var
                 (or
@@ -17265,13 +17604,13 @@
   [types : CompilerRegVarTypeList]
   [tys : (Array AstType)]) : unit
   (match types
-    [(CompilerRegVarTypeNil) unit]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) unit]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType var ty)
+        [(CompilerRegVarType.Type var ty)
           (begin
-            (if (< var (array.array-length tys))
-              (array.array-set! tys var ty)
+            (if (< var (array-length tys))
+              (array-set! tys var ty)
               unit)
             (compiler-reg-color-var-tys (box-get rest) tys))])]))
 
@@ -17284,14 +17623,15 @@
   [a : CompilerRegInterval]
   [b : CompilerRegInterval]) : bool
   (match a
-    [(CompilerRegInterval a-var a-start _)
+    [(CompilerRegInterval.Interval a-var a-start _)
       (match b
-        [(CompilerRegInterval b-var b-start _)
+        [(CompilerRegInterval.Interval b-var b-start _)
           (or (< a-start b-start) (and (= a-start b-start) (< a-var b-var)))])]))
 
 (define (compiler-reg-color-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
   (match item
-    [(CompilerRegInterval var start end) (CompilerRegInterval var start end)]))
+    [(CompilerRegInterval.Interval var start end)
+      (CompilerRegInterval.Interval var start end)]))
 
 (define (compiler-reg-color-sift-down
   [items : (Array CompilerRegInterval)]
@@ -17311,15 +17651,15 @@
               (if (and
                 (< left count)
                 (compiler-reg-color-interval-before?
-                  (array.array-ref items pick)
-                  (array.array-ref items left)))
+                  (array-ref items pick)
+                  (array-ref items left)))
                 (set! pick left)
                 unit)
               (if (and
                 (< right count)
                 (compiler-reg-color-interval-before?
-                  (array.array-ref items pick)
-                  (array.array-ref items right)))
+                  (array-ref items pick)
+                  (array-ref items right)))
                 (set! pick right)
                 unit)
               pick))]
@@ -17327,12 +17667,12 @@
           (set! done true)
           (let
             [node-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array.array-ref items node))]
+              (compiler-reg-color-interval-copy (array-ref items node))]
             [largest-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array.array-ref items largest))]
+              (compiler-reg-color-interval-copy (array-ref items largest))]
             (begin
-              (array.array-set! items node largest-item)
-              (array.array-set! items largest node-item)
+              (array-set! items node largest-item)
+              (array-set! items largest node-item)
               (set! node largest))))))))
 
 (define (compiler-reg-color-heapsort
@@ -17350,20 +17690,20 @@
       (while (> last 0)
         (let
           [root-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array.array-ref items 0))]
+            (compiler-reg-color-interval-copy (array-ref items 0))]
           [last-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array.array-ref items last))]
+            (compiler-reg-color-interval-copy (array-ref items last))]
           (begin
-            (array.array-set! items 0 last-item)
-            (array.array-set! items last root-item)
+            (array-set! items 0 last-item)
+            (array-set! items last root-item)
             (compiler-reg-color-sift-down items 0 last)
             (set! last (- last 1))))))))
 
 (define (compiler-reg-color-interval-count
   [intervals : CompilerRegIntervalList]) : i64
   (match intervals
-    [(CompilerRegIntervalNil) 0]
-    [(CompilerRegIntervalCons _ rest)
+    [(CompilerRegIntervalList.Nil) 0]
+    [(CompilerRegIntervalList.Cons _ rest)
       (+ 1 (compiler-reg-color-interval-count (box-get rest)))]))
 
 (define (compiler-reg-color-interval-fill
@@ -17371,10 +17711,10 @@
   [items : (Array CompilerRegInterval)]
   [index : i64]) : unit
   (match intervals
-    [(CompilerRegIntervalNil) unit]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons head rest)
       (begin
-        (array.array-set! items index head)
+        (array-set! items index head)
         (compiler-reg-color-interval-fill (box-get rest) items (+ index 1)))]))
 
 (define (compiler-reg-color-sorted-array [intervals : CompilerRegIntervalList]) : (Array
@@ -17401,18 +17741,15 @@
     (begin
       (while (< i vars)
         (begin
-          (array.array-set! ends i (- 0 1))
+          (array-set! ends i (- 0 1))
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i (array.array-length items))
-        (match (array.array-ref items i)
-          [(CompilerRegInterval var _ end)
+      (while (< i (array-length items))
+        (match (array-ref items i)
+          [(CompilerRegInterval.Interval var _ end)
             (begin
-              (if (and
-                (>= var 0)
-                (< var vars)
-                (> end (array.array-ref ends var)))
-                (array.array-set! ends var end)
+              (if (and (>= var 0) (< var vars) (> end (array-ref ends var)))
+                (array-set! ends var end)
                 unit)
               (set! i (+ i 1)))]))
       ends)))
@@ -17424,9 +17761,9 @@
 (define (compiler-reg-color-next-free-slot
   [slot-ends : (Array i64)]
   [from : i64]) : i64
-  (if (>= from (array.array-length slot-ends))
+  (if (>= from (array-length slot-ends))
     from
-    (if (= (array.array-ref slot-ends from) 9223372036854775807)
+    (if (= (array-ref slot-ends from) 9223372036854775807)
       (compiler-reg-color-next-free-slot slot-ends (+ from 1))
       from)))
 
@@ -17452,8 +17789,8 @@
   (if (>= index used)
     used
     (if (and
-      (< (array.array-ref slot-ends index) start)
-      (ast-type-eq? (array.array-ref slot-tys index) ty))
+      (< (array-ref slot-ends index) start)
+      (ast-type-eq? (array-ref slot-tys index) ty))
       index
       (compiler-reg-color-find-slot
         slot-ends
@@ -17479,26 +17816,26 @@
   [remap : (Array i64)]) : i64
   (if (>= index count)
     used
-    (match (array.array-ref items index)
-      [(CompilerRegInterval var start end)
+    (match (array-ref items index)
+      [(CompilerRegInterval.Interval var start end)
         (if (or
           ;; Already renumbered: parameter identity pins (the prologue's
           ;; param spill targets the ORIGINAL id's formula slot, so a pinned
           ;; id must never be reassigned mid-walk) and split intervals (the
           ;; first interval wins; revisiting would leak the first slot).
-          (>= (array.array-ref remap var) 0)
-          (not (array.array-ref colorable var))
+          (>= (array-ref remap var) 0)
+          (not (array-ref colorable var))
           (compiler-live-set-contains? pinned var)
           (compiler-live-set-contains? ineligible var)
           ;; Spilled scalars are re-homed by the id remap (the stale
           ;; assignment entry keyed by the old id is never queried);
           ;; register-homed values keep their ids and homes.
           (match (compiler-reg-assignment-index-lookup assignment-index var)
-            [(CompilerRegSomeLocation location)
+            [(CompilerRegMaybeLocation.Some location)
               (match location
-                [(CompilerRegSpill _) false]
+                [(CompilerRegLocation.Spill _) false]
                 [_ true])]
-            [(CompilerRegNoLocation) false]))
+            [(CompilerRegMaybeLocation.No) false]))
           (compiler-reg-color-walk
             items
             count
@@ -17517,7 +17854,7 @@
             ;; Prefer the lowest SAME-TYPE scalar slot whose prior owner ended
             ;; before this variable starts. Otherwise take a fresh slot,
             ;; skipping param-pinned ids so sparse parameter ids leave no hole.
-            [ty : AstType (array.array-ref var-tys var)]
+            [ty : AstType (array-ref var-tys var)]
             [found : i64
               (compiler-reg-color-find-slot slot-ends slot-tys ty used start 0)]
             [slot : i64
@@ -17528,14 +17865,13 @@
               (if (>= found used)
                 (+ slot 1)
                 used)]
-            [full-end : i64
-              (compiler-reg-max end (array.array-ref extent-ends var))]
+            [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
             (begin
-              (array.array-set! slot-ends slot full-end)
-              (if (< slot (array.array-length slot-tys))
-                (array.array-set! slot-tys slot ty)
+              (array-set! slot-ends slot full-end)
+              (if (< slot (array-length slot-tys))
+                (array-set! slot-tys slot ty)
                 unit)
-              (array.array-set! remap var slot)
+              (array-set! remap var slot)
               (compiler-reg-color-walk
                 items
                 count
@@ -17556,15 +17892,15 @@
   [starts : (Array i64)]
   [ends : (Array i64)]) : unit
   (match intervals
-    [(CompilerRegIntervalNil) unit]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons head rest)
       (begin
         (match head
-          [(CompilerRegInterval var start end)
-            (if (and (>= var 0) (< var (array.array-length starts)))
+          [(CompilerRegInterval.Interval var start end)
+            (if (and (>= var 0) (< var (array-length starts)))
               (begin
-                (array.array-set! starts var start)
-                (array.array-set! ends var end))
+                (array-set! starts var start)
+                (array-set! ends var end))
               unit)])
         (compiler-reg-color-fill-interval-bounds (box-get rest) starts ends))]))
 
@@ -17577,10 +17913,8 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (if (and
-          (>= (+ first i) 0)
-          (< (+ first i) (array.array-length range-of-var)))
-          (array.array-set! range-of-var (+ first i) range-id)
+        (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
+          (array-set! range-of-var (+ first i) range-id)
           unit)
         (set! i (+ i 1))))))
 
@@ -17601,8 +17935,8 @@
     (begin
       (while (< i len)
         (begin
-          (match (array.array-ref slots i)
-            [(IrInstrAlloc dst _)
+          (match (array-ref slots i)
+            [(CompilerIrInstr.Alloc dst _)
               (if (or (= run-count 0) (= dst (+ run-last 1)))
                 (begin
                   (if (= run-count 0)
@@ -17614,16 +17948,16 @@
                   (set! run-first dst)
                   (set! run-last dst)
                   (set! run-count 1)))]
-            [(IrInstrAddrOf _ src)
+            [(CompilerIrInstr.AddrOf _ src)
               (begin
                 (if (and
                   (> run-count 0)
                   (= src run-last)
                   (= run-first (+ (- src run-count) 1))
-                  (< ranges (array.array-length range-base)))
+                  (< ranges (array-length range-base)))
                   (begin
-                    (array.array-set! range-base ranges src)
-                    (array.array-set! range-size ranges run-count)
+                    (array-set! range-base ranges src)
+                    (array-set! range-size ranges run-count)
                     (compiler-reg-color-mark-storage-vars
                       range-of-var
                       run-first
@@ -17649,10 +17983,10 @@
   [range-size : (Array i64)]
   [range-count : i64]) : i64
   (match blocks
-    [(IrBlockNil) range-count]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) range-count]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-color-detect-storage-blocks
             (box-get rest)
             range-of-var
@@ -17664,7 +17998,7 @@
               range-base
               range-size
               range-count))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
         [count : i64 range-count]
@@ -17672,7 +18006,7 @@
           (while (< i (compiler-ir-block-seq-count seq))
             (begin
               (match (compiler-ir-block-seq-ref seq i)
-                [(IrBlock _ instrs)
+                [(CompilerIrBlock.Block _ instrs)
                   (set!
                     count
                     (compiler-reg-color-detect-storage-seq
@@ -17688,9 +18022,9 @@
   [roots : (Array i64)]
   [value : CompilerIrValue]) : i64
   (match value
-    [(IrValueVar var)
-      (if (and (>= var 0) (< var (array.array-length roots)))
-        (array.array-ref roots var)
+    [(CompilerIrValue.Var var)
+      (if (and (>= var 0) (< var (array-length roots)))
+        (array-ref roots var)
         (- 0 1))]
     [_ (- 0 1)]))
 
@@ -17706,8 +18040,8 @@
   [values : CompilerIrValueList]
   [acc : i64]) : i64
   (match values
-    [(IrValueNil) acc]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Cons value rest)
       (let
         [next : i64
           (compiler-reg-color-merge-root
@@ -17724,8 +18058,8 @@
   [inputs : CompilerIrPhiInputList]
   [acc : i64]) : i64
   (match inputs
-    [(IrPhiInputNil) acc]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) acc]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (let
         [next : i64
           (compiler-reg-color-merge-root
@@ -17742,24 +18076,24 @@
   [invalid : (Array bool)]
   [dst : i64]
   [root : i64]) : bool
-  (if (or (< root 0) (< dst 0) (>= dst (array.array-length roots)))
+  (if (or (< root 0) (< dst 0) (>= dst (array-length roots)))
     false
     (let
-      [old : i64 (array.array-ref roots dst)]
+      [old : i64 (array-ref roots dst)]
       (if (= old root)
         false
         (if (< old 0)
           (begin
-            (array.array-set! roots dst root)
+            (array-set! roots dst root)
             true)
           (begin
-            (if (< old (array.array-length invalid))
-              (array.array-set! invalid old true)
+            (if (< old (array-length invalid))
+              (array-set! invalid old true)
               unit)
-            (if (< root (array.array-length invalid))
-              (array.array-set! invalid root true)
+            (if (< root (array-length invalid))
+              (array-set! invalid root true)
               unit)
-            (array.array-set! roots dst (- 0 2))
+            (array-set! roots dst (- 0 2))
             true))))))
 
 (define (compiler-reg-color-propagate-root-instr
@@ -17768,35 +18102,35 @@
   [roots : (Array i64)]
   [invalid : (Array bool)]) : bool
   (match instr
-    [(IrInstrAddrOf dst src)
-      (if (and (>= src 0) (< src (array.array-length range-of-var)))
+    [(CompilerIrInstr.AddrOf dst src)
+      (if (and (>= src 0) (< src (array-length range-of-var)))
         (compiler-reg-color-set-root!
           roots
           invalid
           dst
-          (array.array-ref range-of-var src))
+          (array-ref range-of-var src))
         false)]
-    [(IrInstrGep dst base _ _)
+    [(CompilerIrInstr.Gep dst base _ _)
       (compiler-reg-color-set-root!
         roots
         invalid
         dst
         (compiler-reg-color-value-root roots base))]
-    [(IrInstrMov dst value _)
+    [(CompilerIrInstr.Mov dst value _)
       (compiler-reg-color-set-root!
         roots
         invalid
         dst
         (compiler-reg-color-value-root roots value))]
-    [(IrInstrPhi dst inputs _)
+    [(CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-set-root!
         roots
         invalid
         dst
         (compiler-reg-color-phi-root roots inputs (- 0 1)))]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst _ true-value false-value _ _)
+        [(CompilerIrInstrSelectPayload.Payload dst _ true-value false-value _ _)
           (let
             [left : i64 (compiler-reg-color-value-root roots true-value)]
             [right : i64 (compiler-reg-color-value-root roots false-value)]
@@ -17821,7 +18155,7 @@
       (while (< i len)
         (begin
           (if (compiler-reg-color-propagate-root-instr
-            (array.array-ref slots i)
+            (array-ref slots i)
             range-of-var
             roots
             invalid)
@@ -17836,10 +18170,10 @@
   [roots : (Array i64)]
   [invalid : (Array bool)]) : bool
   (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (let
             [head : bool
               (compiler-reg-color-propagate-root-seq
@@ -17854,7 +18188,7 @@
                 roots
                 invalid)]
             (or head tail))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
         [changed : bool false]
@@ -17862,7 +18196,7 @@
           (while (< i (compiler-ir-block-seq-count seq))
             (begin
               (match (compiler-ir-block-seq-ref seq i)
-                [(IrBlock _ instrs)
+                [(CompilerIrBlock.Block _ instrs)
                   (if (compiler-reg-color-propagate-root-seq
                     instrs
                     range-of-var
@@ -17881,7 +18215,7 @@
   (let
     [changed : bool true]
     [rounds : i64 0]
-    [limit : i64 (array.array-length roots)]
+    [limit : i64 (array-length roots)]
     (while (and changed (< rounds limit))
       (begin
         (set!
@@ -17896,8 +18230,8 @@
 (define (compiler-reg-color-invalidate-root!
   [invalid : (Array bool)]
   [root : i64]) : unit
-  (if (and (>= root 0) (< root (array.array-length invalid)))
-    (array.array-set! invalid root true)
+  (if (and (>= root 0) (< root (array-length invalid)))
+    (array-set! invalid root true)
     unit))
 
 (define (compiler-reg-color-invalidate-value!
@@ -17913,8 +18247,8 @@
   [invalid : (Array bool)]
   [value : CompilerIrMaybeValue]) : unit
   (match value
-    [(IrNoValue) unit]
-    [(IrSomeValue inner)
+    [(CompilerIrMaybeValue.No) unit]
+    [(CompilerIrMaybeValue.Some inner)
       (compiler-reg-color-invalidate-value! roots invalid inner)]))
 
 (define (compiler-reg-color-invalidate-value-list!
@@ -17922,8 +18256,8 @@
   [invalid : (Array bool)]
   [values : CompilerIrValueList]) : unit
   (match values
-    [(IrValueNil) unit]
-    [(IrValueCons value rest)
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid value)
         (compiler-reg-color-invalidate-value-list! roots invalid (box-get rest)))]))
@@ -17933,23 +18267,40 @@
   [invalid : (Array bool)]
   [args : CompilerIrCallArgs]) : unit
   (match args
-    [(IrCallArgsNil) unit]
-    [(IrCallArgsOne a) (compiler-reg-color-invalidate-value! roots invalid a)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-color-invalidate-value! roots invalid a)]
+    [(CompilerIrCallArgs.Two a b)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid a)
         (compiler-reg-color-invalidate-value! roots invalid b))]
-    [(IrCallArgsArray items)
+    [(CompilerIrCallArgs.Array items)
       (let
         [i : i64 0]
-        [len : i64 (array.array-length items)]
+        [len : i64 (array-length items)]
         (while (< i len)
           (begin
             (compiler-reg-color-invalidate-value!
               roots
               invalid
-              (array.array-ref items i))
+              (array-ref items i))
             (set! i (+ i 1)))))]))
+
+(define (compiler-reg-color-invalidate-spmd-call-args!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [args : CompilerIrSpmdCallArgList]) : unit
+  (match args
+    [(IrSpmdCallArgNil) unit]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid value)
+            (compiler-reg-color-invalidate-spmd-call-args!
+              roots
+              invalid
+              (box-get rest)))])]))
 
 (define (compiler-reg-color-invalidate-phi!
   [roots : (Array i64)]
@@ -17957,8 +18308,8 @@
   [dst-root : i64]
   [inputs : CompilerIrPhiInputList]) : unit
   (match inputs
-    [(IrPhiInputNil) unit]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (let
         [root : i64 (compiler-reg-color-value-root roots value)]
         (begin
@@ -17976,75 +18327,81 @@
   [roots : (Array i64)]
   [invalid : (Array bool)]) : unit
   (match instr
-    [(IrInstrMov dst value _)
+    [(CompilerIrInstr.Mov dst value _)
       (let
         [root : i64 (compiler-reg-color-value-root roots value)]
         (if (and
           (>= root 0)
           (or
-            (>= dst (array.array-length roots))
-            (not (= (array.array-ref roots dst) root))))
+            (>= dst (array-length roots))
+            (not (= (array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! invalid root)
           unit))]
-    [(IrInstrGep dst base _ _)
+    [(CompilerIrInstr.Gep dst base _ _)
       (let
         [root : i64 (compiler-reg-color-value-root roots base)]
         (if (and
           (>= root 0)
           (or
-            (>= dst (array.array-length roots))
-            (not (= (array.array-ref roots dst) root))))
+            (>= dst (array-length roots))
+            (not (= (array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! invalid root)
           unit))]
-    [(IrInstrStorePtr dst src _)
+    [(CompilerIrInstr.StorePtr dst src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrBoundsCheck index length _)
+    [(CompilerIrInstr.BoundsCheck index length _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid index)
         (compiler-reg-color-invalidate-value! roots invalid length))]
-    [(IrInstrCast _ src _ _)
+    [(CompilerIrInstr.Cast _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrBitcast _ src _ _)
+    [(CompilerIrInstr.Bitcast _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid lhs)
         (compiler-reg-color-invalidate-value! roots invalid rhs))]
-    [(IrInstrUnOp _ _ value _)
+    [(CompilerIrInstr.UnOp _ _ value _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(IrInstrSplat _ value _ _)
+    [(CompilerIrInstr.Splat _ value _ _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid lhs)
             (compiler-reg-color-invalidate-value! roots invalid rhs))])]
-    [(IrInstrVectorReduce _ _ src _ _)
+    [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid lhs)
             (compiler-reg-color-invalidate-value! roots invalid rhs))])]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid lhs)
         (compiler-reg-color-invalidate-value! roots invalid rhs))]
-    [(IrInstrMaskNot _ src _)
+    [(CompilerIrInstr.MaskNot _ src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrMaskReduce _ _ src _)
+    [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst mask true-value false-value _ _)
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            true-value
+            false-value
+            _
+            _)
           (let
             [left : i64 (compiler-reg-color-value-root roots true-value)]
             [right : i64 (compiler-reg-color-value-root roots false-value)]
             [dst-root : i64
-              (if (and (>= dst 0) (< dst (array.array-length roots)))
-                (array.array-ref roots dst)
+              (if (and (>= dst 0) (< dst (array-length roots)))
+                (array-ref roots dst)
                 (- 0 1))]
             (begin
               (compiler-reg-color-invalidate-value! roots invalid mask)
@@ -18054,83 +18411,99 @@
               (if (and (>= right 0) (not (= right dst-root)))
                 (compiler-reg-color-invalidate-root! invalid right)
                 unit)))])]
-    [(IrInstrVectorLoad _ base index _ _)
+    [(CompilerIrInstr.VectorLoad _ base index _ _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid base)
         (compiler-reg-color-invalidate-value! roots invalid index))]
-    [(IrInstrVectorStore payload-box)
+    [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload base index value _ _)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid index)
             (compiler-reg-color-invalidate-value! roots invalid value))])]
-    [(IrInstrPredicatedStore payload-box)
+    [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid index)
             (compiler-reg-color-invalidate-value! roots invalid value)
             (compiler-reg-color-invalidate-value! roots invalid mask))])]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid index)
             (compiler-reg-color-invalidate-value! roots invalid mask))])]
-    [(IrInstrTailMask _ index length _)
+    [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid index)
         (compiler-reg-color-invalidate-value! roots invalid length))]
-    [(IrInstrCpuId _ leaf subleaf _)
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid leaf)
         (compiler-reg-color-invalidate-value! roots invalid subleaf))]
-    [(IrInstrXgetbv _ index)
+    [(CompilerIrInstr.Xgetbv _ index)
       (compiler-reg-color-invalidate-value! roots invalid index)]
-    [(IrInstrSyscall _ args)
+    [(CompilerIrInstr.Syscall _ args)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
-    [(IrInstrCall _ name args _)
-      (if (string.string-eq name "tl_memcpy")
+    [(CompilerIrInstr.Call _ name args _)
+      (if (string.eq name "tl_memcpy")
         unit
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(IrInstrCallIndirect _ callee args _)
+    [(CompilerIrInstr.CallIndirect _ callee args _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(IrInstrCallIndirectC _ callee args _)
+    [(CompilerIrInstr.CallIndirectC _ callee args _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-call-args! roots invalid args))])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            callee
+            args
+            _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid callee)
             (compiler-reg-color-invalidate-call-args! roots invalid args))])]
-    [(IrInstrTailCall _ args _)
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid active-mask)
+            (compiler-reg-color-invalidate-spmd-call-args! roots invalid args))])]
+    [(CompilerIrInstr.TailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
-    [(IrInstrStore _ value _)
+    [(CompilerIrInstr.Store _ value _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(IrInstrBranch value _ _)
+    [(CompilerIrInstr.Branch value _ _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(IrInstrReturn value)
+    [(CompilerIrInstr.Return value)
       (compiler-reg-color-invalidate-maybe-value! roots invalid value)]
-    [(IrInstrPhi dst inputs _)
+    [(CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-invalidate-phi!
         roots
         invalid
-        (if (and (>= dst 0) (< dst (array.array-length roots)))
-          (array.array-ref roots dst)
+        (if (and (>= dst 0) (< dst (array-length roots)))
+          (array-ref roots dst)
           (- 0 1))
         inputs)]
     [_ unit]))
@@ -18145,10 +18518,7 @@
     [i : i64 0]
     (while (< i len)
       (begin
-        (compiler-reg-color-invalidate-instr!
-          (array.array-ref slots i)
-          roots
-          invalid)
+        (compiler-reg-color-invalidate-instr! (array-ref slots i) roots invalid)
         (set! i (+ i 1))))))
 
 (define (compiler-reg-color-invalidate-blocks!
@@ -18156,20 +18526,20 @@
   [roots : (Array i64)]
   [invalid : (Array bool)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-color-invalidate-seq! instrs roots invalid)])
         (compiler-reg-color-invalidate-blocks! (box-get rest) roots invalid))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
         (while (< i (compiler-ir-block-seq-count seq))
           (begin
             (match (compiler-ir-block-seq-ref seq i)
-              [(IrBlock _ instrs)
+              [(CompilerIrBlock.Block _ instrs)
                 (compiler-reg-color-invalidate-seq! instrs roots invalid)])
             (set! i (+ i 1)))))]))
 
@@ -18182,21 +18552,21 @@
   (let
     [i : i64 0]
     [_max-start : i64 9223372036854775807]
-    (while (< i (array.array-length roots))
+    (while (< i (array-length roots))
       (let
-        [root : i64 (array.array-ref roots i)]
+        [root : i64 (array-ref roots i)]
         (begin
-          (if (and (>= root 0) (< root (array.array-length range-starts)))
+          (if (and (>= root 0) (< root (array-length range-starts)))
             (let
-              [start : i64 (array.array-ref starts i)]
-              [end : i64 (array.array-ref ends i)]
+              [start : i64 (array-ref starts i)]
+              [end : i64 (array-ref ends i)]
               (if (>= start 0)
                 (begin
-                  (if (< start (array.array-ref range-starts root))
-                    (array.array-set! range-starts root start)
+                  (if (< start (array-ref range-starts root))
+                    (array-set! range-starts root start)
                     unit)
-                  (if (> end (array.array-ref range-ends root))
-                    (array.array-set! range-ends root end)
+                  (if (> end (array-ref range-ends root))
+                    (array-set! range-ends root end)
                     unit))
                 unit))
             unit)
@@ -18211,12 +18581,12 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (if (> (+ slot size) (array.array-length slot-ends))
+      (if (> (+ slot size) (array-length slot-ends))
         (set! ok false)
         unit)
       (while (and ok (< i size))
         (begin
-          (if (< (array.array-ref slot-ends (+ slot i)) start)
+          (if (< (array-ref slot-ends (+ slot i)) start)
             unit
             (set! ok false))
           (set! i (+ i 1))))
@@ -18246,8 +18616,8 @@
     [i : i64 0]
     (while (< i size)
       (begin
-        (if (< (+ slot i) (array.array-length slot-ends))
-          (array.array-set! slot-ends (+ slot i) end)
+        (if (< (+ slot i) (array-length slot-ends))
+          (array-set! slot-ends (+ slot i) end)
           unit)
         (set! i (+ i 1))))))
 
@@ -18261,8 +18631,8 @@
     [i : i64 0]
     (while (< i size)
       (begin
-        (if (and (>= (+ first i) 0) (< (+ first i) (array.array-length remap)))
-          (array.array-set! remap (+ first i) (+ slot i))
+        (if (and (>= (+ first i) 0) (< (+ first i) (array-length remap)))
+          (array-set! remap (+ first i) (+ slot i))
           unit)
         (set! i (+ i 1))))))
 
@@ -18279,8 +18649,8 @@
         (begin
           (if (and
             (>= (+ first i) 0)
-            (< (+ first i) (array.array-length remap))
-            (< (array.array-ref remap (+ first i)) 0))
+            (< (+ first i) (array-length remap))
+            (< (array-ref remap (+ first i)) 0))
             unit
             (set! ok false))
           (set! i (+ i 1))))
@@ -18303,13 +18673,13 @@
     (begin
       (while (< range range-count)
         (let
-          [start : i64 (array.array-ref range-starts range)]
-          [end : i64 (array.array-ref range-ends range)]
-          [size : i64 (array.array-ref range-size range)]
-          [base : i64 (array.array-ref range-base range)]
+          [start : i64 (array-ref range-starts range)]
+          [end : i64 (array-ref range-ends range)]
+          [size : i64 (array-ref range-size range)]
+          [base : i64 (array-ref range-base range)]
           (begin
             (if (and
-              (not (array.array-ref invalid range))
+              (not (array-ref invalid range))
               (< start max-start)
               (>= end start)
               (> size 0)
@@ -18355,15 +18725,15 @@
         [i : i64 0]
         (while (< i vars)
           (begin
-            (array.array-set! range-of-var i (- 0 1))
-            (array.array-set! range-base i (- 0 1))
-            (array.array-set! range-size i 0)
-            (array.array-set! range-starts i max-start)
-            (array.array-set! range-ends i (- 0 1))
-            (array.array-set! invalid i false)
-            (array.array-set! roots i (- 0 1))
-            (array.array-set! starts i (- 0 1))
-            (array.array-set! ends i (- 0 1))
+            (array-set! range-of-var i (- 0 1))
+            (array-set! range-base i (- 0 1))
+            (array-set! range-size i 0)
+            (array-set! range-starts i max-start)
+            (array-set! range-ends i (- 0 1))
+            (array-set! invalid i false)
+            (array-set! roots i (- 0 1))
+            (array-set! starts i (- 0 1))
+            (array-set! ends i (- 0 1))
             (set! i (+ i 1)))))]
     [range-count : i64
       (compiler-reg-color-detect-storage-blocks
@@ -18410,11 +18780,11 @@
   [items : (Array AstType)]
   [types : CompilerRegVarTypeList]) : unit
   (match types
-    [(CompilerRegVarTypeNil) unit]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) unit]
+    [(CompilerRegVarTypeList.Cons item rest)
       (begin
         (match item
-          [(CompilerRegVarType var ty)
+          [(CompilerRegVarType.Type var ty)
             (compiler-reg-var-type-array-set!
               present
               items
@@ -18436,7 +18806,7 @@
         present
         items
         (- vars 1)
-        CompilerRegVarTypeNil))))
+        CompilerRegVarTypeList.Nil))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -18447,22 +18817,20 @@
   [items : (Array CompilerRegLocation)]
   [assignments : CompilerRegAssignmentList]) : unit
   (match assignments
-    [(CompilerRegAssignmentNil) unit]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) unit]
+    [(CompilerRegAssignmentList.Cons item rest)
       (begin
         (match item
-          [(CompilerRegAssignment var location)
+          [(CompilerRegAssignment.Assignment var location)
             (match location
-              [(CompilerRegSpill _) unit]
+              [(CompilerRegLocation.Spill _) unit]
               [_
                 (let
                   [new-id : i64 (compiler-reg-remap-id remap var)]
-                  (if (and
-                    (>= new-id 0)
-                    (< new-id (array.array-length present)))
+                  (if (and (>= new-id 0) (< new-id (array-length present)))
                     (begin
-                      (array.array-set! present new-id 1)
-                      (array.array-set! items new-id location))
+                      (array-set! present new-id 1)
+                      (array-set! items new-id location))
                     unit))])])
         (compiler-reg-color-scatter-assignments
           remap
@@ -18481,10 +18849,10 @@
       present
       items
       (- index 1)
-      (if (= (array.array-ref present index) 0)
+      (if (= (array-ref present index) 0)
         acc
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment index (array.array-ref items index))
+          (CompilerRegAssignment.Assignment index (array-ref items index))
           acc)))))
 
 (define (compiler-reg-color-rebuild-assignments
@@ -18497,13 +18865,13 @@
       (array.make-array CompilerRegLocation vars)]
     (begin
       (compiler-reg-fill-i64-array present 0)
-      (compiler-reg-fill-location-array items (CompilerRegSpill 0))
+      (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-color-scatter-assignments remap present items assignments)
       (compiler-reg-assignment-arrays-to-list
         present
         items
         (- vars 1)
-        CompilerRegAssignmentNil))))
+        CompilerRegAssignmentList.Nil))))
 
 ;; Identity-pin parameter variables: the prologue's param spill writes each
 ;; parameter to the formula slot of its ORIGINAL id (the ABI hand-off
@@ -18514,15 +18882,15 @@
   [slot-ends : (Array i64)]
   [highest : i64]) : i64
   (match params
-    [(IrParamNil) highest]
-    [(IrParamCons param rest)
+    [(CompilerIrParamList.Nil) highest]
+    [(CompilerIrParamList.Cons param rest)
       (match param
-        [(IrParam _ _ var-id)
+        [(CompilerIrParam.Param _ _ var-id)
           (begin
-            (if (< var-id (array.array-length remap))
+            (if (< var-id (array-length remap))
               (begin
-                (array.array-set! remap var-id var-id)
-                (array.array-set! slot-ends var-id 9223372036854775807))
+                (array-set! remap var-id var-id)
+                (array-set! slot-ends var-id 9223372036854775807))
               unit)
             (compiler-reg-color-param-pins
               (box-get rest)
@@ -18566,20 +18934,20 @@
   [starts : (Array i64)]
   [ends : (Array i64)]) : unit
   (match intervals
-    [(CompilerRegIntervalNil) unit]
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons head rest)
       (begin
         (match head
-          [(CompilerRegInterval var start end)
-            (if (and (>= var 0) (< var (array.array-length starts)))
+          [(CompilerRegInterval.Interval var start end)
+            (if (and (>= var 0) (< var (array-length starts)))
               (begin
                 (if (or
-                  (< (array.array-ref starts var) 0)
-                  (< start (array.array-ref starts var)))
-                  (array.array-set! starts var start)
+                  (< (array-ref starts var) 0)
+                  (< start (array-ref starts var)))
+                  (array-set! starts var start)
                   unit)
-                (if (> end (array.array-ref ends var))
-                  (array.array-set! ends var end)
+                (if (> end (array-ref ends var))
+                  (array-set! ends var end)
                   unit))
               unit)])
         (compiler-reg-color-hull-bounds (box-get rest) starts ends))]))
@@ -18595,38 +18963,38 @@
   [hull-starts : (Array i64)]
   [hull-ends : (Array i64)]) : unit
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match src
-        [(IrValueVar src-var)
+        [(CompilerIrValue.Var src-var)
           (if (and
             (>= dst 0)
-            (< dst (array.array-length alias))
+            (< dst (array-length alias))
             (>= src-var 0)
-            (< src-var (array.array-length alias))
+            (< src-var (array-length alias))
             (not (= dst src-var))
             (compiler-live-set-contains? group-vars dst)
             (compiler-live-set-contains? group-vars src-var)
             (not (compiler-live-set-contains? ineligible dst))
             (not (compiler-live-set-contains? ineligible src-var))
-            (< (array.array-ref remap dst) 0)
-            (< (array.array-ref remap src-var) 0)
-            (>= (array.array-ref hull-starts dst) 0)
-            (>= (array.array-ref hull-starts src-var) 0)
+            (< (array-ref remap dst) 0)
+            (< (array-ref remap src-var) 0)
+            (>= (array-ref hull-starts dst) 0)
+            (>= (array-ref hull-starts src-var) 0)
             (=
-              (array.array-ref hull-ends src-var)
-              (array.array-ref hull-starts dst))
+              (array-ref hull-ends src-var)
+              (array-ref hull-starts dst))
             (ast-type-eq?
-              (array.array-ref var-tys dst)
-              (array.array-ref var-tys src-var))
+              (array-ref var-tys dst)
+              (array-ref var-tys src-var))
             (match (compiler-reg-assignment-index-lookup assignment-index dst)
-              [(CompilerRegSomeLocation _) false]
-              [(CompilerRegNoLocation) true])
+              [(CompilerRegMaybeLocation.Some _) false]
+              [(CompilerRegMaybeLocation.No) true])
             (match (compiler-reg-assignment-index-lookup
               assignment-index
               src-var)
-              [(CompilerRegSomeLocation _) false]
-              [(CompilerRegNoLocation) true]))
-            (array.array-set! alias dst src-var)
+              [(CompilerRegMaybeLocation.Some _) false]
+              [(CompilerRegMaybeLocation.No) true]))
+            (array-set! alias dst src-var)
             unit)]
         [_ unit])]
     [_ unit]))
@@ -18648,7 +19016,7 @@
     (while (< i len)
       (begin
         (compiler-reg-color-group-mov-alias-instr!
-          (array.array-ref slots i)
+          (array-ref slots i)
           alias
           group-vars
           ineligible
@@ -18670,11 +19038,11 @@
   [hull-starts : (Array i64)]
   [hull-ends : (Array i64)]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-color-group-mov-alias-seq!
               instrs
               alias
@@ -18695,13 +19063,13 @@
           remap
           hull-starts
           hull-ends))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
         (while (< i (compiler-ir-block-seq-count seq))
           (begin
             (match (compiler-ir-block-seq-ref seq i)
-              [(IrBlock _ instrs)
+              [(CompilerIrBlock.Block _ instrs)
                 (compiler-reg-color-group-mov-alias-seq!
                   instrs
                   alias
@@ -18725,10 +19093,10 @@
       (while (and
         (< steps 64)
         (>= root 0)
-        (< root (array.array-length alias))
-        (>= (array.array-ref alias root) 0))
+        (< root (array-length alias))
+        (>= (array-ref alias root) 0))
         (begin
-          (set! root (array.array-ref alias root))
+          (set! root (array-ref alias root))
           (set! steps (+ steps 1))))
       root)))
 
@@ -18746,8 +19114,8 @@
   (let
     [intervals : CompilerRegIntervalList (compiler-reg-plan-intervals plan)]
     (match intervals
-      [(CompilerRegIntervalNil) CompilerRegColoringNone]
-      [(CompilerRegIntervalCons _ _)
+      [(CompilerRegIntervalList.Nil) CompilerRegColoring.None]
+      [(CompilerRegIntervalList.Cons _ _)
         (let
           [slots : i64 (+ vars 4)]
           [slot-ends : (Array i64) (array.make-array i64 slots)]
@@ -18764,13 +19132,13 @@
               (begin
                 (while (< i slots)
                   (begin
-                    (array.array-set! slot-ends i (- 0 1))
+                    (array-set! slot-ends i (- 0 1))
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
-                    (array.array-set! colorable i false)
-                    (array.array-set! remap i (- 0 1))
+                    (array-set! colorable i false)
+                    (array-set! remap i (- 0 1))
                     (set! i (+ i 1))))))]
           [_flagged : unit
             (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
@@ -18787,7 +19155,7 @@
           [stack-prefix : i64
             (compiler-reg-color-walk
               sorted
-              (array.array-length sorted)
+              (array-length sorted)
               0
               assignment-index
               group-vars
@@ -18821,9 +19189,9 @@
               (begin
                 (while (< i vars)
                   (begin
-                    (array.array-set! alias i (- 0 1))
-                    (array.array-set! hull-starts i (- 0 1))
-                    (array.array-set! hull-ends i (- 0 1))
+                    (array-set! alias i (- 0 1))
+                    (array-set! hull-starts i (- 0 1))
+                    (array-set! hull-ends i (- 0 1))
                     (set! i (+ i 1))))
                 (compiler-reg-color-hull-bounds intervals hull-starts hull-ends)
                 (compiler-reg-color-group-mov-alias-blocks!
@@ -18850,50 +19218,50 @@
               (begin
                 (while (< i vars)
                   (begin
-                    (if (>= (array.array-ref remap i) 0)
+                    (if (>= (array-ref remap i) 0)
                       unit
                       (let
                         [root : i64
                           (compiler-reg-color-group-alias-root group-alias i)]
                         (if (not (= root i))
                           (begin
-                            (if (< (array.array-ref remap root) 0)
+                            (if (< (array-ref remap root) 0)
                               (let
                                 [slot : i64
                                   (compiler-reg-color-next-free-slot
                                     slot-ends
                                     next)]
                                 (begin
-                                  (array.array-set! remap root slot)
+                                  (array-set! remap root slot)
                                   (set! next (+ slot 1))))
                               unit)
-                            (array.array-set!
+                            (array-set!
                               remap
                               i
-                              (array.array-ref remap root)))
+                              (array-ref remap root)))
                           (match (compiler-reg-assignment-index-lookup
                             assignment-index
                             i)
-                            [(CompilerRegSomeLocation location)
+                            [(CompilerRegMaybeLocation.Some location)
                               (match location
-                                [(CompilerRegSpill _)
+                                [(CompilerRegLocation.Spill _)
                                   (let
                                     [slot : i64
                                       (compiler-reg-color-next-free-slot
                                         slot-ends
                                         next)]
                                     (begin
-                                      (array.array-set! remap i slot)
+                                      (array-set! remap i slot)
                                       (set! next (+ slot 1))))]
                                 [_ unit])]
-                            [(CompilerRegNoLocation)
+                            [(CompilerRegMaybeLocation.No)
                               (let
                                 [slot : i64
                                   (compiler-reg-color-next-free-slot
                                     slot-ends
                                     next)]
                                 (begin
-                                  (array.array-set! remap i slot)
+                                  (array-set! remap i slot)
                                   (set! next (+ slot 1))))]))))
                     (set! i (+ i 1))))
                 next))]
@@ -18912,31 +19280,31 @@
               (begin
                 (while (< i vars)
                   (begin
-                    (array.array-set! taken i false)
+                    (array-set! taken i false)
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
                     (if (and
-                      (>= (array.array-ref remap i) 0)
-                      (< (array.array-ref remap i) vars))
-                      (array.array-set! taken (array.array-ref remap i) true)
+                      (>= (array-ref remap i) 0)
+                      (< (array-ref remap i) vars))
+                      (array-set! taken (array-ref remap i) true)
                       unit)
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
-                    (if (< (array.array-ref remap i) 0)
+                    (if (< (array-ref remap i) 0)
                       (begin
                         (while (if (< free vars)
-                          (array.array-ref taken free)
+                          (array-ref taken free)
                           false)
                           (set! free (+ free 1)))
-                        (array.array-set! remap i free)
+                        (array-set! remap i free)
                         (set! free (+ free 1)))
                       unit)
                     (set! i (+ i 1))))))]
-          (CompilerRegColoringRemap
+          (CompilerRegColoring.Remap
             remap
             (compiler-reg-max slot-count param-floor)))])))
 
@@ -18947,24 +19315,25 @@
 ;; params and register-homed variables keep or receive non-slot ids, so the
 ;; rebuilt assignment table and formula slots stay valid.
 (define (compiler-reg-remap-id [remap : (Array i64)] [id : i64]) : i64
-  (if (and (>= id 0) (< id (array.array-length remap)))
-    (array.array-ref remap id)
+  (if (and (>= id 0) (< id (array-length remap)))
+    (array-ref remap id)
     id))
 
 (define (compiler-reg-remap-value
   [remap : (Array i64)]
   [value : CompilerIrValue]) : CompilerIrValue
   (match value
-    [(IrValueVar id) (IrValueVar (compiler-reg-remap-id remap id))]
+    [(CompilerIrValue.Var id)
+      (CompilerIrValue.Var (compiler-reg-remap-id remap id))]
     [_ value]))
 
 (define (compiler-reg-remap-value-list
   [remap : (Array i64)]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
-    [(IrValueNil) IrValueNil]
-    [(IrValueCons head rest)
-      (IrValueCons
+    [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Cons head rest)
+      (CompilerIrValueList.Cons
         (compiler-reg-remap-value remap head)
         (box (compiler-reg-remap-value-list remap (box-get rest))))]))
 
@@ -18972,34 +19341,60 @@
   [remap : (Array i64)]
   [args : CompilerIrCallArgs]) : CompilerIrCallArgs
   (match args
-    [(IrCallArgsNil) IrCallArgsNil]
-    [(IrCallArgsOne a) (IrCallArgsOne (compiler-reg-remap-value remap a))]
-    [(IrCallArgsTwo a b)
-      (IrCallArgsTwo
+    [(CompilerIrCallArgs.Nil) CompilerIrCallArgs.Nil]
+    [(CompilerIrCallArgs.One a)
+      (CompilerIrCallArgs.One (compiler-reg-remap-value remap a))]
+    [(CompilerIrCallArgs.Two a b)
+      (CompilerIrCallArgs.Two
         (compiler-reg-remap-value remap a)
         (compiler-reg-remap-value remap b))]
-    [(IrCallArgsArray items)
+    [(CompilerIrCallArgs.Array items)
       (let
-        [count : i64 (array.array-length items)]
+        [count : i64 (array-length items)]
         [out : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
         [i : i64 0]
         (begin
           (while (< i count)
             (begin
-              (array.array-set!
+              (array-set!
                 out
                 i
-                (compiler-reg-remap-value remap (array.array-ref items i)))
+                (compiler-reg-remap-value remap (array-ref items i)))
               (set! i (+ i 1))))
-          (IrCallArgsArray out)))]))
+          (CompilerIrCallArgs.Array out)))]))
+
+(define (compiler-reg-remap-spmd-call-arg
+  [remap : (Array i64)]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg class (compiler-reg-remap-value remap value) ty)]))
+
+(define (compiler-reg-remap-spmd-call-args
+  [remap : (Array i64)]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (compiler-reg-remap-spmd-call-arg remap arg)
+        (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]))
+
+(define (compiler-reg-remap-spmd-call-result
+  [remap : (Array i64)]
+  [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdCallResult
+  (match result
+    [(IrSpmdCallResultUnit) IrSpmdCallResultUnit]
+    [(IrSpmdCallResultValue dst class ty)
+      (IrSpmdCallResultValue (compiler-reg-remap-id remap dst) class ty)]))
 
 (define (compiler-reg-remap-phi-inputs
   [remap : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match inputs
-    [(IrPhiInputNil) IrPhiInputNil]
-    [(IrPhiInputCons value label rest)
-      (IrPhiInputCons
+    [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (CompilerIrPhiInputList.Cons
         (compiler-reg-remap-value remap value)
         label
         (box (compiler-reg-remap-phi-inputs remap (box-get rest))))]))
@@ -19008,85 +19403,87 @@
   [remap : (Array i64)]
   [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
   (match value
-    [(IrNoValue) IrNoValue]
-    [(IrSomeValue inner) (IrSomeValue (compiler-reg-remap-value remap inner))]))
+    [(CompilerIrMaybeValue.No) CompilerIrMaybeValue.No]
+    [(CompilerIrMaybeValue.Some inner)
+      (CompilerIrMaybeValue.Some (compiler-reg-remap-value remap inner))]))
 
 (define (compiler-reg-remap-instr
   [remap : (Array i64)]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
-    [(IrInstrMov dst value ty)
-      (IrInstrMov
+    [(CompilerIrInstr.Mov dst value ty)
+      (CompilerIrInstr.Mov
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap value)
         ty)]
-    [(IrInstrAlloc dst ty) (IrInstrAlloc (compiler-reg-remap-id remap dst) ty)]
-    [(IrInstrAddrOf dst src)
-      (IrInstrAddrOf
+    [(CompilerIrInstr.Alloc dst ty)
+      (CompilerIrInstr.Alloc (compiler-reg-remap-id remap dst) ty)]
+    [(CompilerIrInstr.AddrOf dst src)
+      (CompilerIrInstr.AddrOf
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-id remap src))]
-    [(IrInstrGep dst base offset ty)
-      (IrInstrGep
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap base)
         (compiler-reg-remap-value remap offset)
         ty)]
-    [(IrInstrLoad dst src ty)
-      (IrInstrLoad
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         ty)]
-    [(IrInstrStorePtr ptr value ty)
-      (IrInstrStorePtr
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (CompilerIrInstr.StorePtr
         (compiler-reg-remap-value remap ptr)
         (compiler-reg-remap-value remap value)
         ty)]
-    [(IrInstrCopyBytes dst src size)
-      (IrInstrCopyBytes
+    [(CompilerIrInstr.CopyBytes dst src size)
+      (CompilerIrInstr.CopyBytes
         (compiler-reg-remap-value remap dst)
         (compiler-reg-remap-value remap src)
         size)]
-    [(IrInstrBoundsCheck index length ok-label)
-      (IrInstrBoundsCheck
+    [(CompilerIrInstr.BoundsCheck index length ok-label)
+      (CompilerIrInstr.BoundsCheck
         (compiler-reg-remap-value remap index)
         (compiler-reg-remap-value remap length)
         ok-label)]
-    [(IrInstrCast dst src from-ty to-ty)
-      (IrInstrCast
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         from-ty
         to-ty)]
-    [(IrInstrBitcast dst src from-ty to-ty)
-      (IrInstrBitcast
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         from-ty
         to-ty)]
-    [(IrInstrBinOp dst op lhs rhs ty)
-      (IrInstrBinOp
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
         (compiler-reg-remap-id remap dst)
         op
         (compiler-reg-remap-value remap lhs)
         (compiler-reg-remap-value remap rhs)
         ty)]
-    [(IrInstrUnOp dst op value ty)
-      (IrInstrUnOp
+    [(CompilerIrInstr.UnOp dst op value ty)
+      (CompilerIrInstr.UnOp
         (compiler-reg-remap-id remap dst)
         op
         (compiler-reg-remap-value remap value)
         ty)]
-    [(IrInstrLaneId dst lanes ty)
-      (IrInstrLaneId (compiler-reg-remap-id remap dst) lanes ty)]
-    [(IrInstrSplat dst value lanes ty)
-      (IrInstrSplat
+    [(CompilerIrInstr.LaneId dst lanes ty)
+      (CompilerIrInstr.LaneId (compiler-reg-remap-id remap dst) lanes ty)]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (CompilerIrInstr.Splat
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap value)
         lanes
         ty)]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst op lhs rhs lanes ty)
           (ir-instr-vector-bin-op
             (compiler-reg-remap-id remap dst)
             op
@@ -19094,16 +19491,16 @@
             (compiler-reg-remap-value remap rhs)
             lanes
             ty)])]
-    [(IrInstrVectorReduce dst op src lanes ty)
-      (IrInstrVectorReduce
+    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (CompilerIrInstr.VectorReduce
         (compiler-reg-remap-id remap dst)
         op
         (compiler-reg-remap-value remap src)
         lanes
         ty)]
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty)
+        [(CompilerIrInstrVectorComparePayload.Payload dst op lhs rhs lanes ty)
           (ir-instr-vector-compare
             (compiler-reg-remap-id remap dst)
             op
@@ -19111,27 +19508,33 @@
             (compiler-reg-remap-value remap rhs)
             lanes
             ty)])]
-    [(IrInstrMaskBinOp dst op lhs rhs lanes)
-      (IrInstrMaskBinOp
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (CompilerIrInstr.MaskBinOp
         (compiler-reg-remap-id remap dst)
         op
         (compiler-reg-remap-value remap lhs)
         (compiler-reg-remap-value remap rhs)
         lanes)]
-    [(IrInstrMaskNot dst src lanes)
-      (IrInstrMaskNot
+    [(CompilerIrInstr.MaskNot dst src lanes)
+      (CompilerIrInstr.MaskNot
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         lanes)]
-    [(IrInstrMaskReduce dst op src lanes)
-      (IrInstrMaskReduce
+    [(CompilerIrInstr.MaskReduce dst op src lanes)
+      (CompilerIrInstr.MaskReduce
         (compiler-reg-remap-id remap dst)
         op
         (compiler-reg-remap-value remap src)
         lanes)]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst mask true-value false-value lanes ty)
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            true-value
+            false-value
+            lanes
+            ty)
           (ir-instr-select
             (compiler-reg-remap-id remap dst)
             (compiler-reg-remap-value remap mask)
@@ -19139,25 +19542,31 @@
             (compiler-reg-remap-value remap false-value)
             lanes
             ty)])]
-    [(IrInstrVectorLoad dst base index lanes ty)
-      (IrInstrVectorLoad
+    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
+      (CompilerIrInstr.VectorLoad
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap base)
         (compiler-reg-remap-value remap index)
         lanes
         ty)]
-    [(IrInstrVectorStore payload-box)
+    [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload base index value lanes ty)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value lanes ty)
           (ir-instr-vector-store
             (compiler-reg-remap-value remap base)
             (compiler-reg-remap-value remap index)
             (compiler-reg-remap-value remap value)
             lanes
             ty)])]
-    [(IrInstrPredicatedStore payload-box)
+    [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload base index value mask lanes ty)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            lanes
+            ty)
           (ir-instr-predicated-store
             (compiler-reg-remap-value remap base)
             (compiler-reg-remap-value remap index)
@@ -19165,9 +19574,15 @@
             (compiler-reg-remap-value remap mask)
             lanes
             ty)])]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload
+            dst
+            base
+            index
+            mask
+            lanes
+            ty)
           (ir-instr-predicated-load
             (compiler-reg-remap-id remap dst)
             (compiler-reg-remap-value remap base)
@@ -19175,61 +19590,65 @@
             (compiler-reg-remap-value remap mask)
             lanes
             ty)])]
-    [(IrInstrTailMask dst index length lanes)
-      (IrInstrTailMask
+    [(CompilerIrInstr.TailMask dst index length lanes)
+      (CompilerIrInstr.TailMask
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap index)
         (compiler-reg-remap-value remap length)
         lanes)]
-    [(IrInstrEntryArgc dst)
-      (IrInstrEntryArgc (compiler-reg-remap-id remap dst))]
-    [(IrInstrEntryArgv dst)
-      (IrInstrEntryArgv (compiler-reg-remap-id remap dst))]
-    [(IrInstrEntryEnvp dst)
-      (IrInstrEntryEnvp (compiler-reg-remap-id remap dst))]
-    [(IrInstrCpuId dst leaf subleaf reg-index)
-      (IrInstrCpuId
+    [(CompilerIrInstr.EntryArgc dst)
+      (CompilerIrInstr.EntryArgc (compiler-reg-remap-id remap dst))]
+    [(CompilerIrInstr.EntryArgv dst)
+      (CompilerIrInstr.EntryArgv (compiler-reg-remap-id remap dst))]
+    [(CompilerIrInstr.EntryEnvp dst)
+      (CompilerIrInstr.EntryEnvp (compiler-reg-remap-id remap dst))]
+    [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
+      (CompilerIrInstr.CpuId
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap leaf)
         (compiler-reg-remap-value remap subleaf)
         reg-index)]
-    [(IrInstrXgetbv dst index)
-      (IrInstrXgetbv
+    [(CompilerIrInstr.Xgetbv dst index)
+      (CompilerIrInstr.Xgetbv
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap index))]
-    [(IrInstrSyscall dst args)
-      (IrInstrSyscall
+    [(CompilerIrInstr.Syscall dst args)
+      (CompilerIrInstr.Syscall
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-call-args remap args))]
-    [(IrInstrCall dst name args ty)
-      (IrInstrCall
+    [(CompilerIrInstr.Call dst name args ty)
+      (CompilerIrInstr.Call
         (compiler-reg-remap-id remap dst)
         name
         (compiler-reg-remap-call-args remap args)
         ty)]
-    [(IrInstrCallIndirect dst callee args ty)
-      (IrInstrCallIndirect
+    [(CompilerIrInstr.CallIndirect dst callee args ty)
+      (CompilerIrInstr.CallIndirect
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap callee)
         (compiler-reg-remap-call-args remap args)
         ty)]
-    [(IrInstrCallIndirectC dst callee args ty)
-      (IrInstrCallIndirectC
+    [(CompilerIrInstr.CallIndirectC dst callee args ty)
+      (CompilerIrInstr.CallIndirectC
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap callee)
         (compiler-reg-remap-call-args remap args)
         ty)]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
+            base
+            name
+            args
+            slots)
           (ir-instr-call-cabi-store-result
             (compiler-reg-remap-value remap base)
             name
             (compiler-reg-remap-call-args remap args)
             slots)])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
             base
             callee
             args
@@ -19239,41 +19658,60 @@
             (compiler-reg-remap-value remap callee)
             (compiler-reg-remap-call-args remap args)
             slots)])]
-    [(IrInstrTailCall name args ty)
-      (IrInstrTailCall name (compiler-reg-remap-call-args remap args) ty)]
-    [(IrInstrTailCallIndirect callee args ty)
-      (IrInstrTailCallIndirect
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (ir-instr-spmd-call
+            callee
+            backend
+            lanes
+            (compiler-reg-remap-value remap active-mask)
+            (compiler-reg-remap-spmd-call-args remap args)
+            (compiler-reg-remap-spmd-call-result remap result))])]
+    [(CompilerIrInstr.TailCall name args ty)
+      (CompilerIrInstr.TailCall
+        name
+        (compiler-reg-remap-call-args remap args)
+        ty)]
+    [(CompilerIrInstr.TailCallIndirect callee args ty)
+      (CompilerIrInstr.TailCallIndirect
         (compiler-reg-remap-value remap callee)
         (compiler-reg-remap-call-args remap args)
         ty)]
-    [(IrInstrStore name value ty)
-      (IrInstrStore name (compiler-reg-remap-value remap value) ty)]
-    [(IrInstrJump _) instr]
-    [(IrInstrBranch cond true-label false-label)
-      (IrInstrBranch
+    [(CompilerIrInstr.Store name value ty)
+      (CompilerIrInstr.Store name (compiler-reg-remap-value remap value) ty)]
+    [(CompilerIrInstr.Jump _) instr]
+    [(CompilerIrInstr.Branch cond true-label false-label)
+      (CompilerIrInstr.Branch
         (compiler-reg-remap-value remap cond)
         true-label
         false-label)]
-    [(IrInstrReturn value)
-      (IrInstrReturn (compiler-reg-remap-maybe-value remap value))]
-    [(IrInstrPhi dst inputs ty)
-      (IrInstrPhi
+    [(CompilerIrInstr.Return value)
+      (CompilerIrInstr.Return (compiler-reg-remap-maybe-value remap value))]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-phi-inputs remap inputs)
         ty)]
-    [(IrInstrPack dst words ty)
-      (IrInstrPack
+    [(CompilerIrInstr.Pack dst words ty)
+      (CompilerIrInstr.Pack
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value-list remap words)
         ty)]
-    [(IrInstrWord dst src index ty)
-      (IrInstrWord
+    [(CompilerIrInstr.Word dst src index ty)
+      (CompilerIrInstr.Word
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         index
         ty)]
-    [(IrInstrSwitch index base cases default-label)
-      (IrInstrSwitch
+    [(CompilerIrInstr.Switch index base cases default-label)
+      (CompilerIrInstr.Switch
         (compiler-reg-remap-value remap index)
         base
         cases
@@ -19283,9 +19721,9 @@
   [remap : (Array i64)]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) IrInstrNil]
-    [(IrInstrCons head rest)
-      (IrInstrCons
+    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrInstrList.Cons head rest)
+      (CompilerIrInstrList.Cons
         (compiler-reg-remap-instr remap head)
         (box (compiler-reg-remap-instr-list remap (box-get rest))))]))
 
@@ -19293,62 +19731,62 @@
   [remap : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
-    [(IrBlockNil) IrBlockNil]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
-          (IrBlockCons
-            (IrBlock
+        [(CompilerIrBlock.Block label instrs)
+          (CompilerIrBlockList.Cons
+            (CompilerIrBlock.Block
               label
               (compiler-ir-instr-seq-from-list
                 (compiler-reg-remap-instr-list
                   remap
                   (compiler-ir-instr-seq-to-list instrs))))
             (box (compiler-reg-remap-blocks remap (box-get rest))))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-remap-blocks remap (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
-    [(CompilerRegPlan assignments _ _ _ _ _) assignments]))
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _) assignments]))
 
 (define (compiler-reg-plan-ineligible [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ ineligible _ _ _ _) ineligible]))
+    [(CompilerRegPlan.Plan _ ineligible _ _ _ _) ineligible]))
 
 (define (compiler-reg-plan-intervals [plan : CompilerRegPlan]) : CompilerRegIntervalList
   (match plan
-    [(CompilerRegPlan _ _ intervals _ _ _) intervals]))
+    [(CompilerRegPlan.Plan _ _ intervals _ _ _) intervals]))
 
 (define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypeList
   (match plan
-    [(CompilerRegPlan _ _ _ types _ _) types]))
+    [(CompilerRegPlan.Plan _ _ _ types _ _) types]))
 
 (define (compiler-reg-plan-caller-save-shadows [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-shadows split)]))
+    [(CompilerRegPlan.Plan _ _ _ _ split _) (compiler-reg-call-split-shadows split)]))
 
 (define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (Array
     String)
   (match plan
-    [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-regs split)]))
+    [(CompilerRegPlan.Plan _ _ _ _ split _) (compiler-reg-call-split-regs split)]))
 
 (define (compiler-reg-plan-caller-save-regions [plan : CompilerRegPlan]) : CompilerRegCallRegionList
   (match plan
-    [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-regions split)]))
+    [(CompilerRegPlan.Plan _ _ _ _ split _) (compiler-reg-call-split-regions split)]))
 
 (define (compiler-reg-plan-split-plan [plan : CompilerRegPlan]) : CompilerRegSplitPlan
   (match plan
-    [(CompilerRegPlan _ _ _ _ _ split-plan) split-plan]))
+    [(CompilerRegPlan.Plan _ _ _ _ _ split-plan) split-plan]))
 
 (define (compiler-reg-assignment-list-merge
   [extra : CompilerRegAssignmentList]
   [base : CompilerRegAssignmentList]) : CompilerRegAssignmentList
   (match extra
-    [(CompilerRegAssignmentNil) base]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) base]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment var location)
+        [(CompilerRegAssignment.Assignment var location)
           (compiler-reg-assignment-list-merge
             (box-get rest)
             (compiler-reg-assignment-insert base var location))])]))
@@ -19357,10 +19795,10 @@
   [extra : CompilerRegVarTypeList]
   [base : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (match extra
-    [(CompilerRegVarTypeNil) base]
-    [(CompilerRegVarTypeCons item rest)
+    [(CompilerRegVarTypeList.Nil) base]
+    [(CompilerRegVarTypeList.Cons item rest)
       (match item
-        [(CompilerRegVarType var ty)
+        [(CompilerRegVarType.Type var ty)
           (compiler-reg-var-type-list-merge
             (box-get rest)
             (compiler-reg-var-type-insert base var ty))])]))
@@ -19369,10 +19807,15 @@
   [plan : CompilerRegPlan]
   [rewrite : CompilerRegCallSaveRewrite]) : CompilerRegPlan
   (match plan
-    [(CompilerRegPlan assignments ineligible intervals types shadows split-plan)
+    [(CompilerRegPlan.Plan assignments ineligible intervals types shadows split-plan)
       (match rewrite
-        [(CompilerRegCallSaveRewrite _ _ _ extra-assignments extra-types)
-          (CompilerRegPlan
+        [(CompilerRegCallSaveRewrite.Rewrite
+            _
+            _
+            _
+            extra-assignments
+            extra-types)
+          (CompilerRegPlan.Plan
             (compiler-reg-assignment-list-merge extra-assignments assignments)
             ineligible
             intervals
@@ -19383,10 +19826,10 @@
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array.array-length remap))
+  (if (>= index (array-length remap))
     unit
     (begin
-      (array.array-set! remap index index)
+      (array-set! remap index index)
       (compiler-reg-caller-save-remap-fill! remap (+ index 1)))))
 
 (define (compiler-reg-caller-save-remap [vars : i64]) : (Array i64)
@@ -19400,8 +19843,8 @@
   [type-info : CompilerRegVarTypes]
   [var : i64]) : AstType
   (match (compiler-reg-var-types-lookup type-info var)
-    [(CompilerRegSomeType ty) ty]
-    [(CompilerRegNoType) (AstTyI64)]))
+    [(CompilerRegMaybeType.Some ty) ty]
+    [(CompilerRegMaybeType.No) (AstType.I64)]))
 
 ;; ---------------------------------------------------------------------------
 ;; M-G2b backend realization of the per-call-region split. Runs FIRST in the
@@ -19451,11 +19894,11 @@
       (match region
         [(CompilerRegCallRegion var lo hi entry-flag exit-flag)
           (begin
-            (array.array-set! r-var i var)
-            (array.array-set! r-lo i lo)
-            (array.array-set! r-hi i hi)
-            (array.array-set! r-entry i entry-flag)
-            (array.array-set! r-exit i exit-flag)
+            (array-set! r-var i var)
+            (array-set! r-lo i lo)
+            (array-set! r-hi i hi)
+            (array-set! r-entry i entry-flag)
+            (array-set! r-exit i exit-flag)
             (compiler-reg-call-region-fill-arrays!
               (box-get rest)
               r-var
@@ -19470,10 +19913,10 @@
   [a : i64]
   [b : i64]) : unit
   (let
-    [tmp : i64 (array.array-ref arr a)]
+    [tmp : i64 (array-ref arr a)]
     (begin
-      (array.array-set! arr a (array.array-ref arr b))
-      (array.array-set! arr b tmp))))
+      (array-set! arr a (array-ref arr b))
+      (array-set! arr b tmp))))
 
 (define (compiler-reg-call-region-sort-by-lo!
   [r-var : (Array i64)]
@@ -19490,7 +19933,7 @@
         (begin
           (while (and
             (> j 0)
-            (> (array.array-ref r-lo (- j 1)) (array.array-ref r-lo j)))
+            (> (array-ref r-lo (- j 1)) (array-ref r-lo j)))
             (begin
               (compiler-reg-call-region-sort-swap! r-var (- j 1) j)
               (compiler-reg-call-region-sort-swap! r-lo (- j 1) j)
@@ -19502,12 +19945,12 @@
 
 (define (compiler-reg-call-region-control-flow-instr? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrJump _) true]
-    [(IrInstrBranch _ _ _) true]
-    [(IrInstrReturn _) true]
-    [(IrInstrSwitch _ _ _ _) true]
-    [(IrInstrTailCall _ _ _) true]
-    [(IrInstrTailCallIndirect _ _ _) true]
+    [(CompilerIrInstr.Jump _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Return _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TailCall _ _ _) true]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
 
 ;; Exit stores for every active root whose region ends at `point` (emitted
@@ -19527,18 +19970,18 @@
     (begin
       (while (< j active-n)
         (let
-          [root : i64 (array.array-ref active j)]
+          [root : i64 (array-ref active j)]
           (begin
             (if (and
-              (= (array.array-ref act-hi root) point)
-              (= (array.array-ref act-exit root) 1)
-              (>= (array.array-ref act-w root) 0))
+              (= (array-ref act-hi root) point)
+              (= (array-ref act-exit root) 1)
+              (>= (array-ref act-w root) 0))
               (set!
                 out
                 (compiler-ir-instr-cons
-                  (IrInstrMov
+                  (CompilerIrInstr.Mov
                     root
-                    (IrValueVar (array.array-ref act-w root))
+                    (CompilerIrValue.Var (array-ref act-w root))
                     (compiler-reg-caller-save-var-type type-info root))
                   out))
               unit)
@@ -19555,12 +19998,12 @@
       (compiler-reg-plan-caller-save-regions plan)]
     [count : i64 (compiler-reg-call-region-list-count regions)]
     (if (= count 0)
-      (CompilerRegCallSaveRewrite
+      (CompilerRegCallSaveRewrite.Rewrite
         blocks
         vars
         vars
-        CompilerRegAssignmentNil
-        CompilerRegVarTypeNil)
+        CompilerRegAssignmentList.Nil
+        CompilerRegVarTypeList.Nil)
       (let
         [shadow-regs : (Array String) (compiler-reg-plan-caller-save-regs plan)]
         [r-var : (Array i64) (array.make-array i64 count)]
@@ -19590,8 +20033,8 @@
         [active : (Array i64) (array.make-array i64 (+ count 1))]
         [active-n : i64 0]
         [next-var : i64 vars]
-        [extra-assignments : CompilerRegAssignmentList CompilerRegAssignmentNil]
-        [extra-types : CompilerRegVarTypeList CompilerRegVarTypeNil]
+        [extra-assignments : CompilerRegAssignmentList CompilerRegAssignmentList.Nil]
+        [extra-types : CompilerRegVarTypeList CompilerRegVarTypeList.Nil]
         [cursor : i64 0]
         [point : i64 0]
         [seq : CompilerIrBlockSeq
@@ -19599,7 +20042,7 @@
             (compiler-ir-block-list-force-cons blocks))]
         [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
         [nblocks : i64 (struct-get seq len)]
-        [out-rev : CompilerIrBlockList IrBlockNil]
+        [out-rev : CompilerIrBlockList CompilerIrBlockList.Nil]
         [b : i64 0]
         (begin
           (compiler-reg-call-region-fill-arrays!
@@ -19620,54 +20063,54 @@
           (compiler-reg-fill-i64-array act-w (- 0 1))
           (while (< b nblocks)
             (begin
-              (match (array.array-ref bslots b)
-                [(IrBlock label instrs)
+              (match (array-ref bslots b)
+                [(CompilerIrBlock.Block label instrs)
                   (let
                     [ilen : i64 (compiler-ir-instr-seq-count instrs)]
                     [span : i64 (* 2 ilen)]
                     (if (or
                       (>= cursor count)
-                      (>= (array.array-ref r-lo cursor) (+ point span)))
+                      (>= (array-ref r-lo cursor) (+ point span)))
                       ;; no region starts here (none can be active across
                       ;; blocks) -> keep the block untouched
                       (begin
                         (set!
                           out-rev
                           (compiler-ir-block-cons
-                            (IrBlock label instrs)
+                            (CompilerIrBlock.Block label instrs)
                             out-rev))
                         (set! point (+ point span)))
                       (let
                         [islots : (Array CompilerIrInstr)
                           (struct-get instrs slots)]
                         [i : i64 0]
-                        [acc : CompilerIrInstrList IrInstrNil]
+                        [acc : CompilerIrInstrList CompilerIrInstrList.Nil]
                         (begin
                           (while (< i ilen)
                             (let
                               [instr : CompilerIrInstr
-                                (array.array-ref islots i)]
+                                (array-ref islots i)]
                               (begin
                                 ;; defensive: drop any region whose lo was
                                 ;; passed without matching (must not happen)
                                 (while (and
                                   (< cursor count)
-                                  (< (array.array-ref r-lo cursor) point))
+                                  (< (array-ref r-lo cursor) point))
                                   (set! cursor (+ cursor 1)))
                                 ;; activations at this point
                                 (while (and
                                   (< cursor count)
-                                  (= (array.array-ref r-lo cursor) point))
+                                  (= (array-ref r-lo cursor) point))
                                   (let
-                                    [root : i64 (array.array-ref r-var cursor)]
+                                    [root : i64 (array-ref r-var cursor)]
                                     [w : i64 next-var]
                                     [reg : String
                                       (if (and
                                         (>= root 0)
                                         (<
                                           root
-                                          (array.array-length shadow-regs)))
-                                        (array.array-ref shadow-regs root)
+                                          (array-length shadow-regs)))
+                                        (array-ref shadow-regs root)
                                         "")]
                                     [ty : AstType
                                       (compiler-reg-caller-save-var-type
@@ -19675,8 +20118,8 @@
                                         root)]
                                     (begin
                                       (if (or
-                                        (string.string-eq reg "")
-                                        (>= (array.array-ref act-w root) 0))
+                                        (string.eq reg "")
+                                        (>= (array-ref act-w root) 0))
                                         ;; defensive decline: no register or
                                         ;; already active
                                         unit
@@ -19685,9 +20128,9 @@
                                           (set!
                                             extra-assignments
                                             (compiler-reg-assignment-cons
-                                              (CompilerRegAssignment
+                                              (CompilerRegAssignment.Assignment
                                                 w
-                                                (CompilerRegRegister reg))
+                                                (CompilerRegLocation.Register reg))
                                               extra-assignments))
                                           (set!
                                             extra-types
@@ -19696,28 +20139,28 @@
                                               w
                                               ty))
                                           (if (=
-                                            (array.array-ref r-entry cursor)
+                                            (array-ref r-entry cursor)
                                             1)
                                             (set!
                                               acc
                                               (compiler-ir-instr-cons
-                                                (IrInstrMov
+                                                (CompilerIrInstr.Mov
                                                   w
-                                                  (IrValueVar root)
+                                                  (CompilerIrValue.Var root)
                                                   ty)
                                                 acc))
                                             unit)
-                                          (array.array-set! act-w root w)
-                                          (array.array-set!
+                                          (array-set! act-w root w)
+                                          (array-set!
                                             act-hi
                                             root
-                                            (array.array-ref r-hi cursor))
-                                          (array.array-set!
+                                            (array-ref r-hi cursor))
+                                          (array-set!
                                             act-exit
                                             root
-                                            (array.array-ref r-exit cursor))
-                                          (array.array-set! remap root w)
-                                          (array.array-set!
+                                            (array-ref r-exit cursor))
+                                          (array-set! remap root w)
+                                          (array-set!
                                             active
                                             active-n
                                             root)
@@ -19727,7 +20170,7 @@
                                   [out-instr : CompilerIrInstr
                                     (if (> active-n 0)
                                       (match instr
-                                        [(IrInstrPhi _ _ _) instr]
+                                        [(CompilerIrInstr.Phi _ _ _) instr]
                                         [_
                                           (compiler-reg-remap-instr remap instr)])
                                       instr)]
@@ -19772,21 +20215,21 @@
                                       (while (< j active-n)
                                         (let
                                           [root : i64
-                                            (array.array-ref active j)]
+                                            (array-ref active j)]
                                           (if (=
-                                            (array.array-ref act-hi root)
+                                            (array-ref act-hi root)
                                             point)
                                             (begin
-                                              (array.array-set! remap root root)
-                                              (array.array-set!
+                                              (array-set! remap root root)
+                                              (array-set!
                                                 act-w
                                                 root
                                                 (- 0 1))
                                               (set! active-n (- active-n 1))
-                                              (array.array-set!
+                                              (array-set!
                                                 active
                                                 j
-                                                (array.array-ref
+                                                (array-ref
                                                   active
                                                   active-n)))
                                             (set! j (+ j 1))))))))
@@ -19796,24 +20239,24 @@
                           (while (> active-n 0)
                             (let
                               [root : i64
-                                (array.array-ref active (- active-n 1))]
+                                (array-ref active (- active-n 1))]
                               (begin
-                                (array.array-set! remap root root)
-                                (array.array-set! act-w root (- 0 1))
+                                (array-set! remap root root)
+                                (array-set! act-w root (- 0 1))
                                 (set! active-n (- active-n 1)))))
                           (set!
                             out-rev
                             (compiler-ir-block-cons
-                              (IrBlock
+                              (CompilerIrBlock.Block
                                 label
                                 (compiler-ir-instr-seq-from-list
                                   (compiler-ir-instr-list-reverse-onto
                                     acc
-                                    IrInstrNil)))
+                                    CompilerIrInstrList.Nil)))
                               out-rev))))))])
               (set! b (+ b 1))))
-          (CompilerRegCallSaveRewrite
-            (compiler-ir-block-list-reverse-onto out-rev IrBlockNil)
+          (CompilerRegCallSaveRewrite.Rewrite
+            (compiler-ir-block-list-reverse-onto out-rev CompilerIrBlockList.Nil)
             vars
             next-var
             extra-assignments
@@ -19837,42 +20280,42 @@
         (compiler-live-instr-defs instr)
         1)
       (match instr
-        [(IrInstrMov dst value ty)
+        [(CompilerIrInstr.Mov dst value ty)
           (if (and
             (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
-            (< dst (array.array-length candidates)))
+            (< dst (array-length candidates)))
             (begin
-              (array.array-set! candidates dst 1)
-              (array.array-set! kinds dst (compiler-reg-remat-kind-mov))
-              (array.array-set! values dst value)
-              (array.array-set! op-types dst ty)
-              (array.array-set! types dst ty))
+              (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-mov))
+              (array-set! values dst value)
+              (array-set! op-types dst ty)
+              (array-set! types dst ty))
             unit)]
-        [(IrInstrGep dst base offset ty)
+        [(CompilerIrInstr.Gep dst base offset ty)
           (if (and
             (compiler-reg-remat-gep? base offset)
             (>= dst 0)
-            (< dst (array.array-length candidates)))
+            (< dst (array-length candidates)))
             (begin
-              (array.array-set! candidates dst 1)
-              (array.array-set! kinds dst (compiler-reg-remat-kind-gep))
-              (array.array-set! values dst base)
-              (array.array-set! offsets dst offset)
-              (array.array-set! op-types dst ty)
-              (array.array-set! types dst (compiler-reg-addr-of-result-type)))
+              (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-gep))
+              (array-set! values dst base)
+              (array-set! offsets dst offset)
+              (array-set! op-types dst ty)
+              (array-set! types dst (compiler-reg-addr-of-result-type)))
             unit)]
-        [(IrInstrLoad dst src ty)
+        [(CompilerIrInstr.Load dst src ty)
           (if (and
             (compiler-reg-remat-load? src allow-invariant-loads)
             (>= dst 0)
-            (< dst (array.array-length candidates)))
+            (< dst (array-length candidates)))
             (begin
-              (array.array-set! candidates dst 1)
-              (array.array-set! kinds dst (compiler-reg-remat-kind-load))
-              (array.array-set! values dst src)
-              (array.array-set! op-types dst ty)
-              (array.array-set! types dst ty))
+              (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-load))
+              (array-set! values dst src)
+              (array-set! op-types dst ty)
+              (array-set! types dst ty))
             unit)]
         [_ unit]))))
 
@@ -19888,7 +20331,7 @@
       (begin
         (compiler-reg-remat-table-record-def!
           table
-          (array.array-ref slots index)
+          (array-ref slots index)
           allow-invariant-loads)
         (set! index (+ index 1))))))
 
@@ -19897,11 +20340,11 @@
   [blocks : CompilerIrBlockList]
   [allow-invariant-loads : bool]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-remat-table-record-instrs!
               table
               instrs
@@ -19910,7 +20353,7 @@
           table
           (box-get rest)
           allow-invariant-loads))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-remat-table-record-blocks!
         table
         (compiler-ir-block-seq-to-list seq)
@@ -19918,7 +20361,7 @@
 
 (define (compiler-reg-remat-table-build [func : CompilerIrFunction]) : CompilerRegRematTable
   (match func
-    [(IrFunction _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [def-counts : (Array i64) (array.make-array i64 vars)]
         [candidates : (Array i64) (array.make-array i64 vars)]
@@ -19954,11 +20397,11 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegSpill _) true]
+        [(CompilerRegLocation.Spill _) true]
         [_ false])]
-    [(CompilerRegNoLocation) true]))
+    [(CompilerRegMaybeLocation.No) true]))
 
 (define (compiler-reg-remat-table-eligible?
   [table : CompilerRegRematTable]
@@ -19971,9 +20414,9 @@
     [candidates : (Array i64) (struct-get table candidates)]
     (and
       (>= var 0)
-      (< var (array.array-length def-counts))
-      (= (array.array-ref def-counts var) 1)
-      (= (array.array-ref candidates var) 1)
+      (< var (array-length def-counts))
+      (= (array-ref def-counts var) 1)
+      (= (array-ref candidates var) 1)
       (compiler-reg-remat-var-spilled? assignments var)
       (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
 
@@ -19981,19 +20424,19 @@
   (if (compiler-reg-float-type? ty)
     (compiler-reg-xmm-registers)
     (if (compiler-reg-register-eligible-type? ty)
-      (compiler-reg-string-cons "%r9" CompilerRegStringNil)
-      CompilerRegStringNil)))
+      (compiler-reg-string-cons "%r9" CompilerRegStringList.Nil)
+      CompilerRegStringList.Nil)))
 
 (define (compiler-reg-remat-interval-active-at?
   [intervals : CompilerRegIntervalIndex]
   [var : i64]
   [point : i64]) : bool
   (match (compiler-reg-interval-index-lookup intervals var)
-    [(CompilerRegSomeInterval interval)
+    [(CompilerRegMaybeInterval.Some interval)
       (match interval
-        [(CompilerRegInterval _ start end)
+        [(CompilerRegInterval.Interval _ start end)
           (and (<= start point) (<= point end))])]
-    [(CompilerRegNoInterval) false]))
+    [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-remat-location-conflicts-at?
   [assignments : CompilerRegAssignmentList]
@@ -20001,10 +20444,10 @@
   [point : i64]
   [location : CompilerRegLocation]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) false]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment var assigned-location)
+        [(CompilerRegAssignment.Assignment var assigned-location)
           (if (and
             (compiler-reg-location-eq? assigned-location location)
             (compiler-reg-remat-interval-active-at? intervals var point))
@@ -20022,8 +20465,8 @@
   [point : i64]
   [chosen : CompilerRegStringList]) : CompilerRegMaybeString
   (match regs
-    [(CompilerRegStringNil) CompilerRegNoString]
-    [(CompilerRegStringCons reg rest)
+    [(CompilerRegStringList.Nil) CompilerRegMaybeString.No]
+    [(CompilerRegStringList.Cons reg rest)
       (if (and
         (not (compiler-reg-string-list-contains? chosen reg))
         (not
@@ -20031,8 +20474,8 @@
             assignments
             intervals
             point
-            (CompilerRegRegister reg))))
-        (CompilerRegSomeString reg)
+            (CompilerRegLocation.Register reg))))
+        (CompilerRegMaybeString.Some reg)
         (compiler-reg-remat-first-free-register-at
           (box-get rest)
           assignments
@@ -20049,10 +20492,10 @@
   [var : i64]) : CompilerRegMaybeString
   (let
     [types : (Array AstType) (struct-get table types)]
-    (if (or (< var 0) (>= var (array.array-length types)))
-      CompilerRegNoString
+    (if (or (< var 0) (>= var (array-length types)))
+      CompilerRegMaybeString.No
       (compiler-reg-remat-first-free-register-at
-        (compiler-reg-remat-registers-for-type (array.array-ref types var))
+        (compiler-reg-remat-registers-for-type (array-ref types var))
         assignments
         intervals
         point
@@ -20068,22 +20511,22 @@
     [offsets : (Array CompilerIrValue) (struct-get table offsets)]
     [op-types : (Array AstType) (struct-get table op-types)]
     [types : (Array AstType) (struct-get table types)]
-    [ty : AstType (array.array-ref types var)]
-    [value : CompilerIrValue (array.array-ref values var)]
+    [ty : AstType (array-ref types var)]
+    [value : CompilerIrValue (array-ref values var)]
     (cond
-      [(= (array.array-ref kinds var) (compiler-reg-remat-kind-load))
-        (IrInstrLoad temp value ty)]
-      [(= (array.array-ref kinds var) (compiler-reg-remat-kind-gep))
-        (IrInstrGep
+      [(= (array-ref kinds var) (compiler-reg-remat-kind-load))
+        (CompilerIrInstr.Load temp value ty)]
+      [(= (array-ref kinds var) (compiler-reg-remat-kind-gep))
+        (CompilerIrInstr.Gep
           temp
           value
-          (array.array-ref offsets var)
-          (array.array-ref op-types var))]
-      [else (IrInstrMov temp value ty)])))
+          (array-ref offsets var)
+          (array-ref op-types var))]
+      [else (CompilerIrInstr.Mov temp value ty)])))
 
 (define (compiler-reg-remat-use-site-ok? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrPhi _ _ _) false]
+    [(CompilerIrInstr.Phi _ _ _) false]
     ;; Remat temps are assigned to caller-clobbered homes for a single expanded
     ;; instruction. Avoid instructions whose backend expansion may clobber those
     ;; homes before every operand has been consumed.
@@ -20093,8 +20536,8 @@
   [items : CompilerIrInstrList]
   [acc : CompilerIrInstrList]) : CompilerIrInstrList
   (match items
-    [(IrInstrNil) acc]
-    [(IrInstrCons head rest)
+    [(CompilerIrInstrList.Nil) acc]
+    [(CompilerIrInstrList.Cons head rest)
       (compiler-ir-instr-cons
         head
         (compiler-reg-remat-instr-list-onto (box-get rest) acc))]))
@@ -20124,7 +20567,7 @@
                 (let
                   [var : i64 (+ base bit)]
                   (if (< var vars)
-                    (array.array-set! remap var var)
+                    (array-set! remap var var)
                     unit))
                 unit)
               (set! bits (shr bits 1))
@@ -20155,8 +20598,8 @@
       ;; reused across instructions; we restore the bits we set afterwards.
       [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
       [types : (Array AstType) (struct-get table types)]
-      [prefix : CompilerIrInstrList IrInstrNil]
-      [chosen : CompilerRegStringList CompilerRegStringNil]
+      [prefix : CompilerIrInstrList CompilerIrInstrList.Nil]
+      [chosen : CompilerRegStringList CompilerRegStringList.Nil]
       [out-next-var : i64 next-var]
       [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
       [out-extra-types : CompilerRegVarTypeList extra-types]
@@ -20189,12 +20632,12 @@
                           point
                           chosen
                           var)
-                          [(CompilerRegSomeString reg)
+                          [(CompilerRegMaybeString.Some reg)
                             (let
                               [temp : i64 out-next-var]
-                              [ty : AstType (array.array-ref types var)]
+                              [ty : AstType (array-ref types var)]
                               (begin
-                                (array.array-set! remap var temp)
+                                (array-set! remap var temp)
                                 (set!
                                   prefix
                                   (compiler-ir-instr-cons
@@ -20206,9 +20649,9 @@
                                 (set!
                                   out-extra-assignments
                                   (compiler-reg-assignment-cons
-                                    (CompilerRegAssignment
+                                    (CompilerRegAssignment.Assignment
                                       temp
-                                      (CompilerRegRegister reg))
+                                      (CompilerRegLocation.Register reg))
                                     out-extra-assignments))
                                 (set!
                                   out-extra-types
@@ -20217,14 +20660,14 @@
                                     temp
                                     ty))
                                 (set! out-next-var (+ out-next-var 1))))]
-                          [(CompilerRegNoString) unit])
+                          [(CompilerRegMaybeString.No) unit])
                         unit))
                     unit)
                   (set! bits (shr bits 1))
                   (set! bit (+ bit 1))))
               (set! word-index (+ word-index 1)))))
         (if (= out-next-var next-var)
-          (CompilerRegCallSaveInstrRewrite
+          (CompilerRegCallSaveInstrRewrite.Rewrite
             (compiler-ir-instr-cons instr acc)
             (+ point 2)
             out-next-var
@@ -20235,7 +20678,7 @@
             (begin
               ;; Restore the shared remap array to identity for the next instr.
               (compiler-reg-remat-reset-remap-uses! remap uses vars)
-              (CompilerRegCallSaveInstrRewrite
+              (CompilerRegCallSaveInstrRewrite.Rewrite
                 (compiler-ir-instr-cons
                   rewritten
                   (compiler-reg-remat-instr-list-onto prefix acc))
@@ -20243,7 +20686,7 @@
                 out-next-var
                 out-extra-assignments
                 out-extra-types))))))
-    (CompilerRegCallSaveInstrRewrite
+    (CompilerRegCallSaveInstrRewrite.Rewrite
       (compiler-ir-instr-cons instr acc)
       (+ point 2)
       next-var
@@ -20265,14 +20708,14 @@
   [remap : (Array i64)]
   [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
   (match instrs
-    [(IrInstrNil)
-      (CompilerRegCallSaveInstrRewrite
+    [(CompilerIrInstrList.Nil)
+      (CompilerRegCallSaveInstrRewrite.Rewrite
         acc
         point
         next-var
         extra-assignments
         extra-types)]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Cons instr rest)
       (match (compiler-reg-remat-rewrite-one-instr
         instr
         point
@@ -20287,7 +20730,7 @@
         extra-types
         remap
         acc)
-        [(CompilerRegCallSaveInstrRewrite
+        [(CompilerRegCallSaveInstrRewrite.Rewrite
             acc2
             point2
             next-var2
@@ -20334,15 +20777,15 @@
     extra-assignments
     extra-types
     remap
-    IrInstrNil)
-    [(CompilerRegCallSaveInstrRewrite
+    CompilerIrInstrList.Nil)
+    [(CompilerRegCallSaveInstrRewrite.Rewrite
         rev
         next-point
         out-next-var
         out-extra-assignments
         out-extra-types)
-      (CompilerRegCallSaveInstrRewrite
-        (compiler-ir-instr-list-reverse-onto rev IrInstrNil)
+      (CompilerRegCallSaveInstrRewrite.Rewrite
+        (compiler-ir-instr-list-reverse-onto rev CompilerIrInstrList.Nil)
         next-point
         out-next-var
         out-extra-assignments
@@ -20363,16 +20806,16 @@
   [remap : (Array i64)]
   [acc : CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (match blocks
-    [(IrBlockNil)
-      (CompilerRegCallSaveRewrite
+    [(CompilerIrBlockList.Nil)
+      (CompilerRegCallSaveRewrite.Rewrite
         acc
         point
         next-var
         extra-assignments
         extra-types)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (match (compiler-reg-remat-rewrite-instrs
             instrs
             point
@@ -20386,7 +20829,7 @@
             extra-assignments
             extra-types
             remap)
-            [(CompilerRegCallSaveInstrRewrite
+            [(CompilerRegCallSaveInstrRewrite.Rewrite
                 rewritten
                 next-point
                 next-var2
@@ -20406,9 +20849,11 @@
                 extra-types2
                 remap
                 (compiler-ir-block-cons
-                  (IrBlock label (compiler-ir-instr-seq-from-list rewritten))
+                  (CompilerIrBlock.Block
+                    label
+                    (compiler-ir-instr-seq-from-list rewritten))
                   acc))])])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-reg-remat-rewrite-blocks-rev
         (compiler-ir-block-seq-to-list seq)
         point
@@ -20437,7 +20882,7 @@
       (compiler-reg-function-group-vars func types)]
     [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
     (match (compiler-reg-live-interval-selection func liveness)
-      [(CompilerRegIntervalSelection intervals interval-index)
+      [(CompilerRegIntervalSelection.Selection intervals interval-index)
         (let
           [coalesce : CompilerRegCoalesceMap
             (compiler-reg-coalesce-map-build
@@ -20465,18 +20910,20 @@
             interval-index
             parents
             merged-roots
-            CompilerRegAssignmentNil
-            CompilerRegVarTypeNil
+            CompilerRegAssignmentList.Nil
+            CompilerRegVarTypeList.Nil
             remap
-            IrBlockNil)
-            [(CompilerRegCallSaveRewrite
+            CompilerIrBlockList.Nil)
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rev
                 _
                 out-vars
                 extra-assignments
                 extra-types)
-              (CompilerRegCallSaveRewrite
-                (compiler-ir-block-list-reverse-onto rev IrBlockNil)
+              (CompilerRegCallSaveRewrite.Rewrite
+                (compiler-ir-block-list-reverse-onto
+                  rev
+                  CompilerIrBlockList.Nil)
                 vars
                 out-vars
                 extra-assignments
@@ -20486,20 +20933,20 @@
   [maybe-location : CompilerRegMaybeLocation]
   [reg : String]) : bool
   (match maybe-location
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister found) (string.string-eq found reg)]
-        [(CompilerRegRegisterPair a b)
-          (or (string.string-eq a reg) (string.string-eq b reg))]
+        [(CompilerRegLocation.Register found) (string.eq found reg)]
+        [(CompilerRegLocation.RegisterPair a b)
+          (or (string.eq a reg) (string.eq b reg))]
         [_ false])]
     [_ false]))
 
 (define (compiler-reg-location-spill?
   [maybe-location : CompilerRegMaybeLocation]) : bool
   (match maybe-location
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegSpill offset) (< offset 0)]
+        [(CompilerRegLocation.Spill offset) (< offset 0)]
         [_ false])]
     [_ false]))
 
@@ -20507,9 +20954,9 @@
   [maybe-location : CompilerRegMaybeLocation]
   [offset : i64]) : bool
   (match maybe-location
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegSpill found) (= found offset)]
+        [(CompilerRegLocation.Spill found) (= found offset)]
         [_ false])]
     [_ false]))
 
@@ -20517,530 +20964,717 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegNoLocation) true]
+    [(CompilerRegMaybeLocation.No) true]
     [_ false]))
 
 (define (compiler-reg-location-any-register?
   [maybe-location : CompilerRegMaybeLocation]) : bool
   (match maybe-location
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister _) true]
-        [(CompilerRegRegisterPair _ _) true]
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-reg-i64-ty) : AstType
-  (AstTyI64))
+  (AstType.I64))
 
 (define (compiler-reg-f64-ty) : AstType
-  (AstTyF64))
+  (AstType.F64))
 
 (define (compiler-reg-reuse-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "reuse"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 1) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g0"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-f64-reuse-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "f64_reuse"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.F64 0x3ff8000000000000)
+            (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
-            (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
+            (CompilerIrInstr.Store
+              "g0"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov
+              (CompilerIrInstr.Mov
                 1
-                (IrValueF64 0x4004000000000000)
+                (CompilerIrValue.F64 0x4004000000000000)
                 (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-overlap-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "overlap"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     8
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  3
+                  (CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    4
+                    (CompilerIrValue.I64 4)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Mov
+                      5
+                      (CompilerIrValue.I64 5)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Mov
+                        6
+                        (CompilerIrValue.I64 6)
+                        (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+                        (CompilerIrInstr.Store
+                          "g0"
+                          (CompilerIrValue.Var 0)
+                          (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
-                          (IrInstrStore
+                          (CompilerIrInstr.Store
                             "g1"
-                            (IrValueVar 1)
+                            (CompilerIrValue.Var 1)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
-                            (IrInstrStore
+                            (CompilerIrInstr.Store
                               "g2"
-                              (IrValueVar 2)
+                              (CompilerIrValue.Var 2)
                               (compiler-reg-i64-ty))
                             (compiler-ir-instr-cons
-                              (IrInstrStore
+                              (CompilerIrInstr.Store
                                 "g3"
-                                (IrValueVar 3)
+                                (CompilerIrValue.Var 3)
                                 (compiler-reg-i64-ty))
                               (compiler-ir-instr-cons
-                                (IrInstrStore
+                                (CompilerIrInstr.Store
                                   "g4"
-                                  (IrValueVar 4)
+                                  (CompilerIrValue.Var 4)
                                   (compiler-reg-i64-ty))
                                 (compiler-ir-instr-cons
-                                  (IrInstrStore
+                                  (CompilerIrInstr.Store
                                     "g5"
-                                    (IrValueVar 5)
+                                    (CompilerIrValue.Var 5)
                                     (compiler-reg-i64-ty))
                                   (compiler-ir-instr-cons
-                                    (IrInstrStore
+                                    (CompilerIrInstr.Store
                                       "g6"
-                                      (IrValueVar 6)
+                                      (CompilerIrValue.Var 6)
                                       (compiler-reg-i64-ty))
                                     (compiler-ir-instr-cons
-                                      (IrInstrReturn IrNoValue)
-                                      IrInstrNil))))))))))))))))
-      IrBlockNil)))
+                                      (CompilerIrInstr.Return
+                                        CompilerIrMaybeValue.No)
+                                      CompilerIrInstrList.Nil))))))))))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-f64-overlap-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "f64_overlap"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     5
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 0x3fe0000000000000) (compiler-reg-f64-ty))
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.F64 0x3fe0000000000000)
+            (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.F64 0x3ff8000000000000)
+              (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov
+              (CompilerIrInstr.Mov
                 2
-                (IrValueF64 0x4004000000000000)
+                (CompilerIrValue.F64 0x4004000000000000)
                 (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov
+                (CompilerIrInstr.Mov
                   3
-                  (IrValueF64 0x400c000000000000)
+                  (CompilerIrValue.F64 0x400c000000000000)
                   (compiler-reg-f64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov
+                  (CompilerIrInstr.Mov
                     4
-                    (IrValueF64 0x4012000000000000)
+                    (CompilerIrValue.F64 0x4012000000000000)
                     (compiler-reg-f64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
+                    (CompilerIrInstr.Store
+                      "g0"
+                      (CompilerIrValue.Var 0)
+                      (compiler-reg-f64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-f64-ty))
+                      (CompilerIrInstr.Store
+                        "g1"
+                        (CompilerIrValue.Var 1)
+                        (compiler-reg-f64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-f64-ty))
+                        (CompilerIrInstr.Store
+                          "g2"
+                          (CompilerIrValue.Var 2)
+                          (compiler-reg-f64-ty))
                         (compiler-ir-instr-cons
-                          (IrInstrStore
+                          (CompilerIrInstr.Store
                             "g3"
-                            (IrValueVar 3)
+                            (CompilerIrValue.Var 3)
                             (compiler-reg-f64-ty))
                           (compiler-ir-instr-cons
-                            (IrInstrStore
+                            (CompilerIrInstr.Store
                               "g4"
-                              (IrValueVar 4)
+                              (CompilerIrValue.Var 4)
                               (compiler-reg-f64-ty))
                             (compiler-ir-instr-cons
-                              (IrInstrReturn IrNoValue)
-                              IrInstrNil))))))))))))
-      IrBlockNil)))
+                              (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                              CompilerIrInstrList.Nil))))))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-call-live-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "call_live"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (CompilerIrInstr.Call
+              1
+              "side_effect"
+              (CompilerIrCallArgs.Nil)
+              (AstType.Unit))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-f64-call-live-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "f64_call_live"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 0x4023000000000000) (compiler-reg-f64-ty))
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.F64 0x4023000000000000)
+            (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
-            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (CompilerIrInstr.Call
+              1
+              "side_effect"
+              (CompilerIrCallArgs.Nil)
+              (AstType.Unit))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueVar 0) (compiler-reg-f64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.Var 0)
+                (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-call-arg-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "call_arg"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 1) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 2)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrCall
+              (CompilerIrInstr.Call
                 2
                 "use_args"
-                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
-                (AstTyUnit))
+                (CompilerIrCallArgs.Two
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1))
+                (AstType.Unit))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  3
+                  (CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
-                  IrInstrNil))))))
-      IrBlockNil)))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-f64-call-arg-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "f64_call_arg"
-    IrParamNil
+    CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.F64 0x3ff8000000000000)
+            (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
-            (IrInstrCall
+            (CompilerIrInstr.Call
               1
               "takes_f64"
-              (IrCallArgsOne (IrValueVar 0))
-              (AstTyUnit))
+              (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+              (AstType.Unit))
             (compiler-ir-instr-cons
-              (IrInstrMov
+              (CompilerIrInstr.Mov
                 2
-                (IrValueF64 0x4004000000000000)
+                (CompilerIrValue.F64 0x4004000000000000)
                 (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 ;; M-A2 fixture: a direct call mixing a HANDLE arg (8-byte Array descriptor
 ;; pointer, var 0, produced by a call so it is not remat-classified) with a
 ;; scalar arg (var 1). Every arg is single-GP-register passed, and var 0 is
 ;; used again after the call, so it spans the call point.
 (define (compiler-reg-handle-call-arg-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "handle_call_arg"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrCall
+          (CompilerIrInstr.Call
             0
             "make_handle"
-            (IrCallArgsNil)
-            (ast-ty-dyn-array (AstTyI64)))
+            (CompilerIrCallArgs.Nil)
+            (ast-ty-dyn-array (AstType.I64)))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 2) (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrCall
+              (CompilerIrInstr.Call
                 2
                 "use_args"
-                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
-                (AstTyUnit))
+                (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))
+                (AstType.Unit))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueVar 0) (ast-ty-dyn-array (AstTyI64)))
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))))
-      IrBlockNil)))
+                (CompilerIrInstr.Mov 3 (CompilerIrValue.Var 0) (ast-ty-dyn-array (AstType.I64)))
+                (compiler-ir-instr-cons (CompilerIrInstr.Return CompilerIrMaybeValue.No) CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "ineligible"
-    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
-    (AstTyUnit)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
+      CompilerIrParamList.Nil)
+    (AstType.Unit)
     7
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 1 (IrValueF64 0x3ff8000000000000) (AstTyF64))
+          (CompilerIrInstr.Mov
+            1
+            (CompilerIrValue.F64 0x3ff8000000000000)
+            (AstType.F64))
           (compiler-ir-instr-cons
-            (IrInstrMov 2 (IrValueString "heap") (AstTyString))
+            (CompilerIrInstr.Mov
+              2
+              (CompilerIrValue.String "heap")
+              (AstType.String))
             (compiler-ir-instr-cons
-              (IrInstrMov 3 (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                3
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 4 (IrValueUnit) (ast-ty-dyn-array (AstTyI64)))
+                (CompilerIrInstr.Mov
+                  4
+                  (CompilerIrValue.Unit)
+                  (ast-ty-dyn-array (AstType.I64)))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    5
+                    (CompilerIrValue.I64 5)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrAddrOf 6 3)
+                    (CompilerIrInstr.AddrOf 6 3)
                     (compiler-ir-instr-cons
-                      (IrInstrTailMask 7 (IrValueVar 5) (IrValueVar 5) 4)
+                      (CompilerIrInstr.TailMask
+                        7
+                        (CompilerIrValue.Var 5)
+                        (CompilerIrValue.Var 5)
+                        4)
                       (compiler-ir-instr-cons
-                        (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                        IrInstrNil)))))))))
-      IrBlockNil)))
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                        CompilerIrInstrList.Nil)))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-param-livein-gap-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "param_livein_gap"
-    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
-    (AstTyI64)
-    2
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons (IrInstrJump "body") IrInstrNil))
-      (compiler-ir-block-cons
-        (compiler-ir-block
-          "body"
-          (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil)))
-        IrBlockNil))))
-
-(define (compiler-reg-single-block-livein-gap-function) : CompilerIrFunction
-  (IrFunction
-    "single_block_livein_gap"
-    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
-    (AstTyI64)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
+      CompilerIrParamList.Nil)
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 1 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Jump "body")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
           (compiler-ir-instr-cons
-            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-            IrInstrNil)))
-      IrBlockNil)))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-reg-single-block-livein-gap-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "single_block_livein_gap"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
+      CompilerIrParamList.Nil)
+    (AstType.I64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
 
 (cfg
   test
   (define (compiler-reg-param-register-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_registers"
       (compiler-ir-param-cons
-        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
-          (IrParam "b" (compiler-reg-i64-ty) 1)
+          (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
           (compiler-ir-param-cons
-            (IrParam "c" (compiler-reg-i64-ty) 2)
-            IrParamNil)))
-      (AstTyUnit)
+            (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
+            CompilerIrParamList.Nil)))
+      (AstType.Unit)
       3
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrStore "pa" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "pa"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "pb" (IrValueVar 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "pb"
+                (CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "pc" (IrValueVar 2) (compiler-reg-i64-ty))
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
-        IrBlockNil))))
+                (CompilerIrInstr.Store
+                  "pc"
+                  (CompilerIrValue.Var 2)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-zero-call-param-conflict-function) : CompilerIrFunction
     (let
-      [instrs : CompilerIrInstrList IrInstrNil]
+      [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
       (begin
-        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "p5" (IrValueVar 5) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g12" (IrValueVar 12) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "p5"
+              (CompilerIrValue.Var 5)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g11" (IrValueVar 11) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g12"
+              (CompilerIrValue.Var 12)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g10" (IrValueVar 10) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g11"
+              (CompilerIrValue.Var 11)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g9" (IrValueVar 9) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g10"
+              (CompilerIrValue.Var 10)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g8" (IrValueVar 8) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g9"
+              (CompilerIrValue.Var 9)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g7" (IrValueVar 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g8"
+              (CompilerIrValue.Var 8)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g7"
+              (CompilerIrValue.Var 7)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 12 (IrValueI64 12) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g6"
+              (CompilerIrValue.Var 6)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 11 (IrValueI64 11) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              12
+              (CompilerIrValue.I64 12)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 10 (IrValueI64 10) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              11
+              (CompilerIrValue.I64 11)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 9 (IrValueI64 9) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              10
+              (CompilerIrValue.I64 10)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 8 (IrValueI64 8) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              9
+              (CompilerIrValue.I64 9)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 7 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              8
+              (CompilerIrValue.I64 8)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              7
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             instrs))
-        (IrFunction
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              6
+              (CompilerIrValue.I64 6)
+              (compiler-reg-i64-ty))
+            instrs))
+        (CompilerIrFunction.Function
           "zero_call_param_conflict"
           (compiler-ir-param-cons
-            (IrParam "a" (compiler-reg-i64-ty) 0)
+            (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
             (compiler-ir-param-cons
-              (IrParam "b" (compiler-reg-i64-ty) 1)
+              (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
               (compiler-ir-param-cons
-                (IrParam "c" (compiler-reg-i64-ty) 2)
+                (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
                 (compiler-ir-param-cons
-                  (IrParam "d" (compiler-reg-i64-ty) 3)
+                  (CompilerIrParam.Param "d" (compiler-reg-i64-ty) 3)
                   (compiler-ir-param-cons
-                    (IrParam "e" (compiler-reg-i64-ty) 4)
+                    (CompilerIrParam.Param "e" (compiler-reg-i64-ty) 4)
                     (compiler-ir-param-cons
-                      (IrParam "f" (compiler-reg-i64-ty) 5)
-                      IrParamNil))))))
-          (AstTyUnit)
+                      (CompilerIrParam.Param "f" (compiler-reg-i64-ty) 5)
+                      CompilerIrParamList.Nil))))))
+          (AstType.Unit)
           13
-          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+          (compiler-ir-block-cons
+            (compiler-ir-block "entry" instrs)
+            CompilerIrBlockList.Nil))))))
 
 (cfg
   test
   (define (compiler-reg-param-clobber-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_clobber"
       (compiler-ir-param-cons
-        (IrParam "arg" (compiler-reg-i64-ty) 0)
-        IrParamNil)
-      (AstTyI64)
+        (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
+        CompilerIrParamList.Nil)
+      (AstType.I64)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (CompilerIrInstr.Call
+              1
+              "side_effect"
+              (CompilerIrCallArgs.Nil)
+              (AstType.Unit))
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil)))
-        IrBlockNil))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-param-aggregate-function) : CompilerIrFunction
     (let
-      [ty : AstType (AstTyStruct (intern "ParamAggregate"))]
-      (IrFunction
+      [ty : AstType (AstType.Struct (intern "ParamAggregate"))]
+      (CompilerIrFunction.Function
         "param_aggregate"
-        (compiler-ir-param-cons (IrParam "state" ty 0) IrParamNil)
-        (AstTyUnit)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "state" ty 0)
+          CompilerIrParamList.Nil)
+        (AstType.Unit)
         2
         (compiler-ir-block-cons
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueVar 0) ty)
-              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
-          IrBlockNil)))))
+              (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) ty)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil)))
+          CompilerIrBlockList.Nil)))))
 
 (cfg
   test
@@ -21048,36 +21682,36 @@
   ;; in-range CONSTANT (emitted as `shrq $3` -- no %rcx/%cl use). Params keep
   ;; their ABI pins.
   (define (compiler-reg-param-const-shift-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_const_shift"
       (compiler-ir-param-cons
-        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
-          (IrParam "n" (compiler-reg-i64-ty) 1)
-          IrParamNil))
-      (AstTyI64)
+          (CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
+          CompilerIrParamList.Nil))
+      (AstType.I64)
       3
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               2
-              (IrBinShr)
-              (IrValueVar 0)
-              (IrValueI64 3)
+              (CompilerIrBinOp.Shr)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 3)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 2
-                (IrBinAdd)
-                (IrValueVar 2)
-                (IrValueVar 1)
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil))))
-        IrBlockNil))))
+                (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
@@ -21085,36 +21719,36 @@
   ;; backend moves the count into %rcx and shifts by %cl). `a` (var 0) is live
   ;; across the shift: t = a >> n; return t + a.
   (define (compiler-reg-param-var-shift-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_var_shift"
       (compiler-ir-param-cons
-        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
-          (IrParam "n" (compiler-reg-i64-ty) 1)
-          IrParamNil))
-      (AstTyI64)
+          (CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
+          CompilerIrParamList.Nil))
+      (AstType.I64)
       3
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               2
-              (IrBinShr)
-              (IrValueVar 0)
-              (IrValueVar 1)
+              (CompilerIrBinOp.Shr)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 2
-                (IrBinAdd)
-                (IrValueVar 2)
-                (IrValueVar 0)
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 0)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil))))
-        IrBlockNil))))
+                (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
@@ -21123,9 +21757,9 @@
   ;; registers (%rdi/%rsi) -- the crc_update shape.
   (define (compiler-reg-scalar-param-const-shift-pin-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-const-shift-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -21146,9 +21780,9 @@
   ;; compiler-reg-scalar-param-rcx-shift-span-ok? below.)
   (define (compiler-reg-scalar-param-var-shift-pin-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-var-shift-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -21166,42 +21800,42 @@
   ;; t + t -- a (var 0) ends at point 0, the call is at point 2, so %rdi stays
   ;; pinned while the call-spanning t (var 1) takes a callee-saved home.
   (define (compiler-reg-param-dead-before-call-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_dead_before_call"
-      (compiler-ir-param-cons (IrParam "a" (compiler-reg-i64-ty) 0) IrParamNil)
-      (AstTyI64)
+      (compiler-ir-param-cons (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0) CompilerIrParamList.Nil)
+      (AstType.I64)
       4
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               1
-              (IrBinAdd)
-              (IrValueVar 0)
-              (IrValueVar 0)
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrCall 2 "side_effect" (IrCallArgsNil) (AstTyUnit))
+              (CompilerIrInstr.Call 2 "side_effect" (CompilerIrCallArgs.Nil) (AstType.Unit))
               (compiler-ir-instr-cons
-                (IrInstrBinOp
+                (CompilerIrInstr.BinOp
                   3
-                  (IrBinAdd)
-                  (IrValueVar 1)
-                  (IrValueVar 1)
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 1)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
-                  IrInstrNil)))))
-        IrBlockNil))))
+                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  CompilerIrInstrList.Nil)))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-scalar-param-dead-before-call-pin-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-dead-before-call-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
@@ -21220,53 +21854,53 @@
   ;; while v0 (%rdi, ends point 0) and v1 (%rsi, the divisor, last-used AT
   ;; the div = read before the clobber) keep theirs.
   (define (compiler-reg-param-rdx-div-span-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_rdx_div_span"
       (compiler-ir-param-cons
-        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
-          (IrParam "b" (compiler-reg-i64-ty) 1)
+          (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
           (compiler-ir-param-cons
-            (IrParam "c" (compiler-reg-i64-ty) 2)
-            IrParamNil)))
-      (AstTyI64)
+            (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
+            CompilerIrParamList.Nil)))
+      (AstType.I64)
       6
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               3
-              (IrBinAdd)
-              (IrValueVar 0)
-              (IrValueVar 0)
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 4
-                (IrBinDiv)
-                (IrValueVar 3)
-                (IrValueVar 1)
+                (CompilerIrBinOp.Div)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrBinOp
+                (CompilerIrInstr.BinOp
                   5
-                  (IrBinAdd)
-                  (IrValueVar 4)
-                  (IrValueVar 2)
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.Var 2)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                  IrInstrNil)))))
-        IrBlockNil))))
+                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                  CompilerIrInstrList.Nil)))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-scalar-param-rdx-div-span-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-rdx-div-span-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
@@ -21288,62 +21922,62 @@
   ;; and keeps its pin (%rdx is not shift-clobbered), and v0/v1 end at/before
   ;; the shift and keep theirs.
   (define (compiler-reg-param-rcx-shift-span-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_rcx_shift_span"
       (compiler-ir-param-cons
-        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
-          (IrParam "n" (compiler-reg-i64-ty) 1)
+          (CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
           (compiler-ir-param-cons
-            (IrParam "c" (compiler-reg-i64-ty) 2)
+            (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
             (compiler-ir-param-cons
-              (IrParam "d" (compiler-reg-i64-ty) 3)
-              IrParamNil))))
-      (AstTyI64)
+              (CompilerIrParam.Param "d" (compiler-reg-i64-ty) 3)
+              CompilerIrParamList.Nil))))
+      (AstType.I64)
       8
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               4
-              (IrBinAdd)
-              (IrValueVar 0)
-              (IrValueVar 0)
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 5
-                (IrBinShl)
-                (IrValueVar 4)
-                (IrValueVar 1)
+                (CompilerIrBinOp.Shl)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.Var 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrBinOp
+                (CompilerIrInstr.BinOp
                   6
-                  (IrBinAdd)
-                  (IrValueVar 5)
-                  (IrValueVar 2)
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.Var 2)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrBinOp
+                  (CompilerIrInstr.BinOp
                     7
-                    (IrBinAdd)
-                    (IrValueVar 6)
-                    (IrValueVar 3)
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 6)
+                    (CompilerIrValue.Var 3)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrReturn (IrSomeValue (IrValueVar 7)))
-                    IrInstrNil))))))
-        IrBlockNil))))
+                    (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                    CompilerIrInstrList.Nil))))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-scalar-param-rcx-shift-span-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-rcx-shift-span-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 3))
           (compiler-reg-location-register?
@@ -21369,37 +22003,37 @@
   ;; clobbered %rdi. compiler-reg-param-pins-demote! must revoke the pin and
   ;; the class must land on ONE callee-saved home instead.
   (define (compiler-reg-param-pin-coalesce-demote-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "param_pin_coalesce_demote"
-      (compiler-ir-param-cons (IrParam "a" (compiler-reg-i64-ty) 0) IrParamNil)
-      (AstTyUnit)
+      (compiler-ir-param-cons (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0) CompilerIrParamList.Nil)
+      (AstType.Unit)
       4
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrBinOp
+            (CompilerIrInstr.BinOp
               3
-              (IrBinAdd)
-              (IrValueVar 0)
-              (IrValueVar 0)
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrCall 2 "side_effect" (IrCallArgsNil) (AstTyUnit))
+                (CompilerIrInstr.Call 2 "side_effect" (CompilerIrCallArgs.Nil) (AstType.Unit))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
-                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))))
-        IrBlockNil))))
+                  (CompilerIrInstr.Store "g" (CompilerIrValue.Var 1) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons (CompilerIrInstr.Return CompilerIrMaybeValue.No) CompilerIrInstrList.Nil))))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-scalar-param-pin-coalesce-demote-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-pin-coalesce-demote-function))
-      [(CompilerRegPlan assignments _ _ _ _ _)
+      [(CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
           (not
             (compiler-reg-location-register?
@@ -21410,129 +22044,171 @@
           (compiler-reg-same-location? assignments 0 1))])))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "move_chain"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 41) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 41) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueVar 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-same-value-multi-def-census-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "same_value_multi_def_census"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrAlloc 0 (compiler-reg-i64-ty))
+          (CompilerIrInstr.Alloc 0 (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-phi-join-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "phi_join"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-          (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "join")
+            CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
           "join"
           (compiler-ir-instr-cons
-            (IrInstrPhi
+            (CompilerIrInstr.Phi
               1
-              (compiler-ir-phi-input-cons (IrValueVar 0) "entry" IrPhiInputNil)
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "entry"
+                CompilerIrPhiInputList.Nil)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-              IrInstrNil)))
-        IrBlockNil))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
 
 (define (compiler-reg-loop-backedge-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "loop_backedge"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
-          (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "loop")
+            CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
           "loop"
           (compiler-ir-instr-cons
-            (IrInstrPhi
+            (CompilerIrInstr.Phi
               1
               (compiler-ir-phi-input-cons
-                (IrValueVar 0)
+                (CompilerIrValue.Var 0)
                 "entry"
-                (compiler-ir-phi-input-cons (IrValueVar 2) "body" IrPhiInputNil))
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 2)
+                  "body"
+                  CompilerIrPhiInputList.Nil))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueVar 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrBranch (IrValueBool false) "body" "exit")
-                IrInstrNil))))
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Bool false)
+                  "body"
+                  "exit")
+                CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "body"
-            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "exit"
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil))
-            IrBlockNil))))))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))))))
 
 (define (compiler-reg-same-value-clobber-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "same_value_clobber"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrCall 1 "side_effect" IrCallArgsNil (AstTyUnit))
+            (CompilerIrInstr.Call
+              1
+              "side_effect"
+              CompilerIrCallArgs.Nil
+              (AstType.Unit))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 ;; M-C (part 1) census shapes for the extended (mutable-source) same-value
 ;; relation. `safe`: the source's second def lies OUTSIDE the copy's liveness
@@ -21540,268 +22216,331 @@
 ;; refused. `chain`: a copy-of-copy must not smuggle a member past the def
 ;; (the transitive hazard). `cast`: the width-64 int cast counts as a copy.
 (define (compiler-reg-sv-multi-safe-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "sv_multi_safe"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store "g" (CompilerIrValue.Var 1) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))))))
-      IrBlockNil)))
+                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-sv-multi-reject-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "sv_multi_reject"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "g" (IrValueVar 1) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store "g" (CompilerIrValue.Var 1) (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))))))
-      IrBlockNil)))
+                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-sv-multi-chain-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "sv_multi_chain"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueVar 2) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov 3 (CompilerIrValue.Var 2) (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "g" (IrValueVar 3) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store "g" (CompilerIrValue.Var 3) (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                    IrInstrNil)))))))
-      IrBlockNil)))
+                    (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                    CompilerIrInstrList.Nil)))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-sv-multi-cast-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "sv_multi_cast"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrCast 1 (IrValueVar 0) (AstTyI64) (AstTyU64))
+            (CompilerIrInstr.Cast 1 (CompilerIrValue.Var 0) (AstType.I64) (AstType.U64))
             (compiler-ir-instr-cons
-              (IrInstrStore "g" (IrValueVar 1) (AstTyU64))
+              (CompilerIrInstr.Store "g" (CompilerIrValue.Var 1) (AstType.U64))
               (compiler-ir-instr-cons
-                (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))))))
-      IrBlockNil)))
+                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-interference-blocks-coalesce-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "interference_blocks_coalesce"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "keep" (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "keep"
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-                IrInstrNil)))))
-      IrBlockNil)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-spill-coalesce-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "spill_coalesce"
-    IrParamNil
-    (AstTyI64)
+    CompilerIrParamList.Nil
+    (AstType.I64)
     6
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  3
+                  (CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    4
+                    (CompilerIrValue.I64 4)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Store
+                      "g0"
+                      (CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Store
+                        "g1"
+                        (CompilerIrValue.Var 1)
+                        (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-i64-ty))
+                        (CompilerIrInstr.Store
+                          "g2"
+                          (CompilerIrValue.Var 2)
+                          (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
-                          (IrInstrStore
+                          (CompilerIrInstr.Store
                             "g3"
-                            (IrValueVar 3)
+                            (CompilerIrValue.Var 3)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
-                            (IrInstrMov 5 (IrValueVar 4) (compiler-reg-i64-ty))
+                            (CompilerIrInstr.Mov
+                              5
+                              (CompilerIrValue.Var 4)
+                              (compiler-reg-i64-ty))
                             (compiler-ir-instr-cons
-                              (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                              IrInstrNil))))))))))))
-      IrBlockNil)))
+                              (CompilerIrInstr.Return
+                                (CompilerIrMaybeValue.Some
+                                  (CompilerIrValue.Var 5)))
+                              CompilerIrInstrList.Nil))))))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-vector-home-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "vector_home"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
+          (CompilerIrInstr.VectorLoad
+            0
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 0)
+            4
+            (AstType.I64))
           (compiler-ir-instr-cons
-            (IrInstrVectorLoad 1 (IrValueI64 0) (IrValueI64 4) 4 (AstTyI64))
+            (CompilerIrInstr.VectorLoad
+              1
+              (CompilerIrValue.I64 0)
+              (CompilerIrValue.I64 4)
+              4
+              (AstType.I64))
             (compiler-ir-instr-cons
               (ir-instr-vector-bin-op
                 2
-                (IrBinAdd)
-                (IrValueVar 0)
-                (IrValueVar 1)
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
                 4
-                (AstTyI64))
+                (AstType.I64))
               (compiler-ir-instr-cons
                 (ir-instr-vector-bin-op
                   3
-                  (IrBinAdd)
-                  (IrValueVar 0)
-                  (IrValueVar 2)
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 2)
                   4
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (ir-instr-vector-store
-                    (IrValueI64 0)
-                    (IrValueI64 8)
-                    (IrValueVar 3)
+                    (CompilerIrValue.I64 0)
+                    (CompilerIrValue.I64 8)
+                    (CompilerIrValue.Var 3)
                     4
-                    (AstTyI64))
-                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))))
-      IrBlockNil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                    CompilerIrInstrList.Nil)))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-vector-select-false-home-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "vector_select_false_home"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     5
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrSplat 0 (IrValueI64 0) 8 (AstTyI64))
+          (CompilerIrInstr.Splat 0 (CompilerIrValue.I64 0) 8 (AstType.I64))
           (compiler-ir-instr-cons
-            (IrInstrSplat 1 (IrValueI64 1) 8 (AstTyI64))
+            (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 1) 8 (AstType.I64))
             (compiler-ir-instr-cons
-              (IrInstrSplat 2 (IrValueI64 2) 8 (AstTyI64))
+              (CompilerIrInstr.Splat 2 (CompilerIrValue.I64 2) 8 (AstType.I64))
               (compiler-ir-instr-cons
                 (ir-instr-vector-store
-                  (IrValueI64 0)
-                  (IrValueI64 0)
-                  (IrValueVar 0)
+                  (CompilerIrValue.I64 0)
+                  (CompilerIrValue.I64 0)
+                  (CompilerIrValue.Var 0)
                   8
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (ir-instr-vector-compare
                     3
-                    (IrBinLt)
-                    (IrValueVar 2)
-                    (IrValueVar 1)
+                    (CompilerIrBinOp.Lt)
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.Var 1)
                     8
-                    (AstTyI64))
+                    (AstType.I64))
                   (compiler-ir-instr-cons
                     (ir-instr-select
                       4
-                      (IrValueVar 3)
-                      (IrValueVar 2)
-                      (IrValueVar 1)
+                      (CompilerIrValue.Var 3)
+                      (CompilerIrValue.Var 2)
+                      (CompilerIrValue.Var 1)
                       8
-                      (AstTyI64))
+                      (AstType.I64))
                     (compiler-ir-instr-cons
                       (ir-instr-vector-store
-                        (IrValueI64 0)
-                        (IrValueI64 8)
-                        (IrValueVar 4)
+                        (CompilerIrValue.I64 0)
+                        (CompilerIrValue.I64 8)
+                        (CompilerIrValue.Var 4)
                         8
-                        (AstTyI64))
+                        (AstType.I64))
                       (compiler-ir-instr-cons
-                        (IrInstrReturn IrNoValue)
-                        IrInstrNil)))))))))
-      IrBlockNil)))
+                        (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                        CompilerIrInstrList.Nil)))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-mask-home-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "mask_home"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     5
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrTailMask 0 (IrValueI64 0) (IrValueI64 8) 8)
+          (CompilerIrInstr.TailMask
+            0
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 8)
+            8)
           (compiler-ir-instr-cons
-            (IrInstrTailMask 1 (IrValueI64 4) (IrValueI64 8) 8)
+            (CompilerIrInstr.TailMask
+              1
+              (CompilerIrValue.I64 4)
+              (CompilerIrValue.I64 8)
+              8)
             (compiler-ir-instr-cons
-              (IrInstrMaskBinOp 2 (IrMaskAnd) (IrValueVar 0) (IrValueVar 1) 8)
+              (CompilerIrInstr.MaskBinOp
+                2
+                (CompilerIrMaskBinOp.And)
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
+                8)
               (compiler-ir-instr-cons
-                (IrInstrMaskNot 3 (IrValueVar 2) 8)
+                (CompilerIrInstr.MaskNot 3 (CompilerIrValue.Var 2) 8)
                 (compiler-ir-instr-cons
-                  (IrInstrMaskReduce 4 (IrMaskReduceAny) (IrValueVar 3) 8)
+                  (CompilerIrInstr.MaskReduce
+                    4
+                    (CompilerIrMaskReduceOp.Any)
+                    (CompilerIrValue.Var 3)
+                    8)
                   (compiler-ir-instr-cons
-                    (IrInstrReturn (IrSomeValue (IrValueVar 4)))
-                    IrInstrNil)))))))
-      IrBlockNil)))
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                    CompilerIrInstrList.Nil)))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (compiler-reg-location-register?
@@ -21813,7 +22552,7 @@
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (compiler-reg-location-register?
@@ -21825,7 +22564,7 @@
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       ;; Seven simultaneously live values against a five-register callee-saved
       ;; pool: the first five take %r12..%r15 and %rbx, and the remaining two
       ;; spill. %rbx joined the pool once its fixed scratch role moved under the
@@ -21845,7 +22584,7 @@
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 5)
         (= (compiler-reg-spill-count assignments) 1)
@@ -21871,7 +22610,7 @@
 ;; The unit call result (var 1) stays ineligible (non-scalar).
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 1)
@@ -21885,7 +22624,7 @@
 ;; while the unit call result stays ineligible.
 (define (compiler-reg-scalar-call-live-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-reg-location-any-register?
@@ -21898,14 +22637,14 @@
 (define (compiler-reg-scalar-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-reg-unassigned? assignments 0))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 1)
@@ -21917,7 +22656,7 @@
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 1)
@@ -21929,7 +22668,7 @@
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-reg-unassigned? assignments 0)
@@ -21939,7 +22678,7 @@
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (let
         [marked : bool
           (and
@@ -21971,7 +22710,7 @@
 ;; 8-byte values; address-taken values (var 3 via the AddrOf) stay ineligible.
 (define (compiler-reg-scalar-handle-eligible-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 3)
@@ -21990,7 +22729,7 @@
 (define (compiler-reg-scalar-handle-call-arg-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-handle-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _ _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (not (compiler-live-set-contains? ineligible 1))
@@ -22001,9 +22740,9 @@
   test
   (define (compiler-reg-scalar-linux-param-registers-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-register-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -22026,9 +22765,9 @@
   ;; stack-homed.
   (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiWindows
+      CompilerRegTargetAbi.Windows
       (compiler-reg-param-register-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -22052,9 +22791,9 @@
   ;; being reloaded from the stack at every use.
   (define (compiler-reg-scalar-param-clobber-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-clobber-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
@@ -22069,9 +22808,9 @@
   ;; incoming %rdi instead of the M-A-era greedy callee-saved home.
   (define (compiler-reg-scalar-aggregate-param-pinned-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-param-aggregate-function))
-      [(CompilerRegPlan assignments ineligible _ _ _ _)
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
@@ -22084,19 +22823,19 @@
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-param-livein-gap-function))
-    [(CompilerRegPlan _ _ intervals _ _ _)
+    [(CompilerRegPlan.Plan _ _ intervals _ _ _)
       (compiler-reg-interval-range? intervals 0 0 4)]))
 
 (define (compiler-reg-scalar-interval-guardrail-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-single-block-livein-gap-function))
-    [(CompilerRegPlan _ _ intervals _ _ _)
+    [(CompilerRegPlan.Plan _ _ intervals _ _ _)
       (compiler-reg-interval-range? intervals 0 0 2)]))
 
 (define (compiler-reg-scalar-loop-backedge-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-loop-backedge-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (compiler-reg-location-any-register?
           (compiler-reg-assignment-lookup assignments 1))
@@ -22105,160 +22844,218 @@
         (compiler-reg-same-location? assignments 1 2))]))
 
 (define (compiler-reg-syscall-clobber-overlap-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "syscall_clobber_overlap"
-    IrParamNil
-    (AstTyUnit)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
     7
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  3
+                  (CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    4
+                    (CompilerIrValue.I64 4)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Mov
+                      5
+                      (CompilerIrValue.I64 5)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+                      (CompilerIrInstr.Syscall
+                        6
+                        (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
                       (compiler-ir-instr-cons
-                        (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+                        (CompilerIrInstr.Store
+                          "g0"
+                          (CompilerIrValue.Var 0)
+                          (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
-                          (IrInstrStore
+                          (CompilerIrInstr.Store
                             "g1"
-                            (IrValueVar 1)
+                            (CompilerIrValue.Var 1)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
-                            (IrInstrStore
+                            (CompilerIrInstr.Store
                               "g2"
-                              (IrValueVar 2)
+                              (CompilerIrValue.Var 2)
                               (compiler-reg-i64-ty))
                             (compiler-ir-instr-cons
-                              (IrInstrStore
+                              (CompilerIrInstr.Store
                                 "g3"
-                                (IrValueVar 3)
+                                (CompilerIrValue.Var 3)
                                 (compiler-reg-i64-ty))
                               (compiler-ir-instr-cons
-                                (IrInstrStore
+                                (CompilerIrInstr.Store
                                   "g4"
-                                  (IrValueVar 4)
+                                  (CompilerIrValue.Var 4)
                                   (compiler-reg-i64-ty))
                                 (compiler-ir-instr-cons
-                                  (IrInstrStore
+                                  (CompilerIrInstr.Store
                                     "g5"
-                                    (IrValueVar 5)
+                                    (CompilerIrValue.Var 5)
                                     (compiler-reg-i64-ty))
                                   (compiler-ir-instr-cons
-                                    (IrInstrReturn IrNoValue)
-                                    IrInstrNil)))))))))))))))
-      IrBlockNil)))
+                                    (CompilerIrInstr.Return
+                                      CompilerIrMaybeValue.No)
+                                    CompilerIrInstrList.Nil)))))))))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-call-spanning-caller-saved-function) : CompilerIrFunction
   (let
-    [instrs : CompilerIrInstrList IrInstrNil]
+    [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
     (begin
-      (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g5c" (IrValueVar 5) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Return CompilerIrMaybeValue.No)
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g5b" (IrValueVar 5) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g5c"
+            (CompilerIrValue.Var 5)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g5b"
+            (CompilerIrValue.Var 5)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g5" (IrValueVar 5) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g6"
+            (CompilerIrValue.Var 6)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g4" (IrValueVar 4) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g5"
+            (CompilerIrValue.Var 5)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g3" (IrValueVar 3) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g4"
+            (CompilerIrValue.Var 4)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g3"
+            (CompilerIrValue.Var 3)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g2"
+            (CompilerIrValue.Var 2)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g1"
+            (CompilerIrValue.Var 1)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrCall 7 "side_effect" (IrCallArgsNil) (AstTyUnit))
+          (CompilerIrInstr.Store
+            "g0"
+            (CompilerIrValue.Var 0)
+            (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Call
+            7
+            "side_effect"
+            (CompilerIrCallArgs.Nil)
+            (AstType.Unit))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 6 (CompilerIrValue.I64 6) (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 5) (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 4) (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 3) (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 2) (compiler-reg-i64-ty))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           instrs))
-      (IrFunction
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
+          instrs))
+      (CompilerIrFunction.Function
         "call_spanning_caller_saved"
-        IrParamNil
-        (AstTyUnit)
+        CompilerIrParamList.Nil
+        (AstType.Unit)
         8
-        (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)))))
+        (compiler-ir-block-cons
+          (compiler-ir-block "entry" instrs)
+          CompilerIrBlockList.Nil)))))
 
 (define (compiler-reg-scalar-zero-call-caller-saved-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 0)
@@ -22287,9 +23084,9 @@
   ;; pinned %r9; nothing spills.
   (define (compiler-reg-scalar-zero-call-param-conflict-ok?) : bool
     (match (compiler-reg-plan-function-scalar-for-abi
-      CompilerRegAbiLinux
+      CompilerRegTargetAbi.Linux
       (compiler-reg-zero-call-param-conflict-function))
-      [(CompilerRegPlan assignments _ _ _ _ _)
+      [(CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
           (= (compiler-reg-spill-count assignments) 0)
           (compiler-reg-location-register?
@@ -22308,7 +23105,7 @@
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-syscall-clobber-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-spill-count assignments) 1)
         (compiler-reg-location-spill-offset?
@@ -22318,114 +23115,161 @@
 (cfg
   test
   (define (compiler-reg-remat-weight-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_weight"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 1
-                (IrBinAdd)
-                (IrValueI64 1)
-                (IrValueI64 2)
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.I64 1)
+                (CompilerIrValue.I64 2)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "use1" (IrValueVar 1) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "use1"
+                  (CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "use0a" (IrValueVar 0) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store
+                    "use0a"
+                    (CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "use0b" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Store
+                      "use0b"
+                      (CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrReturn IrNoValue)
-                      IrInstrNil)))))))
-        IrBlockNil))))
+                      (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                      CompilerIrInstrList.Nil)))))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-multi-def-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_multi_def"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBinOp
+              (CompilerIrInstr.BinOp
                 0
-                (IrBinAdd)
-                (IrValueI64 1)
-                (IrValueI64 2)
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.I64 1)
+                (CompilerIrValue.I64 2)
                 (compiler-reg-i64-ty))
-              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))
-        IrBlockNil))))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-classifier-ok?) : bool
     (and
       (compiler-reg-remat-defn?
-        (IrInstrMov 10 (IrValueI64 1) (compiler-reg-i64-ty)))
-      (compiler-reg-remat-defn? (IrInstrMov 11 (IrValueBool true) (AstTyBool)))
-      (compiler-reg-remat-defn? (IrInstrMov 12 (IrValueChar 'x') (AstTyChar)))
+        (CompilerIrInstr.Mov 10 (CompilerIrValue.I64 1) (compiler-reg-i64-ty)))
       (compiler-reg-remat-defn?
-        (IrInstrMov 13 (IrValueF64 0x3ff0000000000000) (compiler-reg-f64-ty)))
+        (CompilerIrInstr.Mov 11 (CompilerIrValue.Bool true) (AstType.Bool)))
       (compiler-reg-remat-defn?
-        (IrInstrMov 14 (IrValueGlobalAddr "global") (AstTyU64)))
+        (CompilerIrInstr.Mov 12 (CompilerIrValue.Char 'x') (AstType.Char)))
+      (compiler-reg-remat-defn?
+        (CompilerIrInstr.Mov
+          13
+          (CompilerIrValue.F64 0x3ff0000000000000)
+          (compiler-reg-f64-ty)))
+      (compiler-reg-remat-defn?
+        (CompilerIrInstr.Mov
+          14
+          (CompilerIrValue.GlobalAddr "global")
+          (AstType.U64)))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrMov 15 (IrValueGlobal "global") (compiler-reg-i64-ty))))
+          (CompilerIrInstr.Mov
+            15
+            (CompilerIrValue.Global "global")
+            (compiler-reg-i64-ty))))
       (compiler-reg-remat-defn-with-invariant-loads?
-        (IrInstrMov 16 (IrValueGlobal "global") (compiler-reg-i64-ty))
+        (CompilerIrInstr.Mov
+          16
+          (CompilerIrValue.Global "global")
+          (compiler-reg-i64-ty))
         true)
       (compiler-reg-remat-defn?
-        (IrInstrGep
+        (CompilerIrInstr.Gep
           17
-          (IrValueGlobalAddr "global")
-          (IrValueI64 2)
+          (CompilerIrValue.GlobalAddr "global")
+          (CompilerIrValue.I64 2)
           (compiler-reg-i64-ty)))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrGep
+          (CompilerIrInstr.Gep
             18
-            (IrValueGlobalAddr "global")
-            (IrValueVar 0)
+            (CompilerIrValue.GlobalAddr "global")
+            (CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrGep 19 (IrValueVar 0) (IrValueI64 2) (compiler-reg-i64-ty))))
+          (CompilerIrInstr.Gep
+            19
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 2)
+            (compiler-reg-i64-ty))))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrLoad 20 (IrValueGlobalAddr "global") (compiler-reg-i64-ty))))
+          (CompilerIrInstr.Load
+            20
+            (CompilerIrValue.GlobalAddr "global")
+            (compiler-reg-i64-ty))))
       (compiler-reg-remat-defn-with-invariant-loads?
-        (IrInstrLoad 21 (IrValueGlobalAddr "global") (compiler-reg-i64-ty))
+        (CompilerIrInstr.Load
+          21
+          (CompilerIrValue.GlobalAddr "global")
+          (compiler-reg-i64-ty))
         true)
       (not
         (compiler-reg-remat-defn-with-invariant-loads?
-          (IrInstrLoad 22 (IrValueVar 0) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Load
+            22
+            (CompilerIrValue.Var 0)
+            (compiler-reg-i64-ty))
           true))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrMov 23 (IrValueVar 0) (compiler-reg-i64-ty))))
+          (CompilerIrInstr.Mov 23 (CompilerIrValue.Var 0) (compiler-reg-i64-ty))))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrMov 24 (IrValueString "heap") (AstTyString))))
+          (CompilerIrInstr.Mov
+            24
+            (CompilerIrValue.String "heap")
+            (AstType.String))))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrBinOp
+          (CompilerIrInstr.BinOp
             25
-            (IrBinAdd)
-            (IrValueI64 1)
-            (IrValueI64 2)
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.I64 1)
+            (CompilerIrValue.I64 2)
             (compiler-reg-i64-ty)))))))
 
 (cfg
@@ -22447,64 +23291,89 @@
           empty-coalesce)]
       [parents : (Array i64) (array.make-array i64 2)]
       (begin
-        (array.array-set! parents 0 0)
-        (array.array-set! parents 1 0)
+        (array-set! parents 0 0)
+        (array-set! parents 1 0)
         (let
           [coalesced : (Array i64)
             (compiler-reg-function-spill-weights-remat
               func
               (CompilerRegCoalesceMap parents))]
           (and
-            (= (array.array-ref raw 0) 3)
-            (= (array.array-ref raw 1) 2)
-            (= (array.array-ref discounted 0) 1)
-            (= (array.array-ref discounted 1) 2)
-            (= (array.array-ref coalesced 0) 3)
-            (= (array.array-ref coalesced 1) 2)
-            (= (array.array-ref multi-raw 0) 2)
-            (= (array.array-ref multi-discounted 0) 2)))))))
+            (= (array-ref raw 0) 3)
+            (= (array-ref raw 1) 2)
+            (= (array-ref discounted 0) 1)
+            (= (array-ref discounted 1) 2)
+            (= (array-ref coalesced 0) 3)
+            (= (array-ref coalesced 1) 2)
+            (= (array-ref multi-raw 0) 2)
+            (= (array-ref multi-discounted 0) 2)))))))
 
 (cfg
   test
   (define (compiler-reg-remat-spill-weight-eviction-function) : CompilerIrFunction
     (let
-      [instrs : CompilerIrInstrList IrInstrNil]
+      [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
       (begin
-        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "hot0b" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "hot0a" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "hot0b"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "hot0a"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use5" (IrValueVar 5) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "cold1"
+              (CompilerIrValue.Var 1)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use4" (IrValueVar 4) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use5"
+              (CompilerIrValue.Var 5)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use3" (IrValueVar 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use4"
+              (CompilerIrValue.Var 4)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use2" (IrValueVar 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use3"
+              (CompilerIrValue.Var 3)
+              (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Store
+              "use2"
+              (CompilerIrValue.Var 2)
+              (compiler-reg-i64-ty))
             instrs))
         ;; #perf: syscall after the uses so every value crosses it (call-spanning)
         ;; -- the partition gates off and the 6 candidates oversubscribe the 5
@@ -22515,49 +23384,68 @@
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+            (CompilerIrInstr.Syscall
+              6
+              (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrBinOp
-              1
-              (IrBinAdd)
-              (IrValueI64 1)
-              (IrValueI64 2)
+            (CompilerIrInstr.Mov
+              5
+              (CompilerIrValue.I64 5)
               (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              4
+              (CompilerIrValue.I64 4)
+              (compiler-reg-i64-ty))
             instrs))
-        (IrFunction
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              3
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              2
+              (CompilerIrValue.I64 2)
+              (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              1
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.I64 1)
+              (CompilerIrValue.I64 2)
+              (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            instrs))
+        (CompilerIrFunction.Function
           "remat_spill_weight_eviction"
-          IrParamNil
-          (AstTyUnit)
+          CompilerIrParamList.Nil
+          (AstType.Unit)
           7
-          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+          (compiler-ir-block-cons
+            (compiler-ir-block "entry" instrs)
+            CompilerIrBlockList.Nil))))))
 
 (cfg
   test
@@ -22571,10 +23459,10 @@
       [discounted : (Array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
       (match (compiler-reg-plan-function-scalar func)
-        [(CompilerRegPlan assignments _ _ _ _ _)
+        [(CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
-            (> (array.array-ref raw 0) (array.array-ref raw 1))
-            (< (array.array-ref discounted 0) (array.array-ref discounted 1))
+            (> (array-ref raw 0) (array-ref raw 1))
+            (< (array-ref discounted 0) (array-ref discounted 1))
             ;; The non-remat var1 is KEPT in a register: the remat discount ranks
             ;; the rematerialisable values (var0, var2-5) below it, so a remat
             ;; value -- never the costly-to-spill non-remat one -- is the victim.
@@ -22601,117 +23489,179 @@
     ;; are medium (2 uses), var1 is the unique coldest (1 use) and is the
     ;; spill-weight eviction victim.
     (let
-      [instrs : CompilerIrInstrList IrInstrNil]
+      [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
       (begin
-        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "hot0c" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "hot0b" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "hot0c"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "hot0a" (IrValueVar 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "hot0b"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "hot0a"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use5b" (IrValueVar 5) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "cold1"
+              (CompilerIrValue.Var 1)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use5a" (IrValueVar 5) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use5b"
+              (CompilerIrValue.Var 5)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use4b" (IrValueVar 4) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use5a"
+              (CompilerIrValue.Var 5)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use4a" (IrValueVar 4) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use4b"
+              (CompilerIrValue.Var 4)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use3b" (IrValueVar 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use4a"
+              (CompilerIrValue.Var 4)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use3a" (IrValueVar 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use3b"
+              (CompilerIrValue.Var 3)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use2b" (IrValueVar 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use3a"
+              (CompilerIrValue.Var 3)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrStore "use2a" (IrValueVar 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "use2b"
+              (CompilerIrValue.Var 2)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+            (CompilerIrInstr.Store
+              "use2a"
+              (CompilerIrValue.Var 2)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Syscall
+              6
+              (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              5
+              (CompilerIrValue.I64 5)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              4
+              (CompilerIrValue.I64 4)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              3
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              2
+              (CompilerIrValue.I64 2)
+              (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
             instrs))
-        (IrFunction
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            instrs))
+        (CompilerIrFunction.Function
           "spill_weight_eviction"
-          IrParamNil
-          (AstTyUnit)
+          CompilerIrParamList.Nil
+          (AstType.Unit)
           7
-          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+          (compiler-ir-block-cons
+            (compiler-ir-block "entry" instrs)
+            CompilerIrBlockList.Nil))))))
 
 (cfg
   test
   (define (compiler-reg-spill-weight-eviction-ok?) : bool
     (match (compiler-reg-plan-function-scalar
       (compiler-reg-spill-weight-eviction-function))
-      [(CompilerRegPlan assignments _ _ _ _ _)
+      [(CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
           (compiler-reg-location-any-register?
             (compiler-reg-assignment-lookup assignments 0))
@@ -22728,56 +23678,103 @@
     ;; partition gates off. var0 and vars 2-5 are used inside the loop (loop-depth
     ;; weighted) while var1 is the single cold exit value -- the unique
     ;; spill-weight eviction victim despite var0/var1 sharing one static use each.
-    (IrFunction
+    (CompilerIrFunction.Function
       "loop_spill_weight_eviction"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       7
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  2
+                  (CompilerIrValue.I64 2)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    3
+                    (CompilerIrValue.I64 3)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Mov
+                      4
+                      (CompilerIrValue.I64 4)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Mov
+                        5
+                        (CompilerIrValue.I64 5)
+                        (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
-                        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))))))
+                        (CompilerIrInstr.Syscall
+                          6
+                          (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Jump "loop")
+                          CompilerIrInstrList.Nil)))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "hot0"
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "hot2" (IrValueVar 2) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "hot2"
+                  (CompilerIrValue.Var 2)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "hot3" (IrValueVar 3) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store
+                    "hot3"
+                    (CompilerIrValue.Var 3)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "hot4" (IrValueVar 4) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Store
+                      "hot4"
+                      (CompilerIrValue.Var 4)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrStore "hot5" (IrValueVar 5) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Store
+                        "hot5"
+                        (CompilerIrValue.Var 5)
+                        (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrBranch (IrValueBool false) "body" "exit")
-                        IrInstrNil)))))))
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Bool false)
+                          "body"
+                          "exit")
+                        CompilerIrInstrList.Nil)))))))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
-              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "loop")
+                CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
-                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Store
+                    "cold1"
+                    (CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                    CompilerIrInstrList.Nil)))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
@@ -22788,14 +23785,10 @@
       [static-counts : (Array i64) (compiler-reg-function-ref-counts func)]
       [weighted-counts : (Array i64) (compiler-reg-function-spill-weights func)]
       (match (compiler-reg-plan-function-scalar func)
-        [(CompilerRegPlan assignments _ _ _ _ _)
+        [(CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
-            (=
-              (array.array-ref static-counts 0)
-              (array.array-ref static-counts 1))
-            (>
-              (array.array-ref weighted-counts 0)
-              (array.array-ref weighted-counts 1))
+            (= (array-ref static-counts 0) (array-ref static-counts 1))
+            (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
             (compiler-reg-location-any-register?
               (compiler-reg-assignment-lookup assignments 0))
             (compiler-reg-location-spill-offset?
@@ -22811,12 +23804,12 @@
     [dst : i64]
     [value : i64]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrMov found-dst found-value _)
+          [(CompilerIrInstr.Mov found-dst found-value _)
             (match found-value
-              [(IrValueI64 found)
+              [(CompilerIrValue.I64 found)
                 (if (and (= found-dst dst) (= found value))
                   true
                   (compiler-reg-instr-list-has-mov-i64?
@@ -22834,12 +23827,12 @@
     [dst : i64]
     [src : i64]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrMov found-dst found-value _)
+          [(CompilerIrInstr.Mov found-dst found-value _)
             (match found-value
-              [(IrValueVar found-src)
+              [(CompilerIrValue.Var found-src)
                 (if (and (= found-dst dst) (= found-src src))
                   true
                   (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src))]
@@ -22853,13 +23846,13 @@
     [dst : i64]
     [name : String]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrMov found-dst found-value _)
+          [(CompilerIrInstr.Mov found-dst found-value _)
             (match found-value
-              [(IrValueGlobal found-name)
-                (if (and (= found-dst dst) (string.string-eq found-name name))
+              [(CompilerIrValue.Global found-name)
+                (if (and (= found-dst dst) (string.eq found-name name))
                   true
                   (compiler-reg-instr-list-has-mov-global?
                     (box-get rest)
@@ -22879,13 +23872,13 @@
     [dst : i64]
     [name : String]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrLoad found-dst found-src _)
+          [(CompilerIrInstr.Load found-dst found-src _)
             (match found-src
-              [(IrValueGlobalAddr found-name)
-                (if (and (= found-dst dst) (string.string-eq found-name name))
+              [(CompilerIrValue.GlobalAddr found-name)
+                (if (and (= found-dst dst) (string.eq found-name name))
                   true
                   (compiler-reg-instr-list-has-load-global-addr?
                     (box-get rest)
@@ -22911,18 +23904,18 @@
     [offset : i64]
     [ty : AstType]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrGep found-dst found-base found-offset found-ty)
+          [(CompilerIrInstr.Gep found-dst found-base found-offset found-ty)
             (match found-base
-              [(IrValueGlobalAddr found-name)
+              [(CompilerIrValue.GlobalAddr found-name)
                 (match found-offset
-                  [(IrValueI64 found-offset-value)
+                  [(CompilerIrValue.I64 found-offset-value)
                     (if (and
                       (= found-dst dst)
                       (and
-                        (string.string-eq found-name name)
+                        (string.eq found-name name)
                         (and
                           (= found-offset-value offset)
                           (ast-type-eq? found-ty ty))))
@@ -22962,13 +23955,13 @@
     [name : String]
     [src : i64]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrStore found-name found-value _)
+          [(CompilerIrInstr.Store found-name found-value _)
             (match found-value
-              [(IrValueVar found-src)
-                (if (and (string.string-eq found-name name) (= found-src src))
+              [(CompilerIrValue.Var found-src)
+                (if (and (string.eq found-name name) (= found-src src))
                   true
                   (compiler-reg-instr-list-has-store-var?
                     (box-get rest)
@@ -22984,12 +23977,12 @@
     [instrs : CompilerIrInstrList]
     [callee : i64]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrCallIndirect _ found-callee _ _)
+          [(CompilerIrInstr.CallIndirect _ found-callee _ _)
             (match found-callee
-              [(IrValueVar found)
+              [(CompilerIrValue.Var found)
                 (if (= found callee)
                   true
                   (compiler-reg-instr-list-has-call-indirect-var?
@@ -23010,14 +24003,14 @@
     [instrs : CompilerIrInstrList]
     [src : i64]) : bool
     (match instrs
-      [(IrInstrNil) false]
-      [(IrInstrCons instr rest)
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
         (match instr
-          [(IrInstrReturn maybe)
+          [(CompilerIrInstr.Return maybe)
             (match maybe
-              [(IrSomeValue value)
+              [(CompilerIrMaybeValue.Some value)
                 (match value
-                  [(IrValueVar found)
+                  [(CompilerIrValue.Var found)
                     (if (= found src)
                       true
                       (compiler-reg-instr-list-has-return-var?
@@ -23032,13 +24025,14 @@
   test
   (define (compiler-reg-first-block-instr-list [blocks : CompilerIrBlockList]) : CompilerIrInstrList
     (match blocks
-      [(IrBlockCons block _)
+      [(CompilerIrBlockList.Cons block _)
         (match block
-          [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
-      [(IrBlockArray seq)
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-ir-instr-seq-to-list instrs)])]
+      [(CompilerIrBlockList.Array seq)
         (compiler-reg-first-block-instr-list
           (compiler-ir-block-seq-to-list seq))]
-      [_ IrInstrNil])))
+      [_ CompilerIrInstrList.Nil])))
 
 (cfg
   test
@@ -23046,170 +24040,217 @@
     [blocks : CompilerIrBlockList]
     [want-label : String]) : CompilerIrInstrList
     (match blocks
-      [(IrBlockCons block rest)
+      [(CompilerIrBlockList.Cons block rest)
         (match block
-          [(IrBlock label instrs)
-            (if (string.string-eq label want-label)
+          [(CompilerIrBlock.Block label instrs)
+            (if (string.eq label want-label)
               (compiler-ir-instr-seq-to-list instrs)
               (compiler-reg-block-instr-list (box-get rest) want-label))])]
-      [(IrBlockArray seq)
+      [(CompilerIrBlockList.Array seq)
         (compiler-reg-block-instr-list
           (compiler-ir-block-seq-to-list seq)
           want-label)]
-      [_ IrInstrNil])))
+      [_ CompilerIrInstrList.Nil])))
 
 (cfg
   test
   (define (compiler-reg-remat-rewrite-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_rewrite"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "use0a" (IrValueVar 0) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "use0a"
+                (CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "use0b" (IrValueVar 0) (compiler-reg-i64-ty))
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
-        IrBlockNil))))
+                (CompilerIrInstr.Store
+                  "use0b"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-conflict-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_conflict"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueI64 9) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "use0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "use0"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "keep1" (IrValueVar 1) (compiler-reg-i64-ty))
-                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))))
-        IrBlockNil))))
+                  (CompilerIrInstr.Store
+                    "keep1"
+                    (CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                    CompilerIrInstrList.Nil))))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-caller-clobber-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_caller_clobber"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueGlobalAddr "callee") (AstTyU64))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.GlobalAddr "callee")
+              (AstType.U64))
             (compiler-ir-instr-cons
-              (IrInstrCallIndirect 1 (IrValueVar 0) IrCallArgsNil (AstTyUnit))
-              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))
-        IrBlockNil))))
+              (CompilerIrInstr.CallIndirect
+                1
+                (CompilerIrValue.Var 0)
+                CompilerIrCallArgs.Nil
+                (AstType.Unit))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-mov-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_global_mov"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueGlobal "global_value") (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.Global "global_value")
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil)))
-        IrBlockNil))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-load-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_global_load"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrLoad
+            (CompilerIrInstr.Load
               0
-              (IrValueGlobalAddr "global_value")
+              (CompilerIrValue.GlobalAddr "global_value")
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil)))
-        IrBlockNil))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-gep-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_global_gep"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-addr-of-result-type)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrGep
+            (CompilerIrInstr.Gep
               0
-              (IrValueGlobalAddr "global_value")
-              (IrValueI64 3)
+              (CompilerIrValue.GlobalAddr "global_value")
+              (CompilerIrValue.I64 3)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil)))
-        IrBlockNil))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-mutating-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "remat_global_mutating"
-      IrParamNil
+      CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueGlobal "global_value") (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.Global "global_value")
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "global_value" (IrValueI64 1) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "global_value"
+                (CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                IrInstrNil))))
-        IrBlockNil))))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
   (define (compiler-reg-remat-single-spill-plan [func : CompilerIrFunction]) : CompilerRegPlan
-    (CompilerRegPlan
+    (CompilerRegPlan.Plan
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment
+        (CompilerRegAssignment.Assignment
           0
-          (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
-        CompilerRegAssignmentNil)
+          (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
+        CompilerRegAssignmentList.Nil)
       (compiler-live-set-empty)
-      CompilerRegIntervalNil
+      CompilerRegIntervalList.Nil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
@@ -23217,16 +24258,18 @@
 (cfg
   test
   (define (compiler-reg-remat-conflict-plan [func : CompilerIrFunction]) : CompilerRegPlan
-    (CompilerRegPlan
+    (CompilerRegPlan.Plan
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment
+        (CompilerRegAssignment.Assignment
           0
-          (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+          (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
-          CompilerRegAssignmentNil))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r9"))
+          CompilerRegAssignmentList.Nil))
       (compiler-live-set-empty)
-      CompilerRegIntervalNil
+      CompilerRegIntervalList.Nil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
@@ -23238,14 +24281,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-rewrite-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23257,7 +24300,7 @@
                 [rewritten-plan : CompilerRegPlan
                   (compiler-reg-plan-with-call-save-rewrite
                     plan
-                    (CompilerRegCallSaveRewrite
+                    (CompilerRegCallSaveRewrite.Rewrite
                       rewritten
                       vars
                       out-vars
@@ -23286,19 +24329,19 @@
                     "use0b"
                     (+ vars 1))
                   (match (compiler-reg-var-type-lookup rewritten-types vars)
-                    [(CompilerRegSomeType ty)
+                    [(CompilerRegMaybeType.Some ty)
                       (match ty
-                        [(AstTyI64) true]
+                        [(AstType.I64) true]
                         [_ false])]
-                    [(CompilerRegNoType) false])
+                    [(CompilerRegMaybeType.No) false])
                   (match (compiler-reg-var-type-lookup
                     rewritten-types
                     (+ vars 1))
-                    [(CompilerRegSomeType ty)
+                    [(CompilerRegMaybeType.Some ty)
                       (match ty
-                        [(AstTyI64) true]
+                        [(AstType.I64) true]
                         [_ false])]
-                    [(CompilerRegNoType) false])
+                    [(CompilerRegMaybeType.No) false])
                   (not (compiler-reg-instr-list-has-store-var? items "use0a" 0))
                   (not (compiler-reg-instr-list-has-store-var? items "use0b" 0))))])]))))
 
@@ -23309,14 +24352,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-conflict-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-conflict-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23337,14 +24380,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-caller-clobber-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23365,14 +24408,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-global-mov-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23398,14 +24441,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-global-load-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23431,14 +24474,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-global-gep-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23466,14 +24509,14 @@
       [func : CompilerIrFunction (compiler-reg-remat-global-mutating-function)]
       [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
                 out-vars
@@ -23499,14 +24542,14 @@
     [plan : CompilerRegPlan]
     [label : String]) : bool
     (match func
-      [(IrFunction _ _ _ vars blocks)
+      [(CompilerIrFunction.Function _ _ _ vars blocks)
         (let
           [type-info : CompilerRegVarTypes
             (compiler-reg-function-var-types func)]
           [rewrite : CompilerRegCallSaveRewrite
             (compiler-reg-caller-save-rewrite-blocks blocks vars type-info plan)]
           (match rewrite
-            [(CompilerRegCallSaveRewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
                 rewritten-blocks
                 _
                 out-vars
@@ -23542,7 +24585,7 @@
       (compiler-reg-call-spanning-caller-saved-function)]
     [plan : CompilerRegPlan (compiler-reg-plan-function-scalar func)]
     (match plan
-      [(CompilerRegPlan assignments _ _ _ split-vars _)
+      [(CompilerRegPlan.Plan assignments _ _ _ split-vars _)
         (and
           ;; 7 call-spanning values vs 5 callee-saved registers -> 2 spill (call-
           ;; spanning values cannot use caller-saved across the call). The greedy's
@@ -23569,49 +24612,89 @@
   (define (compiler-reg-call-spanning-post-call-stores
     [tail : CompilerIrInstrList]) : CompilerIrInstrList
     (compiler-ir-instr-cons
-      (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+      (CompilerIrInstr.Store "g0" (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
       (compiler-ir-instr-cons
-        (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-i64-ty))
+        (CompilerIrInstr.Store
+          "g1"
+          (CompilerIrValue.Var 1)
+          (compiler-reg-i64-ty))
         (compiler-ir-instr-cons
-          (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Store
+            "g2"
+            (CompilerIrValue.Var 2)
+            (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrStore "g3" (IrValueVar 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Store
+              "g3"
+              (CompilerIrValue.Var 3)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrStore "g4" (IrValueVar 4) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Store
+                "g4"
+                (CompilerIrValue.Var 4)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrStore "g5" (IrValueVar 5) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "g5"
+                  (CompilerIrValue.Var 5)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store
+                    "g6"
+                    (CompilerIrValue.Var 6)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "g5b" (IrValueVar 5) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Store
+                      "g5b"
+                      (CompilerIrValue.Var 5)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrStore "g5c" (IrValueVar 5) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Store
+                        "g5c"
+                        (CompilerIrValue.Var 5)
+                        (compiler-reg-i64-ty))
                       tail)))))))))))
 
 (cfg
   test
   (define (compiler-reg-call-spanning-defs-before [tail : CompilerIrInstrList]) : CompilerIrInstrList
     (compiler-ir-instr-cons
-      (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+      (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
       (compiler-ir-instr-cons
-        (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
         (compiler-ir-instr-cons
-          (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 2) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              3
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                4
+                (CompilerIrValue.I64 4)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  5
+                  (CompilerIrValue.I64 5)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Mov
+                    6
+                    (CompilerIrValue.I64 6)
+                    (compiler-reg-i64-ty))
                   tail)))))))))
 
 (cfg
   test
   (define (compiler-reg-call-spanning-call-before [tail : CompilerIrInstrList]) : CompilerIrInstrList
     (compiler-ir-instr-cons
-      (IrInstrCall 7 "side_effect" (IrCallArgsNil) (AstTyUnit))
+      (CompilerIrInstr.Call
+        7
+        "side_effect"
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))
       tail)))
 
 (cfg
@@ -23619,27 +24702,33 @@
   (define (compiler-reg-call-spanning-multiblock-local-function) : CompilerIrFunction
     (let
       [body-tail : CompilerIrInstrList
-        (compiler-ir-instr-cons (IrInstrJump "exit") IrInstrNil)]
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "exit")
+          CompilerIrInstrList.Nil)]
       [body : CompilerIrInstrList
         (compiler-reg-call-spanning-defs-before
           (compiler-reg-call-spanning-call-before
             (compiler-reg-call-spanning-post-call-stores body-tail)))]
-      (IrFunction
+      (CompilerIrFunction.Function
         "call_spanning_multiblock_local"
-        IrParamNil
-        (AstTyUnit)
+        CompilerIrParamList.Nil
+        (AstType.Unit)
         8
         (compiler-ir-block-cons
           (compiler-ir-block
             "entry"
-            (compiler-ir-instr-cons (IrInstrJump "body") IrInstrNil))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "body")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block "body" body)
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))
-              IrBlockNil)))))))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
@@ -23647,16 +24736,20 @@
     (let
       [entry : CompilerIrInstrList
         (compiler-reg-call-spanning-defs-before
-          (compiler-ir-instr-cons (IrInstrJump "body") IrInstrNil))]
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "body")
+            CompilerIrInstrList.Nil))]
       [body-tail : CompilerIrInstrList
-        (compiler-ir-instr-cons (IrInstrJump "exit") IrInstrNil)]
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "exit")
+          CompilerIrInstrList.Nil)]
       [body : CompilerIrInstrList
         (compiler-reg-call-spanning-call-before
           (compiler-reg-call-spanning-post-call-stores body-tail))]
-      (IrFunction
+      (CompilerIrFunction.Function
         "call_spanning_multiblock_boundary"
-        IrParamNil
-        (AstTyUnit)
+        CompilerIrParamList.Nil
+        (AstType.Unit)
         8
         (compiler-ir-block-cons
           (compiler-ir-block "entry" entry)
@@ -23665,8 +24758,10 @@
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))
-              IrBlockNil)))))))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
@@ -23676,7 +24771,7 @@
         (compiler-reg-call-spanning-multiblock-local-function)]
       [plan : CompilerRegPlan (compiler-reg-plan-function-scalar func)]
       (match plan
-        [(CompilerRegPlan assignments _ _ _ split-vars _)
+        [(CompilerRegPlan.Plan assignments _ _ _ split-vars _)
           (and
             ;; Same capacity story as the single-block fixture: the greedy
             ;; register-homes the hot call-spanning value (spill-weight priority)
@@ -23703,7 +24798,7 @@
         (compiler-reg-plan-function-scalar
           (compiler-reg-call-spanning-multiblock-boundary-function))]
       (match plan
-        [(CompilerRegPlan _ _ _ _ split-vars _)
+        [(CompilerRegPlan.Plan _ _ _ _ split-vars _)
           (and
             (not
               (compiler-live-set-contains?
@@ -23724,10 +24819,10 @@
     [dst : i64]
     [want-pred-end : bool]) : bool
     (match copies
-      [(CompilerRegEdgeCopyNil) false]
-      [(CompilerRegEdgeCopyCons copy rest)
+      [(CompilerRegEdgeCopyList.Nil) false]
+      [(CompilerRegEdgeCopyList.Cons copy rest)
         (match copy
-          [(CompilerRegEdgeCopy
+          [(CompilerRegEdgeCopy.Copy
               found-from
               found-to
               found-src
@@ -23736,13 +24831,13 @@
               _
               placement)
             (if (and
-              (string.string-eq found-from from-label)
-              (string.string-eq found-to to-label)
+              (string.eq found-from from-label)
+              (string.eq found-to to-label)
               (= found-src src)
               (= found-dst dst)
               (match placement
-                [(CompilerRegEdgeCopyPredEnd) want-pred-end]
-                [(CompilerRegEdgeCopySuccEntry) (not want-pred-end)]))
+                [(CompilerRegEdgeCopyPlacement.PredEnd) want-pred-end]
+                [(CompilerRegEdgeCopyPlacement.SuccEntry) (not want-pred-end)]))
               true
               (compiler-reg-edge-copy-list-has?
                 (box-get rest)
@@ -23755,24 +24850,30 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-linear-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "edge_copy_linear"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons (IrInstrJump "hot") IrInstrNil)))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "hot")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "hot"
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-              IrInstrNil))
-          IrBlockNil)))))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
 
 (cfg
   test
@@ -23780,61 +24881,75 @@
     (let
       [func : CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
       [region : CompilerRegStringList
-        (compiler-reg-string-cons "hot" CompilerRegStringNil)]
+        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
         0
         10
         (compiler-reg-i64-ty))
-        [(CompilerRegEdgeCopyPlan copies)
+        [(CompilerRegEdgeCopyPlan.Plan copies)
           (and
             (= (compiler-reg-edge-copy-list-count copies) 1)
             (compiler-reg-edge-copy-list-has? copies "entry" "hot" 0 10 true)
             (match func
-              [(IrFunction _ _ _ _ blocks)
+              [(CompilerIrFunction.Function _ _ _ _ blocks)
                 (match (compiler-reg-edge-copy-apply blocks copies)
-                  [(CompilerRegEdgeCopyRewrite rewritten)
+                  [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (compiler-reg-instr-list-has-mov-var?
                       (compiler-reg-block-instr-list rewritten "entry")
                       10
                       0)]
-                  [(CompilerRegEdgeCopyRewriteRefused _) false])]))]
-        [(CompilerRegEdgeCopyRefused _) false]))))
+                  [(CompilerRegEdgeCopyRewrite.Refused _) false])]))]
+        [(CompilerRegEdgeCopyPlan.Refused _) false]))))
 
 (cfg
   test
   (define (compiler-reg-edge-copy-backedge-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "edge_copy_backedge"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "body" "exit")
-              IrInstrNil))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                "body"
+                "exit")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
               (compiler-ir-instr-cons
-                (IrInstrStore "sink" (IrValueVar 0) (compiler-reg-i64-ty))
-                (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+                (CompilerIrInstr.Store
+                  "sink"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "loop")
+                  CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
@@ -23842,79 +24957,86 @@
     (let
       [func : CompilerIrFunction (compiler-reg-edge-copy-backedge-function)]
       [region : CompilerRegStringList
-        (compiler-reg-string-cons "body" CompilerRegStringNil)]
+        (compiler-reg-string-cons "body" CompilerRegStringList.Nil)]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
         0
         10
         (compiler-reg-i64-ty))
-        [(CompilerRegEdgeCopyPlan copies)
+        [(CompilerRegEdgeCopyPlan.Plan copies)
           (and
             (= (compiler-reg-edge-copy-list-count copies) 2)
             (compiler-reg-edge-copy-list-has? copies "loop" "body" 0 10 false)
             (compiler-reg-edge-copy-list-has? copies "body" "loop" 10 0 true)
             (match func
-              [(IrFunction _ _ _ _ blocks)
+              [(CompilerIrFunction.Function _ _ _ _ blocks)
                 (match (compiler-reg-edge-copy-apply blocks copies)
-                  [(CompilerRegEdgeCopyRewrite rewritten)
+                  [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (let
                       [body : CompilerIrInstrList
                         (compiler-reg-block-instr-list rewritten "body")]
                       (and
                         (compiler-reg-instr-list-has-mov-var? body 10 0)
                         (compiler-reg-instr-list-has-mov-var? body 0 10)))]
-                  [(CompilerRegEdgeCopyRewriteRefused _) false])]))]
-        [(CompilerRegEdgeCopyRefused _) false]))))
+                  [(CompilerRegEdgeCopyRewrite.Refused _) false])]))]
+        [(CompilerRegEdgeCopyPlan.Refused _) false]))))
 
 (cfg
   test
   (define (compiler-reg-edge-copy-critical-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "edge_copy_critical"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "hot" "cold")
-              IrInstrNil)))
+              (CompilerIrInstr.Branch (CompilerIrValue.Bool false) "hot" "cold")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "other"
-            (compiler-ir-instr-cons (IrInstrJump "hot") IrInstrNil))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "hot")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "hot"
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                IrInstrNil))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "cold"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
   (define (compiler-reg-edge-copy-critical-refusal-ok?) : bool
     (let
       [region : CompilerRegStringList
-        (compiler-reg-string-cons "hot" CompilerRegStringNil)]
+        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
       (match (compiler-reg-edge-copy-plan-for-region
         (compiler-reg-edge-copy-critical-function)
         region
         0
         10
         (compiler-reg-i64-ty))
-        [(CompilerRegEdgeCopyPlan _) false]
-        [(CompilerRegEdgeCopyRefused _) true]))))
+        [(CompilerRegEdgeCopyPlan.Plan _) false]
+        [(CompilerRegEdgeCopyPlan.Refused _) true]))))
 
 (cfg
   test
@@ -23924,13 +25046,13 @@
       [liveness : CompilerFunctionLiveness
         (compiler-live-analyze-function func)]
       (match (compiler-reg-live-interval-selection func liveness)
-        [(CompilerRegIntervalSelection intervals _)
-          (CompilerRegPlan
+        [(CompilerRegIntervalSelection.Selection intervals _)
+          (CompilerRegPlan.Plan
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment
+              (CompilerRegAssignment.Assignment
                 0
-                (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
-              CompilerRegAssignmentNil)
+                (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
+              CompilerRegAssignmentList.Nil)
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
@@ -23945,17 +25067,17 @@
       [liveness : CompilerFunctionLiveness
         (compiler-live-analyze-function func)]
       (match (compiler-reg-live-interval-selection func liveness)
-        [(CompilerRegIntervalSelection intervals _)
-          (CompilerRegPlan
+        [(CompilerRegIntervalSelection.Selection intervals _)
+          (CompilerRegPlan.Plan
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment
+              (CompilerRegAssignment.Assignment
                 0
-                (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+                (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment
+                (CompilerRegAssignment.Assignment
                   1
-                  (CompilerRegSpill (compiler-reg-stack-slot-offset 1)))
-                CompilerRegAssignmentNil))
+                  (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 1)))
+                CompilerRegAssignmentList.Nil))
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
@@ -23965,158 +25087,232 @@
 (cfg
   test
   (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "loop_split_rewrite"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "body" "exit")
-              IrInstrNil))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                "body"
+                "exit")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
               (compiler-ir-instr-cons
-                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "hot0"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "hot1" (IrValueVar 0) (compiler-reg-i64-ty))
-                  (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))
+                  (CompilerIrInstr.Store
+                    "hot1"
+                    (CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump "loop")
+                    CompilerIrInstrList.Nil))))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
   (define (compiler-reg-loop-split-two-rewrite-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "loop_split_two_rewrite"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueI64 11) (compiler-reg-i64-ty))
-              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 11)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "loop")
+                CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "body" "exit")
-              IrInstrNil))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                "body"
+                "exit")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
               (compiler-ir-instr-cons
-                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Store
+                  "hot0"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "hot1" (IrValueVar 1) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store
+                    "hot1"
+                    (CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "hot2" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Store
+                      "hot2"
+                      (CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (IrInstrStore "hot3" (IrValueVar 1) (compiler-reg-i64-ty))
-                      (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))))
+                      (CompilerIrInstr.Store
+                        "hot3"
+                        (CompilerIrValue.Var 1)
+                        (compiler-reg-i64-ty))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Jump "loop")
+                        CompilerIrInstrList.Nil))))))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
   (define (compiler-reg-loop-split-low-benefit-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "loop_split_low_benefit"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       1
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "body" "exit")
-              IrInstrNil))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                "body"
+                "exit")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
               (compiler-ir-instr-cons
-                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
-                (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+                (CompilerIrInstr.Store
+                  "hot0"
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "loop")
+                  CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
   (define (compiler-reg-loop-split-phi-region-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "loop_split_phi_region"
-      IrParamNil
-      (AstTyI64)
+      CompilerIrParamList.Nil
+      (AstType.I64)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
-              (IrInstrBranch (IrValueBool false) "body" "exit")
-              IrInstrNil))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                "body"
+                "exit")
+              CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"
               (compiler-ir-instr-cons
-                (IrInstrPhi
+                (CompilerIrInstr.Phi
                   1
                   (compiler-ir-phi-input-cons
-                    (IrValueVar 0)
+                    (CompilerIrValue.Var 0)
                     "loop"
-                    IrPhiInputNil)
+                    CompilerIrPhiInputList.Nil)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                  (CompilerIrInstr.Store
+                    "hot0"
+                    (CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (IrInstrStore "hot1" (IrValueVar 0) (compiler-reg-i64-ty))
-                    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))
+                    (CompilerIrInstr.Store
+                      "hot1"
+                      (CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "loop")
+                      CompilerIrInstrList.Nil)))))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil))
-              IrBlockNil)))))))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
 
 (cfg
   test
@@ -24125,7 +25321,7 @@
       [func : CompilerIrFunction (compiler-reg-loop-split-rewrite-function)]
       [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : CompilerRegCallSaveRewrite
               (compiler-reg-loop-split-rewrite-blocks
@@ -24135,7 +25331,7 @@
                 (compiler-reg-function-var-types func)
                 plan)]
             (match rewrite
-              [(CompilerRegCallSaveRewrite
+              [(CompilerRegCallSaveRewrite.Rewrite
                   rewritten
                   _
                   out-vars
@@ -24174,7 +25370,7 @@
       [func : CompilerIrFunction (compiler-reg-loop-split-two-rewrite-function)]
       [plan : CompilerRegPlan (compiler-reg-loop-split-two-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : CompilerRegCallSaveRewrite
               (compiler-reg-loop-split-rewrite-blocks
@@ -24184,7 +25380,7 @@
                 (compiler-reg-function-var-types func)
                 plan)]
             (match rewrite
-              [(CompilerRegCallSaveRewrite
+              [(CompilerRegCallSaveRewrite.Rewrite
                   rewritten
                   _
                   out-vars
@@ -24228,14 +25424,19 @@
     (let
       [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-loop-split-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite _ _ out-vars extra-assignments _)
+            [(CompilerRegCallSaveRewrite.Rewrite
+                _
+                _
+                out-vars
+                extra-assignments
+                _)
               (and
                 (= out-vars vars)
                 (= (compiler-reg-assignment-count extra-assignments) 0))])]))))
@@ -24259,14 +25460,14 @@
       [func : CompilerIrFunction (compiler-reg-loop-split-phi-region-function)]
       [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
       (match func
-        [(IrFunction _ _ _ vars blocks)
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-loop-split-rewrite-blocks
             func
             blocks
             vars
             (compiler-reg-function-var-types func)
             plan)
-            [(CompilerRegCallSaveRewrite _ _ out-vars extra-assignments _)
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars extra-assignments _)
               (and
                 (= out-vars (+ vars 1))
                 (= (compiler-reg-assignment-count extra-assignments) 1))])]))))
@@ -24274,30 +25475,53 @@
 (cfg
   test
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
-    (IrFunction
+    (CompilerIrFunction.Function
       "many_call_live"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       6
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 9)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (IrInstrCall 1 "side_effect_a" (IrCallArgsNil) (AstTyUnit))
+              (CompilerIrInstr.Call
+                1
+                "side_effect_a"
+                (CompilerIrCallArgs.Nil)
+                (AstType.Unit))
               (compiler-ir-instr-cons
-                (IrInstrCall 2 "side_effect_b" (IrCallArgsNil) (AstTyUnit))
+                (CompilerIrInstr.Call
+                  2
+                  "side_effect_b"
+                  (CompilerIrCallArgs.Nil)
+                  (AstType.Unit))
                 (compiler-ir-instr-cons
-                  (IrInstrCall 3 "side_effect_c" (IrCallArgsNil) (AstTyUnit))
+                  (CompilerIrInstr.Call
+                    3
+                    "side_effect_c"
+                    (CompilerIrCallArgs.Nil)
+                    (AstType.Unit))
                   (compiler-ir-instr-cons
-                    (IrInstrCall 4 "side_effect_d" (IrCallArgsNil) (AstTyUnit))
+                    (CompilerIrInstr.Call
+                      4
+                      "side_effect_d"
+                      (CompilerIrCallArgs.Nil)
+                      (AstType.Unit))
                     (compiler-ir-instr-cons
-                      (IrInstrMov 5 (IrValueVar 0) (compiler-reg-i64-ty))
+                      (CompilerIrInstr.Mov
+                        5
+                        (CompilerIrValue.Var 0)
+                        (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                        IrInstrNil))))))))
-        IrBlockNil))))
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                        CompilerIrInstrList.Nil))))))))
+        CompilerIrBlockList.Nil))))
 
 (cfg
   test
@@ -24374,45 +25598,45 @@
   [left : i64]
   [right : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments left)
-    [(CompilerRegSomeLocation left-location)
+    [(CompilerRegMaybeLocation.Some left-location)
       (match (compiler-reg-assignment-lookup assignments right)
-        [(CompilerRegSomeLocation right-location)
+        [(CompilerRegMaybeLocation.Some right-location)
           (compiler-reg-location-eq? left-location right-location)]
-        [(CompilerRegNoLocation) false])]
-    [(CompilerRegNoLocation) false]))
+        [(CompilerRegMaybeLocation.No) false])]
+    [(CompilerRegMaybeLocation.No) false]))
 
 (define (compiler-reg-different-location?
   [assignments : CompilerRegAssignmentList]
   [left : i64]
   [right : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments left)
-    [(CompilerRegSomeLocation left-location)
+    [(CompilerRegMaybeLocation.Some left-location)
       (match (compiler-reg-assignment-lookup assignments right)
-        [(CompilerRegSomeLocation right-location)
+        [(CompilerRegMaybeLocation.Some right-location)
           (not (compiler-reg-location-eq? left-location right-location))]
-        [(CompilerRegNoLocation) false])]
-    [(CompilerRegNoLocation) false]))
+        [(CompilerRegMaybeLocation.No) false])]
+    [(CompilerRegMaybeLocation.No) false]))
 
 (define (compiler-reg-indexed-lookups-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-insert
         (compiler-reg-assignment-insert
-          CompilerRegAssignmentNil
+          CompilerRegAssignmentList.Nil
           1
-          (CompilerRegRegister "%r12"))
+          (CompilerRegLocation.Register "%r12"))
         3
-        (CompilerRegSpill 24))]
+        (CompilerRegLocation.Spill 24))]
     [intervals : CompilerRegIntervalList
       (compiler-reg-interval-cons
-        (CompilerRegInterval 1 2 5)
+        (CompilerRegInterval.Interval 1 2 5)
         (compiler-reg-interval-cons
-          (CompilerRegInterval 3 5 9)
+          (CompilerRegInterval.Interval 3 5 9)
           (compiler-reg-interval-cons
-            (CompilerRegInterval 4 1 4)
+            (CompilerRegInterval.Interval 4 1 4)
             (compiler-reg-interval-cons
-              (CompilerRegInterval 4 8 10)
-              CompilerRegIntervalNil))))]
+              (CompilerRegInterval.Interval 4 8 10)
+              CompilerRegIntervalList.Nil))))]
     [assignment-index : CompilerRegAssignmentIndex
       (compiler-reg-assignment-index-build assignments 5)]
     [assignment-table : CompilerRegAssignmentTable
@@ -24420,39 +25644,43 @@
         (compiler-reg-assignment-table-insert
           (compiler-reg-assignment-table-make 5)
           1
-          (CompilerRegRegister "%r12"))
+          (CompilerRegLocation.Register "%r12"))
         3
-        (CompilerRegSpill 24))]
+        (CompilerRegLocation.Spill 24))]
     [assignment-table-list : CompilerRegAssignmentList
       (compiler-reg-assignment-table-to-list assignment-table)]
     [interval-index : CompilerRegIntervalIndex
       (compiler-reg-interval-index-build intervals 5)]
     [assignment-hit-ok : bool
       (match (compiler-reg-assignment-index-lookup assignment-index 1)
-        [(CompilerRegSomeLocation location)
-          (compiler-reg-location-eq? location (CompilerRegRegister "%r12"))]
-        [(CompilerRegNoLocation) false])]
+        [(CompilerRegMaybeLocation.Some location)
+          (compiler-reg-location-eq?
+            location
+            (CompilerRegLocation.Register "%r12"))]
+        [(CompilerRegMaybeLocation.No) false])]
     [assignment-miss-ok : bool
       (match (compiler-reg-assignment-index-lookup assignment-index 2)
-        [(CompilerRegSomeLocation _) false]
-        [(CompilerRegNoLocation) true])]
+        [(CompilerRegMaybeLocation.Some _) false]
+        [(CompilerRegMaybeLocation.No) true])]
     [assignment-oob-ok : bool
       (match (compiler-reg-assignment-index-lookup assignment-index -1)
-        [(CompilerRegSomeLocation _) false]
-        [(CompilerRegNoLocation) true])]
+        [(CompilerRegMaybeLocation.Some _) false]
+        [(CompilerRegMaybeLocation.No) true])]
     [table-hit-ok : bool
       (match (compiler-reg-assignment-table-lookup assignment-table 1)
-        [(CompilerRegSomeLocation location)
-          (compiler-reg-location-eq? location (CompilerRegRegister "%r12"))]
-        [(CompilerRegNoLocation) false])]
+        [(CompilerRegMaybeLocation.Some location)
+          (compiler-reg-location-eq?
+            location
+            (CompilerRegLocation.Register "%r12"))]
+        [(CompilerRegMaybeLocation.No) false])]
     [table-miss-ok : bool
       (match (compiler-reg-assignment-table-lookup assignment-table 2)
-        [(CompilerRegSomeLocation _) false]
-        [(CompilerRegNoLocation) true])]
+        [(CompilerRegMaybeLocation.Some _) false]
+        [(CompilerRegMaybeLocation.No) true])]
     [table-oob-ok : bool
       (match (compiler-reg-assignment-table-lookup assignment-table -1)
-        [(CompilerRegSomeLocation _) false]
-        [(CompilerRegNoLocation) true])]
+        [(CompilerRegMaybeLocation.Some _) false]
+        [(CompilerRegMaybeLocation.No) true])]
     [table-list-ok : bool
       (and
         (compiler-reg-location-register?
@@ -24460,27 +25688,27 @@
           "%r12")
         (compiler-reg-location-eq?
           (match (compiler-reg-assignment-lookup assignment-table-list 3)
-            [(CompilerRegSomeLocation location) location]
-            [(CompilerRegNoLocation) (CompilerRegSpill -1)])
-          (CompilerRegSpill 24)))]
+            [(CompilerRegMaybeLocation.Some location) location]
+            [(CompilerRegMaybeLocation.No) (CompilerRegLocation.Spill -1)])
+          (CompilerRegLocation.Spill 24)))]
     [interval-hit-ok : bool
       (match (compiler-reg-interval-index-lookup interval-index 3)
-        [(CompilerRegSomeInterval interval)
+        [(CompilerRegMaybeInterval.Some interval)
           (match interval
-            [(CompilerRegInterval var start end)
+            [(CompilerRegInterval.Interval var start end)
               (and (= var 3) (= start 5) (= end 9))])]
-        [(CompilerRegNoInterval) false])]
+        [(CompilerRegMaybeInterval.No) false])]
     [interval-miss-ok : bool
       (match (compiler-reg-interval-index-lookup interval-index 2)
-        [(CompilerRegSomeInterval _) false]
-        [(CompilerRegNoInterval) true])]
+        [(CompilerRegMaybeInterval.Some _) false]
+        [(CompilerRegMaybeInterval.No) true])]
     [interval-first-ok : bool
       (match (compiler-reg-interval-index-lookup interval-index 4)
-        [(CompilerRegSomeInterval interval)
+        [(CompilerRegMaybeInterval.Some interval)
           (match interval
-            [(CompilerRegInterval var start end)
+            [(CompilerRegInterval.Interval var start end)
               (and (= var 4) (= start 1) (= end 4))])]
-        [(CompilerRegNoInterval) false])]
+        [(CompilerRegMaybeInterval.No) false])]
     [interference-ok : bool
       (and
         (not (compiler-reg-vars-interfere-index? interval-index 1 3))
@@ -24493,13 +25721,13 @@
             interval-index
             3
             -1
-            (CompilerRegRegister "%r12")))
+            (CompilerRegLocation.Register "%r12")))
         (compiler-reg-location-conflicts?
           assignments
           interval-index
           2
           -1
-          (CompilerRegRegister "%r12")))]
+          (CompilerRegLocation.Register "%r12")))]
     [table-conflict-ok : bool
       (and
         (not
@@ -24508,13 +25736,13 @@
             interval-index
             3
             -1
-            (CompilerRegRegister "%r12")))
+            (CompilerRegLocation.Register "%r12")))
         (compiler-reg-assignment-table-location-conflicts?
           assignment-table
           interval-index
           2
           -1
-          (CompilerRegRegister "%r12")))]
+          (CompilerRegLocation.Register "%r12")))]
     (and
       assignment-hit-ok
       assignment-miss-ok
@@ -24541,34 +25769,34 @@
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array.array-set! starts 0 0)
-      (array.array-set! ends 0 8)
-      (array.array-set! starts 1 0)
-      (array.array-set! ends 1 8)
-      (array.array-set! starts 3 3)
-      (array.array-set! ends 3 5)
-      (array.array-set! starts 4 7)
-      (array.array-set! ends 4 9)
-      (array.array-set!
+      (array-set! starts 0 0)
+      (array-set! ends 0 8)
+      (array-set! starts 1 0)
+      (array-set! ends 1 8)
+      (array-set! starts 3 3)
+      (array-set! ends 3 5)
+      (array-set! starts 4 7)
+      (array-set! ends 4 9)
+      (array-set!
         segments
         1
         (compiler-reg-interval-cons
-          (CompilerRegInterval 1 0 2)
+          (CompilerRegInterval.Interval 1 0 2)
           (compiler-reg-interval-cons
-            (CompilerRegInterval 1 6 8)
-            CompilerRegIntervalNil)))
-      (array.array-set!
+            (CompilerRegInterval.Interval 1 6 8)
+            CompilerRegIntervalList.Nil)))
+      (array-set!
         segments
         3
         (compiler-reg-interval-cons
-          (CompilerRegInterval 3 3 5)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 3 3 5)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         4
         (compiler-reg-interval-cons
-          (CompilerRegInterval 4 7 9)
-          CompilerRegIntervalNil))
+          (CompilerRegInterval.Interval 4 7 9)
+          CompilerRegIntervalList.Nil))
       (and
         (not (compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
         (compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
@@ -24584,65 +25812,65 @@
     [segment-index : CompilerRegIntervalIndex
       (CompilerRegIntervalIndex starts ends segments)]
     [one-reg : CompilerRegStringList
-      (compiler-reg-string-cons "%r12" CompilerRegStringNil)]
+      (compiler-reg-string-cons "%r12" CompilerRegStringList.Nil)]
     [active-root : CompilerRegActiveList
       (compiler-reg-active-cons
-        (CompilerRegActive 0 10 "%r12")
-        CompilerRegActiveNil)]
+        (CompilerRegActive.Active 0 10 "%r12")
+        CompilerRegActiveList.Nil)]
     [active-ordinary : CompilerRegActiveList
       (compiler-reg-active-cons
-        (CompilerRegActive 1 10 "%r12")
-        CompilerRegActiveNil)]
+        (CompilerRegActive.Active 1 10 "%r12")
+        CompilerRegActiveList.Nil)]
     [hole-aware : CompilerLiveI64Set (compiler-live-set3 0 2 3)]
     [parents : (Array i64) (array.make-array i64 5)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array.array-set! starts 0 0)
-      (array.array-set! ends 0 10)
-      (array.array-set! starts 1 4)
-      (array.array-set! ends 1 6)
-      (array.array-set! starts 2 4)
-      (array.array-set! ends 2 6)
-      (array.array-set! starts 3 1)
-      (array.array-set! ends 3 3)
-      (array.array-set! starts 4 8)
-      (array.array-set! ends 4 9)
-      (array.array-set!
+      (array-set! starts 0 0)
+      (array-set! ends 0 10)
+      (array-set! starts 1 4)
+      (array-set! ends 1 6)
+      (array-set! starts 2 4)
+      (array-set! ends 2 6)
+      (array-set! starts 3 1)
+      (array-set! ends 3 3)
+      (array-set! starts 4 8)
+      (array-set! ends 4 9)
+      (array-set!
         segments
         0
         (compiler-reg-interval-cons
-          (CompilerRegInterval 0 0 2)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 0 0 2)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         1
         (compiler-reg-interval-cons
-          (CompilerRegInterval 1 4 6)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 1 4 6)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         2
         (compiler-reg-interval-cons
-          (CompilerRegInterval 2 4 6)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 2 4 6)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         3
         (compiler-reg-interval-cons
-          (CompilerRegInterval 3 1 3)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 3 1 3)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         4
         (compiler-reg-interval-cons
-          (CompilerRegInterval 4 8 9)
-          CompilerRegIntervalNil))
-      (array.array-set! parents 0 0)
-      (array.array-set! parents 1 0)
-      (array.array-set! parents 2 2)
-      (array.array-set! parents 3 2)
-      (array.array-set! parents 4 4)
+          (CompilerRegInterval.Interval 4 8 9)
+          CompilerRegIntervalList.Nil))
+      (array-set! parents 0 0)
+      (array-set! parents 1 0)
+      (array-set! parents 2 2)
+      (array-set! parents 3 2)
+      (array-set! parents 4 4)
       (let
         ;; #3489 -> general hole-filling: the allocator runs on the merged-root
         ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
@@ -24658,8 +25886,8 @@
             segment-index
             1
             hole-aware)
-            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
-            [(CompilerRegNoString) false])]
+            [(CompilerRegMaybeString.Some reg) (string.eq reg "%r12")]
+            [(CompilerRegMaybeString.No) false])]
         [root-hole-reuses : bool
           (match (compiler-reg-first-free-register-holes
             one-reg
@@ -24667,8 +25895,8 @@
             segment-index
             2
             hole-aware)
-            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
-            [(CompilerRegNoString) false])]
+            [(CompilerRegMaybeString.Some reg) (string.eq reg "%r12")]
+            [(CompilerRegMaybeString.No) false])]
         ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
         [root-overlap-conflicts : bool
           (match (compiler-reg-first-free-register-holes
@@ -24677,8 +25905,8 @@
             segment-index
             3
             hole-aware)
-            [(CompilerRegNoString) true]
-            [(CompilerRegSomeString _) false])]
+            [(CompilerRegMaybeString.No) true]
+            [(CompilerRegMaybeString.Some _) false])]
         ;; var 4's [8,9] is disjoint from the active ordinary var 1's [4,6].
         [var4-disjoint-reuses : bool
           (match (compiler-reg-first-free-register-holes
@@ -24687,8 +25915,8 @@
             segment-index
             4
             hole-aware)
-            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
-            [(CompilerRegNoString) false])]
+            [(CompilerRegMaybeString.Some reg) (string.eq reg "%r12")]
+            [(CompilerRegMaybeString.No) false])]
         [roots : CompilerLiveI64Set
           (compiler-reg-coalesce-merged-root-set
             (CompilerRegCoalesceMap parents))]
@@ -24721,36 +25949,36 @@
       (compiler-reg-fill-i64-array present 0)
       (while (< index vars)
         (begin
-          (array.array-set! present index 1)
-          (array.array-set! types index (compiler-reg-i64-ty))
+          (array-set! present index 1)
+          (array-set! types index (compiler-reg-i64-ty))
           (set! index (+ index 1))))
       (CompilerRegVarTypes
         (compiler-reg-var-type-arrays-to-list
           present
           types
           (- vars 1)
-          CompilerRegVarTypeNil)
+          CompilerRegVarTypeList.Nil)
         present
         types))))
 
 (define (compiler-reg-coalesce-test-flat-index) : CompilerRegIntervalIndex
   (compiler-reg-interval-index-build
     (compiler-reg-interval-cons
-      (CompilerRegInterval 0 0 1)
+      (CompilerRegInterval.Interval 0 0 1)
       (compiler-reg-interval-cons
-        (CompilerRegInterval 1 4 5)
+        (CompilerRegInterval.Interval 1 4 5)
         (compiler-reg-interval-cons
-          (CompilerRegInterval 2 2 3)
-          CompilerRegIntervalNil)))
+          (CompilerRegInterval.Interval 2 2 3)
+          CompilerRegIntervalList.Nil)))
     3))
 
 (define (compiler-reg-coalesce-test-overlap-index) : CompilerRegIntervalIndex
   (compiler-reg-interval-index-build
     (compiler-reg-interval-cons
-      (CompilerRegInterval 0 0 5)
+      (CompilerRegInterval.Interval 0 0 5)
       (compiler-reg-interval-cons
-        (CompilerRegInterval 1 2 6)
-        CompilerRegIntervalNil))
+        (CompilerRegInterval.Interval 1 2 6)
+        CompilerRegIntervalList.Nil))
     2))
 
 (define (compiler-reg-coalesce-test-segment-index) : CompilerRegIntervalIndex
@@ -24762,22 +25990,22 @@
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array.array-set! starts 0 0)
-      (array.array-set! ends 0 10)
-      (array.array-set! starts 1 0)
-      (array.array-set! ends 1 10)
-      (array.array-set!
+      (array-set! starts 0 0)
+      (array-set! ends 0 10)
+      (array-set! starts 1 0)
+      (array-set! ends 1 10)
+      (array-set!
         segments
         0
         (compiler-reg-interval-cons
-          (CompilerRegInterval 0 0 2)
-          CompilerRegIntervalNil))
-      (array.array-set!
+          (CompilerRegInterval.Interval 0 0 2)
+          CompilerRegIntervalList.Nil))
+      (array-set!
         segments
         1
         (compiler-reg-interval-cons
-          (CompilerRegInterval 1 4 6)
-          CompilerRegIntervalNil))
+          (CompilerRegInterval.Interval 1 4 6)
+          CompilerRegIntervalList.Nil))
       (CompilerRegIntervalIndex starts ends segments))))
 
 (define (compiler-reg-coalesce-fixpoint-map-ok?) : bool
@@ -24785,7 +26013,7 @@
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 3)]
     [moves : CompilerRegMoveList
       (compiler-reg-move-list-add
-        (compiler-reg-move-list-add CompilerRegMoveNil 0 2 false true)
+        (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 2 false true)
         2
         1
         false
@@ -24803,15 +26031,15 @@
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 3)
         0
-        (CompilerRegRegister "%r12"))]
+        (CompilerRegLocation.Register "%r12"))]
     [tie-assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-insert
           (compiler-reg-assignment-table-make 3)
           2
-          (CompilerRegRegister "%r13"))
+          (CompilerRegLocation.Register "%r13"))
         0
-        (CompilerRegRegister "%r12"))]
+        (CompilerRegLocation.Register "%r12"))]
     (and
       (compiler-reg-location-register?
         (compiler-reg-coalesce-location coalesce assignments index 1)
@@ -24824,7 +26052,7 @@
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveNil 0 1 false true)]
+      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 false true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-overlap-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -24839,16 +26067,16 @@
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
         0
-        (CompilerRegRegister "%r12"))]
+        (CompilerRegLocation.Register "%r12"))]
     (match (compiler-reg-coalesce-location coalesce assignments index 1)
-      [(CompilerRegNoLocation) true]
-      [(CompilerRegSomeLocation _) false])))
+      [(CompilerRegMaybeLocation.No) true]
+      [(CompilerRegMaybeLocation.Some _) false])))
 
 (define (compiler-reg-coalesce-segmented-map-ok?) : bool
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveNil 0 1 false true)]
+      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 false true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -24863,7 +26091,7 @@
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
         0
-        (CompilerRegRegister "%r12"))]
+        (CompilerRegLocation.Register "%r12"))]
     (compiler-reg-location-register?
       (compiler-reg-coalesce-location coalesce assignments index 1)
       "%r12")))
@@ -24872,7 +26100,7 @@
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveNil 0 1 true true)]
+      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 true true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -24887,10 +26115,10 @@
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
         0
-        (CompilerRegRegister "%r12"))]
+        (CompilerRegLocation.Register "%r12"))]
     (match (compiler-reg-coalesce-location coalesce assignments index 1)
-      [(CompilerRegNoLocation) true]
-      [(CompilerRegSomeLocation _) false])))
+      [(CompilerRegMaybeLocation.No) true]
+      [(CompilerRegMaybeLocation.Some _) false])))
 
 (define (compiler-reg-single-segment-range?
   [segments : CompilerRegIntervalList]
@@ -24898,15 +26126,15 @@
   [start : i64]
   [end : i64]) : bool
   (match segments
-    [(CompilerRegIntervalCons head rest)
+    [(CompilerRegIntervalList.Cons head rest)
       (match head
-        [(CompilerRegInterval found-var found-start found-end)
+        [(CompilerRegInterval.Interval found-var found-start found-end)
           (and
             (= found-var var)
             (= found-start start)
             (= found-end end)
             (match (box-get rest)
-              [(CompilerRegIntervalNil) true]
+              [(CompilerRegIntervalList.Nil) true]
               [_ false]))])]
     [_ false]))
 
@@ -24920,41 +26148,41 @@
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array.array-set! segments 0 CompilerRegIntervalNil)
-      (array.array-set! segments 1 CompilerRegIntervalNil)
-      (array.array-set! segments 2 CompilerRegIntervalNil)
-      (array.array-set! starts 0 0)
-      (array.array-set! ends 0 6)
-      (array.array-set! starts 1 2)
-      (array.array-set! ends 1 8)
-      (array.array-set!
+      (array-set! segments 0 CompilerRegIntervalList.Nil)
+      (array-set! segments 1 CompilerRegIntervalList.Nil)
+      (array-set! segments 2 CompilerRegIntervalList.Nil)
+      (array-set! starts 0 0)
+      (array-set! ends 0 6)
+      (array-set! starts 1 2)
+      (array-set! ends 1 8)
+      (array-set!
         segments
         0
         (compiler-reg-interval-cons
-          (CompilerRegInterval 0 0 4)
+          (CompilerRegInterval.Interval 0 0 4)
           (compiler-reg-interval-cons
-            (CompilerRegInterval 0 5 6)
-            CompilerRegIntervalNil)))
-      (array.array-set!
+            (CompilerRegInterval.Interval 0 5 6)
+            CompilerRegIntervalList.Nil)))
+      (array-set!
         segments
         1
         (compiler-reg-interval-cons
-          (CompilerRegInterval 1 2 8)
-          CompilerRegIntervalNil))
-      (array.array-set! parents 0 0)
-      (array.array-set! parents 1 0)
-      (array.array-set! parents 2 2)
+          (CompilerRegInterval.Interval 1 2 8)
+          CompilerRegIntervalList.Nil))
+      (array-set! parents 0 0)
+      (array-set! parents 1 0)
+      (array-set! parents 2 2)
       (let
         [merged : CompilerRegIntervalIndex
           (compiler-reg-merged-root-index
             (CompilerRegCoalesceMap parents)
             (CompilerRegIntervalIndex starts ends segments))]
         (and
-          (= (array.array-ref (struct-get merged starts) 0) 0)
-          (= (array.array-ref (struct-get merged ends) 0) 8)
-          (< (array.array-ref (struct-get merged starts) 1) 0)
+          (= (array-ref (struct-get merged starts) 0) 0)
+          (= (array-ref (struct-get merged ends) 0) 8)
+          (< (array-ref (struct-get merged starts) 1) 0)
           (compiler-reg-single-segment-range?
-            (array.array-ref (struct-get merged segments) 0)
+            (array-ref (struct-get merged segments) 0)
             0
             0
             8))))))
@@ -24981,7 +26209,7 @@
         func
         (compiler-live-analyze-function func))]
     (match selection
-      [(CompilerRegIntervalSelection _ interval-index)
+      [(CompilerRegIntervalSelection.Selection _ interval-index)
         (let
           [parents : (Array i64)
             (compiler-reg-function-same-value-parents-filtered
@@ -24998,7 +26226,7 @@
   (match (compiler-reg-live-interval-selection
     func
     (compiler-live-analyze-function func))
-    [(CompilerRegIntervalSelection _ interval-index)
+    [(CompilerRegIntervalSelection.Selection _ interval-index)
       (compiler-reg-function-same-value-parents-multi
         func
         (compiler-reg-same-value-eligible-vars
@@ -25028,18 +26256,18 @@
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
-    [(CompilerRegPlan chain-assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan chain-assignments _ _ _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-phi-join-function))
-        [(CompilerRegPlan phi-assignments _ _ _ _ _)
+        [(CompilerRegPlan.Plan phi-assignments _ _ _ _ _)
           (match (compiler-reg-plan-function
             (compiler-reg-loop-backedge-function))
-            [(CompilerRegPlan loop-assignments _ _ _ _ _)
+            [(CompilerRegPlan.Plan loop-assignments _ _ _ _ _)
               (match (compiler-reg-plan-function
                 (compiler-reg-interference-blocks-coalesce-function))
-                [(CompilerRegPlan blocked-assignments _ _ _ _ _)
+                [(CompilerRegPlan.Plan blocked-assignments _ _ _ _ _)
                   (match (compiler-reg-plan-function
                     (compiler-reg-spill-coalesce-function))
-                    [(CompilerRegPlan spill-assignments _ _ _ _ _)
+                    [(CompilerRegPlan.Plan spill-assignments _ _ _ _ _)
                       (and
                         (compiler-reg-same-location? chain-assignments 0 1)
                         (compiler-reg-same-location? chain-assignments 1 2)
@@ -25062,12 +26290,12 @@
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
-    [(CompilerRegPlan vector-assignments _ _ _ _ _)
+    [(CompilerRegPlan.Plan vector-assignments _ _ _ _ _)
       (match (compiler-reg-plan-function
         (compiler-reg-vector-select-false-home-function))
-        [(CompilerRegPlan select-assignments _ _ _ _ _)
+        [(CompilerRegPlan.Plan select-assignments _ _ _ _ _)
           (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
-            [(CompilerRegPlan mask-assignments _ _ _ _ _)
+            [(CompilerRegPlan.Plan mask-assignments _ _ _ _ _)
               (let
                 [vector-ok : bool
                   (and
@@ -25120,6 +26348,18 @@
       (compiler-reg-win64-caller-saved-integer-registers)]
     [win-callees : CompilerRegStringList
       (compiler-reg-win64-callee-saved-integer-registers)]
+    [copy-instr : CompilerIrInstr
+      (CompilerIrInstr.CopyBytes
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        24)]
+    [add-instr : CompilerIrInstr
+      (CompilerIrInstr.BinOp
+        2
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64))]
     (and
       (compiler-reg-string-list-contains? sysv-callers "%rdi")
       (not (compiler-reg-string-list-contains? sysv-callees "%rdi"))
@@ -25142,21 +26382,21 @@
       (compiler-reg-string-list-contains? greedy-pool "%r11")
       ;; ABI-aware split: SysV caller-saved-count=9; Win64=7 (%rsi/%rdi are
       ;; nonvolatile on Win64 -> in the callee-saved suffix, not the prefix).
-      (= (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegAbiLinux) 9)
+      (= (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegTargetAbi.Linux) 9)
       (=
-        (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegAbiWindows)
+        (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegTargetAbi.Windows)
         7)
       (=
         (compiler-reg-string-list-count
-          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows))
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows))
         12)
       (not
         (compiler-reg-string-list-contains?
-          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows)
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)
           "%rsi"))
       (not
         (compiler-reg-string-list-contains?
-          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows)
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)
           "%rdi"))
       ;; The scalar zero-call extension is the older three-register subset.
       ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
@@ -25164,6 +26404,20 @@
       (compiler-reg-string-list-contains? zero-call-callers "%r9")
       (compiler-reg-string-list-contains? zero-call-callers "%rcx")
       (compiler-reg-string-list-contains? zero-call-callers "%rdx")
+      (not
+        (compiler-reg-backend-caller-clobber-instr-for-abi?
+          CompilerRegTargetAbi.Linux
+          copy-instr))
+      (compiler-reg-backend-caller-clobber-instr-for-abi?
+        CompilerRegTargetAbi.Windows
+        copy-instr)
+      (not
+        (compiler-reg-backend-caller-clobber-instr-for-abi?
+          CompilerRegTargetAbi.Linux
+          add-instr))
+      (compiler-reg-backend-caller-clobber-instr-for-abi?
+        CompilerRegTargetAbi.Windows
+        add-instr)
       (compiler-reg-string-list-contains? sysv-callers "%rcx")
       (compiler-reg-string-list-contains? sysv-callers "%rdx")
       (compiler-reg-string-list-contains? sysv-callers "%r9")
@@ -25223,115 +26477,118 @@
 
 (define (compiler-reg-color-register-assignments-to [last : i64]) : CompilerRegAssignmentList
   (if (< last 0)
-    CompilerRegAssignmentNil
+    CompilerRegAssignmentList.Nil
     (compiler-reg-assignment-insert
       (compiler-reg-color-register-assignments-to (- last 1))
       last
-      (CompilerRegRegister "%r12"))))
+      (CompilerRegLocation.Register "%r12"))))
 
 (define (compiler-reg-color-storage-function) : CompilerIrFunction
   (let
-    [big : AstType (AstTyStruct (intern "BigStorage"))]
-    (IrFunction
+    [big : AstType (AstType.Struct (intern "BigStorage"))]
+    (CompilerIrFunction.Function
       "storage_ranges"
-      IrParamNil
-      (AstTyUnit)
+      CompilerIrParamList.Nil
+      (AstType.Unit)
       6
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrAlloc 0 big)
+            (CompilerIrInstr.Alloc 0 big)
             (compiler-ir-instr-cons
-              (IrInstrAlloc 1 big)
+              (CompilerIrInstr.Alloc 1 big)
               (compiler-ir-instr-cons
-                (IrInstrAddrOf 2 1)
+                (CompilerIrInstr.AddrOf 2 1)
                 (compiler-ir-instr-cons
-                  (IrInstrStorePtr (IrValueVar 2) (IrValueI64 11) (AstTyI64))
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.I64 11)
+                    (AstType.I64))
                   (compiler-ir-instr-cons
-                    (IrInstrAlloc 3 big)
+                    (CompilerIrInstr.Alloc 3 big)
                     (compiler-ir-instr-cons
-                      (IrInstrAlloc 4 big)
+                      (CompilerIrInstr.Alloc 4 big)
                       (compiler-ir-instr-cons
-                        (IrInstrAddrOf 5 4)
+                        (CompilerIrInstr.AddrOf 5 4)
                         (compiler-ir-instr-cons
-                          (IrInstrStorePtr
-                            (IrValueVar 5)
-                            (IrValueI64 22)
-                            (AstTyI64))
+                          (CompilerIrInstr.StorePtr
+                            (CompilerIrValue.Var 5)
+                            (CompilerIrValue.I64 22)
+                            (AstType.I64))
                           (compiler-ir-instr-cons
-                            (IrInstrReturn IrNoValue)
-                            IrInstrNil))))))))))
-        IrBlockNil))))
+                            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                            CompilerIrInstrList.Nil))))))))))
+        CompilerIrBlockList.Nil))))
 
 (define (compiler-reg-color-pointer-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-insert
     (compiler-reg-assignment-insert
-      CompilerRegAssignmentNil
+      CompilerRegAssignmentList.Nil
       2
-      (CompilerRegRegister "%r12"))
+      (CompilerRegLocation.Register "%r12"))
     5
-    (CompilerRegRegister "%r13")))
+    (CompilerRegLocation.Register "%r13")))
 
 (define (compiler-reg-color-pointer-intervals) : CompilerRegIntervalList
   (compiler-reg-interval-cons
-    (CompilerRegInterval 2 1 3)
+    (CompilerRegInterval.Interval 2 1 3)
     (compiler-reg-interval-cons
-      (CompilerRegInterval 5 5 7)
-      CompilerRegIntervalNil)))
+      (CompilerRegInterval.Interval 5 5 7)
+      CompilerRegIntervalList.Nil)))
 
 (define (compiler-reg-color-pointer-types) : CompilerRegVarTypeList
   (compiler-reg-var-type-cons
-    (CompilerRegVarType 2 (AstTyU64))
+    (CompilerRegVarType.Type 2 (AstType.U64))
     (compiler-reg-var-type-cons
-      (CompilerRegVarType 5 (AstTyU64))
-      CompilerRegVarTypeNil)))
+      (CompilerRegVarType.Type 5 (AstType.U64))
+      CompilerRegVarTypeList.Nil)))
 
 (define (compiler-reg-color-spill-sharing-assignments [vars : i64]) : CompilerRegAssignmentList
   (if (< vars 1)
-    CompilerRegAssignmentNil
+    CompilerRegAssignmentList.Nil
     (compiler-reg-assignment-insert
       (compiler-reg-color-spill-sharing-assignments (- vars 1))
       (- vars 1)
-      (CompilerRegSpill (* (- vars 1) 8)))))
+      (CompilerRegLocation.Spill (* (- vars 1) 8)))))
 
 (define (compiler-reg-color-spill-sharing-types [vars : i64]) : CompilerRegVarTypeList
   (if (< vars 1)
-    CompilerRegVarTypeNil
+    CompilerRegVarTypeList.Nil
     (compiler-reg-var-type-cons
-      (CompilerRegVarType (- vars 1) (AstTyI64))
+      (CompilerRegVarType.Type (- vars 1) (AstType.I64))
       (compiler-reg-color-spill-sharing-types (- vars 1)))))
 
 (define (compiler-reg-color-spill-sharing-intervals) : CompilerRegIntervalList
   (compiler-reg-interval-cons
-    (CompilerRegInterval 0 0 2)
+    (CompilerRegInterval.Interval 0 0 2)
     (compiler-reg-interval-cons
-      (CompilerRegInterval 2 1 5)
+      (CompilerRegInterval.Interval 2 1 5)
       (compiler-reg-interval-cons
-        (CompilerRegInterval 1 3 4)
-        CompilerRegIntervalNil))))
+        (CompilerRegInterval.Interval 1 3 4)
+        CompilerRegIntervalList.Nil))))
 
 (define (compiler-reg-color-spill-split-intervals) : CompilerRegIntervalList
   (compiler-reg-interval-cons
-    (CompilerRegInterval 0 0 1)
+    (CompilerRegInterval.Interval 0 0 1)
     (compiler-reg-interval-cons
-      (CompilerRegInterval 1 2 3)
+      (CompilerRegInterval.Interval 1 2 3)
       (compiler-reg-interval-cons
-        (CompilerRegInterval 0 5 7)
-        CompilerRegIntervalNil))))
+        (CompilerRegInterval.Interval 0 5 7)
+        CompilerRegIntervalList.Nil))))
 
 (define (compiler-reg-color-spill-param-intervals) : CompilerRegIntervalList
   (compiler-reg-interval-cons
-    (CompilerRegInterval 0 0 1)
+    (CompilerRegInterval.Interval 0 0 1)
     (compiler-reg-interval-cons
-      (CompilerRegInterval 1 1 2)
+      (CompilerRegInterval.Interval 1 1 2)
       (compiler-reg-interval-cons
-        (CompilerRegInterval 2 3 4)
-        CompilerRegIntervalNil))))
+        (CompilerRegInterval.Interval 2 3 4)
+        CompilerRegIntervalList.Nil))))
 
 (define (compiler-reg-color-spill-slot-sharing-ok?) : bool
   (match (compiler-reg-color-stack-slots
-    (CompilerRegPlan
+    (CompilerRegPlan.Plan
       (compiler-reg-color-spill-sharing-assignments 3)
       (compiler-live-set-empty)
       (compiler-reg-color-spill-sharing-intervals)
@@ -25339,12 +26596,12 @@
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))
     (compiler-live-set-empty)
-    IrParamNil
-    IrBlockNil
+    CompilerIrParamList.Nil
+    CompilerIrBlockList.Nil
     3)
-    [(CompilerRegColoringRemap share-remap share-slots)
+    [(CompilerRegColoring.Remap share-remap share-slots)
       (match (compiler-reg-color-stack-slots
-        (CompilerRegPlan
+        (CompilerRegPlan.Plan
           (compiler-reg-color-spill-sharing-assignments 2)
           (compiler-live-set-empty)
           (compiler-reg-color-spill-split-intervals)
@@ -25352,28 +26609,22 @@
           (compiler-reg-call-split-empty)
           (compiler-reg-split-plan-empty))
         (compiler-live-set-empty)
-        IrParamNil
-        IrBlockNil
+        CompilerIrParamList.Nil
+        CompilerIrBlockList.Nil
         2)
-        [(CompilerRegColoringRemap split-remap split-slots)
+        [(CompilerRegColoring.Remap split-remap split-slots)
           (and
             (= share-slots 2)
-            (= (array.array-ref share-remap 0) (array.array-ref share-remap 1))
-            (not
-              (=
-                (array.array-ref share-remap 0)
-                (array.array-ref share-remap 2)))
+            (= (array-ref share-remap 0) (array-ref share-remap 1))
+            (not (= (array-ref share-remap 0) (array-ref share-remap 2)))
             (= split-slots 2)
-            (not
-              (=
-                (array.array-ref split-remap 0)
-                (array.array-ref split-remap 1))))]
-        [(CompilerRegColoringNone) false])]
-    [(CompilerRegColoringNone) false]))
+            (not (= (array-ref split-remap 0) (array-ref split-remap 1))))]
+        [(CompilerRegColoring.None) false])]
+    [(CompilerRegColoring.None) false]))
 
 (define (compiler-reg-color-spill-param-pins-ok?) : bool
   (match (compiler-reg-color-stack-slots
-    (CompilerRegPlan
+    (CompilerRegPlan.Plan
       (compiler-reg-color-spill-sharing-assignments 3)
       (compiler-live-set-empty)
       (compiler-reg-color-spill-param-intervals)
@@ -25381,22 +26632,24 @@
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))
     (compiler-live-set-empty)
-    (compiler-ir-param-cons (IrParam "pinned" (AstTyI64) 1) IrParamNil)
-    IrBlockNil
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "pinned" (AstType.I64) 1)
+      CompilerIrParamList.Nil)
+    CompilerIrBlockList.Nil
     3)
-    [(CompilerRegColoringRemap remap slots)
+    [(CompilerRegColoring.Remap remap slots)
       (and
         (= slots 2)
-        (= (array.array-ref remap 1) 1)
-        (= (array.array-ref remap 0) (array.array-ref remap 2))
-        (not (= (array.array-ref remap 0) 1)))]
-    [(CompilerRegColoringNone) false]))
+        (= (array-ref remap 1) 1)
+        (= (array-ref remap 0) (array-ref remap 2))
+        (not (= (array-ref remap 0) 1)))]
+    [(CompilerRegColoring.None) false]))
 
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
-    [(IrFunction _ params _ vars blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (match (compiler-reg-color-stack-slots
-        (CompilerRegPlan
+        (CompilerRegPlan.Plan
           (compiler-reg-color-pointer-assignments)
           (compiler-live-set-empty)
           (compiler-reg-color-pointer-intervals)
@@ -25407,42 +26660,44 @@
         params
         blocks
         vars)
-        [(CompilerRegColoringRemap remap slots)
+        [(CompilerRegColoring.Remap remap slots)
           (and
             (= slots 2)
-            (= (array.array-ref remap 0) 0)
-            (= (array.array-ref remap 1) 1)
-            (= (array.array-ref remap 3) 0)
-            (= (array.array-ref remap 4) 1))]
-        [(CompilerRegColoringNone) false])]))
+            (= (array-ref remap 0) 0)
+            (= (array-ref remap 1) 1)
+            (= (array-ref remap 3) 0)
+            (= (array-ref remap 4) 1))]
+        [(CompilerRegColoring.None) false])]))
 
 (define (compiler-reg-color-stack-group-ok?) : bool
   (let
     [group-var : i64 7]
     [coloring : CompilerRegColoring
       (compiler-reg-color-stack-slots
-        (CompilerRegPlan
+        (CompilerRegPlan.Plan
           (compiler-reg-color-register-assignments-to (- group-var 1))
           (compiler-live-set-empty)
-          (CompilerRegIntervalCons
-            (CompilerRegInterval group-var 0 2)
-            (box CompilerRegIntervalNil))
+          (CompilerRegIntervalList.Cons
+            (CompilerRegInterval.Interval group-var 0 2)
+            (box CompilerRegIntervalList.Nil))
           (compiler-reg-var-type-cons
-            (CompilerRegVarType group-var (AstTyStruct (intern "RegGroup")))
-            CompilerRegVarTypeNil)
+            (CompilerRegVarType.Type
+              group-var
+              (AstType.Struct (intern "RegGroup")))
+            CompilerRegVarTypeList.Nil)
           (compiler-reg-call-split-empty)
           (compiler-reg-split-plan-empty))
         (compiler-live-set1 group-var)
-        IrParamNil
-        IrBlockNil
+        CompilerIrParamList.Nil
+        CompilerIrBlockList.Nil
         (+ group-var 1))]
     (match coloring
-      [(CompilerRegColoringRemap remap slots)
+      [(CompilerRegColoring.Remap remap slots)
         (and
           (= slots 1)
-          (= (array.array-ref remap group-var) 0)
-          (<= (+ (array.array-ref remap group-var) 1) slots))]
-      [(CompilerRegColoringNone) false])))
+          (= (array-ref remap group-var) 0)
+          (<= (+ (array-ref remap group-var) 1) slots))]
+      [(CompilerRegColoring.None) false])))
 
 (define (compiler-regalloc-core-self-test?) : bool
   (and
@@ -25525,26 +26780,26 @@
         segs
         0
         (compiler-reg-interval-cons
-          (CompilerRegInterval 0 0 8)
+          (CompilerRegInterval.Interval 0 0 8)
           (compiler-reg-interval-cons
-            (CompilerRegInterval 0 12 20)
-            CompilerRegIntervalNil)))
-      (array-set! segs 1 CompilerRegIntervalNil)
+            (CompilerRegInterval.Interval 0 12 20)
+            CompilerRegIntervalList.Nil)))
+      (array-set! segs 1 CompilerRegIntervalList.Nil)
       (array-set!
         segs
         2
         (compiler-reg-interval-cons
-          (CompilerRegInterval 2 10 15)
-          CompilerRegIntervalNil))
+          (CompilerRegInterval.Interval 2 10 15)
+          CompilerRegIntervalList.Nil))
       ;; greedy decision: root 0 spilled, root 2 register-homed.
       (compiler-reg-assignment-table-insert
         assignments
         0
-        (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+        (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
       (compiler-reg-assignment-table-insert
         assignments
         2
-        (CompilerRegRegister "%r12"))
+        (CompilerRegLocation.Register "%r12"))
       (let
         [kit : CompilerRegSplitKit
           (compiler-reg-splitkit-build

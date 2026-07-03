@@ -21,7 +21,7 @@
 ;# `stdlib/json.tl`.
 ;#
 ;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
-(import "stdlib/json.tl")
+(import stdlib.json)
 (import "stdlib/io.tl")
 (import "stdlib/random.tl")
 (import "stdlib/string.tl")
@@ -76,7 +76,7 @@
 (define (read-all-stdin-acc [acc : String]) : String
   (let
     [chunk : String (read-stdin-bytes stdin-read-size)]
-    [text : String (string-append acc chunk)]
+    [text : String (append acc chunk)]
     (if (stdin-eof?)
       text
       (read-all-stdin-acc text))))
@@ -118,72 +118,72 @@
             (begin
               (set!
                 out
-                (string-append
-                  (string-append
+                (append
+                  (append
                     out
                     (substring input segment-start (- i segment-start)))
                   "?"))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
-      (string-append out (substring input segment-start (- n segment-start))))))
+      (append out (substring input segment-start (- n segment-start))))))
 
 ;: Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
-(define (json-field-number [item : Json] [field : String]) : i64
+(define (json-field-number [item : json.Json] [field : String]) : i64
   (let
     [key : String field]
-    (match (json-object-get item (& key))
-      [(JsonFound found)
+    (match (json.object-get item (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonNumber text) (string->int text)]
+          [(json.JsonNumber text) (>int text)]
           [_ 0])]
-      [(JsonMissing) 0])))
+      [(json.JsonMissing) 0])))
 
 ;: Extract a String from a JSON string field, defaulting to "" when absent.
-(define (json-field-string [item : Json] [field : String]) : String
+(define (json-field-string [item : json.Json] [field : String]) : String
   (let
     [key : String field]
-    (match (json-object-get item (& key))
-      [(JsonFound found)
+    (match (json.object-get item (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonString text) text]
+          [(json.JsonString text) text]
           [_ ""])]
-      [(JsonMissing) ""])))
+      [(json.JsonMissing) ""])))
 
 ;: Extract a bool from a JSON boolean field, defaulting to false when absent so
 ;: a PR with no `isDraft` key is treated as a non-draft (open) PR.
-(define (json-field-bool [item : Json] [field : String]) : bool
+(define (json-field-bool [item : json.Json] [field : String]) : bool
   (let
     [key : String field]
-    (match (json-object-get item (& key))
-      [(JsonFound found)
+    (match (json.object-get item (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonBool value) value]
+          [(json.JsonBool value) value]
           [_ false])]
-      [(JsonMissing) false])))
+      [(json.JsonMissing) false])))
 
 ;: True when any object in `labels` has a `name` equal to `needle`.
-(define (label-list-has? [labels : JsonList] [needle : String]) : bool
+(define (label-list-has? [labels : json.JsonList] [needle : String]) : bool
   (match labels
-    [(JsonListNil) false]
-    [(JsonListCons head rest)
-      (if (string-eq (json-field-string head "name") needle)
+    [(json.JsonListNil) false]
+    [(json.JsonListCons head rest)
+      (if (eq (json-field-string head "name") needle)
         true
         (label-list-has? (box-get rest) needle))]))
 
 ;: Return the `labels` array of an issue, or an empty list when absent.
-(define (issue-label-list [item : Json]) : JsonList
+(define (issue-label-list [item : json.Json]) : json.JsonList
   (let
     [key : String "labels"]
-    (match (json-object-get item (& key))
-      [(JsonFound found)
+    (match (json.object-get item (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonArray entries) (box-get entries)]
-          [_ (JsonListNil)])]
-      [(JsonMissing) (JsonListNil)])))
+          [(json.JsonArray entries) (box-get entries)]
+          [_ (json.JsonListNil)])]
+      [(json.JsonMissing) (json.JsonListNil)])))
 
 ;: Return the priority bonus for a label list. p0 takes precedence over p1.
-(define (label-list-priority-bonus [labels : JsonList]) : i64
+(define (label-list-priority-bonus [labels : json.JsonList]) : i64
   (if (label-list-has? labels "p0")
     p0-priority-bonus
     (if (label-list-has? labels "p1")
@@ -191,7 +191,7 @@
       0)))
 
 ;: Build a PR candidate (kind = review, no labels considered).
-(define (pr-candidate [item : Json]) : Candidate
+(define (pr-candidate [item : json.Json]) : Candidate
   (Candidate
     kind-pr
     (json-field-number item "number")
@@ -199,23 +199,20 @@
     review-weight))
 
 ;: Return true when a PR is a draft. Draft PRs are never offered for review.
-(define (pr-draft? [item : Json]) : bool
+(define (pr-draft? [item : json.Json]) : bool
   (json-field-bool item "isDraft"))
 
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
-  (string-eq status "COMPLETED"))
+  (eq status "COMPLETED"))
 
 ;: Return true when a legacy status context state is terminal.
 (define (pr-check-state-complete? [state : String]) : bool
-  (or
-    (string-eq state "SUCCESS")
-    (string-eq state "FAILURE")
-    (string-eq state "ERROR")))
+  (or (eq state "SUCCESS") (eq state "FAILURE") (eq state "ERROR")))
 
 ;: Return true when a rollup entry is complete. Unknown entries do not block so
 ;: a missing check shape is treated like no checks rather than a pending check.
-(define (pr-check-entry-complete? [entry : Json]) : bool
+(define (pr-check-entry-complete? [entry : json.Json]) : bool
   (let
     [status : String (json-field-string entry "status")]
     (if (> (string-length status) 0)
@@ -227,31 +224,31 @@
           true)))))
 
 ;: Return true when every check rollup entry has reached a terminal state.
-(define (pr-check-list-complete? [checks : JsonList]) : bool
+(define (pr-check-list-complete? [checks : json.JsonList]) : bool
   (match checks
-    [(JsonListNil) true]
-    [(JsonListCons head rest)
+    [(json.JsonListNil) true]
+    [(json.JsonListCons head rest)
       (if (pr-check-entry-complete? head)
         (pr-check-list-complete? (box-get rest))
         false)]))
 
 ;: Missing or empty `statusCheckRollup` means the PR has no checks and remains
 ;: eligible. Only explicitly pending/running entries are skipped.
-(define (pr-checks-complete? [item : Json]) : bool
+(define (pr-checks-complete? [item : json.Json]) : bool
   (let
     [key : String "statusCheckRollup"]
-    (match (json-object-get item (& key))
-      [(JsonFound found)
+    (match (json.object-get item (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonArray entries) (pr-check-list-complete? (box-get entries))]
+          [(json.JsonArray entries) (pr-check-list-complete? (box-get entries))]
           [_ true])]
-      [(JsonMissing) true])))
+      [(json.JsonMissing) true])))
 
 ;: Build an issue candidate, classifying ready-for-implementation vs triage and
 ;: adding the priority bonus.
-(define (issue-candidate [item : Json]) : Candidate
+(define (issue-candidate [item : json.Json]) : Candidate
   (let
-    [labels : JsonList (issue-label-list item)]
+    [labels : json.JsonList (issue-label-list item)]
     [ready : bool (label-list-has? labels "ready-for-implementation")]
     [bonus : i64 (label-list-priority-bonus labels)]
     (if ready
@@ -267,21 +264,21 @@
         (+ research-weight bonus)))))
 
 ;: Return true when an issue should not enter the active work queue.
-(define (issue-blocked? [item : Json]) : bool
+(define (issue-blocked? [item : json.Json]) : bool
   (label-list-has? (issue-label-list item) "blocked"))
 
 ;: Return true when an issue carries the ready-for-implementation label, i.e. it
 ;: would classify as an implement candidate.
-(define (issue-ready? [item : Json]) : bool
+(define (issue-ready? [item : json.Json]) : bool
   (label-list-has? (issue-label-list item) "ready-for-implementation"))
 
 ;: Map a JSON array of PR objects to candidates, preserving source order. Draft
 ;: PRs are never eligible, and non-draft PRs whose checks are still pending or
 ;: running are skipped until their checks reach a terminal state.
-(define (pr-candidates [items : JsonList]) : CandList
+(define (pr-candidates [items : json.JsonList]) : CandList
   (match items
-    [(JsonListNil) (CandList.Nil)]
-    [(JsonListCons head rest)
+    [(json.JsonListNil) (CandList.Nil)]
+    [(json.JsonListCons head rest)
       (let
         [tail : CandList (pr-candidates (box-get rest))]
         (if (and (not (pr-draft? head)) (pr-checks-complete? head))
@@ -291,10 +288,10 @@
 ;: Map a JSON array of issue objects to candidates, preserving source order.
 ;: Blocked issues are always skipped; ready-for-implementation issues are also
 ;: skipped when `implement-allowed?` is false (the review queue is saturated).
-(define (issue-candidates [items : JsonList] [implement-allowed? : bool]) : CandList
+(define (issue-candidates [items : json.JsonList] [implement-allowed? : bool]) : CandList
   (match items
-    [(JsonListNil) (CandList.Nil)]
-    [(JsonListCons head rest)
+    [(json.JsonListNil) (CandList.Nil)]
+    [(json.JsonListCons head rest)
       (let
         [tail : CandList (issue-candidates (box-get rest) implement-allowed?)]
         (if (or
@@ -311,22 +308,22 @@
       (CandList.Cons head (box (cand-append (box-get rest) back)))]))
 
 ;: Look up the JSON array stored at `field`, or an empty list when absent.
-(define (json-field-array [value : Json] [field : String]) : JsonList
+(define (json-field-array [value : json.Json] [field : String]) : json.JsonList
   (let
     [key : String field]
-    (match (json-object-get value (& key))
-      [(JsonFound found)
+    (match (json.object-get value (& key))
+      [(json.JsonFound found)
         (match found
-          [(JsonArray entries) (box-get entries)]
-          [_ (JsonListNil)])]
-      [(JsonMissing) (JsonListNil)])))
+          [(json.JsonArray entries) (box-get entries)]
+          [_ (json.JsonListNil)])]
+      [(json.JsonMissing) (json.JsonListNil)])))
 
 ;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
 ;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
-(define (count-open-nondraft-prs [items : JsonList]) : i64
+(define (count-open-nondraft-prs [items : json.JsonList]) : i64
   (match items
-    [(JsonListNil) 0]
-    [(JsonListCons head rest)
+    [(json.JsonListNil) 0]
+    [(json.JsonListCons head rest)
       (let
         [tail : i64 (count-open-nondraft-prs (box-get rest))]
         (if (json-field-bool head "isDraft")
@@ -336,10 +333,10 @@
 ;: Build the full candidate list: PR candidates first, then issue candidates.
 ;: Ready-for-implementation issues are dropped once more than `implement-pr-cap`
 ;: open non-draft PRs are present, leaving only review and research/triage work.
-(define (build-candidates [root : Json]) : CandList
+(define (build-candidates [root : json.Json]) : CandList
   (let
-    [prs : JsonList (json-field-array root "prs")]
-    [issues : JsonList (json-field-array root "issues")]
+    [prs : json.JsonList (json-field-array root "prs")]
+    [issues : json.JsonList (json-field-array root "issues")]
     [implement-allowed? : bool
       (<= (count-open-nondraft-prs prs) implement-pr-cap)]
     (cand-append
@@ -350,11 +347,9 @@
 ;: index maps back to the candidate at the same position.
 (define (cand-weights [cands : CandList]) : RandomWeightList
   (match cands
-    [(CandList.Nil) (random-weight-list-empty)]
+    [(CandList.Nil) (weight-list-empty)]
     [(CandList.Cons head rest)
-      (random-weight-list-cons
-        (struct-get head weight)
-        (cand-weights (box-get rest)))]))
+      (weight-list-cons (struct-get head weight) (cand-weights (box-get rest)))]))
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
@@ -386,8 +381,8 @@
   (let
     [text : String
       "{\"prs\":[{\"number\":1,\"title\":\"No checks\",\"isDraft\":false},{\"number\":2,\"title\":\"Empty checks\",\"statusCheckRollup\":[]},{\"number\":3,\"title\":\"Completed checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]},{\"number\":4,\"title\":\"Running checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":5,\"title\":\"Pending status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"PENDING\"}]},{\"number\":6,\"title\":\"Failed status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}]}],\"issues\":[{\"number\":7,\"title\":\"Fallback issue\",\"labels\":[]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -409,15 +404,15 @@
             (if (= (struct-get (cand-nth cands 4) number) 7)
               unit
               (panic "issue should remain after skipped PRs"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-p0-label-takes-precedence-over-p1
   (let
     [text : String
       "{\"prs\":[],\"issues\":[{\"number\":10,\"title\":\"Both priorities\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"P1 only\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -434,15 +429,15 @@
               (+ implement-weight p1-priority-bonus))
               unit
               (panic "issue with only p1 should use p1 priority"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-skips-blocked-issues
   (let
     [text : String
       "{\"prs\":[],\"issues\":[{\"number\":30,\"title\":\"Blocked triage\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":31,\"title\":\"Blocked ready\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"ready-for-implementation\"}]},{\"number\":32,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":33,\"title\":\"Triage issue\",\"labels\":[]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -455,15 +450,15 @@
             (if (= (struct-get (cand-nth cands 1) number) 33)
               unit
               (panic "second non-blocked issue should remain eligible"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-pr-review-weight-is-raised
   (let
     [text : String
       "{\"prs\":[{\"number\":20,\"title\":\"Review me\",\"statusCheckRollup\":[]}],\"issues\":[]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -473,15 +468,15 @@
             (if (= (struct-get (cand-nth cands 0) weight) 45)
               unit
               (panic "PR review weight should be 45"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-never-chooses-draft-prs
   (let
     [text : String
       "{\"prs\":[{\"number\":60,\"title\":\"Draft passing\",\"isDraft\":true,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]},{\"number\":61,\"title\":\"Draft no checks\",\"isDraft\":true},{\"number\":62,\"title\":\"Open passing\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}],\"issues\":[{\"number\":70,\"title\":\"Triage issue\",\"labels\":[]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -495,15 +490,15 @@
             (if (= (struct-get (cand-nth cands 1) number) 70)
               unit
               (panic "triage issue should follow once draft PRs are dropped"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-caps-implement-when-many-open-prs
   (let
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -524,15 +519,15 @@
             (if (= (struct-get (cand-nth cands 4) number) 51)
               unit
               (panic "triage issue should remain after the four review PRs"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-allows-implement-at-pr-cap-boundary
   (let
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -545,15 +540,15 @@
             (if (= (struct-get (cand-nth cands 3) number) 50)
               unit
               (panic "ready issue should remain right at the PR cap"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-draft-prs-do-not-count-toward-pr-cap
   (let
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (begin
@@ -567,21 +562,21 @@
             (if (= (struct-get (cand-nth cands 3) number) 50)
               unit
               (panic "ready issue should sit right after the non-draft PRs"))))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 (test
   chooser-implement-cap-can-empty-queue-when-only-ready-issues
   (let
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Another ready\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
-    (match (json-parse (& text))
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
             unit
             (panic "saturated PRs with only ready issues should leave no work")))]
-      [(ErrJson _) (panic "test JSON should parse")])))
+      [(json.ErrJson _) (panic "test JSON should parse")])))
 
 ;: The action verb for a candidate kind.
 (define (action-name [kind : i64]) : String
@@ -599,13 +594,13 @@
 
 ;: Render one candidate as the chooser's action line (without trailing newline).
 (define (candidate-line [cand : Candidate]) : String
-  (string-append
-    (string-append (action-name (struct-get cand kind)) " ")
-    (string-append
-      (string-append (github-kind (struct-get cand kind)) " #")
-      (string-append
+  (append
+    (append (action-name (struct-get cand kind)) " ")
+    (append
+      (append (github-kind (struct-get cand kind)) " #")
+      (append
         (int->string (struct-get cand number))
-        (string-append ": " (struct-get cand title))))))
+        (append ": " (struct-get cand title))))))
 
 ;: Choose one candidate from the input JSON, returning an error message on
 ;: invalid input or an empty candidate set.
@@ -613,26 +608,26 @@
   (let
     [normalized : String (chooser-normalize-json-input text)]
     [text : String normalized]
-    (match (json-parse (& text))
-      [(ErrJson message)
-        (ChooserResult.Err (string-append "Error: invalid JSON: " message))]
-      [(OkJson root)
+    (match (json.parse (& text))
+      [(json.ErrJson message)
+        (ChooserResult.Err (append "Error: invalid JSON: " message))]
+      [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
             (ChooserResult.Err "Error: no eligible candidates were provided")
-            (match (random-system-seed)
+            (match (system-seed)
               [(ErrSystemSeed err)
                 (ChooserResult.Err
                   (match err
                     [(RandomSystemSeedUnavailable message)
-                      (string-append "Error: " message)]))]
+                      (append "Error: " message)]))]
               [(OkSystemSeed seed)
-                (match (random-weighted-index
-                  (random-seed seed)
+                (match (weighted-index
+                  (stdlib.random.seed seed)
                   (cand-weights cands))
                   [(ErrRandomWeightedIndex message)
-                    (ChooserResult.Err (string-append "Error: " message))]
+                    (ChooserResult.Err (append "Error: " message))]
                   [(OkRandomWeightedIndex _ index)
                     (ChooserResult.Ok (cand-nth cands index))])])))])))
 

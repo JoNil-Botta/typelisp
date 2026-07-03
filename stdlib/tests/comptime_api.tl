@@ -26,7 +26,7 @@
   feature-comptime-public-fields
   (defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
     (if (> (struct-get args len) 1)
-      (array-ref (struct-get args items) 1)
+      (__tl_array-ref (struct-get args items) 1)
       (comptime.expr-int 0))))
 
 (defmacro (stdlib-comptime-clause-count [arms : comptime.ExprClause ...]) : i64
@@ -44,7 +44,7 @@
   (defmacro (stdlib-comptime-public-clause-first-result
     [arms : comptime.ExprClause ...]) : i64
     (if (> (struct-get arms len) 0)
-      (match (array-ref (struct-get arms items) 0)
+      (match (__tl_array-ref (struct-get arms items) 0)
         [(ExprClause _ result) result])
       (comptime.expr-int 0))))
 
@@ -53,10 +53,26 @@
     [(ExprClause test result)
       (match test
         [(ExprVar name)
-          (if (string.string-eq name "else")
+          (if (string.eq name "else")
             result
             (comptime.expr-int 0))]
         [_ (comptime.expr-int 0)])]))
+
+(defmacro (stdlib-comptime-quoted-dense-second) : i64
+  (match (quote (stdlib-comptime-quoted-dense-source 5 37))
+    [(comptime.ExprCall _ args)
+      (if (= (struct-get args len) 2)
+        (__tl_array-ref (struct-get args items) 1)
+        (comptime.expr-int 0))]
+    [_ (comptime.expr-int 0)]))
+
+(defmacro (stdlib-comptime-spliced-dense-second [args : comptime.Expr ...]) : i64
+  (match `(stdlib-comptime-spliced-dense-source ,@args)
+    [(comptime.ExprCall _ operands)
+      (if (= (struct-get operands len) 2)
+        (__tl_array-ref (struct-get operands items) 1)
+        (comptime.expr-int 0))]
+    [_ (comptime.expr-int 0)]))
 
 (cfg
   feature-comptime-public-fields
@@ -65,8 +81,8 @@
     (if (> (struct-get bindings len) 0)
       (let
         [first : comptime.ExprBindingClause
-          (array-ref (struct-get bindings items) 0)]
-        (if (string.string-eq (struct-get first name) "value")
+          (__tl_array-ref (struct-get bindings items) 0)]
+        (if (string.eq (struct-get first name) "value")
           (struct-get first init)
           (comptime.expr-int 0)))
       (comptime.expr-int 0))))
@@ -95,8 +111,8 @@
           (+
             (length base)
             (+
-              (string->int "7")
-              (if (string.string-eq base "stdlib-comptime-derived")
+              (string.>int "7")
+              (if (string.eq base "stdlib-comptime-derived")
                 (if (string=? base "stdlib-comptime-derived")
                   (if (=
                     (cast (string-ref base 0) : i64)
@@ -109,7 +125,7 @@
 
 (defmacro (stdlib-comptime-error-unreached [x : comptime.Expr]) : i64
   (if false
-    (comptime.comptime-error "unreached stdlib comptime error")
+    (comptime.error "unreached stdlib comptime error")
     x))
 
 (define (stdlib-comptime-qualified-import-shape) : i64
@@ -146,6 +162,12 @@
 (define (stdlib-comptime-clause-match-shape) : i64
   (+ (stdlib-comptime-clause-else-value [else 6]) 36))
 
+(define (stdlib-comptime-quote-dense-shape) : i64
+  (+ (stdlib-comptime-quoted-dense-second) 5))
+
+(define (stdlib-comptime-splice-dense-shape) : i64
+  (+ (stdlib-comptime-spliced-dense-second 10 32) 10))
+
 (define (stdlib-comptime-qualified-string-helper-shape) : i64
   (let
     [stdlib-comptime-derived0-value : i64 42]
@@ -154,7 +176,7 @@
       (stdlib-comptime-derived-name stdlib-comptime-derived))))
 
 (define (stdlib-comptime-derived-string-shape) : bool
-  (string.string-eq
+  (string.eq
     (stdlib-comptime-derived-string stdlib-comptime-derived)
     "stdlib-comptime-derived-literal"))
 
@@ -213,6 +235,22 @@
 (test
   comptime-clause-match-shape
   (if (= (stdlib-comptime-clause-match-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-quote-dense-shape
+  (if (= (stdlib-comptime-quote-dense-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-splice-dense-shape
+  (if (= (stdlib-comptime-splice-dense-shape) 42)
     unit
     (begin
       (/ 1 0)

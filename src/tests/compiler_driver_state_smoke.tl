@@ -1,18 +1,19 @@
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.io)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_driver_core.tl")
+(import "../compiler_lower.tl")
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
+(import sym_i64_env)
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
   [value : i64]) : AstExprNodePoolState
   (match (ast-expr-node-pool-state-push
     pool
-    (AstExprLiteral (ast-lit-int value)))
+    (AstExpr.Literal (ast-lit-int value)))
     [(AstExprNodePoolPushOk next _) next]))
 
 (define (compiler-driver-state-smoke-type-push
@@ -26,9 +27,9 @@
   [id : i64]
   [expected : i64]) : bool
   (match (ast-expr-node-pool-state-get pool id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -36,29 +37,29 @@
   [pool : AstTypeNodePoolState]
   [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-type-char?
   [pool : AstTypeNodePoolState]
   [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyChar) true]
+    [(AstType.Char) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-global-expr-int?
   [id : i64]
   [expected : i64]) : bool
   (match (ast-node-get id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
 (define (compiler-driver-state-smoke-global-type-i64? [id : i64]) : bool
   (match (ty-node-get id)
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-cache-isolated?) : bool
@@ -122,7 +123,7 @@
     [state-a : CompilerDriverState
       (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [program : AstProgram (ast-program AstDeclNil)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
     [ok : bool true]
     (begin
       (compiler-driver-state-apply-session-flags! state-a)
@@ -132,10 +133,10 @@
         (set! ok false))
       (compiler-load-runtime-prelude-cache-store
         "prelude-key"
-        AstDeclNil
-        AstDeclPathNil
-        AstDeclModuleNil
-        (sym-i64-empty))
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
+        (ast-decl-module-list-new)
+        (sym_i64_env.sym-i64-empty))
       (compiler-load-session-floors-set! 2 3 4)
       (compiler-driver-state-apply-session-flags! state-b)
       (unless (not (compiler-load-session-cache-enabled?)) (set! ok false))
@@ -173,7 +174,7 @@
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
     [expr-a0 : AstExprNodePoolState
-      (array.array-ref (struct-get state-a expr-pool) 0)]
+      (array-ref (struct-get state-a expr-pool) 0)]
     [expr-a-id0 : i64 (ast-expr-node-pool-state-mark expr-a0)]
     [expr-a1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a0 7)]
@@ -181,7 +182,7 @@
     [expr-a2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a1 8)]
     [expr-b0 : AstExprNodePoolState
-      (array.array-ref (struct-get state-b expr-pool) 0)]
+      (array-ref (struct-get state-b expr-pool) 0)]
     [expr-b-mark : i64 (ast-expr-node-pool-state-mark expr-b0)]
     [expr-b1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b0 11)]
@@ -191,23 +192,23 @@
     [expr-b2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b-reset 12)]
     [type-a0 : AstTypeNodePoolState
-      (array.array-ref (struct-get state-a type-pool) 0)]
+      (array-ref (struct-get state-a type-pool) 0)]
     [type-a-id0 : i64 (ast-type-node-pool-state-mark type-a0)]
     [type-a1 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-a0 (AstTyI64))]
+      (compiler-driver-state-smoke-type-push type-a0 (AstType.I64))]
     [type-a-id1 : i64 (ast-type-node-pool-state-mark type-a1)]
     [type-a2 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-a1 (AstTyString))]
+      (compiler-driver-state-smoke-type-push type-a1 (AstType.String))]
     [type-b0 : AstTypeNodePoolState
-      (array.array-ref (struct-get state-b type-pool) 0)]
+      (array-ref (struct-get state-b type-pool) 0)]
     [type-b-mark : i64 (ast-type-node-pool-state-mark type-b0)]
     [type-b1 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-b0 (AstTyBool))]
+      (compiler-driver-state-smoke-type-push type-b0 (AstType.Bool))]
     [type-b-reset : AstTypeNodePoolState
       (ast-type-node-pool-state-reset-to-mark type-b1 type-b-mark)]
     [type-b-id : i64 (ast-type-node-pool-state-mark type-b-reset)]
     [type-b2 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-b-reset (AstTyChar))]
+      (compiler-driver-state-smoke-type-push type-b-reset (AstType.Char))]
     (and
       (= expr-a-id0 0)
       (= expr-a-id1 1)
@@ -230,16 +231,16 @@
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
     [type-a0 : AstTypeNodePoolState
-      (array.array-ref (struct-get state-a type-pool) 0)]
+      (array-ref (struct-get state-a type-pool) 0)]
     [type-b0 : AstTypeNodePoolState
-      (array.array-ref (struct-get state-b type-pool) 0)]
-    (match (ast-type-node-pool-state-push type-a0 (AstTyI64))
+      (array-ref (struct-get state-b type-pool) 0)]
+    (match (ast-type-node-pool-state-push type-a0 (AstType.I64))
       [(AstTypeNodePoolPushOk type-a1 a-id)
-        (match (ast-type-node-pool-state-push type-b0 (AstTyI64))
+        (match (ast-type-node-pool-state-push type-b0 (AstType.I64))
           [(AstTypeNodePoolPushOk type-b1 b-id)
-            (match (ast-type-node-pool-state-push type-a1 (AstTyI64))
+            (match (ast-type-node-pool-state-push type-a1 (AstType.I64))
               [(AstTypeNodePoolPushOk type-a2 a-dupe-id)
-                (match (ast-type-node-pool-state-push type-b1 (AstTyI64))
+                (match (ast-type-node-pool-state-push type-b1 (AstType.I64))
                   [(AstTypeNodePoolPushOk type-b2 b-dupe-id)
                     (and
                       (= a-id 0)
@@ -255,7 +256,7 @@
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner-id _)
+    [(AstExpr.Spanned inner-id _)
       (compiler-driver-state-smoke-context-expr-unspan
         pools
         (ast-node-pool-context-expr-get pools inner-id))]
@@ -265,7 +266,7 @@
   [pools : AstNodePoolContext]
   [id : i64]) : bool
   (match (ast-node-pool-context-type-get pools id)
-    [(AstTyU8) true]
+    [(AstType.U8) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-context-bool-lit?
@@ -273,14 +274,56 @@
   [id : i64]
   [want : bool]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprLiteral (AstLitBool value)) (= value want)]
+    [(AstExpr.Literal (AstLiteral.Bool value)) (= value want)]
     [_ false]))
+
+(define (compiler-driver-state-smoke-context-int-lit?
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [want : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExpr.Literal (AstLiteral.Int value _)) (= value want)]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-lower-state-instrs [state : LowerState]) : CompilerIrInstrList
+  (match state
+    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _) (box-get instrs)]))
+
+(define (compiler-driver-state-smoke-instr-i64-mov?
+  [instr : CompilerIrInstr]
+  [want : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ (CompilerIrValue.I64 got) _) (= got want)]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-instrs-contain-i64-mov?
+  [instrs : CompilerIrInstrList]
+  [want : i64]) : bool
+  (match instrs
+    [(CompilerIrInstrList.Nil) false]
+    [(CompilerIrInstrList.Cons instr rest)
+      (or
+        (compiler-driver-state-smoke-instr-i64-mov? instr want)
+        (compiler-driver-state-smoke-instrs-contain-i64-mov?
+          (box-get rest)
+          want))]))
+
+(define (compiler-driver-state-smoke-lower-args-from-state-a?
+  [state : LowerState]) : bool
+  (let
+    [instrs : CompilerIrInstrList
+      (compiler-driver-state-smoke-lower-state-instrs state)]
+    (and
+      (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 3)
+      (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 5)
+      (not (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 3000))
+      (not (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 5000)))))
 
 (define (compiler-driver-state-smoke-context-if-bool-lits?
   [pools : AstNodePoolContext]
   [id : i64]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (and
         (compiler-driver-state-smoke-context-bool-lit? pools cond true)
         (compiler-driver-state-smoke-context-bool-lit? pools then-branch true)
@@ -293,7 +336,7 @@
   (match (compiler-driver-state-smoke-context-expr-unspan
     pools
     (ast-node-pool-context-expr-get pools id))
-    [(AstExprPtrNull (AstTyPtr inner-id))
+    [(AstExpr.PtrNull (AstType.Ptr inner-id))
       (compiler-driver-state-smoke-context-type-u8? pools inner-id)]
     [_ false]))
 
@@ -303,12 +346,14 @@
   [body-cell : (Array i64)]
   [type-cell : (Array i64)]) : bool
   (match program
-    [(AstProgram decls-box)
-      (match (box-get decls-box)
-        [(AstDeclCons (AstDeclDefFn _ _ (AstTyPtr inner-id) body-id _) _)
+    [(AstProgram.Program decls-box)
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons
+            (AstDecl.DefFn _ _ (AstType.Ptr inner-id) body-id _)
+            _)
           (begin
-            (array.array-set! body-cell 0 body-id)
-            (array.array-set! type-cell 0 inner-id)
+            (array-set! body-cell 0 body-id)
+            (array-set! type-cell 0 inner-id)
             (and
               (compiler-driver-state-smoke-context-type-u8? pools inner-id)
               (compiler-driver-state-smoke-context-ptr-null-u8? pools body-id)))]
@@ -318,12 +363,12 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [body-cell : (Array i64) (array.make-array i64 1)]
-    [type-cell : (Array i64) (array.make-array i64 1)]
+    [body-cell : (Array i64) (make-array i64 1)]
+    [type-cell : (Array i64) (make-array i64 1)]
     [ok : bool true]
     (begin
-      (array.array-set! body-cell 0 (- 0 1))
-      (array.array-set! type-cell 0 (- 0 1))
+      (array-set! body-cell 0 (- 0 1))
+      (array-set! type-cell 0 (- 0 1))
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
       (let
@@ -337,7 +382,7 @@
             "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))"
             (compiler-cfg-empty)
             pools-a)
-            [(OkAstProgramDiagnostic program)
+            [(ResultAstProgramDiagnostic.Ok program)
               (unless
                 (compiler-driver-state-smoke-note-main-ptr-u8!
                   pools-a
@@ -345,26 +390,26 @@
                   body-cell
                   type-cell)
                 (set! ok false))]
-            [(ErrAstProgramDiagnostic _) (set! ok false)])
+            [(ResultAstProgramDiagnostic.Err _) (set! ok false)])
           (match (parse-ast-source-diagnostic-with-cfg-and-pools
             "state-b.tl"
             "(define (main) : (Ptr i64) (ptr-null : (Ptr i64)))"
             (compiler-cfg-empty)
             pools-b)
-            [(OkAstProgramDiagnostic _) unit]
-            [(ErrAstProgramDiagnostic _) (set! ok false)])
+            [(ResultAstProgramDiagnostic.Ok _) unit]
+            [(ResultAstProgramDiagnostic.Err _) (set! ok false)])
           (compiler-driver-state-reset-file-state! state-b)
-          (unless (>= (array.array-ref body-cell 0) 0) (set! ok false))
-          (unless (>= (array.array-ref type-cell 0) 0) (set! ok false))
+          (unless (>= (array-ref body-cell 0) 0) (set! ok false))
+          (unless (>= (array-ref type-cell 0) 0) (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array.array-ref type-cell 0))
+              (array-ref type-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array.array-ref body-cell 0))
+              (array-ref body-cell 0))
             (set! ok false))
           ok)))))
 
@@ -372,40 +417,40 @@
   [pools : AstNodePoolContext]
   [name : String]) : AstProgram
   (let
-    [elem : i64 (ast-node-pool-context-type-push pools (AstTyI64))]
+    [elem : i64 (ast-node-pool-context-type-push pools (AstType.I64))]
     [field : AstFieldDef
-      (ast-field-def "items" (AstTyArray elem 2) (AstFieldNoCleanup))]
+      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
     [decl : AstDecl
       (ast-decl-def-struct
         name
-        (AstStructReprDefault)
-        (AstStructNoCleanup)
-        (ast-field-def-cons field AstFieldDefNil))]
-    (ast-program (ast-decl-cons decl AstDeclNil))))
+        (AstStructRepr.Default)
+        (AstStructCleanup.No)
+        (ast-field-def-cons field (ast-field-def-list-new)))]
+    (ast-program (ast-decl-cons decl (ast-decl-list-new)))))
 
 (define (compiler-driver-state-smoke-clone-generated-ctor?
   [pools : AstNodePoolContext]
   [program : AstProgram]
   [name : String]) : bool
   (match program
-    [(AstProgram decls-box)
-      (match (box-get decls-box)
-        [(AstDeclCons _ rest)
-          (match (box-get rest)
-            [(AstDeclCons decl tail)
-              (match (box-get tail)
-                [(AstDeclNil)
+    [(AstProgram.Program decls-box)
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons _ rest)
+          (match (ast-decl-list-step rest)
+            [(AstDeclListStep.Cons decl tail)
+              (match (ast-decl-list-step tail)
+                [(AstDeclListStep.Nil)
                   (match decl
-                    [(AstDeclDefFn fn-name _ _ body _)
+                    [(AstDecl.DefFn fn-name _ _ body _)
                       (and
-                        (string.string-eq
+                        (string.eq
                           (intern-str fn-name)
                           (clone-helper-name name))
                         (match (ast-node-pool-context-expr-get pools body)
-                          [(AstExprCall callee _)
+                          [(AstExpr.Call callee _)
                             (match (ast-node-pool-context-expr-get pools callee)
-                              [(AstExprVar ctor)
-                                (string.string-eq (intern-str ctor) name)]
+                              [(AstExpr.Var ctor)
+                                (string.eq (intern-str ctor) name)]
                               [_ false])]
                           [_ false]))]
                     [_ false])]
@@ -449,10 +494,10 @@
               "CloneA")))))))
 
 (define (compiler-driver-state-smoke-specialize-source [n : i64]) : String
-  (string.string-append
+  (string.append
     "(define (scale [comptime n : i64] [x : i64]) : i64 (+ x n))
 (define (main) : i64 (scale "
-    (string.string-append (string.int->string n) " 35))")))
+    (string.append (string.int->string n) " 35))")))
 
 (define (compiler-driver-state-smoke-specialized-scale-body-ok?
   [pools : AstNodePoolContext]
@@ -460,20 +505,20 @@
   (match (compiler-driver-state-smoke-context-expr-unspan
     pools
     (ast-node-pool-context-expr-get pools body))
-    [(AstExprBinary op left right)
+    [(AstExpr.Binary op left right)
       (match op
-        [(AstBinAdd)
+        [(AstBinOp.Add)
           (match (compiler-driver-state-smoke-context-expr-unspan
             pools
             (ast-node-pool-context-expr-get pools left))
-            [(AstExprVar name)
-              (if (string.string-eq (intern-str name) "x")
+            [(AstExpr.Var name)
+              (if (string.eq (intern-str name) "x")
                 (match (compiler-driver-state-smoke-context-expr-unspan
                   pools
                   (ast-node-pool-context-expr-get pools right))
-                  [(AstExprLiteral lit)
+                  [(AstExpr.Literal lit)
                     (match lit
-                      [(AstLitInt value _) (= value 7)]
+                      [(AstLiteral.Int value _) (= value 7)]
                       [_ false])]
                   [_ false])
                 false)]
@@ -484,28 +529,21 @@
 (define (compiler-driver-state-smoke-specialized-scale-decls-ok?
   [pools : AstNodePoolContext]
   [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (match decl
-        [(AstDeclDefFn name _ _ body _)
-          (if (string.string-eq
-            (intern-str name)
-            "__tl_specialized_scale_i64_7_none")
+        [(AstDecl.DefFn name _ _ body _)
+          (if (string.eq (intern-str name) "__tl_specialized_scale_i64_7_none")
             (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
-            (compiler-driver-state-smoke-specialized-scale-decls-ok?
-              pools
-              (box-get rest)))]
-        [_
-          (compiler-driver-state-smoke-specialized-scale-decls-ok?
-            pools
-            (box-get rest))])]))
+            (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest))]
+        [_ (compiler-driver-state-smoke-specialized-scale-decls-ok? pools rest)])]))
 
 (define (compiler-driver-state-smoke-specialized-scale-program-ok?
   [pools : AstNodePoolContext]
   [program : AstProgram]) : bool
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (compiler-driver-state-smoke-specialized-scale-decls-ok?
         pools
         (box-get decls-box))]))
@@ -528,19 +566,19 @@
           (compiler-driver-state-smoke-specialize-source 7)
           (compiler-cfg-empty)
           pools-a)
-          [(OkAstProgramDiagnostic program-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
               "spec-b.tl"
               (compiler-driver-state-smoke-specialize-source 11)
               (compiler-cfg-empty)
               pools-b)
-              [(OkAstProgramDiagnostic _)
+              [(ResultAstProgramDiagnostic.Ok _)
                 (begin
                   (compiler-driver-state-install-pools! state-b)
                   (match (compiler-specialize-program-with-pools
                     program-a
                     pools-a)
-                    [(OkSpecProgram specialized-a)
+                    [(ResultSpecProgram.Ok specialized-a)
                       (begin
                         (compiler-driver-state-reset-file-state! state-b)
                         (unless
@@ -552,9 +590,9 @@
                           (> (ast-node-pool-context-expr-len pools-a) 0)
                           (set! ok false))
                         ok)]
-                    [(ErrSpecProgram _) false]))]
-              [(ErrAstProgramDiagnostic _) false])]
-          [(ErrAstProgramDiagnostic _) false])))))
+                    [(ResultSpecProgram.Err _) false]))]
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
 
 (define (compiler-driver-state-smoke-active-pools-isolated?) : bool
   (let
@@ -564,14 +602,14 @@
     (begin
       (compiler-driver-state-install-pools! state-a)
       (let
-        [expr-a-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 7)))]
-        [type-a-id : i64 (ty-node-push (AstTyI64))]
+        [expr-a-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 7)))]
+        [type-a-id : i64 (ty-node-push (AstType.I64))]
         (begin
           (compiler-driver-state-capture-active-pools! state-a)
           (compiler-driver-state-install-pools! state-b)
           (let
-            [expr-b-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 11)))]
-            [type-b-id : i64 (ty-node-push (AstTyChar))]
+            [expr-b-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 11)))]
+            [type-b-id : i64 (ty-node-push (AstType.Char))]
             (begin
               (compiler-driver-state-capture-active-pools! state-b)
               (compiler-driver-state-reset-file-state! state-b)
@@ -606,28 +644,28 @@
         [cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool true)))]
+            (AstExpr.Literal (AstLiteral.Bool true)))]
         [then-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (ast-lit-int 7)))]
+            (AstExpr.Literal (ast-lit-int 7)))]
         [else-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (ast-lit-int 9)))]
+            (AstExpr.Literal (ast-lit-int 9)))]
         [if-id : i64 (ast-expr-if-with-pools pools-a cond-id then-id else-id)]
         [quote-cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool true)))]
+            (AstExpr.Literal (AstLiteral.Bool true)))]
         [quote-false-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool false)))]
+            (AstExpr.Literal (AstLiteral.Bool false)))]
         [quote-var-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprVar (intern "replacement")))]
+            (AstExpr.Var (intern "replacement")))]
         [quote-unquote-id : i64
           (ast-expr-unquote-with-pools pools-a quote-var-id)]
         [quote-if-id : i64
@@ -642,7 +680,7 @@
           (ctfe-env-extend
             env-a
             "replacement"
-            (CtfeExpr quote-cond-id (AstTyBool)))]
+            (CompilerCtfeValue.Expr quote-cond-id (AstType.Bool)))]
         [quote-len-before : i64 (ast-node-pool-context-expr-len pools-a)]
         (begin
           (compiler-driver-state-install-pools! state-b)
@@ -650,21 +688,21 @@
             (ast-node-pool-context-expr-get pools-a if-id)
             env-a
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (match value
-                [(CtfeI64 n) (unless (= n 7) (set! ok false))]
+                [(CompilerCtfeValue.I64 n) (unless (= n 7) (set! ok false))]
                 [_ (set! ok false)])]
-            [(ErrCtfe _) (set! ok false)])
+            [(ResultCtfe.Err _) (set! ok false)])
           (match (compiler-ctfe-eval
             (ast-node-pool-context-expr-get pools-a quasiquote-id)
             quote-env
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (match value
-                [(CtfeExpr node ty)
+                [(CompilerCtfeValue.Expr node ty)
                   (begin
                     (unless
-                      (ctfe-type-eq-in-env quote-env ty (AstTyBool))
+                      (ctfe-type-eq-in-env quote-env ty (AstType.Bool))
                       (set! ok false))
                     (unless (>= node quote-len-before) (set! ok false))
                     (unless
@@ -677,16 +715,16 @@
                         node)
                       (set! ok false)))]
                 [_ (set! ok false)])]
-            [(ErrCtfe _) (set! ok false)])
+            [(ResultCtfe.Err _) (set! ok false)])
           ok)))))
 
 (define (compiler-driver-state-smoke-typecheck-macro-source [n : i64]) : String
-  (string.string-append
+  (string.append
     "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 (define (use-macro) : i64 (if (and2 true true) "
-    (string.string-append (string.int->string n) " 0))")))
+    (string.append (string.int->string n) " 0))")))
 
 (define (compiler-driver-state-smoke-typecheck-macro-with-pools
   [path : String]
@@ -701,56 +739,50 @@
     source
     (compiler-cfg-empty)
     pools)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (if (compiler-driver-state-smoke-note-main-ptr-u8!
         pools
         program
         body-cell
         type-cell)
         (begin
-          (array.array-set!
-            before-cell
-            0
-            (ast-node-pool-context-expr-len pools))
+          (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
-            AstDeclPathNil
-            (vector.string-vec-new)
+            (ast-decl-path-list-new)
+            (svec.new)
             (tc-prefix-default-cache-scope)
             pools)
-            [(OkCompilerTypecheck _)
+            [(ResultCompilerTypecheck.Ok _)
               (begin
-                (array.array-set!
-                  after-cell
-                  0
-                  (ast-node-pool-context-expr-len pools))
+                (array-set! after-cell 0 (ast-node-pool-context-expr-len pools))
                 true)]
-            [(ErrCompilerTypecheck _) false]))
+            [(ResultCompilerTypecheck.Err _) false]))
         false)]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-driver-state-smoke-typecheck-macro-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [body-a-cell : (Array i64) (array.make-array i64 1)]
-    [type-a-cell : (Array i64) (array.make-array i64 1)]
-    [before-a-cell : (Array i64) (array.make-array i64 1)]
-    [after-a-cell : (Array i64) (array.make-array i64 1)]
-    [body-b-cell : (Array i64) (array.make-array i64 1)]
-    [type-b-cell : (Array i64) (array.make-array i64 1)]
-    [before-b-cell : (Array i64) (array.make-array i64 1)]
-    [after-b-cell : (Array i64) (array.make-array i64 1)]
+    [body-a-cell : (Array i64) (make-array i64 1)]
+    [type-a-cell : (Array i64) (make-array i64 1)]
+    [before-a-cell : (Array i64) (make-array i64 1)]
+    [after-a-cell : (Array i64) (make-array i64 1)]
+    [body-b-cell : (Array i64) (make-array i64 1)]
+    [type-b-cell : (Array i64) (make-array i64 1)]
+    [before-b-cell : (Array i64) (make-array i64 1)]
+    [after-b-cell : (Array i64) (make-array i64 1)]
     [ok : bool true]
     (begin
-      (array.array-set! body-a-cell 0 (- 0 1))
-      (array.array-set! type-a-cell 0 (- 0 1))
-      (array.array-set! before-a-cell 0 (- 0 1))
-      (array.array-set! after-a-cell 0 (- 0 1))
-      (array.array-set! body-b-cell 0 (- 0 1))
-      (array.array-set! type-b-cell 0 (- 0 1))
-      (array.array-set! before-b-cell 0 (- 0 1))
-      (array.array-set! after-b-cell 0 (- 0 1))
+      (array-set! body-a-cell 0 (- 0 1))
+      (array-set! type-a-cell 0 (- 0 1))
+      (array-set! before-a-cell 0 (- 0 1))
+      (array-set! after-a-cell 0 (- 0 1))
+      (array-set! body-b-cell 0 (- 0 1))
+      (array-set! type-b-cell 0 (- 0 1))
+      (array-set! before-b-cell 0 (- 0 1))
+      (array-set! after-b-cell 0 (- 0 1))
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
       (let
@@ -774,17 +806,15 @@
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array.array-ref type-a-cell 0))
+              (array-ref type-a-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array.array-ref body-a-cell 0))
+              (array-ref body-a-cell 0))
             (set! ok false))
           (unless
-            (>
-              (array.array-ref after-a-cell 0)
-              (array.array-ref before-a-cell 0))
+            (> (array-ref after-a-cell 0) (array-ref before-a-cell 0))
             (set! ok false))
           (compiler-driver-state-install-pools! state-a)
           (unless
@@ -802,17 +832,15 @@
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array.array-ref type-a-cell 0))
+              (array-ref type-a-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array.array-ref body-a-cell 0))
+              (array-ref body-a-cell 0))
             (set! ok false))
           (unless
-            (>
-              (array.array-ref after-b-cell 0)
-              (array.array-ref before-b-cell 0))
+            (> (array-ref after-b-cell 0) (array-ref before-b-cell 0))
             (set! ok false))
           ok)))))
 
@@ -827,28 +855,27 @@
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
-            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (compiler-driver-builtin-typecheck-string-length-id?
+              string-length-id)
             (set! ok false))
           (compiler-driver-state-capture-active-builtins! state-a)
           (let
             [state-a-generation : i64
-              (compiler-builtin-ids-state-generation
-                (array.array-ref (struct-get state-a builtin-ids) 0))]
+              (compiler-driver-state-builtin-generation state-a)]
             (begin
               (compiler-driver-state-install-builtins! state-b)
               (let
                 [array-length-id : i64 (intern "array-length")]
                 (begin
                   (unless
-                    (compiler-builtin-typecheck-array-length-id?
+                    (compiler-driver-builtin-typecheck-array-length-id?
                       array-length-id)
                     (set! ok false))
                   (compiler-driver-state-capture-active-builtins! state-b)
                   (compiler-driver-state-reset-file-state! state-b)
                   (unless
                     (=
-                      (compiler-builtin-ids-state-generation
-                        (array.array-ref (struct-get state-a builtin-ids) 0))
+                      (compiler-driver-state-builtin-generation state-a)
                       state-a-generation)
                     (set! ok false))
                   (compiler-driver-state-install-builtins! state-a)
@@ -857,17 +884,10 @@
                       (intern "__tl_string_length")]
                     (begin
                       (unless
-                        (compiler-builtin-typecheck-string-length-id?
+                        (compiler-driver-builtin-typecheck-string-length-id?
                           string-length-id-after-reset)
                         (set! ok false))
                       ok)))))))))))
-
-(define (compiler-driver-state-smoke-builtin-ids-data-addr
-  [state : CompilerBuiltinIdsState]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
-    : i64))
 
 (define (compiler-driver-state-smoke-builtins-scratch-capture-stable?) : bool
   (let
@@ -876,25 +896,23 @@
     (begin
       (compiler-driver-state-install-builtins! state)
       (let
-        [before : i64
-          (compiler-driver-state-smoke-builtin-ids-data-addr
-            (array.array-ref (struct-get state builtin-ids) 0))]
+        [before : i64 (compiler-driver-state-builtin-ids-data-addr state)]
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
-            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (compiler-driver-builtin-typecheck-string-length-id?
+              string-length-id)
             (set! ok false))
           (with-scratch (compiler-driver-state-capture-active-builtins! state))
           (let
-            [after : i64
-              (compiler-driver-state-smoke-builtin-ids-data-addr
-                (array.array-ref (struct-get state builtin-ids) 0))]
+            [after : i64 (compiler-driver-state-builtin-ids-data-addr state)]
             (begin
               (unless (= before after) (set! ok false))
-              (compiler-builtin-reset!)
+              (compiler-driver-builtin-reset!)
               (compiler-driver-state-install-builtins! state)
               (unless
-                (compiler-builtin-typecheck-string-length-id? string-length-id)
+                (compiler-driver-builtin-typecheck-string-length-id?
+                  string-length-id)
                 (set! ok false))
               ok)))))))
 
@@ -919,9 +937,9 @@
               (compiler-driver-state-reset-file-state! state-b)
               (let
                 [lower-b : CompilerLowerArenaState
-                  (array.array-ref (struct-get state-b lower-arenas) 0)]
+                  (array-ref (struct-get state-b lower-arenas) 0)]
                 [lower-a : CompilerLowerArenaState
-                  (array.array-ref (struct-get state-a lower-arenas) 0)]
+                  (array-ref (struct-get state-a lower-arenas) 0)]
                 (begin
                   (unless
                     (= (compiler-lower-arena-state-scratch-arena lower-b) 0)
@@ -947,12 +965,828 @@
                   (compiler-driver-state-reset-file-state! state-a)
                   ok)))))))))
 
+(define (compiler-driver-state-smoke-lower-type-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstType.Str))]
+        [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstType.I64))]
+        [array-ty : AstType
+          (ast-ty-dyn-array-with-pools pools-a (AstType.Bool))]
+        [array-decoy-id : i64
+          (ast-node-pool-context-type-push pools-b (AstType.F64))]
+        (match ref-ty
+          [(AstType.Ref _ inner)
+            (match (build-compiler-symbols program)
+              [(ResultCompilerSymbols.Ok symbols)
+                (match (build-compiler-registries-with-symbols program symbols)
+                  [(ResultCompilerRegistries.Ok registries)
+                    (let
+                      [ctx : TcContext
+                        (TcContext program symbols registries "" pools-a)]
+                      [_ : unit (ast-node-pool-context-install! pools-b)]
+                      [active-len : i64 (ty-node-pool-len)]
+                      [name-id : i64 (intern "xs")]
+                      [env : sym_i64_env.SymI64Env
+                        (sym_i64_env.sym-i64-bind-id
+                          (sym_i64_env.sym-i64-empty)
+                          name-id
+                          7)]
+                      [type-env : TcTypeEnv
+                        (tc-bind-id TcTypeEnv.Nil name-id array-ty)]
+                      [dynamic-ok : bool
+                        (match (lower-dynamic-array-var
+                          ctx
+                          env
+                          type-env
+                          (AstExpr.Var name-id))
+                          [(LowerMaybeArrayVar.Some var-id elem-ty)
+                            (and
+                              (= var-id 7)
+                              (tc-type-eq elem-ty (AstType.Bool)))]
+                          [(LowerMaybeArrayVar.No) false])]
+                      (and
+                        (= inner decoy-id)
+                        (= array-decoy-id (+ decoy-id 1))
+                        (= active-len (ast-node-pool-context-type-len pools-b))
+                        (lower-str-ref-type? ctx ref-ty)
+                        (not (lower-bytes-ref-type? ctx ref-ty))
+                        dynamic-ok
+                        (= active-len (ty-node-pool-len))))]
+                  [(ResultCompilerRegistries.Err _) false])]
+              [(ResultCompilerSymbols.Err _) false])]
+          [_ false])))))
+
+(define (compiler-driver-state-smoke-lower-expr-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [then-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 11)))]
+        [arg0-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 3)))]
+        [arg1-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 5)))]
+        [cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [then-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 700)))]
+        [else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 1100)))]
+        [arg0-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 3000)))]
+        [arg1-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 5000)))]
+        [args-a : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) arg0-a)
+              (ast-expr-list-push (&mut items) arg1-a)
+              items))]
+        [result-exprs-a : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) arg0-a)
+              (ast-expr-list-push (&mut items) cond-a)
+              items))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "main"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Scalar)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [lowered : ResultLowerExpr
+                    (lower-expr
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (AstExpr.If cond-a then-a else-a))]
+                  [args-lowered : ResultLowerArgs
+                    (lower-args
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      args-a)]
+                  [result-type : ResultTcType
+                    (lower-expr-list-result-type-fast
+                      ctx
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      result-exprs-a)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= cond-a cond-b)
+                    (= then-a then-b)
+                    (= else-a else-b)
+                    (= arg0-a arg0-b)
+                    (= arg1-a arg1-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (match lowered
+                      [(ResultLowerExpr.Ok _) true]
+                      [(ResultLowerExpr.Err _) false])
+                    (match args-lowered
+                      [(ResultLowerArgs.Ok arg-state _)
+                        (compiler-driver-state-smoke-lower-args-from-state-a?
+                          arg-state)]
+                      [(ResultLowerArgs.Err _) false])
+                    (match result-type
+                      [(ResultTcType.Ok ty) (tc-type-eq ty (AstType.Bool))]
+                      [(ResultTcType.Err _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-tail-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [callee-name : i64 (intern "loop")]
+        [callee-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var callee-name))]
+        [callee-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [call-a : i64
+          (ast-expr-call-with-pools pools-a callee-a (ast-expr-list-new))]
+        [call-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [rvo-cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [rvo-cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 72)))]
+        [rvo-value-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [rvo-value-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 73)))]
+        [rvo-return-a : i64 (ast-expr-return-with-pools pools-a rvo-value-a)]
+        [rvo-return-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 74)))]
+        [rvo-else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 0)))]
+        [rvo-else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 75)))]
+        [tail-exprs : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) call-a)
+              items))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "loop"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Scalar)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [tail-candidate : bool
+                    (lower-tail-expr-candidate?
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (AstExpr.Begin tail-exprs))]
+                  [rvo-has-return : bool
+                    (lower-rvo-expr-has-early-return?
+                      ctx
+                      (AstExpr.If rvo-cond-a rvo-return-a rvo-else-a))]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= callee-a callee-b)
+                    (= call-a call-b)
+                    (= rvo-cond-a rvo-cond-b)
+                    (= rvo-value-a rvo-value-b)
+                    (= rvo-return-a rvo-return-b)
+                    (= rvo-else-a rvo-else-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    tail-candidate
+                    rvo-has-return))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-vector-analysis-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [array-name : i64 (intern "xs")]
+        [index-name : i64 (intern "i")]
+        [arr-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var array-name))]
+        [arr-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [idx-var-a : i64
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var index-name))]
+        [idx-var-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [idx-span-a : i64
+          (ast-expr-spanned-with-pools
+            pools-a
+            idx-var-a
+            (AstSourceSpan 1 1 1 2))]
+        [idx-span-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 72)))]
+        [idx-offset-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 3)))]
+        [_idx-offset-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 73)))]
+        [idx-a : i64
+          (ast-expr-binary-with-pools
+            pools-a
+            (AstBinOp.Add)
+            idx-span-a
+            idx-offset-a)]
+        [idx-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 74)))]
+        [array-ref-a : i64 (ast-expr-array-ref-with-pools pools-a arr-a idx-a)]
+        [array-ref-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 75)))]
+        [cond-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [_cond-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 76)))]
+        [else-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 0)))]
+        [_else-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 77)))]
+        [array-body-a : i64
+          (ast-expr-if-with-pools pools-a cond-a array-ref-a else-a)]
+        [array-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 78)))]
+        [shuffle-a : i64 (ast-expr-spmd-shuffle-with-pools pools-a arr-a idx-a)]
+        [_shuffle-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 79)))]
+        [shuffle-body-a : i64
+          (ast-expr-if-with-pools pools-a cond-a shuffle-a else-a)]
+        [shuffle-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 80)))]
+        [mul-left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 2)))]
+        [_mul-left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 81)))]
+        [mul-right-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 4)))]
+        [_mul-right-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 82)))]
+        [mul-a : i64
+          (ast-expr-binary-with-pools
+            pools-a
+            (AstBinOp.Mul)
+            mul-left-a
+            mul-right-a)]
+        [_mul-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 83)))]
+        [add-left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 1)))]
+        [_add-left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 84)))]
+        [mul-body-a : i64
+          (ast-expr-binary-with-pools pools-a (AstBinOp.Add) add-left-a mul-a)]
+        [mul-body-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 85)))]
+        [array-ty : AstType (ast-ty-dyn-array-with-pools pools-a (AstType.I32))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [env : sym_i64_env.SymI64Env
+                    (sym_i64_env.sym-i64-bind-id
+                      (sym_i64_env.sym-i64-empty)
+                      array-name
+                      99)]
+                  [type-env : TcTypeEnv
+                    (tc-bind-id TcTypeEnv.Nil array-name array-ty)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [array-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a array-body-a)]
+                  [shuffle-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a shuffle-body-a)]
+                  [mul-body : AstExpr
+                    (ast-node-pool-context-expr-get pools-a mul-body-a)]
+                  [array-ref : AstExpr (AstExpr.ArrayRef arr-a idx-span-a)]
+                  [idx-expr : AstExpr
+                    (ast-node-pool-context-expr-get pools-a idx-a)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= arr-a arr-b)
+                    (= idx-var-a idx-var-b)
+                    (= idx-span-a idx-span-b)
+                    (= idx-a idx-b)
+                    (= array-ref-a array-ref-b)
+                    (= array-body-a array-body-b)
+                    (= shuffle-body-a shuffle-body-b)
+                    (= mul-body-a mul-body-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (lower-vector-body-has-array-read? ctx array-body)
+                    (lower-vector-body-has-spmd-shuffle? ctx shuffle-body)
+                    (lower-spmd-expr-has-mul? ctx mul-body)
+                    (= (lower-masked-vector-index-offset ctx "i" idx-expr) 3)
+                    (match (lower-array-ref-var-for-index
+                      ctx
+                      env
+                      type-env
+                      array-ref
+                      "i")
+                      [(LowerMaybeArrayVar.Some var-id elem-ty)
+                        (and (= var-id 99) (tc-type-eq elem-ty (AstType.I32)))]
+                      [(LowerMaybeArrayVar.No) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-avx512-masked-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [inner-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (AstLiteral.Bool true)))]
+        [inner-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [spanned-a : i64
+          (ast-expr-spanned-with-pools pools-a inner-a (AstSourceSpan 1 1 1 5))]
+        [spanned-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 71)))]
+        [exprs : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) spanned-a)
+              items))]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (box CompilerIrInstrList.Nil)
+                      (box CompilerIrBlockList.Nil)
+                      (box CompilerIrFunctionList.Nil)
+                      "main"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Avx512)
+                      0
+                      0)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [lowered : ResultLowerExpr
+                    (lower-avx512-masked-begin
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      LowerStringSet.Nil
+                      "i"
+                      0
+                      (CompilerIrValue.I64 255)
+                      8
+                      exprs)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= inner-a inner-b)
+                    (= spanned-a spanned-b)
+                    (= active-before (ast-node-pool-context-expr-len pools-b))
+                    (= active-after active-before)
+                    (match lowered
+                      [(ResultLowerExpr.Ok result)
+                        (match result
+                          [(LowerExpr.Expr _ _ ty)
+                            (tc-type-eq ty (AstType.Bool))])]
+                      [(ResultLowerExpr.Err _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [left-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 7)))]
+        [right-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 11)))]
+        [left-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 70)))]
+        [right-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 110)))]
+        [before-a : i64 (ast-node-pool-context-expr-len pools-a)]
+        [before-b : i64 (ast-node-pool-context-expr-len pools-b)]
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols program symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries "" pools-a)]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [rewritten : ResultLowerAstExpr
+                    (lower-spmd-inline-expr
+                      ctx
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (AstExpr.Binary (AstBinOp.Add) left-a right-a)
+                      LowerSpmdInlineSubst.Nil
+                      LowerStringSet.Nil)]
+                  [after-a : i64 (ast-node-pool-context-expr-len pools-a)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  (and
+                    (= left-a left-b)
+                    (= right-a right-b)
+                    (= active-before before-b)
+                    (= active-after before-b)
+                    (> after-a before-a)
+                    (match rewritten
+                      [(ResultLowerAstExpr.Ok expr)
+                        (match expr
+                          [(AstExpr.Binary (AstBinOp.Add) left-id right-id)
+                            (and
+                              (>= left-id before-a)
+                              (< left-id after-a)
+                              (>= right-id before-a)
+                              (< right-id after-a)
+                              (compiler-driver-state-smoke-context-int-lit?
+                                pools-a
+                                left-id
+                                7)
+                              (compiler-driver-state-smoke-context-int-lit?
+                                pools-a
+                                right-id
+                                11))]
+                          [_ false])]
+                      [(ResultLowerAstExpr.Err _) false])))]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-clone-roots-source-a) : String
+  "(defstruct CloneRootA (text String))
+(define (use-clone [x : CloneRootA]) : CloneRootA (not-clone x))")
+
+(define (compiler-driver-state-smoke-lower-clone-roots-source-b) : String
+  "(defstruct CloneRootA (text String))
+(define (use-clone [x : CloneRootA]) : CloneRootA (clone x))")
+
+(define (compiler-driver-state-smoke-lower-reachability-source-a) : String
+  "(define (helper) : i64 41)
+(define (main) : i64 (helper))
+(define (dead-a) : i64 0)")
+
+(define (compiler-driver-state-smoke-lower-reachability-source-b) : String
+  "(define (helper) : i64 100)
+(define (main) : i64 (dead-a))
+(define (dead-a) : i64 200)")
+
+(define (compiler-driver-state-smoke-lower-reachability-uses-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [paths : AstDeclPathList (ast-decl-path-list-new)]
+        (match (parse-ast-source-diagnostic-with-cfg-and-pools
+          "reach-state-a.tl"
+          (compiler-driver-state-smoke-lower-reachability-source-a)
+          (compiler-cfg-empty)
+          pools-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              "reach-state-b.tl"
+              (compiler-driver-state-smoke-lower-reachability-source-b)
+              (compiler-cfg-empty)
+              pools-b)
+              [(ResultAstProgramDiagnostic.Ok _)
+                (let
+                  [names : LowerNameEnv
+                    (match program-a
+                      [(AstProgram.Program decls-box)
+                        (lower-name-env-from-decls
+                          (box-get decls-box)
+                          paths
+                          "reach-state-a.tl"
+                          LowerNameEnv.Nil)])]
+                  [_ : unit (ast-node-pool-context-install! pools-b)]
+                  [active-before : i64 (ast-node-pool-len)]
+                  [pruned : LowerPrunedProgram
+                    (lower-prune-unreachable-functions
+                      pools-a
+                      "reach-state-a.tl"
+                      program-a
+                      paths
+                      names)]
+                  [active-after : i64 (ast-node-pool-len)]
+                  [ok : bool
+                    (and
+                      (= active-before (ast-node-pool-context-expr-len pools-b))
+                      (= active-after active-before)
+                      (match pruned
+                        [(LowerPrunedProgram.Program kept-program _)
+                          (match kept-program
+                            [(AstProgram.Program kept-box)
+                              (let
+                                [kept : AstDeclList (box-get kept-box)]
+                                (and
+                                  (lower-test-decl-list-defines? kept "main")
+                                  (lower-test-decl-list-defines? kept "helper")
+                                  (not
+                                    (lower-test-decl-list-defines?
+                                      kept
+                                      "dead-a"))))])]))]
+                  (begin
+                    (compiler-driver-state-reset-file-state! state-b)
+                    ok))]
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
+
+(define (compiler-driver-state-smoke-lower-clone-roots-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (compiler-driver-state-install-builtins! state-a)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [paths : AstDeclPathList (ast-decl-path-list-new)]
+        (match (parse-ast-source-diagnostic-with-cfg-and-pools
+          "clone-state-a.tl"
+          (compiler-driver-state-smoke-lower-clone-roots-source-a)
+          (compiler-cfg-empty)
+          pools-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              "clone-state-b.tl"
+              (compiler-driver-state-smoke-lower-clone-roots-source-b)
+              (compiler-cfg-empty)
+              pools-b)
+              [(ResultAstProgramDiagnostic.Ok _)
+                (match (build-compiler-symbols program-a)
+                  [(ResultCompilerSymbols.Ok symbols)
+                    (match (build-compiler-registries-with-symbols
+                      program-a
+                      symbols)
+                      [(ResultCompilerRegistries.Ok registries)
+                        (let
+                          [ctx : TcContext
+                            (TcContext program-a symbols registries "" pools-a)]
+                          [names : LowerNameEnv
+                            (match program-a
+                              [(AstProgram.Program decls-box)
+                                (lower-name-env-from-decls
+                                  (box-get decls-box)
+                                  paths
+                                  "clone-state-a.tl"
+                                  LowerNameEnv.Nil)])]
+                          (match (tc-build-top-env ctx program-a)
+                            [(ResultTcEnv.Ok top-env)
+                              (let
+                                [_ : unit
+                                  (ast-node-pool-context-install! pools-b)]
+                                [active-before : i64 (ast-node-pool-len)]
+                                [roots : CloneNameList
+                                  (lower-clone-roots-program
+                                    ctx
+                                    top-env
+                                    names
+                                    program-a)]
+                                [active-after : i64 (ast-node-pool-len)]
+                                (and
+                                  (=
+                                    active-before
+                                    (ast-node-pool-context-expr-len pools-b))
+                                  (= active-after active-before)
+                                  (match roots
+                                    [(CloneNameList.Nil) true]
+                                    [_ false])))]
+                            [(ResultTcEnv.Err _) false]))]
+                      [(ResultCompilerRegistries.Err _) false])]
+                  [(ResultCompilerSymbols.Err _) false])]
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
+
 (define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
       (compiler-driver-state-reset-file-state! state-a)
@@ -961,11 +1795,11 @@
           (compiler-driver-load-and-lower-escaping-with-state
             state-a
             "tests/integration/calc.tl"
-            (BackendTargetLinux)
+            (CompilerBackendTarget.Linux)
             roots
-            (BackendModeScalar)
+            (CompilerBackendMode.Scalar)
             (compiler-driver-target-cfgs
-              (BackendTargetLinux)
+              (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         (match lowered
           [(ResultCompilerDriverLowered.Ok _ _ pools-a)
@@ -974,31 +1808,37 @@
                 (compiler-driver-state-pool-context state-b)]
               (begin
                 (compiler-driver-state-reset-file-state! state-b)
-                (ast-node-pool-context-type-push pools-b (AstTyBool))
-                (ast-node-pool-context-type-push pools-b (AstTyChar))
+                (ast-node-pool-context-type-push pools-b (AstType.Bool))
+                (ast-node-pool-context-type-push pools-b (AstType.Char))
                 (ast-node-pool-context-install! pools-b)
-                (and
-                  (> (ast-node-pool-context-type-len pools-a) 0)
-                  (match (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-                    "tests/integration/calc.tl"
-                    lowered
-                    (BackendTargetLinux)
-                    true
-                    (BackendModeScalar)
-                    0
-                    true
-                    false)
-                    [(ResultCompilerDriver.Ok asm)
-                      (and
-                        (compiler-backend-string-contains? asm "calc")
-                        (compiler-backend-string-contains? asm "main"))]
-                    [(ResultCompilerDriver.Err _) false]))))]
+                (let
+                  [active-type-len-before : i64 (ty-node-pool-len)]
+                  [emitted : ResultCompilerDriver
+                    (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+                      "tests/integration/calc.tl"
+                      lowered
+                      (CompilerBackendTarget.Linux)
+                      true
+                      (CompilerBackendMode.Scalar)
+                      1
+                      true
+                      false)]
+                  (and
+                    (> (ast-node-pool-context-type-len pools-a) 0)
+                    (= active-type-len-before 2)
+                    (= (ty-node-pool-len) active-type-len-before)
+                    (match emitted
+                      [(ResultCompilerDriver.Ok asm)
+                        (and
+                          (compiler-backend-string-contains? asm "calc")
+                          (compiler-backend-string-contains? asm "main"))]
+                      [(ResultCompilerDriver.Err _) false])))))]
           [(ResultCompilerDriverLowered.Err _) false])))))
 
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
   [input-path : String]
-  [stdlib-roots : vector.StringVec]) : bool
+  [stdlib-roots : svec.StringVector]) : bool
   (let
     [decoy-state : CompilerDriverState (compiler-driver-state-new)]
     (begin
@@ -1009,11 +1849,11 @@
           (match (compiler-driver-load-and-lower-escaping-with-state
             state
             input-path
-            (BackendTargetLinux)
+            (CompilerBackendTarget.Linux)
             stdlib-roots
-            (BackendModeScalar)
+            (CompilerBackendMode.Scalar)
             (compiler-driver-target-cfgs
-              (BackendTargetLinux)
+              (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))
             [(ResultCompilerDriverLowered.Ok _ _ _) true]
             [(ResultCompilerDriverLowered.Err _) false])]
@@ -1027,8 +1867,12 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -1046,6 +1890,52 @@
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
       ok)))
+
+(define (compiler-driver-state-smoke-scratch-batch-owned-pool?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/calc.tl"
+            roots))
+        (set! ok false))
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/lexer.tl"
+            roots))
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
+(define (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?) : bool
+  (begin
+    (compiler-driver-reset-file-state!)
+    (with-scratch
+      (let
+        [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [temp : AstNodePoolContext
+          (ast-node-pool-context-new-with-capacities 1 1)]
+        (begin
+          (ast-node-pool-context-install! temp)
+          (ast-node-pool-context-install! prev)
+          unit)))
+    (compiler-driver-reset-file-state!)
+    true))
 
 (define (compiler-driver-state-smoke-emit-ir-core-macro-source) : String
   "(define (main) : i64
@@ -1068,8 +1958,12 @@
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
     [needle : String "score"]
@@ -1078,16 +1972,125 @@
       (match (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         state
         input-path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         roots
         2
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriver.Ok summary)
           (and
             (> (string.string-length summary) 0)
-            (string.string-contains (& summary) (& needle)))]
+            (string.contains (& summary) (& needle)))]
         [(ResultCompilerDriver.Err _) false]))))
+
+(define (compiler-driver-state-smoke-double-lower-source) : String
+  "(define (main) : i64 29)")
+
+(define (compiler-driver-state-smoke-double-lower-fixture-path) : String
+  (let
+    [path : String "target/compiler_driver_double_lower_loaded.tl"]
+    [fallback : String "compiler_driver_double_lower_loaded.tl"]
+    [source : String (compiler-driver-state-smoke-double-lower-source)]
+    (match (io.try-write-file (& path) (& source))
+      [(io.OkIoUnit) path]
+      [(io.ErrIoUnit _)
+        (begin
+          (io.write-file fallback source)
+          fallback)])))
+
+(define (compiler-driver-state-smoke-lower-loaded-with-pools
+  [input-path : String]
+  [roots : svec.StringVector]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+    input-path
+    (ast-program decls)
+    paths
+    (CompilerLowerMode.Scalar)
+    roots
+    (tc-prefix-default-cache-scope)
+    pools))
+
+(define (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
+  [input-path : String]
+  [roots : svec.StringVector]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+    input-path
+    (ast-program decls)
+    paths
+    (CompilerLowerMode.Scalar)
+    roots
+    (tc-prefix-default-cache-scope)
+    pools))
+
+(define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
+  (let
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [input-path : String
+      (compiler-driver-state-smoke-double-lower-fixture-path)]
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-load-package-file-with-runtime
+        input-path
+        (CompilerBackendTarget.Linux)
+        roots
+        ""
+        (compiler-pkg-deps-empty)
+        true)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (let
+            [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+            [decoy-pools : AstNodePoolContext
+              (ast-node-pool-context-new-with-capacities 2 2)]
+            [_install-decoy-first : unit
+              (ast-node-pool-context-install! decoy-pools)]
+            (match (compiler-driver-state-smoke-lower-loaded-with-pools
+              input-path
+              roots
+              decls
+              paths
+              pools)
+              [(ResultCompilerLower.Ok _ _)
+                (begin
+                  (ast-node-pool-context-install! decoy-pools)
+                  (match (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
+                    input-path
+                    roots
+                    decls
+                    paths
+                    pools)
+                    [(ResultCompilerLower.Ok _ _)
+                      (begin
+                        (compiler-driver-reset-file-state!)
+                        0)]
+                    [(ResultCompilerLower.Err _)
+                      (begin
+                        (io.print-error
+                          "double lower smoke: second lower failed")
+                        (compiler-driver-reset-file-state!)
+                        3)]))]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (io.print-error "double lower smoke: first lower failed")
+                  (io.print-error (compiler-diagnostic-render (box-get diag)))
+                  (compiler-driver-reset-file-state!)
+                  2)]))]
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (begin
+            (io.print-error "double lower smoke: load failed")
+            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (compiler-driver-reset-file-state!)
+            1)]))))
 
 (define (main) : i64
   (begin
@@ -1114,12 +2117,44 @@
       (return 10))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     (unless
+      (compiler-driver-state-smoke-lower-type-reads-use-context?)
+      (return 18))
+    (unless
+      (compiler-driver-state-smoke-lower-expr-reads-use-context?)
+      (return 22))
+    (unless
+      (compiler-driver-state-smoke-lower-tail-reads-use-context?)
+      (return 24))
+    (unless
+      (compiler-driver-state-smoke-lower-vector-analysis-uses-context?)
+      (return 23))
+    (unless
+      (compiler-driver-state-smoke-lower-avx512-masked-uses-context?)
+      (return 25))
+    (unless
+      (compiler-driver-state-smoke-lower-spmd-inline-expr-pools?)
+      (return 19))
+    (unless
+      (compiler-driver-state-smoke-lower-clone-roots-use-context?)
+      (return 20))
+    (unless
+      (compiler-driver-state-smoke-lower-reachability-uses-context?)
+      (return 21))
+    (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))
     (unless
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
+    (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 25))
+    (unless
+      (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
+      (return 26))
     (unless
       (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
       (return 17))
+    (let
+      [double-lower-status : i64
+        (compiler-driver-state-smoke-lower-loaded-twice-status)]
+      (unless (= double-lower-status 0) (return (+ 260 double-lower-status))))
     42))

@@ -16,9 +16,9 @@
 (define (vec-family-span-end [s : VecFamilySpan]) : i64
   (+ (struct-get s start) (struct-get s len)))
 
-(vector-family VecFamilyPoint VecFamilyPointVec vec-family-point-vec)
+(family VecFamilyPoint VecFamilyPointVec vec-family-point-vec)
 
-(vector-family VecFamilySpan VecFamilySpanVec vec-family-span-vec)
+(family VecFamilySpan VecFamilySpanVec vec-family-span-vec)
 
 (test
   named-vector-family-two-local-aggregate-families

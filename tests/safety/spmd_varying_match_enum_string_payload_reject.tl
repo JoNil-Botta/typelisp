@@ -8,9 +8,9 @@
 (define (main [items : (Array Choice)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (match (array.array-ref items i)
+      (match (array-ref items i)
         [(Named name) 1]
         [(Code value) value]))))

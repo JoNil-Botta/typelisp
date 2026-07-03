@@ -9,7 +9,7 @@
 ;# `(cfg windows …)`.
 ;#
 ;# Linux uses raw syscalls (memfd-captured stdout/stderr, a pipe2 stdin feed, an
-;# `execve` failure-marker pipe, fork/execve, and wait4 exit-status decoding) and
+;# `execve` failure-marker pipe, vfork/execve, and wait4 exit-status decoding) and
 ;# fully supports the asynchronous `start`/`wait` pair. Windows uses kernel32
 ;# (CreateProcessA with temp-file stdout/stderr redirection) for the captured
 ;# `output` path and reports the asynchronous `start`/`wait` pair as unsupported,
@@ -17,6 +17,8 @@
 ;#
 ;# Usage: imported by `tl` (which provides the public wrappers).
 (module stdlib.process_runtime)
+
+(import stdlib.array)
 
 ;: Private runtime argv list. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
@@ -108,36 +110,34 @@
   (message String))
 
 ;: Return an empty runtime argv list.
-(define (process-runtime-args-empty) : ProcessRuntimeStringList
+(define (args-empty) : ProcessRuntimeStringList
   ProcessRuntimeStringNil)
 
 ;: Prepend an owned argv string to a runtime argv list.
-(define (process-runtime-args-cons
-  [value : String]
-  [rest : ProcessRuntimeStringList]) : ProcessRuntimeStringList
+(define (args-cons [value : String] [rest : ProcessRuntimeStringList]) : ProcessRuntimeStringList
   (ProcessRuntimeStringCons value (box rest)))
 
 ;: Return an empty runtime environment override list.
-(define (process-runtime-env-empty) : ProcessRuntimeEnvList
+(define (env-empty) : ProcessRuntimeEnvList
   ProcessRuntimeEnvNil)
 
 ;: Prepend an owned environment override to a runtime env list.
-(define (process-runtime-env-cons
+(define (env-cons
   [name : String]
   [value : String]
   [rest : ProcessRuntimeEnvList]) : ProcessRuntimeEnvList
   (ProcessRuntimeEnvCons name value (box rest)))
 
 ;: Return a missing runtime optional string.
-(define (process-runtime-no-string) : ProcessRuntimeMaybeString
+(define (no-string) : ProcessRuntimeMaybeString
   (ProcessRuntimeMaybeString false ""))
 
 ;: Return a present runtime optional string.
-(define (process-runtime-some-string [value : String]) : ProcessRuntimeMaybeString
+(define (some-string [value : String]) : ProcessRuntimeMaybeString
   (ProcessRuntimeMaybeString true value))
 
 ;: Construct a private runtime command.
-(define (process-runtime-command-full
+(define (command-full
   [executable : String]
   [argv : ProcessRuntimeStringList]
   [cwd : ProcessRuntimeMaybeString]
@@ -146,14 +146,11 @@
   (ProcessRuntimeCommand executable argv cwd env stdin))
 
 ;: Construct a private runtime child handle.
-(define (process-runtime-child
-  [pid : i64]
-  [stdout-handle : i64]
-  [stderr-handle : i64]) : ProcessRuntimeChild
+(define (child [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ProcessRuntimeChild
   (ProcessRuntimeChild pid stdout-handle stderr-handle))
 
 ;: Return a destructured argv step.
-(define (process-runtime-string-step [args : ProcessRuntimeStringList]) : ProcessRuntimeStringStep
+(define (string-step [args : ProcessRuntimeStringList]) : ProcessRuntimeStringStep
   (match args
     [(ProcessRuntimeStringNil)
       (ProcessRuntimeStringStep false "" ProcessRuntimeStringNil)]
@@ -161,26 +158,26 @@
       (ProcessRuntimeStringStep true value (box-get rest))]))
 
 ;: Return whether a destructured argv step contains an item.
-(define (process-runtime-string-step-present? [step : ProcessRuntimeStringStep]) : bool
+(define (string-step-present? [step : ProcessRuntimeStringStep]) : bool
   (struct-get step present))
 
 ;: Return the argv value from a destructured step.
-(define (process-runtime-string-step-value [step : ProcessRuntimeStringStep]) : String
+(define (string-step-value [step : ProcessRuntimeStringStep]) : String
   (struct-get step value))
 
 ;: Return the argv tail from a destructured step.
-(define (process-runtime-string-step-rest [step : ProcessRuntimeStringStep]) : ProcessRuntimeStringList
+(define (string-step-rest [step : ProcessRuntimeStringStep]) : ProcessRuntimeStringList
   (struct-get step rest))
 
 ;: Return the number of runtime argv entries.
-(define (process-runtime-args-count [args : ProcessRuntimeStringList]) : i64
+(define (args-count [args : ProcessRuntimeStringList]) : i64
   (match args
     [(ProcessRuntimeStringNil) 0]
     [(ProcessRuntimeStringCons _ rest)
-      (+ 1 (stdlib.process_runtime.process-runtime-args-count (box-get rest)))]))
+      (+ 1 (stdlib.process_runtime.args-count (box-get rest)))]))
 
 ;: Return a destructured environment step.
-(define (process-runtime-env-step [env : ProcessRuntimeEnvList]) : ProcessRuntimeEnvStep
+(define (env-step [env : ProcessRuntimeEnvList]) : ProcessRuntimeEnvStep
   (match env
     [(ProcessRuntimeEnvNil)
       (ProcessRuntimeEnvStep false "" "" ProcessRuntimeEnvNil)]
@@ -188,112 +185,103 @@
       (ProcessRuntimeEnvStep true name value (box-get rest))]))
 
 ;: Return whether a destructured env step contains an item.
-(define (process-runtime-env-step-present? [step : ProcessRuntimeEnvStep]) : bool
+(define (env-step-present? [step : ProcessRuntimeEnvStep]) : bool
   (struct-get step present))
 
 ;: Return the env name from a destructured step.
-(define (process-runtime-env-step-name [step : ProcessRuntimeEnvStep]) : String
+(define (env-step-name [step : ProcessRuntimeEnvStep]) : String
   (struct-get step name))
 
 ;: Return the env value from a destructured step.
-(define (process-runtime-env-step-value [step : ProcessRuntimeEnvStep]) : String
+(define (env-step-value [step : ProcessRuntimeEnvStep]) : String
   (struct-get step value))
 
 ;: Return the env tail from a destructured step.
-(define (process-runtime-env-step-rest [step : ProcessRuntimeEnvStep]) : ProcessRuntimeEnvList
+(define (env-step-rest [step : ProcessRuntimeEnvStep]) : ProcessRuntimeEnvList
   (struct-get step rest))
 
 ;: Return a destructured optional string.
-(define (process-runtime-maybe-string-info [value : ProcessRuntimeMaybeString]) : ProcessRuntimeMaybeStringInfo
+(define (maybe-string-info [value : ProcessRuntimeMaybeString]) : ProcessRuntimeMaybeStringInfo
   (ProcessRuntimeMaybeStringInfo
     (struct-get value present)
     (struct-get value value)))
 
 ;: Return whether a destructured optional string is present.
-(define (process-runtime-maybe-string-info-present?
-  [info : ProcessRuntimeMaybeStringInfo]) : bool
+(define (maybe-string-info-present? [info : ProcessRuntimeMaybeStringInfo]) : bool
   (struct-get info present))
 
 ;: Return the string from a destructured optional string.
-(define (process-runtime-maybe-string-info-value
-  [info : ProcessRuntimeMaybeStringInfo]) : String
+(define (maybe-string-info-value [info : ProcessRuntimeMaybeStringInfo]) : String
   (struct-get info value))
 
 ;: Return the executable path from a runtime command.
-(define (process-runtime-command-executable [command : ProcessRuntimeCommand]) : String
+(define (command-executable [command : ProcessRuntimeCommand]) : String
   (struct-get command executable))
 
 ;: Return the argv list from a runtime command.
-(define (process-runtime-command-argv [command : ProcessRuntimeCommand]) : ProcessRuntimeStringList
+(define (command-argv [command : ProcessRuntimeCommand]) : ProcessRuntimeStringList
   (struct-get command argv))
 
 ;: Return the cwd setting from a runtime command.
-(define (process-runtime-command-cwd [command : ProcessRuntimeCommand]) : ProcessRuntimeMaybeString
+(define (command-cwd [command : ProcessRuntimeCommand]) : ProcessRuntimeMaybeString
   (struct-get command cwd))
 
 ;: Return the environment override list from a runtime command.
-(define (process-runtime-command-env [command : ProcessRuntimeCommand]) : ProcessRuntimeEnvList
+(define (command-env [command : ProcessRuntimeCommand]) : ProcessRuntimeEnvList
   (struct-get command env))
 
 ;: Return the stdin setting from a runtime command.
-(define (process-runtime-command-stdin [command : ProcessRuntimeCommand]) : ProcessRuntimeMaybeString
+(define (command-stdin [command : ProcessRuntimeCommand]) : ProcessRuntimeMaybeString
   (struct-get command stdin))
 
 ;: Construct a successful captured-output runtime result.
-(define (process-runtime-output-ok
-  [status : i64]
-  [stdout : String]
-  [stderr : String]) : ResultProcessRuntimeOutput
+(define (output-ok [status : i64] [stdout : String] [stderr : String]) : ResultProcessRuntimeOutput
   (OkProcessRuntimeOutput (ProcessRuntimeOutput status stdout stderr)))
 
 ;: Construct a successful child runtime result.
-(define (process-runtime-child-ok
-  [pid : i64]
-  [stdout-handle : i64]
-  [stderr-handle : i64]) : ResultProcessRuntimeChild
+(define (child-ok [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ResultProcessRuntimeChild
   (OkProcessRuntimeChild (ProcessRuntimeChild pid stdout-handle stderr-handle)))
 
 ;: Construct a runtime output error result.
-(define (process-runtime-output-error [error : ProcessRuntimeError]) : ResultProcessRuntimeOutput
+(define (output-error [error : ProcessRuntimeError]) : ResultProcessRuntimeOutput
   (ErrProcessRuntimeOutput error))
 
 ;: Construct a runtime child error result.
-(define (process-runtime-child-error [error : ProcessRuntimeError]) : ResultProcessRuntimeChild
+(define (child-error [error : ProcessRuntimeError]) : ResultProcessRuntimeChild
   (ErrProcessRuntimeChild error))
 
 ;: Construct a spawn-failure runtime output result.
-(define (process-runtime-output-spawn-failed [message : String]) : ResultProcessRuntimeOutput
+(define (output-spawn-failed [message : String]) : ResultProcessRuntimeOutput
   (ErrProcessRuntimeOutput (ProcessRuntimeSpawnFailed message)))
 
 ;: Construct a wait-failure runtime output result.
-(define (process-runtime-output-wait-failed [message : String]) : ResultProcessRuntimeOutput
+(define (output-wait-failed [message : String]) : ResultProcessRuntimeOutput
   (ErrProcessRuntimeOutput (ProcessRuntimeWaitFailed message)))
 
 ;: Construct an unsupported runtime output result.
-(define (process-runtime-output-unsupported [message : String]) : ResultProcessRuntimeOutput
+(define (output-unsupported [message : String]) : ResultProcessRuntimeOutput
   (ErrProcessRuntimeOutput (ProcessRuntimeUnsupported message)))
 
 ;: Construct a spawn-failure runtime child result.
-(define (process-runtime-child-spawn-failed [message : String]) : ResultProcessRuntimeChild
+(define (child-spawn-failed [message : String]) : ResultProcessRuntimeChild
   (ErrProcessRuntimeChild (ProcessRuntimeSpawnFailed message)))
 
 ;: Construct a wait-failure runtime child result.
-(define (process-runtime-child-wait-failed [message : String]) : ResultProcessRuntimeChild
+(define (child-wait-failed [message : String]) : ResultProcessRuntimeChild
   (ErrProcessRuntimeChild (ProcessRuntimeWaitFailed message)))
 
 ;: Construct an unsupported runtime child result.
-(define (process-runtime-child-unsupported [message : String]) : ResultProcessRuntimeChild
+(define (child-unsupported [message : String]) : ResultProcessRuntimeChild
   (ErrProcessRuntimeChild (ProcessRuntimeUnsupported message)))
 
 ;: Return true when a runtime output result is an `Ok`.
-(define (process-runtime-result-output-ok?
-  [result : ResultProcessRuntimeOutput]) : bool
+(define (result-output-ok? [result : ResultProcessRuntimeOutput]) : bool
   (match result
     [(OkProcessRuntimeOutput _) true]
     [(ErrProcessRuntimeOutput _) false]))
 
 ;: Return captured status, or `fallback` when `result` is an error.
-(define (process-runtime-result-status-or
+(define (result-status-or
   [result : ResultProcessRuntimeOutput]
   [fallback : i64]) : i64
   (match result
@@ -301,7 +289,7 @@
     [(ErrProcessRuntimeOutput _) fallback]))
 
 ;: Return an error kind code, or `fallback` when `result` is ok.
-(define (process-runtime-result-error-kind-or
+(define (result-error-kind-or
   [result : ResultProcessRuntimeOutput]
   [fallback : i64]) : i64
   (match result
@@ -314,7 +302,7 @@
         [(ProcessRuntimeUnsupported _) 3])]))
 
 ;: Return an error message, or `fallback` when `result` is ok.
-(define (process-runtime-result-error-message-or
+(define (result-error-message-or
   [result : ResultProcessRuntimeOutput]
   [fallback : String]) : String
   (match result
@@ -327,8 +315,7 @@
         [(ProcessRuntimeUnsupported message) message])]))
 
 ;: Destructure a runtime captured-output result in one pass.
-(define (process-runtime-result-output-info
-  [result : ResultProcessRuntimeOutput]) : ProcessRuntimeOutputInfo
+(define (result-output-info [result : ResultProcessRuntimeOutput]) : ProcessRuntimeOutputInfo
   (match result
     [(OkProcessRuntimeOutput output)
       (ProcessRuntimeOutputInfo
@@ -350,13 +337,13 @@
           (ProcessRuntimeOutputInfo false 3 (- 0 1) "" "" message)])]))
 
 ;: Return true when a runtime child result is an `Ok`.
-(define (process-runtime-result-child-ok? [result : ResultProcessRuntimeChild]) : bool
+(define (result-child-ok? [result : ResultProcessRuntimeChild]) : bool
   (match result
     [(OkProcessRuntimeChild _) true]
     [(ErrProcessRuntimeChild _) false]))
 
 ;: Return the child pid, or `fallback` when `result` is an error.
-(define (process-runtime-child-result-pid-or
+(define (child-result-pid-or
   [result : ResultProcessRuntimeChild]
   [fallback : i64]) : i64
   (match result
@@ -364,7 +351,7 @@
     [(ErrProcessRuntimeChild _) fallback]))
 
 ;: Return a child-result error kind code, or `fallback` when `result` is ok.
-(define (process-runtime-child-result-error-kind-or
+(define (child-result-error-kind-or
   [result : ResultProcessRuntimeChild]
   [fallback : i64]) : i64
   (match result
@@ -377,7 +364,7 @@
         [(ProcessRuntimeUnsupported _) 3])]))
 
 ;: Return a child-result error message, or `fallback` when `result` is ok.
-(define (process-runtime-child-result-error-message-or
+(define (child-result-error-message-or
   [result : ResultProcessRuntimeChild]
   [fallback : String]) : String
   (match result
@@ -390,7 +377,7 @@
         [(ProcessRuntimeUnsupported message) message])]))
 
 ;: Destructure a runtime child result in one pass.
-(define (process-runtime-result-child-info [result : ResultProcessRuntimeChild]) : ProcessRuntimeChildInfo
+(define (result-child-info [result : ResultProcessRuntimeChild]) : ProcessRuntimeChildInfo
   (match result
     [(OkProcessRuntimeChild child)
       (ProcessRuntimeChildInfo
@@ -411,6 +398,7 @@
         [(ProcessRuntimeUnsupported message)
           (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
 
+(cfg windows (import stdlib.byte_buf_core))
 (import stdlib.io)
 (import stdlib.string)
 
@@ -491,38 +479,45 @@
 
 ;: Shared spawn-failure result for the captured-output path.
 (define (process-spawn-error) : ResultProcessRuntimeOutput
-  (stdlib.process_runtime.process-runtime-output-spawn-failed
-    "process: spawn failed"))
+  (stdlib.process_runtime.output-spawn-failed "process: spawn failed"))
 
 ;: Shared wait-failure result for the captured-output path.
 (define (process-wait-error) : ResultProcessRuntimeOutput
-  (stdlib.process_runtime.process-runtime-output-wait-failed
-    "process: wait failed"))
+  (stdlib.process_runtime.output-wait-failed "process: wait failed"))
 
 ;: Shared spawn-failure result for the asynchronous start path.
 (define (process-spawn-error-child) : ResultProcessRuntimeChild
-  (stdlib.process_runtime.process-runtime-child-spawn-failed
-    "process: spawn failed"))
+  (stdlib.process_runtime.child-spawn-failed "process: spawn failed"))
 
 ;: Shared wait-failure result for the asynchronous start path.
 (define (process-wait-error-child) : ResultProcessRuntimeChild
-  (stdlib.process_runtime.process-runtime-child-wait-failed
-    "process: wait failed"))
+  (stdlib.process_runtime.child-wait-failed "process: wait failed"))
 
 ;: Async-unsupported result for `start` on runtimes without child handles.
 (define (process-async-unsupported-child) : ResultProcessRuntimeChild
-  (stdlib.process_runtime.process-runtime-child-unsupported
+  (stdlib.process_runtime.child-unsupported
     "process: async child handles are not supported by this runtime"))
 
 ;: Async-unsupported result for `wait` on runtimes without child handles.
 (define (process-async-unsupported-output) : ResultProcessRuntimeOutput
-  (stdlib.process_runtime.process-runtime-output-unsupported
+  (stdlib.process_runtime.output-unsupported
     "process: async child handles are not supported by this runtime"))
 
 ;: Return the integer address of an `Array u8` backing buffer.
 (define (process-array-u8-addr [buf : (Array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+
+;: Return the integer address of a byte-builder snapshot backing buffer.
+(cfg
+  windows
+  (define (process-byte-builder-addr [buf : byte_buf_core.ByteBufBuilder]) : i64
+    (begin
+      (set! (struct-get buf len) (array-length (struct-get buf slots)))
+      (let
+        [bytes : (Array u8)
+          (byte_buf_core.byte-buf-builder-finish-array (& buf))]
+        (stdlib.process_runtime.process-array-u8-addr bytes)))))
 
 ;: Return the integer address of an `Array u64` backing buffer.
 (define (process-array-u64-addr [buf : (Array u64)]) : i64
@@ -588,12 +583,11 @@
       found)))
 
 ;: Build a NUL-terminated `NAME=VALUE` C string for an env override.
-(define (process-runtime-env-cstring [name : String] [value : String]) : (Array
-    u8)
+(define (env-cstring [name : String] [value : String]) : (Array u8)
   (let
     [nl : i64 (string-length name)]
     [vl : i64 (string-length value)]
-    [buf : (Array u8) (make-array u8 (+ (+ nl vl) 2))]
+    [buf : (Array u8) (array.make-array u8 (+ (+ nl vl) 2))]
     [i : i64 0]
     (begin
       (while (< i nl)
@@ -615,78 +609,70 @@
 (define (process-build-override-cstrings [env : ProcessRuntimeEnvList]) : (Array
     u64)
   (let
-    [ov : (Array u64) (make-array u64 0)]
+    [ov : (Array u64) (array.make-array u64 0)]
     [cur : ProcessRuntimeEnvList env]
     [continue : bool true]
     (begin
       (while continue
         (let
-          [step : ProcessRuntimeEnvStep
-            (stdlib.process_runtime.process-runtime-env-step cur)]
-          (if (stdlib.process_runtime.process-runtime-env-step-present? step)
+          [step : ProcessRuntimeEnvStep (stdlib.process_runtime.env-step cur)]
+          (if (stdlib.process_runtime.env-step-present? step)
             (let
-              [name : String
-                (stdlib.process_runtime.process-runtime-env-step-name step)]
-              [value : String
-                (stdlib.process_runtime.process-runtime-env-step-value step)]
+              [name : String (stdlib.process_runtime.env-step-name step)]
+              [value : String (stdlib.process_runtime.env-step-value step)]
               [rest : ProcessRuntimeEnvList
-                (stdlib.process_runtime.process-runtime-env-step-rest step)]
+                (stdlib.process_runtime.env-step-rest step)]
               (begin
                 (array-push!
                   ov
                   (unsafe
                     (cast
                       (ptr->int
-                        (io.io-array-const-ptr
-                          (stdlib.process_runtime.process-runtime-env-cstring
-                            name
-                            value)))
+                        (io.array-const-ptr
+                          (stdlib.process_runtime.env-cstring name value)))
                       : u64)))
                 (set! cur rest)))
             (set! continue false))))
       ov)))
 
 ;: Return the integer address of an optional command path C string, or 0.
-(define (process-runtime-maybe-cstring-addr [value : ProcessRuntimeMaybeString]) : i64
+(define (maybe-cstring-addr [value : ProcessRuntimeMaybeString]) : i64
   (let
     [info : ProcessRuntimeMaybeStringInfo
-      (stdlib.process_runtime.process-runtime-maybe-string-info value)]
-    (if (stdlib.process_runtime.process-runtime-maybe-string-info-present? info)
+      (stdlib.process_runtime.maybe-string-info value)]
+    (if (stdlib.process_runtime.maybe-string-info-present? info)
       (stdlib.process_runtime.process-array-u8-addr
-        (io.io-c-string
-          (stdlib.process_runtime.process-runtime-maybe-string-info-value info)))
+        (io.c-string (stdlib.process_runtime.maybe-string-info-value info)))
       0)))
 
 ;: Return true when an optional stdin value provides input.
-(define (process-runtime-maybe-present? [value : ProcessRuntimeMaybeString]) : bool
-  (stdlib.process_runtime.process-runtime-maybe-string-info-present?
-    (stdlib.process_runtime.process-runtime-maybe-string-info value)))
+(define (maybe-present? [value : ProcessRuntimeMaybeString]) : bool
+  (stdlib.process_runtime.maybe-string-info-present?
+    (stdlib.process_runtime.maybe-string-info value)))
 
 ;: Return the integer address of an optional stdin string's byte storage, or 0.
-(define (process-runtime-maybe-data-addr [value : ProcessRuntimeMaybeString]) : i64
+(define (maybe-data-addr [value : ProcessRuntimeMaybeString]) : i64
   (let
     [info : ProcessRuntimeMaybeStringInfo
-      (stdlib.process_runtime.process-runtime-maybe-string-info value)]
-    (if (stdlib.process_runtime.process-runtime-maybe-string-info-present? info)
+      (stdlib.process_runtime.maybe-string-info value)]
+    (if (stdlib.process_runtime.maybe-string-info-present? info)
       (let
-        [text : String
-          (stdlib.process_runtime.process-runtime-maybe-string-info-value info)]
+        [text : String (stdlib.process_runtime.maybe-string-info-value info)]
         (unsafe
           (cast (ptr->int (string-data text)) : i64)))
       0)))
 
 ;: Return the byte length of an optional stdin string, or 0.
-(define (process-runtime-maybe-len [value : ProcessRuntimeMaybeString]) : i64
+(define (maybe-len [value : ProcessRuntimeMaybeString]) : i64
   (let
     [info : ProcessRuntimeMaybeStringInfo
-      (stdlib.process_runtime.process-runtime-maybe-string-info value)]
-    (if (stdlib.process_runtime.process-runtime-maybe-string-info-present? info)
+      (stdlib.process_runtime.maybe-string-info value)]
+    (if (stdlib.process_runtime.maybe-string-info-present? info)
       (cfg
         feature-compiler-private-string-intrinsics
         (__tl_string_length
-          (stdlib.process_runtime.process-runtime-maybe-string-info-value info))
-        (string-length
-          (stdlib.process_runtime.process-runtime-maybe-string-info-value info)))
+          (stdlib.process_runtime.maybe-string-info-value info))
+        (string-length (stdlib.process_runtime.maybe-string-info-value info)))
       0)))
 
 ;; ---------------------------------------------------------------------------
@@ -728,8 +714,8 @@
   [exec-addr : i64]
   [argv : ProcessRuntimeStringList]) : i64
   (let
-    [argc : i64 (stdlib.process_runtime.process-runtime-args-count argv)]
-    [arr : (Array u64) (make-array u64 (+ argc 2))]
+    [argc : i64 (stdlib.process_runtime.args-count argv)]
+    [arr : (Array u64) (array.make-array u64 (+ argc 2))]
     [w : i64 1]
     [cur : ProcessRuntimeStringList argv]
     [continue : bool true]
@@ -738,20 +724,19 @@
       (while continue
         (let
           [step : ProcessRuntimeStringStep
-            (stdlib.process_runtime.process-runtime-string-step cur)]
-          (if (stdlib.process_runtime.process-runtime-string-step-present? step)
+            (stdlib.process_runtime.string-step cur)]
+          (if (stdlib.process_runtime.string-step-present? step)
             (let
-              [text : String
-                (stdlib.process_runtime.process-runtime-string-step-value step)]
+              [text : String (stdlib.process_runtime.string-step-value step)]
               [rest : ProcessRuntimeStringList
-                (stdlib.process_runtime.process-runtime-string-step-rest step)]
+                (stdlib.process_runtime.string-step-rest step)]
               (begin
                 (array-set!
                   arr
                   w
                   (unsafe
                     (cast
-                      (ptr->int (io.io-array-const-ptr (io.io-c-string text)))
+                      (ptr->int (io.array-const-ptr (io.c-string text)))
                       : u64)))
                 (set! w (+ w 1))
                 (set! cur rest)))
@@ -805,7 +790,7 @@
               : (Ptr (Ptr u8))))]
         [inh : i64
           (stdlib.process_runtime.process-linux-count-inherited environ ov)]
-        [arr : (Array u64) (make-array u64 (+ (+ inh ovc) 1))]
+        [arr : (Array u64) (array.make-array u64 (+ (+ inh ovc) 1))]
         [w : i64 0]
         [i : i64 0]
         [k : i64 0]
@@ -894,8 +879,8 @@
       (begin
         (stdlib.process_runtime.process-linux-close-if stdin-r)
         (let
-          [act : (Array u64) (make-array u64 4)]
-          [old : (Array u64) (make-array u64 4)]
+          [act : (Array u64) (array.make-array u64 4)]
+          [old : (Array u64) (array.make-array u64 4)]
           (begin
             (array-set! act 0 (cast 1 : u64))
             (unsafe
@@ -928,7 +913,7 @@
 
 ;: Assemble argv/envp/cwd/marker C strings and open the capture descriptors
 ;: (memfd stdout/stderr, an optional stdin pipe, and the exec-failure pipe)
-;: before forking. `failed` records a pre-fork OS error.
+;: before spawning. `failed` records a pre-spawn OS error.
 (define (process-linux-prepare [command : ProcessRuntimeCommand]) : ProcessLinuxSpawn
   (cfg
     windows
@@ -936,29 +921,28 @@
     (let
       [exec-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string
-            (stdlib.process_runtime.process-runtime-command-executable command)))]
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
       [argv-addr : i64
         (stdlib.process_runtime.process-linux-build-argv
           exec-addr
-          (stdlib.process_runtime.process-runtime-command-argv command))]
+          (stdlib.process_runtime.command-argv command))]
       [envp-addr : i64
         (stdlib.process_runtime.process-linux-build-envp
-          (stdlib.process_runtime.process-runtime-command-env command))]
+          (stdlib.process_runtime.command-env command))]
       [cwd-addr : i64
-        (stdlib.process_runtime.process-runtime-maybe-cstring-addr
-          (stdlib.process_runtime.process-runtime-command-cwd command))]
+        (stdlib.process_runtime.maybe-cstring-addr
+          (stdlib.process_runtime.command-cwd command))]
       [marker-addr : i64
-        (stdlib.process_runtime.process-array-u8-addr (io.io-c-string "exec"))]
+        (stdlib.process_runtime.process-array-u8-addr (io.c-string "exec"))]
       [has-stdin : bool
-        (stdlib.process_runtime.process-runtime-maybe-present?
-          (stdlib.process_runtime.process-runtime-command-stdin command))]
+        (stdlib.process_runtime.maybe-present?
+          (stdlib.process_runtime.command-stdin command))]
       [stdin-data : i64
-        (stdlib.process_runtime.process-runtime-maybe-data-addr
-          (stdlib.process_runtime.process-runtime-command-stdin command))]
+        (stdlib.process_runtime.maybe-data-addr
+          (stdlib.process_runtime.command-stdin command))]
       [stdin-len : i64
-        (stdlib.process_runtime.process-runtime-maybe-len
-          (stdlib.process_runtime.process-runtime-command-stdin command))]
+        (stdlib.process_runtime.maybe-len
+          (stdlib.process_runtime.command-stdin command))]
       [stdin-r : i64 -1]
       [stdin-w : i64 -1]
       [stdout-fd : i64 -1]
@@ -966,8 +950,8 @@
       [exec-r : i64 -1]
       [exec-w : i64 -1]
       [failed : bool false]
-      [pbuf : (Array i32) (make-array i32 2)]
-      [ebuf : (Array i32) (make-array i32 2)]
+      [pbuf : (Array i32) (array.make-array i32 2)]
+      [ebuf : (Array i32) (array.make-array i32 2)]
       (begin
         (if has-stdin
           (if (<
@@ -989,7 +973,7 @@
                 (syscall
                   319
                   (stdlib.process_runtime.process-array-u8-addr
-                    (io.io-c-string "typelisp-process-stdout"))
+                    (io.c-string "typelisp-process-stdout"))
                   0))]
             (if (< fd 0)
               (set! failed true)
@@ -1002,7 +986,7 @@
                 (syscall
                   319
                   (stdlib.process_runtime.process-array-u8-addr
-                    (io.io-c-string "typelisp-process-stderr"))
+                    (io.c-string "typelisp-process-stderr"))
                   0))]
             (if (< fd 0)
               (set! failed true)
@@ -1062,8 +1046,8 @@
         (syscall 60 127))
       (stdlib.process_runtime.process-linux-child-fail exec-w marker-addr))))
 
-;: Forked child path (syscalls only, no allocation): wire stdin/stdout/stderr,
-;: chdir, then `execve`. Never returns (it execs or exits 127).
+;: Child path after vfork (syscalls only, no allocation or parent-memory writes):
+;: wire stdin/stdout/stderr, chdir, then `execve`. Never returns.
 (define (process-linux-exec-child [spawn : ProcessLinuxSpawn]) : never
   (cfg
     windows
@@ -1121,7 +1105,7 @@
     windows
     true
     (let
-      [buf : (Array u8) (make-array u8 8)]
+      [buf : (Array u8) (array.make-array u8 8)]
       [count : i64
         (unsafe
           (syscall
@@ -1159,7 +1143,7 @@
               (struct-get spawn exec-r))
             (stdlib.process_runtime.process-wait-error))
           (let
-            [statusbuf : (Array i32) (make-array i32 1)]
+            [statusbuf : (Array i32) (array.make-array i32 1)]
             [waited : i64
               (unsafe
                 (syscall
@@ -1187,9 +1171,9 @@
                   (stdlib.process_runtime.process-spawn-error))
                 (let
                   [stdout-text : String
-                    (io.io-read-fd-to-string (struct-get spawn stdout-fd))]
+                    (io.read-fd-to-string (struct-get spawn stdout-fd))]
                   [stderr-text : String
-                    (io.io-read-fd-to-string (struct-get spawn stderr-fd))]
+                    (io.read-fd-to-string (struct-get spawn stderr-fd))]
                   [status : i64
                     (stdlib.process_runtime.process-decode-status
                       (array-ref statusbuf 0))]
@@ -1198,7 +1182,7 @@
                       (struct-get spawn stdout-fd))
                     (stdlib.process_runtime.process-linux-close-if
                       (struct-get spawn stderr-fd))
-                    (stdlib.process_runtime.process-runtime-output-ok
+                    (stdlib.process_runtime.output-ok
                       status
                       stdout-text
                       stderr-text)))))))))))
@@ -1226,7 +1210,7 @@
                 61
                 pid
                 (stdlib.process_runtime.process-array-i32-addr
-                  (make-array i32 1))
+                  (array.make-array i32 1))
                 0
                 0))
             (stdlib.process_runtime.process-linux-close-if
@@ -1244,7 +1228,7 @@
                   61
                   pid
                   (stdlib.process_runtime.process-array-i32-addr
-                    (make-array i32 1))
+                    (array.make-array i32 1))
                   0
                   0))
               (stdlib.process_runtime.process-linux-close-if
@@ -1252,12 +1236,12 @@
               (stdlib.process_runtime.process-linux-close-if
                 (struct-get spawn stderr-fd))
               (stdlib.process_runtime.process-spawn-error-child))
-            (stdlib.process_runtime.process-runtime-child-ok
+            (stdlib.process_runtime.child-ok
               pid
               (struct-get spawn stdout-fd)
               (struct-get spawn stderr-fd))))))))
 
-;: Linux captured-output runtime: prepare, fork, and dispatch parent/child.
+;: Linux captured-output runtime: prepare, vfork, and dispatch parent/child.
 (define (process-linux-output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
   (cfg
     windows
@@ -1270,9 +1254,11 @@
           (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
           (stdlib.process_runtime.process-spawn-error))
         (let
+          ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
+          ;; on memory-constrained runners without copying page tables.
           [pid : i64
             (unsafe
-              (syscall 57))]
+              (syscall 58))]
           (if (< pid 0)
             (begin
               (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
@@ -1281,7 +1267,7 @@
               (stdlib.process_runtime.process-linux-exec-child spawn)
               (stdlib.process_runtime.process-linux-output-parent spawn pid))))))))
 
-;: Linux asynchronous start runtime: prepare, fork, and dispatch parent/child.
+;: Linux asynchronous start runtime: prepare, vfork, and dispatch parent/child.
 (define (process-linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
   (cfg
     windows
@@ -1294,9 +1280,11 @@
           (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
           (stdlib.process_runtime.process-spawn-error-child))
         (let
+          ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
+          ;; on memory-constrained runners without copying page tables.
           [pid : i64
             (unsafe
-              (syscall 57))]
+              (syscall 58))]
           (if (< pid 0)
             (begin
               (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
@@ -1315,7 +1303,7 @@
       [pid : i64 (struct-get child pid)]
       [stdout-fd : i64 (struct-get child stdout-handle)]
       [stderr-fd : i64 (struct-get child stderr-handle)]
-      [statusbuf : (Array i32) (make-array i32 1)]
+      [statusbuf : (Array i32) (array.make-array i32 1)]
       [waited : i64
         (unsafe
           (syscall
@@ -1330,14 +1318,14 @@
           (stdlib.process_runtime.process-linux-close-if stderr-fd)
           (stdlib.process_runtime.process-wait-error))
         (let
-          [stdout-text : String (io.io-read-fd-to-string stdout-fd)]
+          [stdout-text : String (io.read-fd-to-string stdout-fd)]
           (begin
             (stdlib.process_runtime.process-linux-close-if stdout-fd)
             (let
-              [stderr-text : String (io.io-read-fd-to-string stderr-fd)]
+              [stderr-text : String (io.read-fd-to-string stderr-fd)]
               (begin
                 (stdlib.process_runtime.process-linux-close-if stderr-fd)
-                (stdlib.process_runtime.process-runtime-output-ok
+                (stdlib.process_runtime.output-ok
                   (stdlib.process_runtime.process-decode-status
                     (array-ref statusbuf 0))
                   stdout-text
@@ -1362,7 +1350,7 @@
 ;: Quote a command-line argument with double quotes when it contains a space.
 (define (process-quote-arg [text : String]) : String
   (if (stdlib.process_runtime.process-string-has-space? text)
-    (string.string-append (string.string-append "\"" text) "\"")
+    (string.append (string.append "\"" text) "\"")
     text))
 
 ;: Join the executable and argv into a single space-separated command line,
@@ -1371,26 +1359,25 @@
   (let
     [line : String
       (stdlib.process_runtime.process-quote-arg
-        (stdlib.process_runtime.process-runtime-command-executable command))]
+        (stdlib.process_runtime.command-executable command))]
     [cur : ProcessRuntimeStringList
-      (stdlib.process_runtime.process-runtime-command-argv command)]
+      (stdlib.process_runtime.command-argv command)]
     [continue : bool true]
     (begin
       (while continue
         (let
           [step : ProcessRuntimeStringStep
-            (stdlib.process_runtime.process-runtime-string-step cur)]
-          (if (stdlib.process_runtime.process-runtime-string-step-present? step)
+            (stdlib.process_runtime.string-step cur)]
+          (if (stdlib.process_runtime.string-step-present? step)
             (let
-              [text : String
-                (stdlib.process_runtime.process-runtime-string-step-value step)]
+              [text : String (stdlib.process_runtime.string-step-value step)]
               [rest : ProcessRuntimeStringList
-                (stdlib.process_runtime.process-runtime-string-step-rest step)]
+                (stdlib.process_runtime.string-step-rest step)]
               (begin
                 (set!
                   line
-                  (string.string-append
-                    (string.string-append line " ")
+                  (string.append
+                    (string.append line " ")
                     (stdlib.process_runtime.process-quote-arg text)))
                 (set! cur rest)))
             (set! continue false))))
@@ -1401,7 +1388,9 @@
 ;: final raw byte block, and no growable byte array escapes this module.
 (cfg
   windows
-  (define (process-windows-push-cstr [block : (Array u8)] [addr : i64]) : unit
+  (define (process-windows-push-cstr
+    [block : (&mut block byte_buf_core.ByteBufBuilder)]
+    [addr : i64]) : unit
     (let
       [ptr : (Ptr u8) (stdlib.process_runtime.process-addr->ptr addr)]
       [i : i64 0]
@@ -1411,7 +1400,7 @@
           (let
             [byte : i64 (stdlib.process_runtime.process-byte-at ptr i)]
             (begin
-              (array-push! block (cast byte : u8))
+              (array-push! (struct-get block slots) (cast byte : u8))
               (if (= byte 0)
                 (set! done true)
                 (set! i (+ i 1))))))
@@ -1430,7 +1419,8 @@
       (if (= ovc 0)
         0
         (let
-          [block : (Array u8) (make-array u8 0)]
+          [block : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
           [base : (Ptr u8)
             (stdlib.process_runtime.process-win-get-environment-strings)]
           [i : i64 0]
@@ -1454,7 +1444,7 @@
                         entry
                         ov))
                       (stdlib.process_runtime.process-windows-push-cstr
-                        block
+                        (&mut block)
                         (unsafe
                           (cast (ptr->int entry) : i64)))
                       unit)
@@ -1462,11 +1452,11 @@
             (while (< k ovc)
               (begin
                 (stdlib.process_runtime.process-windows-push-cstr
-                  block
+                  (&mut block)
                   (cast (array-ref ov k) : i64))
                 (set! k (+ k 1))))
-            (array-push! block (cast 0 : u8))
-            (stdlib.process_runtime.process-array-u8-addr block)))))))
+            (array-push! (struct-get block slots) (cast 0 : u8))
+            (stdlib.process_runtime.process-byte-builder-addr block)))))))
 
 ;: Close a Windows handle when it is not INVALID_HANDLE_VALUE.
 (cfg
@@ -1483,9 +1473,9 @@
   windows
   (define (process-windows-make-temp-file) : i64
     (let
-      [pathbuf : (Array u8) (make-array u8 320)]
-      [namebuf : (Array u8) (make-array u8 320)]
-      [prefix : (Array u8) (io.io-c-string "tlp")]
+      [pathbuf : (Array u8) (array.make-array u8 320)]
+      [namebuf : (Array u8) (array.make-array u8 320)]
+      [prefix : (Array u8) (io.c-string "tlp")]
       [path-len : i32
         (stdlib.process_runtime.process-win-get-temp-path
           (cast 320 : i32)
@@ -1496,15 +1486,15 @@
         (let
           [name-result : i32
             (stdlib.process_runtime.process-win-get-temp-file-name
-              (io.io-array-const-ptr pathbuf)
-              (io.io-array-const-ptr prefix)
+              (io.array-const-ptr pathbuf)
+              (io.array-const-ptr prefix)
               (cast 0 : i32)
               (unsafe
                 (array-data namebuf)))]
           (if (= (cast name-result : i64) 0)
             -1
             (let
-              [security : (Array u64) (make-array u64 3)]
+              [security : (Array u64) (array.make-array u64 3)]
               (begin
                 (array-set! security 0 (cast 24 : u64))
                 (array-set! security 1 (cast 0 : u64))
@@ -1512,7 +1502,7 @@
                 (let
                   [handle : i64
                     (stdlib.process_runtime.process-win-create-file
-                      (io.io-array-const-ptr namebuf)
+                      (io.array-const-ptr namebuf)
                       0xc0000000
                       0x3
                       (stdlib.process_runtime.process-array-u64-addr security)
@@ -1535,8 +1525,8 @@
     [out-handle : i64]
     [err-handle : i64]) : i64
     (let
-      [startup : (Array u64) (make-array u64 13)]
-      [procinfo : (Array u64) (make-array u64 3)]
+      [startup : (Array u64) (array.make-array u64 13)]
+      [procinfo : (Array u64) (array.make-array u64 3)]
       (begin
         (array-set! startup 0 (cast 104 : u64))
         (array-set! startup 7 (shl (cast 0x100 : u64) 32))
@@ -1564,9 +1554,9 @@
           (if (= created (cast 0 : i32))
             -1
             (let
-              [codebuf : (Array i32) (make-array i32 1)]
+              [codebuf : (Array i32) (array.make-array i32 1)]
               [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
-              [thread-handle : i64 (cast (array-ref procinfo 1) : i64)]
+              [worker-handle : i64 (cast (array-ref procinfo 1) : i64)]
               (begin
                 (stdlib.process_runtime.process-win-wait-single
                   process-handle
@@ -1576,7 +1566,7 @@
                   (unsafe
                     (ptr-cast (array-data codebuf) : (MutPtr i32))))
                 (stdlib.process_runtime.process-win-close-handle process-handle)
-                (stdlib.process_runtime.process-win-close-handle thread-handle)
+                (stdlib.process_runtime.process-win-close-handle worker-handle)
                 (cast (array-ref codebuf 0) : i64)))))))))
 
 ;: Seek a raw Windows file HANDLE and return the resulting offset.
@@ -1587,7 +1577,7 @@
     [offset : i64]
     [whence : i32]) : i64
     (let
-      [pos : (Array i64) (make-array i64 1)]
+      [pos : (Array i64) (array.make-array i64 1)]
       [ok : i32
         (stdlib.process_runtime.process-win-set-file-pointer-ex
           handle
@@ -1628,7 +1618,7 @@
           0)
           ""
           (let
-            [buf : (Array u8) (make-array u8 end)]
+            [buf : (Array u8) (array.make-array u8 end)]
             [offset : i64 0]
             [done : bool false]
             (begin
@@ -1641,12 +1631,12 @@
                     (if (> remaining 1048576)
                       (cast 1048576 : i32)
                       (cast remaining : i32))]
-                  [readbuf : (Array i32) (make-array i32 1)]
+                  [readbuf : (Array i32) (array.make-array i32 1)]
                   [ok : i32
                     (stdlib.process_runtime.process-win-read-file
                       handle
                       (unsafe
-                        (ptr-offset (stdlib.io.io-array-ptr buf) offset))
+                        (ptr-offset (stdlib.io.array-ptr buf) offset))
                       chunk
                       (unsafe
                         (ptr-cast (array-data readbuf) : (MutPtr i32)))
@@ -1658,7 +1648,7 @@
                       (set! done true)
                       (set! offset (+ offset read-count))))))
               (unsafe
-                (string-from-bytes (stdlib.io.io-array-const-ptr buf) offset)))))))))
+                (string-from-bytes (stdlib.io.array-const-ptr buf) offset)))))))))
 
 ;: Non-Windows stub for the module-qualified helper name.
 (cfg
@@ -1674,23 +1664,21 @@
     (let
       [appname-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string
-            (stdlib.process_runtime.process-runtime-command-executable command)))]
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
       [cmdline-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string
-            (stdlib.process_runtime.process-windows-cmdline command)))]
+          (io.c-string (stdlib.process_runtime.process-windows-cmdline command)))]
       [env-addr : i64 0]
       [cwd-addr : i64
-        (stdlib.process_runtime.process-runtime-maybe-cstring-addr
-          (stdlib.process_runtime.process-runtime-command-cwd command))]
+        (stdlib.process_runtime.maybe-cstring-addr
+          (stdlib.process_runtime.command-cwd command))]
       [out-handle : i64 -1]
       [err-handle : i64 -1]
       (begin
         (set!
           env-addr
           (stdlib.process_runtime.process-windows-build-env
-            (stdlib.process_runtime.process-runtime-command-env command)))
+            (stdlib.process_runtime.command-env command)))
         (set!
           out-handle
           (stdlib.process_runtime.process-windows-make-temp-file))
@@ -1729,7 +1717,7 @@
                   (begin
                     (stdlib.process_runtime.process-windows-close-if out-handle)
                     (stdlib.process_runtime.process-windows-close-if err-handle)
-                    (stdlib.process_runtime.process-runtime-output-ok
+                    (stdlib.process_runtime.output-ok
                       status
                       stdout-text
                       stderr-text)))))))))))

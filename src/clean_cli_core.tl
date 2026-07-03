@@ -6,7 +6,7 @@
 (import stdlib.io)
 (import "build_cli_core.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 
 (defenum CleanConfig
   (Source String bool)
@@ -69,13 +69,13 @@
     [suffix-len : i64 (string.string-length suffix)]
     (if (> suffix-len text-len)
       false
-      (string.string-eq
+      (string.eq
         (string.substring text (- text-len suffix-len) suffix-len)
         suffix))))
 
 (define (clean-vcs-metadata-path? [path : String]) : bool
   (or
-    (string.string-eq path ".git")
+    (string.eq path ".git")
     (clean-string-prefix? path ".git/")
     (clean-string-prefix? path ".git\\")
     (clean-string-contains? path "/.git/")
@@ -86,10 +86,10 @@
 (define (clean-dangerous-path? [path : String]) : bool
   (or
     (= (string.string-length path) 0)
-    (string.string-eq path ".")
-    (string.string-eq path "..")
-    (string.string-eq path "/")
-    (string.string-eq path "\\")
+    (string.eq path ".")
+    (string.eq path "..")
+    (string.eq path "/")
+    (string.eq path "\\")
     (clean-vcs-metadata-path? path)))
 
 (define (clean-file-exists? [path : String]) : bool
@@ -124,7 +124,7 @@
                 "clean: failed to remove file "
                 path
                 ": "
-                (io.io-error-message error)))
+                (io.error-message error)))
             1)]))
     0))
 
@@ -146,7 +146,7 @@
                 "clean: failed to remove directory "
                 path
                 ": "
-                (io.io-error-message error)))
+                (io.error-message error)))
             1)]))
     0))
 
@@ -158,7 +158,7 @@
 (define (clean-source-artifact-safe? [source : String] [path : String]) : bool
   (and
     (not (clean-dangerous-path? path))
-    (not (string.string-eq source path))
+    (not (string.eq source path))
     (not (clean-string-suffix? path ".tl"))))
 
 (define (clean-remove-source-artifact
@@ -235,12 +235,10 @@
   [path : String]) : bool
   (let
     [output-dir : String (build-package-output-dir manifest-dir name)]
-    [output-prefix : String (string.string-append output-dir "/")]
+    [output-prefix : String (string.append output-dir "/")]
     (and
       (not (clean-dangerous-path? path))
-      (or
-        (string.string-eq path output-dir)
-        (clean-string-prefix? path output-prefix)))))
+      (or (string.eq path output-dir) (clean-string-prefix? path output-prefix)))))
 
 (define (clean-remove-package-file
   [manifest-dir : String]
@@ -270,7 +268,7 @@
   (match (build-load-manifest manifest-path)
     [(ResultBuildManifest.Err message)
       (begin
-        (io.print-error (string.string-append "Error: " message))
+        (io.print-error (string.append "Error: " message))
         1)]
     [(ResultBuildManifest.Ok manifest)
       (let
@@ -303,7 +301,7 @@
                   (build-package-obj-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -315,7 +313,7 @@
                   (build-package-obj-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -327,7 +325,7 @@
                   (build-package-bin-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -339,7 +337,7 @@
                   (build-package-bin-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -351,7 +349,7 @@
                   (build-package-lib-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -363,7 +361,7 @@
                   (build-package-lib-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -423,7 +421,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--dry-run")
+        [(string.eq current "--dry-run")
           (clean-parse-options
             (+ idx 1)
             count
@@ -432,7 +430,7 @@
             manifest
             has-manifest
             true)]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultCleanConfig.Err "clean: --manifest-path requires a value")
             (if has-manifest
@@ -447,8 +445,7 @@
                 true
                 dry-run)))]
         [(clean-flag? current)
-          (ResultCleanConfig.Err
-            (string.string-append "clean: unknown flag " current))]
+          (ResultCleanConfig.Err (string.append "clean: unknown flag " current))]
         [has-source
           (ResultCleanConfig.Err "clean: accepts only one source file")]
         [else

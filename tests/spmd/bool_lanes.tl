@@ -5,15 +5,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! flags i (< i 5))
-        (array.array-set! values i (- i 4))
+        (array-set! flags i (< i 5))
+        (array-set! values i (- i 4))
         (set! i (+ i 1))))))
 
 (define (fill-bool-copy-foreach
   [src : (Array bool)]
   [out : (Array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array.array-set! out i (array.array-ref src i))))
+  (foreach ([i : i64 0 n]) (array-set! out i (array-ref src i))))
 
 (define (fill-bool-copy-scalar
   [src : (Array bool)]
@@ -23,16 +23,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! out i (array.array-ref src i))
+        (array-set! out i (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-foreach
   [values : (Array i64)]
   [out : (Array bool)]
   [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array.array-set! out i (< (array.array-ref values i) 0))))
+  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-scalar
   [values : (Array i64)]
@@ -42,7 +40,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! out i (< (array.array-ref values i) 0))
+        (array-set! out i (< (array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (eq-bool [a : (Array bool)] [b : (Array bool)] [n : i64]) : bool
@@ -52,11 +50,11 @@
     (begin
       (while (< i n)
         (begin
-          (if (array.array-ref a i)
-            (if (array.array-ref b i)
+          (if (array-ref a i)
+            (if (array-ref b i)
               unit
               (set! ok false))
-            (if (array.array-ref b i)
+            (if (array-ref b i)
               (set! ok false)
               unit))
           (set! i (+ i 1))))

@@ -10,9 +10,9 @@
   [left : (&mut bags (Array i64))]
   [right : (&mut bags (Array i64))]) : i64
   (begin
-    (array.array-set! left 0 18)
-    (array.array-set! right 0 24)
-    (+ (array.array-ref left 0) (array.array-ref right 0))))
+    (array-set! left 0 18)
+    (array-set! right 0 24)
+    (+ (array-ref left 0) (array-ref right 0))))
 
 (define (main) : i64
   (let

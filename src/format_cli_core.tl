@@ -4,13 +4,13 @@
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
 (import stdlib.io)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
 
 (defenum FmtConfig
-  (File bool vector.StringVec)
+  (File bool svec.StringVector)
   (Package bool String bool))
 
 (defenum ResultFmtConfig
@@ -22,11 +22,9 @@
   (Err String))
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
-  (string.string-append
+  (string.append
     "fmt: failed to write "
-    (string.string-append
-      path
-      (string.string-append ": " (io.io-error-message error)))))
+    (string.append path (string.append ": " (io.error-message error)))))
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (& formatted))
@@ -39,32 +37,32 @@
     [(ResultFmtWrite.Ok) 0]
     [(ResultFmtWrite.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]))
 
 (define (fmt-source-error-message [path : String] [err : FormatSourceError]) : String
   (let
     [span : FormatSourceSpan (format-source-error-span err)]
-    (string.string-append
+    (string.append
       path
-      (string.string-append
+      (string.append
         ":"
-        (string.string-append
+        (string.append
           (string.int->string (format-source-span-start-line span))
-          (string.string-append
+          (string.append
             ":"
-            (string.string-append
+            (string.append
               (string.int->string (format-source-span-start-col span))
-              (string.string-append ": " (format-source-error-message err)))))))))
+              (string.append ": " (format-source-error-message err)))))))))
 
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fmt-try-write-formatted-file "" "(define x 1)\n")
     [(ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
     [(ResultFmtWrite.Err message)
-      (if (string.string-eq message "fmt: failed to write : io: invalid path: ")
+      (if (string.eq message "fmt: failed to write : io: invalid path: ")
         unit
-        (io.panic (string.string-copy message)))]))
+        (io.panic (string.copy message)))]))
 
 (test
   fmt-parse-diagnostic-includes-path-line-and-column
@@ -73,7 +71,7 @@
     [(ResultFormatString.Err err)
       (let
         [message : String (fmt-source-error-message "bad.tl" err)]
-        (if (string.string-eq
+        (if (string.eq
           message
           "bad.tl:2:3: format cst: unexpected closing delimiter")
           unit
@@ -83,7 +81,7 @@
   (match (format-rules-render-source-width-result source 80)
     [(ResultFormatString.Ok _) false]
     [(ResultFormatString.Err err)
-      (string.string-eq
+      (string.eq
         (format-source-error-message err)
         "format lexer: malformed integer literal")]))
 
@@ -100,12 +98,19 @@
 (define (fmt-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
+(define (fmt-svec-push [items : svec.StringVector] [value : String]) : svec.StringVector
+  (let
+    [out : svec.StringVector items]
+    (begin
+      (svec.push (&mut out) value)
+      out)))
+
 (define (fmt-config-finish
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
-  (if (vector.string-vec-is-empty? paths)
+  (if (svec.is-empty? (& paths))
     (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
     (if has-manifest
       (ResultFmtConfig.Err
@@ -116,7 +121,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -124,9 +129,9 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--check")
+        [(string.eq current "--check")
           (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
             (if has-manifest
@@ -138,7 +143,7 @@
                 paths
                 (io.arg (+ idx 1))
                 true)))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultFmtConfig.Err "fmt: --stdlib-root requires a value")
             (fmt-parse-args
@@ -149,19 +154,18 @@
               manifest-path
               has-manifest))]
         [(fmt-flag? current)
-          (ResultFmtConfig.Err
-            (string.string-append "fmt: unknown flag " current))]
+          (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
         [else
           (fmt-parse-args
             (+ idx 1)
             count
             check
-            (vector.string-vec-push paths current)
+            (fmt-svec-push paths current)
             manifest-path
             has-manifest)]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (fmt-parse-args start count false (vector.string-vec-new) "" false))
+  (fmt-parse-args start count false (svec.new) "" false))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -169,32 +173,30 @@
     (match (format-rules-render-source-width-result source 80)
       [(ResultFormatString.Ok formatted)
         (if check
-          (if (string.string-eq source formatted)
+          (if (string.eq source formatted)
             0
             (begin
               (io.print-error
-                (string.string-append
-                  "fmt: would reformat "
-                  (string.string-append path "\n")))
+                (string.append "fmt: would reformat " (string.append path "\n")))
               1))
-          (if (string.string-eq source formatted)
+          (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
       [(ResultFormatString.Err err)
         (begin
           (io.print-error
-            (string.string-append (fmt-source-error-message path err) "\n"))
+            (string.append (fmt-source-error-message path err) "\n"))
           1)])))
 
 (define (fmt-files-from
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [index : i64]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len paths))
+  (if (>= index (svec.len (& paths)))
     status
     (let
-      [path : String (vector.string-vec-get paths index "")]
+      [path : String (svec.get (& paths) index "")]
       [file-status : i64 (fmt-format-file check path)]
       (fmt-files-from
         check
@@ -204,8 +206,32 @@
           file-status
           status)))))
 
-(define (fmt-files [check : bool] [paths : vector.StringVec] [status : i64]) : i64
+(define (fmt-files [check : bool] [paths : svec.StringVector] [status : i64]) : i64
   (fmt-files-from check paths 0 status))
+
+(define (fmt-package-files-from
+  [check : bool]
+  [paths : PackageSourceList]
+  [index : i64]
+  [status : i64]) : i64
+  (if (>= index (package-source-list-len paths))
+    status
+    (let
+      [path : String (package-source-list-get paths index "")]
+      [file-status : i64 (fmt-format-file check path)]
+      (fmt-package-files-from
+        check
+        paths
+        (+ index 1)
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (fmt-package-files
+  [check : bool]
+  [paths : PackageSourceList]
+  [status : i64]) : i64
+  (fmt-package-files-from check paths 0 status))
 
 (define (fmt-package
   [check : bool]
@@ -214,10 +240,10 @@
   (match (package-source-discover-for "fmt" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
-      (fmt-files check (struct-get source-set sources) 0)]))
+      (fmt-package-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.
@@ -230,5 +256,5 @@
           (fmt-package check manifest-path has-manifest)])]
     [(ResultFmtConfig.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]))

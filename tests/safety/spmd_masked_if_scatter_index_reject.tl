@@ -9,7 +9,7 @@
   (foreach
     ([i : i64 0 n])
     (let
-      [j : i64 (array.array-ref ix i)]
-      (if (> (array.array-ref xs i) 0)
-        (array.array-set! out j (array.array-ref xs i))
-        (array.array-set! out i 0)))))
+      [j : i64 (array-ref ix i)]
+      (if (> (array-ref xs i) 0)
+        (array-set! out j (array-ref xs i))
+        (array-set! out i 0)))))

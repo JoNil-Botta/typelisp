@@ -249,6 +249,16 @@ from one compiler binary. The instruction-count path is Linux/cachegrind-only;
 use WSL on Windows. Pass `--profile` to also build a `compile-profile` CLI and
 print load, lower/macro, optimize, backend, and total phase deltas.
 
+`scripts/measure-result-import-cost.sh` is the paired #3903/#3215 diagnostic
+harness for generated `(result T E)` imports in hot selfhost modules. It copies
+`src/*.tl` into scratch trees under `target/` and injects one unused generated
+result import into each variant source (`format_tokens.tl`, `lex.tl`, or
+`compiler_ctfe.tl`) without editing tracked sources. Linux/cachegrind mode
+reports a baseline plus one `self_compile/compile_cli_opt1` instruction-count
+delta for each variant; `--profile` also emits phase deltas and generated
+macro/import counter deltas. The harness is for local diagnosis before #3903
+optimization attempts, not a CI gate.
+
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a

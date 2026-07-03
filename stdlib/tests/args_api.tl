@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.args)
 (import stdlib.io)
 (import stdlib.string)
@@ -5,13 +6,13 @@
 (import (vector.vector String) as svec)
 
 (define args-api-specs : args.ArgsOptionSpecList
-  (args.args-option-spec-cons
-    (args.args-value-option "output" "output" "o")
-    (args.args-option-spec-cons
-      (args.args-value-option "include" "include" "I")
-      (args.args-option-spec-cons
-        (args.args-flag-option "verbose" "verbose" "v")
-        (args.args-option-spec-empty)))))
+  (args.option-spec-cons
+    (args.value-option "output" "output" "o")
+    (args.option-spec-cons
+      (args.value-option "include" "include" "I")
+      (args.option-spec-cons
+        (args.flag-option "verbose" "verbose" "v")
+        (args.option-spec-empty)))))
 
 (define (args-api-assert-true [condition : bool] [message : String]) : unit
   (if condition
@@ -28,14 +29,14 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (args-api-assert-true (string.string-eq actual expected) message))
+  (args-api-assert-true (string.eq actual expected) message))
 
 (define (args-api-array0) : (Array String)
-  (make-array String 0))
+  (array.make-array String 0))
 
 (define (args-api-array1 [a : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 1)]
+    [items : (Array String) (array.make-array String 1)]
     (begin
       (array-set! items 0 a)
       items)))
@@ -43,7 +44,7 @@
 (define (args-api-array3 [a : String] [b : String] [c : String]) : (Array
     String)
   (let
-    [items : (Array String) (make-array String 3)]
+    [items : (Array String) (array.make-array String 3)]
     (begin
       (array-set! items 0 a)
       (array-set! items 1 b)
@@ -57,7 +58,7 @@
   [d : String]
   [e : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 5)]
+    [items : (Array String) (array.make-array String 5)]
     (begin
       (array-set! items 0 a)
       (array-set! items 1 b)
@@ -74,7 +75,7 @@
   [e : String]
   [f : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 6)]
+    [items : (Array String) (array.make-array String 6)]
     (begin
       (array-set! items 0 a)
       (array-set! items 1 b)
@@ -132,14 +133,14 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.args-parse-array args-api-specs (args-api-array0))
+        (args.parse-array args-api-specs (args-api-array0))
         "empty argv should parse")]
     (begin
       (args-api-assert-vec-empty
-        (args.args-parsed-positionals (& parsed))
+        (args.parsed-positionals (& parsed))
         "empty argv has no positionals")
       (args-api-assert-i64-eq
-        (args.args-option-count parsed "verbose")
+        (args.option-count parsed "verbose")
         0
         "empty argv has no flags"))))
 
@@ -148,12 +149,10 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.args-parse-array
-          args-api-specs
-          (args-api-array3 "src.tl" "out.s" "-"))
+        (args.parse-array args-api-specs (args-api-array3 "src.tl" "out.s" "-"))
         "positional-only argv should parse")]
     (args-api-assert-vec3
-      (args.args-parsed-positionals (& parsed))
+      (args.parsed-positionals (& parsed))
       "src.tl"
       "out.s"
       "-"
@@ -164,24 +163,24 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.args-parse-array
+        (args.parse-array
           args-api-specs
           (args-api-array5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (begin
       (args-api-assert-true
-        (args.args-option-present? parsed "verbose")
+        (args.option-present? parsed "verbose")
         "long boolean flag present")
       (args-api-assert-i64-eq
-        (args.args-option-count parsed "output")
+        (args.option-count parsed "output")
         1
         "short value flag counted")
       (args-api-assert-string-eq
-        (args.args-option-value-or parsed "output" "missing")
+        (args.option-value-or parsed "output" "missing")
         "out.s"
         "short value flag consumes next argv")
       (args-api-assert-vec2
-        (args.args-parsed-positionals (& parsed))
+        (args.parsed-positionals (& parsed))
         "input.tl"
         "rest"
         "positionals before and after flags preserved"))))
@@ -191,17 +190,17 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.args-parse-array
+        (args.parse-array
           args-api-specs
           (args-api-array3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (begin
       (args-api-assert-i64-eq
-        (args.args-option-count parsed "verbose")
+        (args.option-count parsed "verbose")
         0
         "tokens after -- are positionals")
       (args-api-assert-vec2
-        (args.args-parsed-positionals (& parsed))
+        (args.parsed-positionals (& parsed))
         "--verbose"
         "-o"
         "end-of-options preserves later tokens"))))
@@ -211,14 +210,14 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.args-parse-array args-api-specs (args-api-array1 "--output"))
+        (args.parse-array args-api-specs (args-api-array1 "--output"))
         "missing value should fail")]
     (begin
       (args-api-assert-true
-        (args.args-error-missing-value? error)
+        (args.error-missing-value? error)
         "missing value error kind")
       (args-api-assert-string-eq
-        (args.args-error-option error)
+        (args.error-option error)
         "--output"
         "missing value carries token"))))
 
@@ -227,14 +226,14 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.args-parse-array args-api-specs (args-api-array1 "--missing"))
+        (args.parse-array args-api-specs (args-api-array1 "--missing"))
         "unknown option should fail")]
     (begin
       (args-api-assert-true
-        (args.args-error-unknown-option? error)
+        (args.error-unknown-option? error)
         "unknown option error kind")
       (args-api-assert-string-eq
-        (args.args-error-option error)
+        (args.error-option error)
         "--missing"
         "unknown option carries token"))))
 
@@ -243,21 +242,21 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.args-parse-array
+        (args.parse-array
           args-api-specs
           (args-api-array6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (begin
       (args-api-assert-i64-eq
-        (args.args-option-count parsed "include")
+        (args.option-count parsed "include")
         2
         "repeated value option count")
       (args-api-assert-string-eq
-        (args.args-option-value-or parsed "include" "missing")
+        (args.option-value-or parsed "include" "missing")
         "inc2"
         "last repeated value returned")
       (args-api-assert-i64-eq
-        (args.args-option-count parsed "verbose")
+        (args.option-count parsed "verbose")
         2
         "repeated boolean flag count"))))
 
@@ -266,13 +265,13 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.args-parse-array args-api-specs (args-api-array1 "--output=file"))
+        (args.parse-array args-api-specs (args-api-array1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (begin
       (args-api-assert-true
-        (args.args-error-unknown-option? error)
+        (args.error-unknown-option? error)
         "equals spelling is intentionally unknown")
       (args-api-assert-string-eq
-        (args.args-error-option error)
+        (args.error-option error)
         "--output=file"
         "equals spelling carries original token"))))

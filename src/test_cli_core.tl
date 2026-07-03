@@ -5,11 +5,12 @@
 ;; generated `main`, then assembles, links, and runs that generated harness
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
-;; `AstDeclTest`.
+;; `AstDecl.Test`.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.process)
 (import stdlib.hashmap)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import "compiler_load.tl")
@@ -17,16 +18,17 @@
 (import "compiler_optimize.tl")
 (import "compiler_typecheck.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
+(import sym_i64_env)
 
 (defenum TestMode
   (Run)
   (Check))
 
 (defenum TestConfig
-  (File String String String vector.StringVec i64 TestMode)
-  (Batch vector.StringVec String String vector.StringVec i64 TestMode)
-  (Package String bool String String vector.StringVec i64 TestMode))
+  (File String String String svec.StringVector i64 TestMode)
+  (Batch svec.StringVector String String svec.StringVector i64 TestMode)
+  (Package String bool String String svec.StringVector i64 TestMode))
 
 (defenum ResultTestConfig
   (Ok TestConfig)
@@ -37,11 +39,11 @@
   (Some String))
 
 (defenum ResultTestBatchPaths
-  (Ok vector.StringVec)
+  (Ok svec.StringVector)
   (Err String))
 
 (defenum InlineTest
-  (Case String String i64 i64 String))
+  (Case String String String i64 i64 String))
 
 (defenum InlineCollect
   (Collect AstDeclList AstDeclPathList (Array InlineTest)))
@@ -109,7 +111,7 @@
   [text : String]
   [start : i64]
   [n : i64]
-  [paths : vector.StringVec]) : vector.StringVec
+  [paths : svec.StringVector]) : svec.StringVector
   (if (>= start n)
     paths
     (let
@@ -121,26 +123,30 @@
           text
           next-start
           n
-          (vector.string-vec-push
-            paths
-            (string.substring text start (- line-end start))))))))
+          (let
+            [next-paths : svec.StringVector paths]
+            (begin
+              (svec.push
+                (&mut next-paths)
+                (string.substring text start (- line-end start)))
+              next-paths)))))))
 
-(define (tltest-batch-paths-from-text [text : String]) : vector.StringVec
+(define (tltest-batch-paths-from-text [text : String]) : svec.StringVector
   (tltest-batch-paths-from-text-from
     text
     0
     (string.string-length text)
-    (vector.string-vec-new)))
+    (svec.new)))
 
 (define (tltest-batch-paths-from-text-self-test?) : bool
   (let
-    [paths : vector.StringVec
+    [paths : svec.StringVector
       (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
     (and
-      (= (vector.string-vec-len paths) 3)
-      (string.string-eq (vector.string-vec-get paths 0 "") "a.tl")
-      (string.string-eq (vector.string-vec-get paths 1 "") "b.tl")
-      (string.string-eq (vector.string-vec-get paths 2 "") "c.tl"))))
+      (= (svec.len (& paths)) 3)
+      (string.eq (svec.get (& paths) 0 "") "a.tl")
+      (string.eq (svec.get (& paths) 1 "") "b.tl")
+      (string.eq (svec.get (& paths) 2 "") "c.tl"))))
 
 (test
   test-batch-paths-vector-preserves-order
@@ -154,9 +160,9 @@
       (ResultTestBatchPaths.Ok (tltest-batch-paths-from-text text))]
     [(io.ErrIoString error)
       (ResultTestBatchPaths.Err
-        (string.string-append
+        (string.append
           "test: failed to read --batch list file: "
-          (io.io-error-message error)))]))
+          (io.error-message error)))]))
 
 (define (tltest-config-finish
   [source : String]
@@ -165,7 +171,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
@@ -182,7 +188,7 @@
             [(TestMode.Check)
               (match (tltest-batch-paths list-path)
                 [(ResultTestBatchPaths.Ok paths)
-                  (if (vector.string-vec-is-empty? paths)
+                  (if (svec.is-empty? (& paths))
                     (ResultTestConfig.Err "test: --batch list is empty")
                     (ResultTestConfig.Ok
                       (TestConfig.Batch
@@ -220,9 +226,9 @@
 
 (define (tltest-backend-mode-valid? [value : String]) : bool
   (or
-    (string.string-eq value "scalar")
-    (string.string-eq value "avx2")
-    (string.string-eq value "avx512")))
+    (string.eq value "scalar")
+    (string.eq value "avx2")
+    (string.eq value "avx512")))
 
 (define (tltest-parse-options
   [idx : i64]
@@ -233,7 +239,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -253,7 +259,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--check")
+        [(string.eq current "--check")
           (tltest-parse-options
             (+ idx 1)
             count
@@ -268,7 +274,7 @@
             opt-level
             TestMode.Check
             batch-list)]
-        [(string.string-eq current "--target")
+        [(string.eq current "--target")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --target requires a value")
             (let
@@ -289,13 +295,13 @@
                   test-mode
                   batch-list)
                 (ResultTestConfig.Err (tltest-unknown-target value)))))]
-        [(string.string-eq current "--backend-mode")
+        [(string.eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --backend-mode requires a value")
             (let
               [value : String (io.arg (+ idx 1))]
               (if (tltest-backend-mode-valid? value)
-                (if (string.string-eq value "scalar")
+                (if (string.eq value "scalar")
                   (tltest-parse-options
                     (+ idx 2)
                     count
@@ -312,7 +318,7 @@
                     batch-list)
                   (ResultTestConfig.Err (tltest-unsupported-mode value)))
                 (ResultTestConfig.Err (tltest-unknown-mode value)))))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --stdlib-root requires a value")
             (tltest-parse-options
@@ -324,12 +330,16 @@
               has-manifest
               target
               mode
-              (vector.string-vec-push roots (io.arg (+ idx 1)))
+              (let
+                [next-roots : svec.StringVector roots]
+                (begin
+                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  next-roots))
               has-opt-level
               opt-level
               test-mode
               batch-list))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --manifest-path requires a value")
             (if has-manifest
@@ -348,7 +358,7 @@
                 opt-level
                 test-mode
                 batch-list)))]
-        [(string.string-eq current "--batch")
+        [(string.eq current "--batch")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --batch requires a value")
             (match batch-list
@@ -369,7 +379,7 @@
                   opt-level
                   test-mode
                   (TestMaybeString.Some (io.arg (+ idx 1))))]))]
-        [(string.string-eq current "--opt-level")
+        [(string.eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ResultTestConfig.Err "test: --opt-level requires a value")
             (if has-opt-level
@@ -378,7 +388,7 @@
               (let
                 [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
-                  [(OkCompilerOptimizeLevel parsed-level)
+                  [(ResultCompilerOptimizeLevel.Ok parsed-level)
                     (tltest-parse-options
                       (+ idx 2)
                       count
@@ -393,9 +403,9 @@
                       parsed-level
                       test-mode
                       batch-list)]
-                  [(ErrCompilerOptimizeLevel)
+                  [(ResultCompilerOptimizeLevel.Err)
                     (ResultTestConfig.Err (tltest-invalid-opt-level value))]))))]
-        [(string.string-eq current "--prefix-cache-stats")
+        [(string.eq current "--prefix-cache-stats")
           (begin
             (set! tltest-prefix-cache-stats true)
             (tltest-parse-options
@@ -413,8 +423,7 @@
               test-mode
               batch-list))]
         [(source-tool-flag? current)
-          (ResultTestConfig.Err
-            (string.string-append "test: unknown flag " current))]
+          (ResultTestConfig.Err (string.append "test: unknown flag " current))]
         [has-source (ResultTestConfig.Err "test: accepts only one source file")]
         [else
           (tltest-parse-options
@@ -446,7 +455,7 @@
       false
       (source-tool-default-target-name)
       "scalar"
-      (vector.string-vec-new)
+      (svec.new)
       false
       (compiler-optimize-default-level)
       TestMode.Run
@@ -461,7 +470,7 @@
     (tltest-decls-onto
       items
       (- index 1)
-      (ast-decl-cons (array-ref items index) out))))
+      (ast-decl-list-prepend-builder (array-ref items index) out))))
 
 (define (tltest-paths-onto
   [items : (Array String)]
@@ -472,37 +481,63 @@
     (tltest-paths-onto
       items
       (- index 1)
-      (ast-decl-path-cons (array-ref items index) out))))
+      (ast-decl-path-list-prepend-builder (array-ref items index) out))))
 
 (define (tltest-decl-list-reverse-onto
   [items : AstDeclList]
   [out : AstDeclList]) : AstDeclList
-  (match items
-    [(AstDeclNil) out]
-    [(AstDeclCons decl rest)
-      (tltest-decl-list-reverse-onto (box-get rest) (ast-decl-cons decl out))]))
+  (let
+    [index : i64 (- (ast-decl-list-len (& items)) 1)]
+    [result : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& items)) (ast-decl-list-len (& out))))]
+    (begin
+      (while (>= index 0)
+        (begin
+          (ast-decl-list-push (&mut result) (ast-decl-list-ref items index))
+          (set! index (- index 1))))
+      (ast-decl-list-append-from (&mut result) (& out) 0)
+      result)))
 
 (define (tltest-path-list-reverse-onto
   [items : AstDeclPathList]
   [out : AstDeclPathList]) : AstDeclPathList
-  (match items
-    [(AstDeclPathNil) out]
-    [(AstDeclPathCons path rest)
-      (tltest-path-list-reverse-onto
-        (box-get rest)
-        (ast-decl-path-cons path out))]))
+  (let
+    [index : i64 (- (ast-decl-path-list-len (& items)) 1)]
+    [result : AstDeclPathList
+      (ast-decl-path-list-with-capacity
+        (+ (ast-decl-path-list-len (& items)) (ast-decl-path-list-len (& out))))]
+    (begin
+      (while (>= index 0)
+        (begin
+          (ast-decl-path-list-push
+            (&mut result)
+            (ast-decl-path-list-get (& items) index ""))
+          (set! index (- index 1))))
+      (ast-decl-path-list-append-from (&mut result) (& out) 0)
+      result)))
 
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
-  (match items
-    [(AstDeclNil) 0]
-    [(AstDeclCons _ rest) (+ 1 (tltest-decl-list-count (box-get rest)))]))
+  (let
+    [cur : AstDeclList items]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! cur rest))]))
+      count)))
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef name _ _) (= name (intern "main"))]
-    [(AstDeclDefFn name _ _ _ _) (= name (intern "main"))]
-    [(AstDeclDefMacro _ _ _ _) false]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Def name _ _) (= name (intern "main"))]
+    [(AstDecl.DefFn name _ _ _ _) (= name (intern "main"))]
+    [(AstDecl.DefMacro _ _ _ _) false]
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-main-decl? inner))]
@@ -512,10 +547,10 @@
   (struct-get span start-line))
 
 (define (tltest-private-name [idx : i64]) : String
-  (string.string-append "__tl_inline_test_" (string.int->string idx)))
+  (string.append "__tl_inline_test_" (string.int->string idx)))
 
 (define (tltest-owned-test-path? [target-path : String] [decl-path : String]) : bool
-  (string.string-eq target-path (compiler-load-normalize-path decl-path)))
+  (string.eq target-path (compiler-load-normalize-path decl-path)))
 
 (define (tltest-collect-in
   [target-path : String]
@@ -524,95 +559,75 @@
   [runtime-decls : AstDeclList]
   [runtime-paths : AstDeclPathList]
   [tests : (Array InlineTest)]) : InlineCollect
-  (match decls
-    [(AstDeclNil)
-      (InlineCollect.Collect
-        (tltest-decl-list-reverse-onto runtime-decls AstDeclNil)
-        (tltest-path-list-reverse-onto runtime-paths AstDeclPathNil)
-        tests)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclTest name body-box span)
-            (if (tltest-owned-test-path? target-path decl-path)
-              (let
-                [body : i64 body-box]
-                [test-count : i64 (array-length tests)]
-                (begin
-                  (array-push!
-                    tests
-                    (InlineTest.Case
-                      (intern-str name)
-                      decl-path
-                      (tltest-source-line span)
-                      body
-                      (tltest-private-name test-count)))
-                  (tltest-collect-in
-                    target-path
-                    rest
-                    rest-paths
-                    runtime-decls
-                    runtime-paths
-                    tests)))
-              (tltest-collect-in
-                target-path
-                rest
-                rest-paths
-                runtime-decls
-                runtime-paths
-                tests))]
-          [(AstDeclImport _)
-            (tltest-collect-in
-              target-path
-              rest
-              rest-paths
-              (ast-decl-cons decl runtime-decls)
-              (ast-decl-path-cons decl-path runtime-paths)
-              tests)]
-          [(AstDeclIncludeStr _ _)
-            (tltest-collect-in
-              target-path
-              rest
-              rest-paths
-              runtime-decls
-              runtime-paths
-              tests)]
-          [(AstDeclIncludeBin _ _)
-            (tltest-collect-in
-              target-path
-              rest
-              rest-paths
-              runtime-decls
-              runtime-paths
-              tests)]
-          [_
-            (if (tltest-main-decl? decl)
-              (tltest-collect-in
-                target-path
-                rest
-                rest-paths
-                runtime-decls
-                runtime-paths
-                tests)
-              (tltest-collect-in
-                target-path
-                rest
-                rest-paths
-                (ast-decl-cons decl runtime-decls)
-                (ast-decl-path-cons decl-path runtime-paths)
-                tests))]))]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [runtime-decls-out : AstDeclList runtime-decls]
+    [runtime-paths-out : AstDeclPathList runtime-paths]
+    [test-items : (Array InlineTest) tests]
+    [current-module : String ""]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [rest-decls : AstDeclList rest]
+              [decl-path : String
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
+              [rest-paths : AstDeclPathList
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList path-rest]
+                      path-rest)]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+              (begin
+                (match decl
+                  [(AstDecl.Test name body-box span)
+                    (if (tltest-owned-test-path? target-path decl-path)
+                      (let
+                        [body : i64 body-box]
+                        [test-count : i64 (array-length test-items)]
+                        (array-push!
+                          test-items
+                          (InlineTest.Case
+                            (intern-str name)
+                            decl-path
+                            current-module
+                            (tltest-source-line span)
+                            body
+                            (tltest-private-name test-count))))
+                      unit)]
+                  [(AstDecl.Module name)
+                    (begin
+                      (set! current-module (intern-str name))
+                      (ast-decl-list-push (&mut runtime-decls-out) decl)
+                      (ast-decl-path-list-push
+                        (&mut runtime-paths-out)
+                        decl-path))]
+                  [(AstDecl.Import _)
+                    (begin
+                      (ast-decl-list-push (&mut runtime-decls-out) decl)
+                      (ast-decl-path-list-push
+                        (&mut runtime-paths-out)
+                        decl-path))]
+                  [(AstDecl.IncludeStr _ _) unit]
+                  [(AstDecl.IncludeBin _ _) unit]
+                  [_
+                    (if (tltest-main-decl? decl)
+                      unit
+                      (begin
+                        (ast-decl-list-push (&mut runtime-decls-out) decl)
+                        (ast-decl-path-list-push
+                          (&mut runtime-paths-out)
+                          decl-path)))])
+                (set! cur-decls rest-decls)
+                (set! cur-paths rest-paths)))]))
+      (InlineCollect.Collect runtime-decls-out runtime-paths-out test-items))))
 
 (define (tltest-collect
   [source : String]
@@ -622,233 +637,244 @@
     (compiler-load-normalize-path source)
     decls
     paths
-    AstDeclNil
-    AstDeclPathNil
+    (ast-decl-list-new)
+    (ast-decl-path-list-new)
     (make-array InlineTest 0)))
 
 (define (tltest-print-expr [text : String]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar (intern "__tl_test_print_error")))
+    (ast-node-push (AstExpr.Var (intern "__tl_test_print_error")))
     (ast-expr-cons
-      (ast-node-push (AstExprLiteral (AstLitString text)))
+      (ast-node-push (AstExpr.Literal (AstLiteral.String text)))
       (ast-expr-cons
         (ast-expr-cast
           (ast-node-push
-            (AstExprLiteral (ast-lit-int (string.string-length text))))
-          (AstTyI32))
-        AstExprNil))))
+            (AstExpr.Literal (ast-lit-int (string.string-length text))))
+          (AstType.I32))
+        (ast-expr-list-new)))))
 
 (define (tltest-call-expr [name : String]) : i64
-  (ast-expr-call (ast-node-push (AstExprVar (intern name))) AstExprNil))
+  (ast-expr-call
+    (ast-node-push (AstExpr.Var (intern name)))
+    (ast-expr-list-new)))
+
+(define (tltest-private-call-name [module : String] [private-name : String]) : String
+  (if (= (string.string-length module) 0)
+    private-name
+    (tc-hygiene-global-name (compiler-symbol-module-key module private-name))))
 
 (define (tltest-location [path : String] [line : i64]) : String
-  (if (string.string-eq path "")
-    (string.string-append "<unknown>:" (string.int->string line))
-    (string.string-append
-      path
-      (string.string-append ":" (string.int->string line)))))
+  (if (string.eq path "")
+    (string.append "<unknown>:" (string.int->string line))
+    (string.append path (string.append ":" (string.int->string line)))))
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path line _ _)
-      (string.string-append
+    [(InlineTest.Case name path _ line _ _)
+      (string.append
         "test "
-        (string.string-append
+        (string.append
           name
-          (string.string-append
-            " "
-            (string.string-append (tltest-location path line) "\n"))))]))
+          (string.append " " (string.append (tltest-location path line) "\n"))))]))
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name _ _ _ _)
-      (string.string-append "ok " (string.string-append name "\n"))]))
+    [(InlineTest.Case name _ _ _ _ _)
+      (string.append "ok " (string.append name "\n"))]))
 
 (define (tltest-summary-line [count : i64]) : String
-  (string.string-append
+  (string.append
     "TypeLisp tests passed: "
-    (string.string-append (string.int->string count) " test(s)\n")))
+    (string.append (string.int->string count) " test(s)\n")))
 
 (define (tltest-print-runtime-write-params) : AstParamList
   (ast-param-cons
-    (ast-param "fd" (AstTyI32) false)
+    (ast-param "fd" (AstType.I32) false)
     (ast-param-cons
-      (ast-param "buf" (ast-ty-ptr (AstTyU8)) false)
-      (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil))))
+      (ast-param "buf" (ast-ty-ptr (AstType.U8)) false)
+      (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new)))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast-node-push
-    (AstExprUnsafe
+    (AstExpr.Unsafe
       (ast-expr-cons
         (ast-expr-cast
-          (ast-expr-ptr-to-int (ast-node-push (AstExprVar (intern "buf"))))
-          (AstTyI64))
-        AstExprNil))))
+          (ast-expr-ptr-to-int (ast-node-push (AstExpr.Var (intern "buf"))))
+          (AstType.I64))
+        (ast-expr-list-new)))))
 
 (define (tltest-linux-write-syscall) : i64
   (ast-node-push
-    (AstExprUnsafe
+    (AstExpr.Unsafe
       (ast-expr-cons
         (ast-expr-syscall
           (ast-expr-cons
-            (ast-node-push (AstExprLiteral (ast-lit-int 1)))
+            (ast-node-push (AstExpr.Literal (ast-lit-int 1)))
             (ast-expr-cons
               (ast-expr-cast
-                (ast-node-push (AstExprVar (intern "fd")))
-                (AstTyI64))
+                (ast-node-push (AstExpr.Var (intern "fd")))
+                (AstType.I64))
               (ast-expr-cons
                 (tltest-linux-write-ptr-arg)
                 (ast-expr-cons
                   (ast-expr-cast
-                    (ast-node-push (AstExprVar (intern "n")))
-                    (AstTyI64))
-                  AstExprNil)))))
-        AstExprNil))))
+                    (ast-node-push (AstExpr.Var (intern "n")))
+                    (AstType.I64))
+                  (ast-expr-list-new))))))
+        (ast-expr-list-new)))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
     "__tl_test_write"
     (tltest-print-runtime-write-params)
-    (AstTyI32)
-    (ast-expr-cast (tltest-linux-write-syscall) (AstTyI32))))
+    (AstType.I32)
+    (ast-expr-cast (tltest-linux-write-syscall) (AstType.I32))))
 
 (define (tltest-windows-get-std-handle-decl) : AstDecl
   (ast-decl-extern
     "__tl_test_get_std_handle"
-    (AstExternFunction)
-    (AstExternMetadata
-      (AstExternAbiC)
+    (AstExternKind.Function)
+    (AstExternMetadata.Metadata
+      (AstExternAbi.C)
       "GetStdHandle"
-      AstExternLinkInputNil
+      (ast-extern-link-input-list-new)
       true)
-    (ast-ty-func (ast-type-cons (AstTyI32) AstTypeNil) (AstTyI64))))
+    (ast-ty-func
+      (ast-type-cons (AstType.I32) (ast-type-list-new))
+      (AstType.I64))))
 
 (define (tltest-windows-write-file-decl) : AstDecl
   (ast-decl-extern
     "__tl_test_write_file"
-    (AstExternFunction)
-    (AstExternMetadata (AstExternAbiC) "WriteFile" AstExternLinkInputNil true)
+    (AstExternKind.Function)
+    (AstExternMetadata.Metadata
+      (AstExternAbi.C)
+      "WriteFile"
+      (ast-extern-link-input-list-new)
+      true)
     (ast-ty-func
       (ast-type-cons
-        (AstTyI64)
+        (AstType.I64)
         (ast-type-cons
-          (ast-ty-ptr (AstTyU8))
+          (ast-ty-ptr (AstType.U8))
           (ast-type-cons
-            (AstTyI32)
+            (AstType.I32)
             (ast-type-cons
-              (ast-ty-mut-ptr (AstTyI32))
-              (ast-type-cons (AstTyI64) AstTypeNil)))))
-      (AstTyI32))))
+              (ast-ty-mut-ptr (AstType.I32))
+              (ast-type-cons (AstType.I64) (ast-type-list-new))))))
+      (AstType.I32))))
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar (intern "__tl_test_get_std_handle")))
+    (ast-node-push (AstExpr.Var (intern "__tl_test_get_std_handle")))
     (ast-expr-cons
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (ast-lit-int -12)))
-        (AstTyI32))
-      AstExprNil)))
+        (ast-node-push (AstExpr.Literal (ast-lit-int -12)))
+        (AstType.I32))
+      (ast-expr-list-new))))
 
 (define (tltest-windows-write-file-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar (intern "__tl_test_write_file")))
+    (ast-node-push (AstExpr.Var (intern "__tl_test_write_file")))
     (ast-expr-cons
-      (ast-node-push (AstExprVar (intern "handle")))
+      (ast-node-push (AstExpr.Var (intern "handle")))
       (ast-expr-cons
-        (ast-node-push (AstExprVar (intern "buf")))
+        (ast-node-push (AstExpr.Var (intern "buf")))
         (ast-expr-cons
-          (ast-node-push (AstExprVar (intern "n")))
+          (ast-node-push (AstExpr.Var (intern "n")))
           (ast-expr-cons
-            (ast-node-push (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32))))
+            (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstType.I32))))
             (ast-expr-cons
-              (ast-node-push (AstExprLiteral (ast-lit-int 0)))
-              AstExprNil)))))))
+              (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
+              (ast-expr-list-new))))))))
 
 (define (tltest-windows-write-body) : i64
   (ast-expr-let
     (ast-let-binding-cons
       (ast-let-binding
         "handle"
-        (AstSomeType (AstTyI64))
+        (AstMaybeType.Some (AstType.I64))
         (tltest-windows-get-stderr-handle-expr))
       (ast-let-binding-cons
         (ast-let-binding
           "ok"
-          (AstSomeType (AstTyI32))
+          (AstMaybeType.Some (AstType.I32))
           (tltest-windows-write-file-call))
-        AstLetBindingNil))
+        (ast-let-binding-list-new)))
     (ast-expr-if
       (ast-expr-binary
-        (AstBinEq)
-        (ast-node-push (AstExprVar (intern "ok")))
+        (AstBinOp.Eq)
+        (ast-node-push (AstExpr.Var (intern "ok")))
         (ast-expr-cast
-          (ast-node-push (AstExprLiteral (ast-lit-int 0)))
-          (AstTyI32)))
+          (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
+          (AstType.I32)))
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (ast-lit-int -1)))
-        (AstTyI32))
-      (ast-node-push (AstExprVar (intern "n"))))))
+        (ast-node-push (AstExpr.Literal (ast-lit-int -1)))
+        (AstType.I32))
+      (ast-node-push (AstExpr.Var (intern "n"))))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
     "__tl_test_write"
     (tltest-print-runtime-write-params)
-    (AstTyI32)
+    (AstType.I32)
     (tltest-windows-write-body)))
 
 (define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
   (match target
-    [(BackendTargetLinux) (tltest-linux-print-runtime-write-decl)]
-    [(BackendTargetWindows) (tltest-windows-print-runtime-write-decl)]))
+    [(CompilerBackendTarget.Linux) (tltest-linux-print-runtime-write-decl)]
+    [(CompilerBackendTarget.Windows) (tltest-windows-print-runtime-write-decl)]))
 
 (define (tltest-print-param-list) : AstParamList
   (ast-param-cons
-    (ast-param "text" (AstTyString) false)
-    (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil)))
+    (ast-param "text" (AstType.String) false)
+    (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new))))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar (intern "__tl_test_write")))
+    (ast-node-push (AstExpr.Var (intern "__tl_test_write")))
     (ast-expr-cons
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (ast-lit-int 2)))
-        (AstTyI32))
+        (ast-node-push (AstExpr.Literal (ast-lit-int 2)))
+        (AstType.I32))
       (ast-expr-cons
         (ast-node-push
-          (AstExprUnsafe
+          (AstExpr.Unsafe
             (ast-expr-cons
               (ast-expr-string-data
-                (ast-node-push (AstExprVar (intern "text"))))
-              AstExprNil)))
-        (ast-expr-cons (ast-node-push (AstExprVar (intern "n"))) AstExprNil)))))
+                (ast-node-push (AstExpr.Var (intern "text"))))
+              (ast-expr-list-new))))
+        (ast-expr-cons
+          (ast-node-push (AstExpr.Var (intern "n")))
+          (ast-expr-list-new))))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
   (ast-decl-def-fn
     "__tl_test_print_error"
     (tltest-print-param-list)
-    (AstTyUnit)
+    (AstType.Unit)
     (ast-node-push
-      (AstExprBegin
+      (AstExpr.Begin
         (ast-expr-cons
           (tltest-print-runtime-write-call)
           (ast-expr-cons
-            (ast-node-push (AstExprLiteral (AstLitUnit)))
-            AstExprNil))))))
+            (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+            (ast-expr-list-new)))))))
 
 (define (tltest-program-with-print-runtime
   [program : AstProgram]
   [target : CompilerBackendTarget]) : AstProgram
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
           (match target
-            [(BackendTargetLinux)
+            [(CompilerBackendTarget.Linux)
               (ast-decl-cons
                 (tltest-print-runtime-write-decl target)
                 (ast-decl-cons (tltest-print-runtime-print-decl) decls))]
-            [(BackendTargetWindows)
+            [(CompilerBackendTarget.Windows)
               (ast-decl-cons
                 (tltest-windows-get-std-handle-decl)
                 (ast-decl-cons
@@ -870,8 +896,10 @@
   [target : CompilerBackendTarget]
   [paths : AstDeclPathList]) : AstDeclPathList
   (match target
-    [(BackendTargetLinux) (tltest-paths-with-print-runtime-count 2 paths)]
-    [(BackendTargetWindows) (tltest-paths-with-print-runtime-count 4 paths)]))
+    [(CompilerBackendTarget.Linux)
+      (tltest-paths-with-print-runtime-count 2 paths)]
+    [(CompilerBackendTarget.Windows)
+      (tltest-paths-with-print-runtime-count 4 paths)]))
 
 (define (tltest-main-exprs-from
   [tests : (Array InlineTest)]
@@ -882,14 +910,15 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ _ _ private-name)
+        [(InlineTest.Case _ _ module _ _ private-name)
           (tltest-main-exprs-from
             tests
             (- index 1)
             (ast-expr-cons
               (tltest-print-expr (tltest-running-line test))
               (ast-expr-cons
-                (tltest-call-expr private-name)
+                (tltest-call-expr
+                  (tltest-private-call-name module private-name))
                 (ast-expr-cons (tltest-print-expr (tltest-ok-line test)) out))))]))))
 
 (define (tltest-main-exprs [tests : (Array InlineTest)]) : AstExprList
@@ -901,8 +930,8 @@
       (ast-expr-cons
         (tltest-print-expr (tltest-summary-line count))
         (ast-expr-cons
-          (ast-node-push (AstExprLiteral (ast-lit-int 0)))
-          AstExprNil)))))
+          (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
+          (ast-expr-list-new))))))
 
 (define (tltest-test-decls-onto
   [tests : (Array InlineTest)]
@@ -913,13 +942,62 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ _ body private-name)
+        [(InlineTest.Case _ _ module _ body private-name)
           (tltest-test-decls-onto
             tests
             (- index 1)
-            (ast-decl-cons
-              (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
-              out))]))))
+            (ast-decl-list-prepend-builder
+              (ast-decl-module module)
+              (ast-decl-list-prepend-builder
+                (ast-decl-def-fn
+                  private-name
+                  (ast-param-list-new)
+                  (AstType.Unit)
+                  body)
+                out)))]))))
+
+(define (tltest-main-decls [tests : (Array InlineTest)]) : AstDeclList
+  (ast-decl-cons
+    (ast-decl-module "")
+    (ast-decl-cons (tltest-main-decl tests) (ast-decl-list-new))))
+
+(define (tltest-main-paths [source : String]) : AstDeclPathList
+  (ast-decl-path-cons
+    source
+    (ast-decl-path-cons source (ast-decl-path-list-new))))
+
+(define (tltest-empty-main-decls) : AstDeclList
+  (ast-decl-cons
+    (ast-decl-module "")
+    (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new))))
+
+(define (tltest-empty-main-paths [source : String]) : AstDeclPathList
+  (ast-decl-path-cons
+    source
+    (ast-decl-path-cons source (ast-decl-path-list-new))))
+
+(define (tltest-generated-test-decls [tests : (Array InlineTest)]) : AstDeclList
+  (tltest-test-decls-onto
+    tests
+    (- (array-length tests) 1)
+    (tltest-main-decls tests)))
+
+(define (tltest-generated-typecheck-decls [tests : (Array InlineTest)]) : AstDeclList
+  (tltest-test-decls-onto tests (- (array-length tests) 1) (ast-decl-list-new)))
+
+(define (tltest-generated-test-paths
+  [source : String]
+  [tests : (Array InlineTest)]) : AstDeclPathList
+  (tltest-test-paths-onto
+    tests
+    (- (array-length tests) 1)
+    (tltest-main-paths source)))
+
+(define (tltest-generated-typecheck-paths [tests : (Array InlineTest)]) : AstDeclPathList
+  (tltest-test-paths-onto
+    tests
+    (- (array-length tests) 1)
+    (ast-decl-path-list-new)))
 
 (define (tltest-test-paths-onto
   [tests : (Array InlineTest)]
@@ -930,18 +1008,20 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ path _ _ _)
+        [(InlineTest.Case _ path _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
-            (ast-decl-path-cons path out))]))))
+            (ast-decl-path-list-prepend-builder
+              path
+              (ast-decl-path-list-prepend-builder path out)))]))))
 
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn
     "main"
-    AstParamNil
-    (AstTyI64)
-    (ast-node-push (AstExprBegin (tltest-main-exprs tests)))))
+    (ast-param-list-new)
+    (AstType.I64)
+    (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
 (define (tltest-empty-main-decl) : AstDecl
   (tltest-main-decl (make-array InlineTest 0)))
@@ -985,7 +1065,7 @@
     ;; (`panic`) survives runtime-decl pruning (everything is exported by
     ;; default: there is no longer an export list to seed it as a root).
     [leaf : String (tltest-reach-name-dot-leaf name)]
-    (if (string.string-eq leaf name)
+    (if (string.eq leaf name)
       with-slash-base
       (tltest-reach-mark-name with-slash-base leaf))))
 
@@ -999,18 +1079,18 @@
       false)
     (let
       [leaf : String (tltest-reach-name-dot-leaf name)]
-      (if (string.string-eq leaf name)
+      (if (string.eq leaf name)
         false
         (hashmap.string-i64-map-contains? names leaf)))))
 
 (define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta inner-box)
+    [(AstDecl.ComptimeDecl meta inner-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
-        [(AstNoGeneratedDeclMeta)
+        [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+        [(AstGeneratedDeclMeta.No)
           (tltest-generated-comptime-decl? (box-get inner-box))])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (tltest-generated-comptime-decl? (box-get inner-box))]
     [_ false]))
 
@@ -1026,23 +1106,23 @@
 
 (define (tltest-bytes-view-from-parts-name? [name : String]) : bool
   (or
-    (string.string-eq name "tl_bytes_view_from_str_parts")
-    (string.string-eq name "tl_bytes_view_from_buf_parts")
-    (string.string-eq name "tl_bytes_mut_view_from_buf_parts")
-    (string.string-eq name "tl_bytes_view_from_bytes_parts")
-    (string.string-eq name "tl_bytes_mut_view_from_bytes_parts")))
+    (string.eq name "tl_bytes_view_from_str_parts")
+    (string.eq name "tl_bytes_view_from_buf_parts")
+    (string.eq name "tl_bytes_mut_view_from_buf_parts")
+    (string.eq name "tl_bytes_view_from_bytes_parts")
+    (string.eq name "tl_bytes_mut_view_from_bytes_parts")))
 
 (define (tltest-reach-mark-lowered-runtime-for-call
   [name : String]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (cond
     [(or
-        (string.string-eq name "clone")
-        (string.string-eq name "substring")
-        (string.string-eq name "string-slice"))
+        (string.eq name "clone")
+        (string.eq name "substring")
+        (string.eq name "string-slice"))
       (tltest-reach-mark-string-snapshot-runtime names)]
     [(or
-        (string.string-eq name "tl_str_view")
+        (string.eq name "tl_str_view")
         (tltest-bytes-view-from-parts-name? name))
       (tltest-reach-mark-str-view-runtime names)]
     [else names]))
@@ -1050,96 +1130,116 @@
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match exprs
-    [(AstExprNil) names]
-    [(AstExprCons head rest)
-      (let
-        [head : AstExpr (ast-node-get head)]
-        [rest : AstExprList (box-get rest)]
-        (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names)))]))
+  (tltest-reach-mark-expr-list-at exprs names 0))
+
+(define (tltest-reach-mark-expr-list-at
+  [exprs : AstExprList]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-expr-list-len (& exprs)))
+    names
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get (& exprs) index 0))]
+      (tltest-reach-mark-expr-list-at
+        exprs
+        (tltest-reach-mark-expr head names)
+        (+ index 1)))))
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match bindings
-    [(AstLetBindingNil) names]
-    [(AstLetBindingCons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding _ _ value-box)
-            (let
-              [value : AstExpr (ast-node-get value-box)]
-              (tltest-reach-mark-let-bindings
-                rest
-                (tltest-reach-mark-expr value names)))]))]))
+  (tltest-reach-mark-let-bindings-at (& bindings) names 0))
+
+(define (tltest-reach-mark-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-let-binding-list-len bindings))
+    names
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ value-box)
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          (tltest-reach-mark-let-bindings-at
+            bindings
+            (tltest-reach-mark-expr value names)
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match bindings
-    [(AstResourceBindingNil) names]
-    [(AstResourceBindingCons binding rest)
-      (let
-        [rest : AstResourceBindingList (box-get rest)]
-        (match binding
-          [(AstResourceBinding _ init-box cleanup-box)
-            (let
-              [init : AstExpr (ast-node-get init-box)]
-              [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (tltest-reach-mark-resource-bindings
-                rest
-                (tltest-reach-mark-expr
-                  cleanup
-                  (tltest-reach-mark-expr init names))))]))]))
+  (tltest-reach-mark-resource-bindings-at (& bindings) names 0))
+
+(define (tltest-reach-mark-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-resource-binding-list-len bindings))
+    names
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (tltest-reach-mark-resource-bindings-at
+            bindings
+            (tltest-reach-mark-expr cleanup (tltest-reach-mark-expr init names))
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match arms
-    [(AstMatchArmNil) names]
-    [(AstMatchArmCons arm rest)
-      (let
-        [rest : AstMatchArmList (box-get rest)]
-        (match arm
-          [(AstMatchArm _ body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (tltest-reach-mark-match-arms
-                rest
-                (tltest-reach-mark-expr body names)))]))]))
+  (tltest-reach-mark-match-arms-at (& arms) names 0))
+
+(define (tltest-reach-mark-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-match-arm-list-len arms))
+    names
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (tltest-reach-mark-match-arms-at
+            arms
+            (tltest-reach-mark-expr body names)
+            (+ index 1)))])))
 
 (define (tltest-reach-mark-expr [expr : AstExpr] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprLiteral _) names]
-    [(AstExprVar name) (tltest-reach-mark-source-name names (intern-str name))]
-    [(AstExprBinary _ left-box right-box)
+    [(AstExpr.Literal _) names]
+    [(AstExpr.Var name) (tltest-reach-mark-source-name names (intern-str name))]
+    [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (tltest-reach-mark-expr right (tltest-reach-mark-expr left names)))]
-    [(AstExprUnary _ inner-box)
+    [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         [called-names : hashmap.StringI64Map
           (tltest-reach-mark-expr func names)]
         [runtime-names : hashmap.StringI64Map
           (match (ast-expr-unspan func)
-            [(AstExprVar name)
+            [(AstExpr.Var name)
               (tltest-reach-mark-lowered-runtime-for-call
                 (intern-str name)
                 called-names)]
             [_ called-names])]
         (tltest-reach-mark-expr-list args runtime-names))]
-    [(AstExprIf cond-box then-branch-box else-branch-box)
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -1149,38 +1249,38 @@
           (tltest-reach-mark-expr
             then-branch
             (tltest-reach-mark-expr cond names))))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body-box)
+        [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (tltest-reach-mark-expr
               body
               (tltest-reach-mark-let-bindings bindings names)))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body-box)
+        [(AstLambda.Lambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (tltest-reach-mark-expr
               body
               (tltest-reach-mark-string-snapshot-runtime names)))])]
-    [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprTupleRef tuple-box _)
+    [(AstExpr.Tuple exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExpr.TupleRef tuple-box _)
       (let
         [tuple : AstExpr (ast-node-get tuple-box)]
         (tltest-reach-mark-expr tuple names))]
-    [(AstExprArray exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprMakeArray _ len-box)
+    [(AstExpr.Array exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
         (tltest-reach-mark-expr len names))]
-    [(AstExprArrayRef array-box index-box)
+    [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
-    [(AstExprArraySet array-box index-box value-box)
+    [(AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
@@ -1188,52 +1288,52 @@
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))))]
-    [(AstExprArrayPush array-box value-box)
+    [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr array names)))]
-    [(AstExprStringRef text-box index-box)
+    [(AstExpr.StringRef text-box index-box)
       (let
         [text : AstExpr (ast-node-get text-box)]
         [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr text names)))]
-    [(AstExprWhile cond-box body-box)
+    [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names)))]
-    [(AstExprBegin exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprUnsafe exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprSet name value-box)
+    [(AstExpr.Begin exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExpr.Unsafe exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExpr.Set name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-source-name names (intern-str name))))]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBorrow _ _ place-box)
+    [(AstExpr.Borrow _ _ place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee-box arms)
+        [(AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (tltest-reach-mark-match-arms
               arms
               (tltest-reach-mark-expr scrutinee names)))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ _ start-box end-box body-box)
+        [(AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -1241,9 +1341,9 @@
             (tltest-reach-mark-expr
               body
               (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+        [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -1256,9 +1356,19 @@
                 (tltest-reach-mark-expr
                   end
                   (tltest-reach-mark-expr start names)))))])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+        [(AstSpmdScan.Scan
+            _
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            value-box
+            body-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -1274,27 +1384,27 @@
                   (tltest-reach-mark-expr
                     end
                     (tltest-reach-mark-expr start names))))))])]
-    [(AstExprSpmdBroadcast value-box lane-box)
+    [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (tltest-reach-mark-expr lane (tltest-reach-mark-expr value names)))]
-    [(AstExprSpmdShuffle value-box lane-box)
+    [(AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (tltest-reach-mark-expr lane (tltest-reach-mark-expr value names)))]
-    [(AstExprStructGet receiver-box _)
+    [(AstExpr.StructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tltest-reach-mark-expr receiver names))]
-    [(AstExprStructSet receiver-box _ value-box)
+    [(AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr receiver names)))]
-    [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
-    [(AstExprWithEscape scratch-box body)
+    [(AstExpr.WithRegion _ body) (tltest-reach-mark-expr-list body names)]
+    [(AstExpr.WithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (tltest-reach-mark-expr-list
@@ -1302,148 +1412,150 @@
           (tltest-reach-mark-expr
             scratch
             (tltest-reach-mark-string-snapshot-runtime names))))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (tltest-reach-mark-expr-list
         body
         (tltest-reach-mark-string-snapshot-runtime names))]
-    [(AstExprInArena arena-box body)
+    [(AstExpr.InArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (tltest-reach-mark-expr-list body (tltest-reach-mark-expr arena names)))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (tltest-reach-mark-expr-list
             body
             (tltest-reach-mark-resource-bindings bindings names))])]
-    [(AstExprBox inner-box)
+    [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBoxGet inner-box)
+    [(AstExpr.BoxGet inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBoxTake inner-box)
+    [(AstExpr.BoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBoxSet inner-box value-box)
+    [(AstExpr.BoxSet inner-box value-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr inner names)))]
-    [(AstExprBorrow _ _ place-box)
+    [(AstExpr.Borrow _ _ place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
-    [(AstExprTypeLiteral _) names]
-    [(AstExprInit _) names]
-    [(AstExprComptime inner-box)
+    [(AstExpr.TypeLiteral _) names]
+    [(AstExpr.Init _) names]
+    [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprQuote inner-box)
+    [(AstExpr.Quote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprQuasiquote inner-box)
+    [(AstExpr.Quasiquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprUnquote inner-box)
+    [(AstExpr.Unquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprUnquoteSplicing inner-box)
+    [(AstExpr.UnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBracketClause items) (tltest-reach-mark-expr-list items names)]
-    [(AstExprTry inner-box)
+    [(AstExpr.BracketClause items) (tltest-reach-mark-expr-list items names)]
+    [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprReturn inner-box)
+    [(AstExpr.Return inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprPtrNull _) names]
-    [(AstExprPtrNullCheck inner-box)
+    [(AstExpr.Break) names]
+    [(AstExpr.Continue) names]
+    [(AstExpr.PtrNull _) names]
+    [(AstExpr.PtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprPtrAddrOf _) names]
-    [(AstExprPtrRead ptr-box)
+    [(AstExpr.PtrAddrOf _) names]
+    [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
-    [(AstExprPtrWrite ptr-box value-box)
+    [(AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr ptr names)))]
-    [(AstExprPtrOffset ptr-box offset-box)
+    [(AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names)))]
-    [(AstExprPtrCast ptr-box _)
+    [(AstExpr.PtrCast ptr-box _)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
-    [(AstExprPtrToInt ptr-box)
+    [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
-    [(AstExprIntToPtr value-box _)
+    [(AstExpr.IntToPtr value-box _)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value names))]
-    [(AstExprStringData inner-box)
+    [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprStringFromBytes ptr-box len-box)
+    [(AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (tltest-reach-mark-expr len (tltest-reach-mark-expr ptr names)))]
-    [(AstExprArrayData inner-box)
+    [(AstExpr.ArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBinaryData _) names]
-    [(AstExprSpmdProgramIndex) names]
-    [(AstExprSpmdProgramCount) names]
-    [(AstExprProgramArgc) names]
-    [(AstExprProgramArgv) names]
-    [(AstExprProgramEnvp) names]
-    [(AstExprCpuIdEax leaf-box subleaf-box)
+    [(AstExpr.BinaryData _) names]
+    [(AstExpr.SpmdProgramIndex) names]
+    [(AstExpr.SpmdProgramCount) names]
+    [(AstExpr.ProgramArgc) names]
+    [(AstExpr.ProgramArgv) names]
+    [(AstExpr.ProgramEnvp) names]
+    [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
-    [(AstExprCpuIdEbx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
-    [(AstExprCpuIdEcx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
-    [(AstExprCpuIdEdx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
-    [(AstExprXgetbv index-box)
+    [(AstExpr.Xgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index names))]
-    [(AstExprSyscall args) (tltest-reach-mark-expr-list args names)]))
+    [(AstExpr.Syscall args) (tltest-reach-mark-expr-list args names)]))
 
 (define (tltest-reach-mark-tests-from
   [tests : (Array InlineTest)]
@@ -1454,7 +1566,7 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ _ body _)
+        [(InlineTest.Case _ _ _ _ body _)
           (tltest-reach-mark-tests-from
             tests
             (- index 1)
@@ -1467,29 +1579,35 @@
 
 (define (tltest-runtime-string-helper-impl-name? [name : String]) : bool
   (or
-    (string.string-eq name "tl-runtime-int-to-string")
-    (string.string-eq name "tl-runtime-substring")
-    (string.string-eq name "tl-runtime-str-view")
-    (string.string-eq name "tl-runtime-string-concat")
-    (string.string-eq name "tl-runtime-string-concat3")
-    (string.string-eq name "tl-runtime-string-concat4")
-    (string.string-eq name "tl-runtime-string-concat5")))
+    (string.eq name "tl-runtime-int-to-string")
+    (string.eq name "tl-runtime-substring")
+    (string.eq name "tl-runtime-str-view")
+    (string.eq name "tl-runtime-string-concat")
+    (string.eq name "tl-runtime-string-concat3")
+    (string.eq name "tl-runtime-string-concat4")
+    (string.eq name "tl-runtime-string-concat5")
+    (string.eq name "eq")
+    (string.eq name "string-concat-all")
+    (string.eq name "string-concat-all-pack-part")
+    (string.eq name "string-concat3")
+    (string.eq name "string-concat4")
+    (string.eq name "string-concat5")))
 
 (define (tltest-reach-mark-runtime-helper-root
   [decl : AstDecl]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match decl
-    [(AstDeclDefFn name _ _ _ _)
+    [(AstDecl.DefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
         (if (tltest-runtime-string-helper-impl-name? name-str)
           (tltest-reach-mark-name names name-str)
           names))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-runtime-helper-root inner names))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-runtime-helper-root inner names))]
@@ -1498,121 +1616,152 @@
 (define (tltest-reach-mark-runtime-helper-roots
   [decls : AstDeclList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (tltest-reach-mark-runtime-helper-roots
-        (box-get rest)
-        (tltest-reach-mark-runtime-helper-root decl names))]))
+  (let
+    [cur : AstDeclList decls]
+    [result : hashmap.StringI64Map names]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (set! result (tltest-reach-mark-runtime-helper-root decl result))
+              (set! cur rest))]))
+      result)))
 
 (define (tltest-reach-mark-struct-cleanup
   [cleanup : AstStructCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstStructCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
-    [(AstStructNoCleanup) names]))
+    [(AstStructCleanup.Fn name)
+      (tltest-reach-mark-name names (intern-str name))]
+    [(AstStructCleanup.No) names]))
 
 (define (tltest-reach-mark-enum-cleanup
   [cleanup : AstEnumCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstEnumCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
-    [(AstEnumNoCleanup) names]))
+    [(AstEnumCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstEnumCleanup.No) names]))
 
 (define (tltest-reach-mark-field-cleanup
   [cleanup : AstFieldCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstFieldCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstFieldCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
     [_ names]))
 
 (define (tltest-reach-mark-field-cleanups
   [fields : AstFieldDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match fields
-    [(AstFieldDefNil) names]
-    [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef _ _ cleanup)
-          (tltest-reach-mark-field-cleanups
-            (box-get rest)
-            (tltest-reach-mark-field-cleanup cleanup names))])]))
+  (tltest-reach-mark-field-cleanups-at (& fields) names 0))
+
+(define (tltest-reach-mark-field-cleanups-at
+  [fields : (& fields AstFieldDefList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-field-def-list-len fields))
+    names
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ _ cleanup)
+        (tltest-reach-mark-field-cleanups-at
+          fields
+          (tltest-reach-mark-field-cleanup cleanup names)
+          (+ index 1))])))
 
 (define (tltest-reach-mark-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstVariantPayloadCleanupFn name)
+    [(AstVariantPayloadCleanup.Fn name)
       (tltest-reach-mark-name names (intern-str name))]
     [_ names]))
 
 (define (tltest-reach-mark-variant-payload-cleanups
   [cleanups : AstVariantPayloadCleanupList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match cleanups
-    [(AstVariantPayloadCleanupNil) names]
-    [(AstVariantPayloadCleanupCons cleanup rest)
-      (tltest-reach-mark-variant-payload-cleanups
-        (box-get rest)
-        (tltest-reach-mark-variant-payload-cleanup cleanup names))]))
+  (tltest-reach-mark-variant-payload-cleanups-at (& cleanups) names 0))
+
+(define (tltest-reach-mark-variant-payload-cleanups-at
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    names
+    (tltest-reach-mark-variant-payload-cleanups-at
+      cleanups
+      (tltest-reach-mark-variant-payload-cleanup
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback))
+        names)
+      (+ index 1))))
 
 (define (tltest-reach-mark-variant-cleanups
   [variants : AstVariantDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match variants
-    [(AstVariantDefNil) names]
-    [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef _ _ cleanups)
-          (tltest-reach-mark-variant-cleanups
-            (box-get rest)
-            (tltest-reach-mark-variant-payload-cleanups cleanups names))])]))
+  (tltest-reach-mark-variant-cleanups-at (& variants) names 0))
+
+(define (tltest-reach-mark-variant-cleanups-at
+  [variants : (& variants AstVariantDefList)]
+  [names : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (ast-variant-def-list-len variants))
+    names
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (tltest-reach-mark-variant-cleanups-at
+          variants
+          (tltest-reach-mark-variant-payload-cleanups cleanups names)
+          (+ index 1))])))
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match decl
-    [(AstDeclDef name _ expr-box)
+    [(AstDecl.Def name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (if (tltest-reachable-name-marked? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDeclDefFn name _ _ body-box export)
+    [(AstDecl.DefFn name _ _ body-box export)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match export
-          [(AstFnExport _)
+          [(AstFnExport.Export _)
             (tltest-reach-mark-expr
               body
               (tltest-reach-mark-name names (intern-str name)))]
-          [(AstFnNoExport)
+          [(AstFnExport.No)
             (if (tltest-reachable-name-marked? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
-    [(AstDeclDefMacro _ _ _ body-box)
+    [(AstDecl.DefMacro _ _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body names))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
-    [(AstDeclDefStruct _ _ cleanup fields)
+    [(AstDecl.DefStruct _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
         (tltest-reach-mark-struct-cleanup cleanup names))]
-    [(AstDeclDefStructLifetimes _ _ _ cleanup fields)
+    [(AstDecl.DefStructLifetimes _ _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
         (tltest-reach-mark-struct-cleanup cleanup names))]
-    [(AstDeclDefEnum _ cleanup variants)
+    [(AstDecl.DefEnum _ cleanup variants)
       (tltest-reach-mark-variant-cleanups
         variants
         (tltest-reach-mark-enum-cleanup cleanup names))]
-    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
       (tltest-reach-mark-variant-cleanups
         variants
         (tltest-reach-mark-enum-cleanup cleanup names))]
@@ -1621,12 +1770,19 @@
 (define (tltest-reach-mark-decls-from
   [decls : AstDeclList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (tltest-reach-mark-decls-from
-        (box-get rest)
-        (tltest-reach-mark-decl decl names))]))
+  (let
+    [cur : AstDeclList decls]
+    [result : hashmap.StringI64Map names]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (set! result (tltest-reach-mark-decl decl result))
+              (set! cur rest))]))
+      result)))
 
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
 ;; ever grows (marking is monotonic and dedup'd), so a pass that adds no new
@@ -1637,14 +1793,22 @@
   [decls : AstDeclList]
   [fuel : i64]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
-  (if (<= fuel 0)
-    names
-    (let
-      [before : i64 (hashmap.string-i64-map-len names)]
-      [next : hashmap.StringI64Map (tltest-reach-mark-decls-from decls names)]
-      (if (= (hashmap.string-i64-map-len next) before)
-        next
-        (tltest-reach-fixed decls (- fuel 1) next)))))
+  (let
+    [remaining : i64 fuel]
+    [result : hashmap.StringI64Map names]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> remaining 0))
+        (let
+          [before : i64 (hashmap.string-i64-map-len result)]
+          [next : hashmap.StringI64Map
+            (tltest-reach-mark-decls-from decls result)]
+          (begin
+            (set! result next)
+            (if (= (hashmap.string-i64-map-len result) before)
+              (set! done true)
+              (set! remaining (- remaining 1))))))
+      result)))
 
 (define (tltest-reachable-names
   [decls : AstDeclList]
@@ -1660,29 +1824,29 @@
   [decl : AstDecl]
   [names : hashmap.StringI64Map]) : bool
   (match decl
-    [(AstDeclDef name _ _)
+    [(AstDecl.Def name _ _)
       (let
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
         marked)]
-    [(AstDeclDefFn name _ _ _ export)
+    [(AstDecl.DefFn name _ _ _ export)
       (let
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
         (match export
-          [(AstFnExport _) true]
-          [(AstFnNoExport) marked]))]
-    [(AstDeclExtern name _ _ _)
+          [(AstFnExport.Export _) true]
+          [(AstFnExport.No) marked]))]
+    [(AstDecl.Extern name _ _ _)
       (let
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
         marked)]
-    [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reachable-runtime-decl? inner names))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reachable-runtime-decl? inner names))]
@@ -1695,46 +1859,41 @@
   [names : hashmap.StringI64Map]
   [out-decls : AstDeclList]
   [out-paths : AstDeclPathList]) : InlineRuntimeDecls
-  (match decls
-    [(AstDeclNil)
-      (InlineRuntimeDecls.Decls
-        (tltest-decl-list-reverse-onto out-decls AstDeclNil)
-        (tltest-path-list-reverse-onto out-paths AstDeclPathNil))]
-    [(AstDeclCons decl rest)
-      (match paths
-        [(AstDeclPathNil)
-          (tltest-prune-runtime-decls-in
-            (box-get rest)
-            AstDeclPathNil
-            target-path
-            names
-            out-decls
-            out-paths)]
-        [(AstDeclPathCons decl-path path-rest)
-          ;; Keep imported generated helpers: macro-expanded bodies can
-          ;; reference them in ways the lightweight source reachability walk
-          ;; cannot always see. Local generated helpers and ordinary imported
-          ;; functions/values still go through reachability pruning so tiny
-          ;; inline harnesses stay small.
-          (if (or
-            (tltest-reachable-runtime-decl? decl names)
-            (and
-              (not (tltest-owned-test-path? target-path decl-path))
-              (tltest-generated-comptime-decl? decl)))
-            (tltest-prune-runtime-decls-in
-              (box-get rest)
-              (box-get path-rest)
-              target-path
-              names
-              (ast-decl-cons decl out-decls)
-              (ast-decl-path-cons decl-path out-paths))
-            (tltest-prune-runtime-decls-in
-              (box-get rest)
-              (box-get path-rest)
-              target-path
-              names
-              out-decls
-              out-paths))])]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [result-decls : AstDeclList out-decls]
+    [result-paths : AstDeclPathList out-paths]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (match (ast-decl-path-list-step cur-paths)
+              [(AstDeclPathListStep.Nil)
+                (begin
+                  (set! cur-decls rest)
+                  (set! cur-paths (ast-decl-path-list-new)))]
+              [(AstDeclPathListStep.Cons decl-path path-rest)
+                (begin
+                  ;; Keep imported generated helpers: macro-expanded bodies can
+                  ;; reference them in ways the lightweight source reachability walk
+                  ;; cannot always see. Local generated helpers and ordinary imported
+                  ;; functions/values still go through reachability pruning so tiny
+                  ;; inline harnesses stay small.
+                  (if (or
+                    (tltest-reachable-runtime-decl? decl names)
+                    (and
+                      (not (tltest-owned-test-path? target-path decl-path))
+                      (tltest-generated-comptime-decl? decl)))
+                    (begin
+                      (ast-decl-list-push (&mut result-decls) decl)
+                      (ast-decl-path-list-push (&mut result-paths) decl-path))
+                    unit)
+                  (set! cur-decls rest)
+                  (set! cur-paths path-rest))])]))
+      (InlineRuntimeDecls.Decls result-decls result-paths))))
 
 (define (tltest-prune-runtime-decls
   [source : String]
@@ -1746,8 +1905,8 @@
     paths
     (compiler-load-normalize-path source)
     (tltest-reachable-names decls tests)
-    AstDeclNil
-    AstDeclPathNil))
+    (ast-decl-list-new)
+    (ast-decl-path-list-new)))
 
 (define (tltest-build-harness
   [source : String]
@@ -1767,19 +1926,13 @@
               (ast-program
                 (compiler-load-decl-list-append
                   pruned-decls
-                  (tltest-test-decls-onto
-                    tests
-                    (- count 1)
-                    (ast-decl-cons (tltest-main-decl tests) AstDeclNil))))
+                  (tltest-generated-test-decls tests)))
               (compiler-load-decl-path-list-append
                 pruned-paths
-                (tltest-test-paths-onto
-                  tests
-                  (- count 1)
-                  (ast-decl-path-cons source AstDeclPathNil)))
+                (tltest-generated-test-paths source tests))
               count))])]))
 
-(define (tltest-inline-typecheck-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (tltest-inline-typecheck-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable cfgs "test"))
 
 (define (tltest-inline-typecheck-program
@@ -1788,21 +1941,21 @@
   (ast-program
     (compiler-load-decl-list-append
       decls
-      (tltest-test-decls-onto tests (- (array-length tests) 1) AstDeclNil))))
+      (tltest-generated-typecheck-decls tests))))
 
 (define (tltest-inline-typecheck-paths
   [paths : AstDeclPathList]
   [tests : (Array InlineTest)]) : AstDeclPathList
   (compiler-load-decl-path-list-append
     paths
-    (tltest-test-paths-onto tests (- (array-length tests) 1) AstDeclPathNil)))
+    (tltest-generated-typecheck-paths tests)))
 
 (define (tltest-inline-typecheck-loaded
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (match (tltest-collect source decls paths)
     [(InlineCollect.Collect runtime-decls runtime-paths tests)
@@ -1824,8 +1977,8 @@
                   cache-scope-prefix
                   roots
                   cfgs))
-                [(OkCompilerTypecheck _) 0]
-                [(ErrCompilerTypecheck diag)
+                [(ResultCompilerTypecheck.Ok _) 0]
+                [(ResultCompilerTypecheck.Err diag)
                   (begin
                     (io.print-error
                       (compiler-diagnostic-render
@@ -1836,7 +1989,7 @@
 
 (define (tltest-inline-stdlib-source?
   [source : String]
-  [roots : vector.StringVec]) : bool
+  [roots : svec.StringVector]) : bool
   (let
     [normalized : String (compiler-load-normalize-path source)]
     [stdlib-path : String
@@ -1869,8 +2022,8 @@
 
 (define (tltest-inline-typecheck-file-with-cfg
   [source : String]
-  [roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
     (tltest-inline-stdlib-source? source roots)
@@ -1878,7 +2031,7 @@
     (not (tltest-source-has-inline-tests? source)))
     0
     (let
-      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       (begin
         (tltest-inline-reset-load-state!)
         (match (compiler-driver-load-file-with-runtime source roots test-cfgs)
@@ -1899,15 +2052,15 @@
 
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (tltest-source-has-inline-tests? source)
     (let
-      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       (match (compiler-driver-load-package-file-with-runtime-owned-cfg
         source
         roots
@@ -1940,39 +2093,42 @@
   (Nil)
   (Cons String i64 (Box TltestCfgNameList)))
 
-(define (tltest-cfg-name-list-from-env [cfgs : SymI64Env]) : TltestCfgNameList
+(define (tltest-cfg-name-list-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNameList
   (match cfgs
-    [(SymI64Nil) (TltestCfgNameList.Nil)]
-    [(SymI64Bind key value rest)
+    [(sym_i64_env.SymI64Nil) (TltestCfgNameList.Nil)]
+    [(sym_i64_env.SymI64Bind key value rest)
       (TltestCfgNameList.Cons
         (intern-str key)
         value
         (box (tltest-cfg-name-list-from-env (box-get rest))))]))
 
-(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : SymI64Env
+(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : sym_i64_env.SymI64Env
   (match names
-    [(TltestCfgNameList.Nil) (sym-i64-empty)]
+    [(TltestCfgNameList.Nil) (sym_i64_env.sym-i64-empty)]
     [(TltestCfgNameList.Cons name value rest)
-      (sym-i64-bind (tltest-cfg-name-list-to-env (box-get rest)) name value)]))
+      (sym_i64_env.sym-i64-bind
+        (tltest-cfg-name-list-to-env (box-get rest))
+        name
+        value)]))
 
 (define (tltest-inline-typecheck-package-sources-from
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [index : i64]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (let
-    [count : i64 (vector.string-vec-len sources)]
+    [count : i64 (package-source-list-len sources)]
     [cursor : i64 index]
     [status : i64 0]
     [cfg-names : TltestCfgNameList (tltest-cfg-name-list-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
-          [source : String (vector.string-vec-get sources cursor "")]
+          [source : String (package-source-list-get sources cursor "")]
           [has-inline-tests : bool (tltest-source-has-inline-tests? source)]
           (begin
             (if has-inline-tests
@@ -2001,9 +2157,7 @@
             (if (= status 0)
               unit
               (io.print-error
-                (string.string-append
-                  "test: package inline preflight failed: "
-                  source)))
+                (string.append "test: package inline preflight failed: " source)))
             (set! cursor (+ cursor 1)))))
       (begin
         (begin
@@ -2012,12 +2166,12 @@
         status))))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg
-  [sources : vector.StringVec]
-  [roots : vector.StringVec]
+  [sources : PackageSourceList]
+  [roots : svec.StringVector]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (tltest-inline-typecheck-package-sources-from
     sources
@@ -2030,44 +2184,44 @@
     cache-scope-prefix))
 
 (define (tltest-path-at [paths : AstDeclPathList] [index : i64]) : String
-  (match paths
-    [(AstDeclPathNil) ""]
-    [(AstDeclPathCons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) ""]
+    [(AstDeclPathListStep.Cons path rest)
       (if (= index 0)
         path
-        (tltest-path-at (box-get rest) (- index 1)))]))
+        (tltest-path-at rest (- index 1)))]))
 
 (define (tltest-decl-name [decl : AstDecl]) : String
   (match decl
-    [(AstDeclDef name _ _) (intern-str name)]
-    [(AstDeclDefFn name _ _ _ _) (intern-str name)]
-    [(AstDeclDefMacro name _ _ _) (intern-str name)]
-    [(AstDeclExtern name _ _ _) (intern-str name)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Def name _ _) (intern-str name)]
+    [(AstDecl.DefFn name _ _ _ _) (intern-str name)]
+    [(AstDecl.DefMacro name _ _ _) (intern-str name)]
+    [(AstDecl.Extern name _ _ _) (intern-str name)]
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-decl-name inner))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-decl-name inner))]
     [_ ""]))
 
 (define (tltest-decl-name-at [decls : AstDeclList] [index : i64]) : String
-  (match decls
-    [(AstDeclNil) ""]
-    [(AstDeclCons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ""]
+    [(AstDeclListStep.Cons decl rest)
       (if (= index 0)
         (tltest-decl-name decl)
-        (tltest-decl-name-at (box-get rest) (- index 1)))]))
+        (tltest-decl-name-at rest (- index 1)))]))
 
 (define (tltest-decl-list-has-name? [decls : AstDeclList] [name : String]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (if (string.string-eq (tltest-decl-name decl) name)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (if (string.eq (tltest-decl-name decl) name)
         true
-        (tltest-decl-list-has-name? (box-get rest) name))]))
+        (tltest-decl-list-has-name? rest name))]))
 
 (define (tltest-import-alias-call-retained-self-test?) : bool
   (let
@@ -2076,17 +2230,17 @@
     [source : String "stdlib/args.tl"]
     [dep-fn : AstDecl
       (ast-decl-def-fn
-        "string-eq"
-        AstParamNil
-        (AstTyBool)
-        (ast-node-push (AstExprLiteral (AstLitBool true))))]
+        "eq"
+        (ast-param-list-new)
+        (AstType.Bool)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Bool true))))]
     [source-import : AstDecl
-      (AstDeclImport
-        (AstImportSpec
-          (AstImportModule)
+      (AstDecl.Import
+        (AstImportSpec.Spec
+          (AstImportKind.Module)
           dep-path
-          (AstSomeModuleName "stdlib.string")
-          (AstSomeImportAlias "string")
+          (AstMaybeModuleName.Some "stdlib.string")
+          (AstMaybeImportAlias.Some "string")
           span))]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2098,11 +2252,8 @@
             (ast-decl-cons
               source-import
               (ast-decl-cons
-                (ast-decl-test
-                  "owned"
-                  (tltest-call-expr "string.string-eq")
-                  span)
-                AstDeclNil)))))]
+                (ast-decl-test "owned" (tltest-call-expr "string.eq") span)
+                (ast-decl-list-new))))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         dep-path
@@ -2112,16 +2263,14 @@
             source
             (ast-decl-path-cons
               source
-              (ast-decl-path-cons source AstDeclPathNil)))))]
+              (ast-decl-path-cons source (ast-decl-path-list-new))))))]
     (match (tltest-build-harness source decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (and
               (= count 1)
-              (tltest-decl-list-has-name?
-                (box-get harness-decls-box)
-                "string-eq"))])])))
+              (tltest-decl-list-has-name? (box-get harness-decls-box) "eq"))])])))
 
 (test
   test-cli-inline-harness-keeps-alias-qualified-base
@@ -2135,9 +2284,9 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
     [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
     [decls : AstDeclList
@@ -2147,35 +2296,39 @@
           (ast-decl-test "first" (tltest-call-expr helper-name) first-span)
           (ast-decl-cons
             (ast-decl-test "second" (tltest-call-expr helper-name) second-span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 2)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 0)
-                  helper-name)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 1)
-                  "__tl_inline_test_0")
-                (string.string-eq
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) "")
+                (string.eq
                   (tltest-decl-name-at harness-decls 2)
+                  "__tl_inline_test_0")
+                (string.eq (tltest-decl-name-at harness-decls 3) "")
+                (string.eq
+                  (tltest-decl-name-at harness-decls 4)
                   "__tl_inline_test_1")
-                (string.string-eq (tltest-decl-name-at harness-decls 3) "main")
-                (string.string-eq (tltest-path-at harness-paths 0) "runtime.tl")
-                (string.string-eq (tltest-path-at harness-paths 1) "driver.tl")
-                (string.string-eq (tltest-path-at harness-paths 2) "driver.tl")
-                (string.string-eq (tltest-path-at harness-paths 3) "driver.tl")))])])))
+                (string.eq (tltest-decl-name-at harness-decls 5) "")
+                (string.eq (tltest-decl-name-at harness-decls 6) "main")
+                (string.eq (tltest-path-at harness-paths 0) "runtime.tl")
+                (string.eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 2) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 3) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 4) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 5) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 6) "driver.tl")))])])))
 
 (test
   test-cli-vector-builders-preserve-order
@@ -2185,24 +2338,33 @@
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        (ast-param-list-new)
+        (AstType.Unit)
+        unit-expr)]
     [str-view-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-str-view" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-str-view"
+        (ast-param-list-new)
+        (AstType.Unit)
+        unit-expr)]
     [helper-body : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
-            (ast-expr-with-scratch (ast-expr-cons unit-expr AstExprNil))
+            (ast-expr-with-scratch
+              (ast-expr-cons unit-expr (ast-expr-list-new)))
             (ast-expr-cons
               (tltest-call-expr "tl_bytes_view_from_str_parts")
-              (ast-expr-cons unit-expr AstExprNil)))))]
+              (ast-expr-cons unit-expr (ast-expr-list-new))))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_runtime_helper"
-        AstParamNil
-        (AstTyUnit)
+        (ast-param-list-new)
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 17 1 17 1)]
     [decls : AstDeclList
@@ -2217,7 +2379,7 @@
                 "keeps-generated-runtime"
                 (tltest-call-expr "__tl_generated_runtime_helper")
                 span)
-              AstDeclNil))))]
+              (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
@@ -2225,22 +2387,22 @@
           "stdlib/runtime.tl"
           (ast-decl-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
+            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 0)
                   "tl-runtime-substring")
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "tl-runtime-str-view")
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 2)
                   "__tl_generated_runtime_helper")))])])))
 
@@ -2252,19 +2414,26 @@
 
 (define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
-    [lambda-expr : i64 (ast-expr-lambda AstParamNil AstNoType unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        (ast-param-list-new)
+        (AstType.Unit)
+        unit-expr)]
+    [lambda-expr : i64
+      (ast-expr-lambda (ast-param-list-new) AstMaybeType.No unit-expr)]
     [helper-body : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons lambda-expr (ast-expr-cons unit-expr AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons
+            lambda-expr
+            (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_lambda_helper"
-        AstParamNil
-        (AstTyUnit)
+        (ast-param-list-new)
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 18 1 18 1)]
     [decls : AstDeclList
@@ -2277,25 +2446,25 @@
               "keeps-generated-lambda-runtime"
               (tltest-call-expr "__tl_generated_lambda_helper")
               span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 0)
                   "tl-runtime-substring")
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_lambda_helper")))])])))
 
@@ -2307,20 +2476,24 @@
 
 (define (tltest-generated-runtime-substring-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        (ast-param-list-new)
+        (AstType.Unit)
+        unit-expr)]
     [helper-body : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             (tltest-call-expr "substring")
-            (ast-expr-cons unit-expr AstExprNil))))]
+            (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_substring_helper"
-        AstParamNil
-        (AstTyUnit)
+        (ast-param-list-new)
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 19 1 19 1)]
     [decls : AstDeclList
@@ -2333,25 +2506,25 @@
               "keeps-generated-substring-runtime"
               (tltest-call-expr "__tl_generated_substring_helper")
               span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 0)
                   "tl-runtime-substring")
-                (string.string-eq
+                (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_substring_helper")))])])))
 
@@ -2367,9 +2540,9 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
     [imported-span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
     [decls : AstDeclList
@@ -2382,31 +2555,33 @@
               "imported"
               (tltest-call-expr helper-name)
               imported-span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "driver.tl"
         (ast-decl-path-cons
           "driver.tl"
-          (ast-decl-path-cons "imported.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "imported.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 0)
-                  helper-name)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 1)
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) "")
+                (string.eq
+                  (tltest-decl-name-at harness-decls 2)
                   "__tl_inline_test_0")
-                (string.string-eq (tltest-decl-name-at harness-decls 2) "main")
-                (string.string-eq (tltest-path-at harness-paths 0) "driver.tl")
-                (string.string-eq (tltest-path-at harness-paths 1) "driver.tl")
-                (string.string-eq (tltest-path-at harness-paths 2) "driver.tl")))])])))
+                (string.eq (tltest-decl-name-at harness-decls 3) "")
+                (string.eq (tltest-decl-name-at harness-decls 4) "main")
+                (string.eq (tltest-path-at harness-paths 0) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 2) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 3) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 4) "driver.tl")))])])))
 
 (test
   test-cli-inline-harness-skips-imported-tests
@@ -2416,27 +2591,25 @@
 
 (define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport
-        (AstImportSpec
+    [(AstDecl.Import
+        (AstImportSpec.Spec
           _
           _
-          (AstSomeModuleName module)
-          (AstSomeImportAlias alias)
+          (AstMaybeModuleName.Some module)
+          (AstMaybeImportAlias.Some alias)
           _))
-      (and
-        (string.string-eq module "stdlib.core_macros")
-        (string.string-eq alias "core"))]
+      (and (string.eq module "stdlib.core_macros") (string.eq alias "core"))]
     [_ false]))
 
 (define (tltest-import-alias-preserved-self-test?) : bool
   (let
     [import-decl : AstDecl
-      (AstDeclImport
-        (AstImportSpec
-          (AstImportPath)
+      (AstDecl.Import
+        (AstImportSpec.Spec
+          (AstImportKind.Path)
           "stdlib/core_macros.tl"
-          (AstSomeModuleName "stdlib.core_macros")
-          (AstSomeImportAlias "core")
+          (AstMaybeModuleName.Some "stdlib.core_macros")
+          (AstMaybeImportAlias.Some "core")
           (AstSourceSpan 0 0 0 0)))]
     [span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
     [decls : AstDeclList
@@ -2445,19 +2618,19 @@
         (ast-decl-cons
           (ast-decl-test
             "uses-qualified-macro-alias"
-            (ast-node-push (AstExprLiteral (AstLitUnit)))
+            (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
             span)
-          AstDeclNil))]
+          (ast-decl-list-new)))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "alias.tl"
-        (ast-decl-path-cons "alias.tl" AstDeclPathNil))]
+        (ast-decl-path-cons "alias.tl" (ast-decl-path-list-new)))]
     (match (tltest-build-harness "alias.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
-            (match (box-get harness-decls-box)
-              [(AstDeclCons first _)
+          [(AstProgram.Program harness-decls-box)
+            (match (ast-decl-list-step (box-get harness-decls-box))
+              [(AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
               [_ false])])])))
 
@@ -2471,18 +2644,32 @@
   (let
     [dep-name : String "__tl_runtime_helper_dep"]
     [helper-name : String "tl-runtime-substring"]
+    [eq-dep-name : String "__tl_runtime_eq_dep"]
+    [eq-name : String "eq"]
     [dep-decl : AstDecl
       (ast-decl-def-fn
         dep-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
+        (ast-param-list-new)
+        (AstType.Unit)
         (tltest-call-expr dep-name))]
+    [eq-dep-decl : AstDecl
+      (ast-decl-def-fn
+        eq-dep-name
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
+    [eq-decl : AstDecl
+      (ast-decl-def-fn
+        eq-name
+        (ast-param-list-new)
+        (AstType.Unit)
+        (tltest-call-expr eq-dep-name))]
     [span : AstSourceSpan (AstSourceSpan 13 1 13 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2490,27 +2677,37 @@
         (ast-decl-cons
           helper-decl
           (ast-decl-cons
-            (ast-decl-test
-              "runtime-helper-not-called-by-test"
-              (ast-node-push (AstExprLiteral (AstLitUnit)))
-              span)
-            AstDeclNil)))]
+            eq-dep-decl
+            (ast-decl-cons
+              eq-decl
+              (ast-decl-cons
+                (ast-decl-test
+                  "runtime-helper-not-called-by-test"
+                  (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+                  span)
+                (ast-decl-list-new))))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "stdlib/runtime.tl"
         (ast-decl-path-cons
           "stdlib/runtime.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons
+            "stdlib/string.tl"
+            (ast-decl-path-cons
+              "stdlib/string.tl"
+              (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
                 (tltest-decl-list-has-name? harness-decls helper-name)
-                (tltest-decl-list-has-name? harness-decls dep-name)))])])))
+                (tltest-decl-list-has-name? harness-decls dep-name)
+                (tltest-decl-list-has-name? harness-decls eq-name)
+                (tltest-decl-list-has-name? harness-decls eq-dep-name)))])])))
 
 (test
   test-cli-inline-harness-keeps-runtime-string-helper-roots
@@ -2520,7 +2717,11 @@
 
 (define (tltest-generated-wrapper [item : String] [decl : AstDecl]) : AstDecl
   (ast-decl-comptime-decl-with-meta
-    (AstSomeGeneratedDeclMeta "tltest-generated" item AstExprNil "tltest")
+    (AstGeneratedDeclMeta.Some
+      "tltest-generated"
+      item
+      (ast-expr-list-new)
+      "tltest")
     decl))
 
 (define (tltest-generated-reachability-self-test?) : bool
@@ -2533,25 +2734,25 @@
         dep-name
         (ast-decl-def-fn
           dep-name
-          AstParamNil
-          (AstTyUnit)
-          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+          (ast-param-list-new)
+          (AstType.Unit)
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [live-decl : AstDecl
       (tltest-generated-wrapper
         live-name
         (ast-decl-def-fn
           live-name
-          AstParamNil
-          (AstTyUnit)
+          (ast-param-list-new)
+          (AstType.Unit)
           (tltest-call-expr dep-name)))]
     [dead-decl : AstDecl
       (tltest-generated-wrapper
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamNil
-          (AstTyUnit)
-          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+          (ast-param-list-new)
+          (AstType.Unit)
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2565,7 +2766,7 @@
                 "uses-generated-live"
                 (tltest-call-expr live-name)
                 span)
-              AstDeclNil))))]
+              (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "driver.tl"
@@ -2573,11 +2774,11 @@
           "driver.tl"
           (ast-decl-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
+            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
@@ -2601,15 +2802,15 @@
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamNil
-          (AstTyUnit)
-          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+          (ast-param-list-new)
+          (AstType.Unit)
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [ordinary-decl : AstDecl
       (ast-decl-def-fn
         ordinary-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2619,19 +2820,19 @@
           (ast-decl-cons
             (ast-decl-test
               "keeps-imported-generated"
-              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
               span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "generated.tl"
         (ast-decl-path-cons
           "generated.tl"
-          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
@@ -2652,14 +2853,14 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+        (ast-param-list-new)
+        (AstType.Unit)
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [macro-decl : AstDecl
       (ast-decl-def-macro
         macro-name
-        AstMacroParamNil
-        (AstTyExpr)
+        (ast-macro-param-list-new)
+        (AstType.Expr)
         (ast-expr-quasiquote (tltest-call-expr helper-name)))]
     [span : AstSourceSpan (AstSourceSpan 31 1 31 1)]
     [decls : AstDeclList
@@ -2672,31 +2873,29 @@
               "uses-macro-generated-helper"
               (tltest-call-expr macro-name)
               span)
-            AstDeclNil)))]
+            (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "macro-deps.tl"
         (ast-decl-path-cons
           "macro-deps.tl"
-          (ast-decl-path-cons "macro-deps.tl" AstDeclPathNil)))]
+          (ast-decl-path-cons "macro-deps.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "macro-deps.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
-          [(AstProgram harness-decls-box)
+          [(AstProgram.Program harness-decls-box)
             (let
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 0)
-                  helper-name)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 1)
-                  macro-name)
-                (string.string-eq
-                  (tltest-decl-name-at harness-decls 2)
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) macro-name)
+                (string.eq (tltest-decl-name-at harness-decls 2) "")
+                (string.eq
+                  (tltest-decl-name-at harness-decls 3)
                   "__tl_inline_test_0")
-                (string.string-eq (tltest-decl-name-at harness-decls 3) "main")))])])))
+                (string.eq (tltest-decl-name-at harness-decls 4) "")
+                (string.eq (tltest-decl-name-at harness-decls 5) "main")))])])))
 
 (test
   test-cli-inline-harness-keeps-macro-quasiquote-deps
@@ -2706,6 +2905,7 @@
 
 (define (tltest-nested-module-macro-vector-source) : String
   "(import stdlib.vector)
+(import (vector.vector String) as svec)
 (import stdlib.vector_slice)
 
 (defstruct Pair
@@ -2758,28 +2958,31 @@
 (define (tltest-nested-module-macro-vector-typecheck-ok?
   [program : AstProgram]
   [harness-paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]) : bool
   (match (typecheck-compiler-program-with-paths-cache
     (tltest-program-with-print-runtime program target)
     (tltest-paths-with-print-runtime target harness-paths)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _) true]
-    [(ErrCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) true]
+    [(ResultCompilerTypecheck.Err diag)
+      (begin
+        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        false)]))
 
 (define (tltest-function-base-defined?
   [funcs : CompilerIrFunctionList]
   [base : String]) : bool
   (match funcs
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ _)
-          (if (string.string-contains (& name) (& base))
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (if (string.contains (& name) (& base))
             true
             (tltest-function-base-defined? (box-get rest) base))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (tltest-function-base-defined?
         (compiler-ir-function-seq-to-list seq)
         base)]))
@@ -2788,26 +2991,26 @@
   [source : String]
   [program : AstProgram]
   [harness-paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]) : bool
   (match (lower-compiler-program-with-decl-paths-mode-cache
     source
     (tltest-program-with-print-runtime program target)
     (tltest-paths-with-print-runtime target harness-paths)
-    (CompilerLowerScalar)
+    (CompilerLowerMode.Scalar)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerLower lowered _)
+    [(ResultCompilerLower.Ok lowered _)
       (match lowered
-        [(IrProgram _ functions _)
+        [(CompilerIrProgram.Program _ functions _)
           (tltest-function-base-defined? functions "clone$Pair")])]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Err _) false]))
 
 (define (tltest-nested-module-macro-vector-loaded-ok?
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]) : bool
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
@@ -2842,8 +3045,8 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
-        [roots : vector.StringVec (tltest-roots-for-self-test)]
-        [target : CompilerBackendTarget (BackendTargetLinux)]
+        [roots : svec.StringVector (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (io.write-file source (tltest-nested-module-macro-vector-source))
           (match (compiler-driver-load-file-with-runtime
@@ -2865,19 +3068,98 @@
     unit
     (io.panic "test CLI nested module macro vector import mismatch")))
 
+(define (tltest-nested-generated-result-helper-source) : String
+  "(module test.nested_result_user)
+
+(import stdlib.comptime)
+(import stdlib.result)
+(import stdlib.test)
+
+(cfg
+  test
+  (defmacro (result-user [T : type] [E : type]) : Module
+    (let
+      [module-name : comptime.Expr
+        (comptime.expr-var \"generated.result_user\")]
+      `(begin
+        (module ,module-name)
+        (import (result ,T ,E) as local_result)
+        (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
+          (local_result.value-or value fallback))))))
+
+(cfg test (import (result i64 String) as result_i64_string))
+(cfg test (import (result-user i64 String) as user))
+
+(cfg
+  test
+  (test
+    nested-generated-result-helper-value-or
+    (test.assert-i64-eq
+      (user.value-or (result_i64_string.ok 21) 0)
+      21
+      \"nested generated result helper should stay rooted\")))")
+
+(define (tltest-nested-generated-result-helper-loaded-ok?
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : svec.StringVector]
+  [target : CompilerBackendTarget]) : bool
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness.Harness program harness-paths count)
+      (begin
+        (unless (= count 1) (return false))
+        (tltest-nested-module-macro-vector-typecheck-ok?
+          program
+          harness-paths
+          roots
+          target))]))
+
+(define (tltest-nested-generated-result-helper-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-nested-generated-result-helper")
+    [(ResultSourceToolString.Err _) false]
+    [(ResultSourceToolString.Ok dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "nested_result.tl")]
+        [roots : svec.StringVector (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
+        (begin
+          (io.write-file source (tltest-nested-generated-result-helper-source))
+          (match (compiler-driver-load-file-with-runtime
+            source
+            roots
+            (tltest-cfgs target))
+            [(ResultCompilerLoadWithPaths.Err _) false]
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+              (tltest-nested-generated-result-helper-loaded-ok?
+                source
+                decls
+                paths
+                roots
+                target)])))]))
+
+(test
+  test-cli-inline-harness-nested-generated-result-helper
+  (if (tltest-nested-generated-result-helper-self-test?)
+    unit
+    (io.panic "test CLI nested generated result helper import mismatch")))
+
 (test
   test-cli-enables-test-cfg
   (cfg test unit (io.panic "test CLI did not enable test cfg")))
 
-(define (tltest-cfgs [backend-target : CompilerBackendTarget]) : SymI64Env
+(define (tltest-cfgs [backend-target : CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))
     "test"))
 
-(define (tltest-roots-for-self-test) : vector.StringVec
-  (vector.string-vec-push
-    (vector.string-vec-push (vector.string-vec-new) "stdlib")
-    "src"))
+(define (tltest-roots-for-self-test) : svec.StringVector
+  (let
+    [roots : svec.StringVector (svec.new)]
+    (begin
+      (svec.push (&mut roots) "stdlib")
+      (svec.push (&mut roots) "src")
+      roots)))
 
 (define (tltest-package-cfg-inline-load-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-package-cfg")
@@ -2885,7 +3167,7 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "cfg_inline.tl")]
-        [roots : vector.StringVec (tltest-roots-for-self-test)]
+        [roots : svec.StringVector (tltest-roots-for-self-test)]
         (begin
           (io.write-file source "(cfg test (test package-cfg-inline unit))\n")
           (match (compiler-driver-load-package-file-with-runtime-owned-cfg
@@ -2895,7 +3177,7 @@
             "tltest"
             (compiler-pkg-deps-empty)
             true
-            (tltest-cfgs (BackendTargetLinux)))
+            (tltest-cfgs (CompilerBackendTarget.Linux)))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (let
@@ -2916,8 +3198,8 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "io_run.tl")]
-        [roots : vector.StringVec (tltest-roots-for-self-test)]
-        [target : CompilerBackendTarget (BackendTargetLinux)]
+        [roots : svec.StringVector (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (tltest-inline-reset-load-state!)
           (io.write-file
@@ -2942,11 +3224,11 @@
                 source
                 (ast-program decls)
                 paths
-                (CompilerLowerScalar)
+                (CompilerLowerMode.Scalar)
                 roots
                 (tltest-typecheck-cache-scope roots target))
-                [(OkCompilerLower _ _) true]
-                [(ErrCompilerLower diag)
+                [(ResultCompilerLower.Ok _ _) true]
+                [(ResultCompilerLower.Err diag)
                   (begin
                     (io.print-error
                       (compiler-diagnostic-render
@@ -2962,7 +3244,7 @@
     (io.panic "stdlib/io imported stdout-write failed to lower string helper")))
 
 (define (tltest-typecheck-cache-scope
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [backend-target : CompilerBackendTarget]) : String
   (compiler-typecheck-prefix-cache-scope
     "typecheck-prefix-test-cli"
@@ -2974,20 +3256,20 @@
   [paths : AstDeclPathList]
   [count : i64]
   [target : CompilerBackendTarget]
-  [roots : vector.StringVec]) : i64
+  [roots : svec.StringVector]) : i64
   (match (typecheck-compiler-program-with-paths-cache
     (tltest-program-with-print-runtime program target)
     (tltest-paths-with-print-runtime target paths)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _)
+    [(ResultCompilerTypecheck.Ok _)
       (begin
         (io.print-string
-          (string.string-append
+          (string.append
             "TypeLisp test typecheck passed: "
-            (string.string-append (string.int->string count) " test(s)\n")))
+            (string.append (string.int->string count) " test(s)\n")))
         0)]
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
@@ -3003,16 +3285,13 @@
 
 (define (tltest-report-child-status [output : process.ProcessOutput]) : unit
   (begin
-    (if (tltest-stderr-ends-with-newline?
-      (process.process-output-stderr output))
+    (if (tltest-stderr-ends-with-newline? (process.output-stderr output))
       unit
       (io.print-error "\n"))
     (io.print-error
-      (string.string-append
+      (string.append
         "typelisp test: test executable exited with exit status: "
-        (string.string-append
-          (string.int->string (process.process-output-status output))
-          "\n")))))
+        (string.append (string.int->string (process.output-status output)) "\n")))))
 
 (define (tltest-diagnostic-with-source-fallback
   [source : String]
@@ -3028,22 +3307,22 @@
         "test executable exists; child-process spawn failed"
         "test executable is missing after link")]
     [(io.ErrIoBool error)
-      (string.string-append
+      (string.append
         "could not inspect test executable: "
-        (io.io-error-message error))]))
+        (io.error-message error))]))
 
 (define (tltest-run-executable-error-message
   [bin-path : String]
   [temp-dir : String]
   [error : process.ProcessError]) : String
-  (string.string-append
-    (string.string-append
-      (string.string-append
-        (string.string-append "Error: failed to run test executable '" bin-path)
-        (string.string-append "': " (process.process-error-message error)))
-      (string.string-append " (" (tltest-executable-spawn-detail bin-path)))
-    (string.string-append
-      (string.string-append "); preserving test artifacts in '" temp-dir)
+  (string.append
+    (string.append
+      (string.append
+        (string.append "Error: failed to run test executable '" bin-path)
+        (string.append "': " (process.error-message error)))
+      (string.append " (" (tltest-executable-spawn-detail bin-path)))
+    (string.append
+      (string.append "); preserving test artifacts in '" temp-dir)
       "'\n")))
 
 (define (tltest-run-executable-error-message-self-test?) : bool
@@ -3059,8 +3338,8 @@
     [preserve-detail : String
       "preserving test artifacts in 'target/typelisp-test-2619'"]
     (and
-      (string.string-contains (& message) (& missing-detail))
-      (string.string-contains (& message) (& preserve-detail)))))
+      (string.contains (& message) (& missing-detail))
+      (string.contains (& message) (& preserve-detail)))))
 
 (test
   test-cli-spawn-error-preserves-artifacts
@@ -3072,8 +3351,8 @@
   (let
     [normalized : String (compiler-load-normalize-path source)]
     (or
-      (string.string-eq normalized "stdlib/env.tl")
-      (string.string-eq normalized "stdlib/tests/env_api.tl"))))
+      (string.eq normalized "stdlib/env.tl")
+      (string.eq normalized "stdlib/tests/env_api.tl"))))
 
 (define (tltest-stdlib-env-fixture-path [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -3081,13 +3360,13 @@
     "one:two:three"))
 
 (define (tltest-stdlib-env-fixture-env [target : CompilerBackendTarget]) : process.ProcessEnvList
-  (process.process-env-cons
+  (process.env-cons
     "TYPELISP_STDLIB_TEST_EMPTY"
     ""
-    (process.process-env-cons
+    (process.env-cons
       "TYPELISP_STDLIB_TEST_VALUE"
       "env-value-854"
-      (process.process-env-cons
+      (process.env-cons
         "TYPELISP_STDLIB_TEST_PATH"
         (tltest-stdlib-env-fixture-path target)
         (process.ProcessEnvNil)))))
@@ -3097,13 +3376,13 @@
   [bin-path : String]
   [target : CompilerBackendTarget]) : process.ResultProcessOutput
   (if (tltest-stdlib-env-fixture-source? source)
-    (process.process-output
+    (process.output
       (source-tool-command-for-target
         target
-        (process.process-command-with-env-list
-          (process.process-command bin-path (process.process-args-empty))
+        (process.command-with-env-list
+          (process.command bin-path (process.args-empty))
           (tltest-stdlib-env-fixture-env target))))
-    (source-tool-run-executable bin-path target (process.process-args-empty))))
+    (source-tool-run-executable bin-path target (process.args-empty))))
 
 (define (tltest-stdlib-env-fixture-self-test?) : bool
   (and
@@ -3112,11 +3391,11 @@
     (tltest-stdlib-env-fixture-source? "stdlib/tests/env_api.tl")
     (tltest-stdlib-env-fixture-source? "stdlib\\tests\\env_api.tl")
     (not (tltest-stdlib-env-fixture-source? "stdlib/process.tl"))
-    (string.string-eq
-      (tltest-stdlib-env-fixture-path (BackendTargetWindows))
+    (string.eq
+      (tltest-stdlib-env-fixture-path (CompilerBackendTarget.Windows))
       "one;two;three")
-    (string.string-eq
-      (tltest-stdlib-env-fixture-path (BackendTargetLinux))
+    (string.eq
+      (tltest-stdlib-env-fixture-path (CompilerBackendTarget.Linux))
       "one:two:three")))
 
 (test
@@ -3130,7 +3409,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [temp-dir : String]) : i64
@@ -3142,10 +3421,10 @@
       entry-path
       program
       paths
-      (CompilerLowerScalar)
+      (CompilerLowerMode.Scalar)
       roots
       (tltest-typecheck-cache-scope roots target))
-      [(OkCompilerLower ir spans)
+      [(ResultCompilerLower.Ok ir spans)
         (match (source-tool-lowered-object-or-assembly-and-link
           source
           ir
@@ -3168,7 +3447,7 @@
               (match (tltest-run-harness-output source bin-path target)
                 [(process.OkProcessOutput output)
                   (let
-                    [status : i64 (process.process-output-status output)]
+                    [status : i64 (process.output-status output)]
                     (begin
                       (source-tool-forward-output output)
                       (if (= status 0)
@@ -3196,7 +3475,7 @@
                         temp-dir
                         error))
                     1)]))])]
-      [(ErrCompilerLower diag)
+      [(ResultCompilerLower.Err diag)
         (begin
           (io.print-error
             (compiler-diagnostic-render
@@ -3209,7 +3488,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : String]
   [opt-level : i64]) : i64
   (match (source-tool-target target)
@@ -3232,14 +3511,14 @@
         [(ResultSourceToolString.Err message)
           (begin
             (io.print-error
-              (string.string-append "test: failed to create temp dir: " message))
+              (string.append "test: failed to create temp dir: " message))
             1)])]))
 
 (define (tltest-run-direct
   [source : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : String]
   [opt-level : i64]) : i64
   (tltest-run-direct-with-entry
@@ -3254,18 +3533,18 @@
 (define (tltest-no-tests-check
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]) : i64
   (match (typecheck-compiler-program-with-paths-cache
     (ast-program decls)
     paths
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _)
+    [(ResultCompilerTypecheck.Ok _)
       (begin
         (io.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
         0)]
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
@@ -3274,14 +3553,14 @@
   [source : String]
   [target : String]
   [_mode : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]) : i64
   ;; With no inline tests there is no source harness to validate here. `test
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
   (tltest-run-direct
     source
-    (ast-program (ast-decl-cons (tltest-empty-main-decl) AstDeclNil))
-    (ast-decl-path-cons source AstDeclPathNil)
+    (ast-program (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new)))
+    (ast-decl-path-cons source (ast-decl-path-list-new))
     roots
     target
     opt-level))
@@ -3360,10 +3639,10 @@
     [prefix-len : i64 (string.string-length prefix)]
     (if (> prefix-len text-len)
       false
-      (string.string-eq (string.substring text 0 prefix-len) prefix))))
+      (string.eq (string.substring text 0 prefix-len) prefix))))
 
 (define (tltest-package-tests-prefix [manifest-dir : String]) : String
-  (string.string-append
+  (string.append
     (compiler-load-normalize-path
       (package-source-root-join manifest-dir "tests"))
     "/"))
@@ -3374,7 +3653,7 @@
 (define (tltest-package-tests-subdir-prefix
   [tests-prefix : String]
   [name : String]) : String
-  (string.string-append tests-prefix (string.string-append name "/")))
+  (string.append tests-prefix (string.append name "/")))
 
 (define (tltest-package-manifest-managed-integration? [tests-prefix : String]) : bool
   (let
@@ -3382,9 +3661,9 @@
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
     (or
       (io.file-exists?
-        (string.string-append integration-prefix "native-linux.manifest"))
+        (string.append integration-prefix "native-linux.manifest"))
       (io.file-exists?
-        (string.string-append integration-prefix "native-windows.manifest")))))
+        (string.append integration-prefix "native-windows.manifest")))))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : String]
@@ -3508,21 +3787,21 @@
     (io.panic "test CLI package integration filter mismatch")))
 
 (define (tltest-decls-have-main? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (if (tltest-main-decl? decl)
         true
-        (tltest-decls-have-main? (box-get rest)))]))
+        (tltest-decls-have-main? rest))]))
 
 (define (tltest-package-source-line [source : String] [count : i64]) : String
-  (string.string-append
+  (string.append
     "TypeLisp test file: "
-    (string.string-append
+    (string.append
       source
-      (string.string-append
+      (string.append
         " ("
-        (string.string-append (string.int->string count) " test(s))\n")))))
+        (string.append (string.int->string count) " test(s))\n")))))
 
 (define (tltest-package-summary-line
   [mode : TestMode]
@@ -3530,26 +3809,26 @@
   [test-count : i64]) : String
   (match mode
     [(TestMode.Check)
-      (string.string-append
+      (string.append
         "TypeLisp package test typecheck passed: "
-        (string.string-append
+        (string.append
           (string.int->string test-count)
-          (string.string-append
+          (string.append
             " test(s) in "
-            (string.string-append (string.int->string file-count) " file(s)\n"))))]
+            (string.append (string.int->string file-count) " file(s)\n"))))]
     [(TestMode.Run)
-      (string.string-append
+      (string.append
         "TypeLisp package tests passed: "
-        (string.string-append
+        (string.append
           (string.int->string test-count)
-          (string.string-append
+          (string.append
             " test(s) in "
-            (string.string-append (string.int->string file-count) " file(s)\n"))))]))
+            (string.append (string.int->string file-count) " file(s)\n"))))]))
 
 (define (tltest-package-run-one
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3560,9 +3839,9 @@
       (if (= count 0)
         (begin
           (io.print-error
-            (string.string-append
+            (string.append
               "test: discovered inline test marker but no inline tests in "
-              (string.string-append source "\n")))
+              (string.append source "\n")))
           (ResultTestPackageTotals.Err 1))
         (begin
           (io.print-string (tltest-package-source-line source count))
@@ -3589,20 +3868,18 @@
               (ResultTestPackageTotals.Err status)))))]))
 
 (define (tltest-package-integration-line [source : String]) : String
-  (string.string-append
-    "TypeLisp integration test file: "
-    (string.string-append source "\n")))
+  (string.append "TypeLisp integration test file: " (string.append source "\n")))
 
 (define (tltest-package-integration-missing-main [source : String]) : String
-  (string.string-append
+  (string.append
     "test: integration test file has no main: "
-    (string.string-append source "\n")))
+    (string.append source "\n")))
 
 (define (tltest-package-integration-check
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [target : CompilerBackendTarget]) : ResultTestPackageTotals
   (begin
     (io.print-string (tltest-package-integration-line source))
@@ -3612,8 +3889,8 @@
         paths
         roots
         (tltest-typecheck-cache-scope roots target))
-        [(OkCompilerTypecheck _) (ResultTestPackageTotals.Ok 1 1)]
-        [(ErrCompilerTypecheck diag)
+        [(ResultCompilerTypecheck.Ok _) (ResultTestPackageTotals.Ok 1 1)]
+        [(ResultCompilerTypecheck.Err diag)
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             (ResultTestPackageTotals.Err 1))])
@@ -3624,7 +3901,7 @@
 (define (tltest-package-integration-run
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTestPackageTotals
@@ -3651,7 +3928,7 @@
 (define (tltest-package-run-integration-source
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3686,14 +3963,14 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
-          (string.string-append "test: integration test source failed: " source))
+          (string.append "test: integration test source failed: " source))
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         (ResultTestPackageTotals.Err 1))]))
 
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3719,7 +3996,7 @@
 (define (tltest-package-run-source
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3755,7 +4032,7 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (io.print-error
-            (string.string-append "test: package source failed: " source))
+            (string.append "test: package source failed: " source))
           (io.print-error (compiler-diagnostic-render (box-get diag)))
           (ResultTestPackageTotals.Err 1))])
     (ResultTestPackageTotals.Ok 0 0)))
@@ -3763,7 +4040,7 @@
 (define (tltest-package-run-source-isolated-count
   [source : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3787,11 +4064,11 @@
         [(ResultTestPackageTotals.Ok _ tests) tests]))))
 
 (define (tltest-package-run-sources-from
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3800,10 +4077,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (vector.string-vec-len sources))
+  (if (>= index (package-source-list-len sources))
     (ResultTestPackageTotals.Ok file-count test-count)
     (let
-      [source : String (vector.string-vec-get sources index "")]
+      [source : String (package-source-list-get sources index "")]
       (if (tltest-package-test-source? source tests-prefix)
         (tltest-package-run-sources-from
           sources
@@ -3851,10 +4128,10 @@
               (+ test-count source-tests))))))))
 
 (define (tltest-package-run-sources
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3879,11 +4156,11 @@
     test-count))
 
 (define (tltest-package-run-integration-sources-from
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3892,10 +4169,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (vector.string-vec-len sources))
+  (if (>= index (package-source-list-len sources))
     (ResultTestPackageTotals.Ok file-count test-count)
     (let
-      [source : String (vector.string-vec-get sources index "")]
+      [source : String (package-source-list-get sources index "")]
       (if (tltest-package-integration-source? source tests-prefix)
         (let
           [source-tests : i64
@@ -3941,10 +4218,10 @@
           test-count)))))
 
 (define (tltest-package-run-integration-sources
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3972,7 +4249,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)
@@ -4045,7 +4322,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [backend-target : CompilerBackendTarget]
-  [roots : vector.StringVec]) : ResultTestFileCheck
+  [roots : svec.StringVector]) : ResultTestFileCheck
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
       (begin
@@ -4066,7 +4343,7 @@
 
 (define (tltest-check-file-source
   [source : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
   (match (compiler-driver-load-file-with-runtime
     source
@@ -4080,17 +4357,17 @@
         (ResultTestFileCheck.Err 1))]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
-  (string.string-append
+  (string.append
     "TypeLisp test batch typecheck passed: "
-    (string.string-append
+    (string.append
       (string.int->string test-count)
-      (string.string-append
+      (string.append
         " test(s) in "
-        (string.string-append (string.int->string file-count) " file(s)\n")))))
+        (string.append (string.int->string file-count) " file(s)\n")))))
 
 (define (tltest-run-batch-check-path
   [source : String]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [backend-target : CompilerBackendTarget]) : i64
   (with-scratch
     (begin
@@ -4100,14 +4377,14 @@
         [(ResultTestFileCheck.Ok count) count]))))
 
 (define (tltest-run-batch-check-paths-from
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [index : i64]
-  [roots : vector.StringVec]
+  [roots : svec.StringVector]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
   (let
-    [count : i64 (vector.string-vec-len paths)]
+    [count : i64 (svec.len (& paths))]
     [cursor : i64 index]
     [files : i64 file-count]
     [tests : i64 test-count]
@@ -4115,7 +4392,7 @@
     (begin
       (while (and (= status 0) (< cursor count))
         (let
-          [source : String (vector.string-vec-get paths cursor "")]
+          [source : String (svec.get (& paths) cursor "")]
           ;; Match compile --batch: isolate each entry in a destroyable scratch
           ;; arena. Lexical arena rewind keeps overflow chunks retired until the
           ;; owning arena is destroyed (#2441), so destroying the entry arena is
@@ -4125,7 +4402,7 @@
           (if (< entry-result 0)
             (begin
               (io.print-error
-                (string.string-append "test: batch source failed: " source))
+                (string.append "test: batch source failed: " source))
               (io.print-error "\n")
               (set! status (- 0 entry-result)))
             (begin
@@ -4139,8 +4416,8 @@
         status))))
 
 (define (tltest-run-batch-check-paths
-  [paths : vector.StringVec]
-  [roots : vector.StringVec]
+  [paths : svec.StringVector]
+  [roots : svec.StringVector]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
@@ -4153,9 +4430,9 @@
     test-count))
 
 (define (tltest-run-batch-check
-  [paths : vector.StringVec]
+  [paths : svec.StringVector]
   [target : String]
-  [roots : vector.StringVec]) : i64
+  [roots : svec.StringVector]) : i64
   (begin
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)

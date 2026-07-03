@@ -20,7 +20,7 @@
   5)
 
 (define (array-second [a : (& a (Array i64))]) : i64
-  (array.array-ref a 1))
+  (array-ref a 1))
 
 (define (text-len [text : (& text str)]) : i64
   (string-length text))
@@ -55,9 +55,9 @@
       (lambda ([arg : (& p Pair)]) : i64
         (sum-pair arg))]
     (begin
-      (array.array-set! items 0 17)
-      (array.array-set! items 1 19)
-      (array.array-set! items 2 23)
+      (array-set! items 0 17)
+      (array-set! items 1 19)
+      (array-set! items 2 23)
       (let
         [direct : i64 (sum-pair p)]
         [explicit : i64 (sum-pair (& p))]
@@ -74,9 +74,7 @@
         [projection-value : i64
           (+
             (ref-score (struct-get nums first))
-            (+
-              (ref-score (tuple-ref t 1))
-              (ref-score (array.array-ref items 2))))]
+            (+ (ref-score (tuple-ref t 1)) (ref-score (array-ref items 2))))]
         [scoped-value : i64 (scoped-use-after-auto-borrow "scope")]
         (if (and
           (= direct 24)

@@ -11,9 +11,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! keys i (cast (+ (* i 5) 1) : u32))
-        (array.array-set! left i (cast (+ i 10) : u32))
-        (array.array-set! right i (cast (+ i 100) : u32))
+        (array-set! keys i (cast (+ (* i 5) 1) : u32))
+        (array-set! left i (cast (+ i 10) : u32))
+        (array-set! right i (cast (+ i 100) : u32))
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
@@ -25,12 +25,12 @@
   [pivot : u32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (< (array.array-ref keys i) pivot)
-        (array.array-ref left i)
-        (array.array-ref right i)))))
+      (if (< (array-ref keys i) pivot)
+        (array-ref left i)
+        (array-ref right i)))))
 
 (define (fill-u32-scalar
   [keys : (Array u32)]
@@ -43,12 +43,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (< (array.array-ref keys i) pivot)
-            (array.array-ref left i)
-            (array.array-ref right i)))
+          (if (< (array-ref keys i) pivot)
+            (array-ref left i)
+            (array-ref right i)))
         (set! i (+ i 1))))))
 
 (define (eq-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : bool
@@ -58,7 +58,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -87,9 +87,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! keys i (cast (+ (* i 7) 2) : u64))
-        (array.array-set! left i (cast (+ i 20) : u64))
-        (array.array-set! right i (cast (+ i 200) : u64))
+        (array-set! keys i (cast (+ (* i 7) 2) : u64))
+        (array-set! left i (cast (+ i 20) : u64))
+        (array-set! right i (cast (+ i 200) : u64))
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
@@ -101,12 +101,12 @@
   [pivot : u64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (< (array.array-ref keys i) pivot)
-        (array.array-ref left i)
-        (array.array-ref right i)))))
+      (if (< (array-ref keys i) pivot)
+        (array-ref left i)
+        (array-ref right i)))))
 
 (define (fill-u64-scalar
   [keys : (Array u64)]
@@ -119,12 +119,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (< (array.array-ref keys i) pivot)
-            (array.array-ref left i)
-            (array.array-ref right i)))
+          (if (< (array-ref keys i) pivot)
+            (array-ref left i)
+            (array-ref right i)))
         (set! i (+ i 1))))))
 
 (define (eq-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : bool
@@ -134,7 +134,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -163,9 +163,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! keys i (cast (+ i 1) : f32))
-        (array.array-set! left i (cast (+ i 30) : f32))
-        (array.array-set! right i (cast (+ i 300) : f32))
+        (array-set! keys i (cast (+ i 1) : f32))
+        (array-set! left i (cast (+ i 30) : f32))
+        (array-set! right i (cast (+ i 300) : f32))
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
@@ -177,12 +177,12 @@
   [pivot : f32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (< (array.array-ref keys i) pivot)
-        (array.array-ref left i)
-        (array.array-ref right i)))))
+      (if (< (array-ref keys i) pivot)
+        (array-ref left i)
+        (array-ref right i)))))
 
 (define (fill-f32-scalar
   [keys : (Array f32)]
@@ -195,12 +195,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (< (array.array-ref keys i) pivot)
-            (array.array-ref left i)
-            (array.array-ref right i)))
+          (if (< (array-ref keys i) pivot)
+            (array-ref left i)
+            (array-ref right i)))
         (set! i (+ i 1))))))
 
 (define (eq-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : bool
@@ -210,7 +210,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -239,9 +239,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! keys i (cast (+ i 1) : f64))
-        (array.array-set! left i (cast (+ i 40) : f64))
-        (array.array-set! right i (cast (+ i 400) : f64))
+        (array-set! keys i (cast (+ i 1) : f64))
+        (array-set! left i (cast (+ i 40) : f64))
+        (array-set! right i (cast (+ i 400) : f64))
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
@@ -253,12 +253,12 @@
   [pivot : f64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (< (array.array-ref keys i) pivot)
-        (array.array-ref left i)
-        (array.array-ref right i)))))
+      (if (< (array-ref keys i) pivot)
+        (array-ref left i)
+        (array-ref right i)))))
 
 (define (fill-f64-scalar
   [keys : (Array f64)]
@@ -271,12 +271,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (< (array.array-ref keys i) pivot)
-            (array.array-ref left i)
-            (array.array-ref right i)))
+          (if (< (array-ref keys i) pivot)
+            (array-ref left i)
+            (array-ref right i)))
         (set! i (+ i 1))))))
 
 (define (eq-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : bool
@@ -286,7 +286,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -315,9 +315,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! keys i (< (% i 3) 2))
-        (array.array-set! left i (= (% i 2) 0))
-        (array.array-set! right i (= (% i 5) 0))
+        (array-set! keys i (< (% i 3) 2))
+        (array-set! left i (= (% i 2) 0))
+        (array-set! right i (= (% i 5) 0))
         (set! i (+ i 1))))))
 
 (define (fill-bool-foreach
@@ -328,12 +328,12 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (array.array-ref keys i)
-        (array.array-ref left i)
-        (array.array-ref right i)))))
+      (if (array-ref keys i)
+        (array-ref left i)
+        (array-ref right i)))))
 
 (define (fill-bool-scalar
   [keys : (Array bool)]
@@ -345,12 +345,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (array.array-ref keys i)
-            (array.array-ref left i)
-            (array.array-ref right i)))
+          (if (array-ref keys i)
+            (array-ref left i)
+            (array-ref right i)))
         (set! i (+ i 1))))))
 
 (define (eq-bool [a : (Array bool)] [b : (Array bool)] [n : i64]) : bool
@@ -360,11 +360,11 @@
     (begin
       (while (< i n)
         (begin
-          (if (array.array-ref a i)
-            (if (array.array-ref b i)
+          (if (array-ref a i)
+            (if (array-ref b i)
               unit
               (set! ok false))
-            (if (array.array-ref b i)
+            (if (array-ref b i)
               (set! ok false)
               unit))
           (set! i (+ i 1))))

@@ -14,11 +14,11 @@
   (let
     [items : (Array Triple) (array.make-array Triple 1)]
     (begin
-      (array.array-set! items 0 (Triple 1 2 3))
-      (array.array-push! items (Triple 5 7 11))
-      (array.array-push! items (Triple 2 4 7))
+      (array-set! items 0 (Triple 1 2 3))
+      (array-push! items (Triple 5 7 11))
+      (array-push! items (Triple 2 4 7))
       (+
-        (triple-score (array.array-ref items 0))
+        (triple-score (array-ref items 0))
         (+
-          (triple-score (array.array-ref items 1))
-          (triple-score (array.array-ref items 2)))))))
+          (triple-score (array-ref items 1))
+          (triple-score (array-ref items 2)))))))

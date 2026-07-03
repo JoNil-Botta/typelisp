@@ -1,4 +1,6 @@
+(import stdlib.array)
 (import stdlib.byte_buf_core)
+(import stdlib.string)
 (import stdlib.test)
 
 (define (assert-u8-eq [actual : u8] [expected : i64] [message : String]) : unit
@@ -15,7 +17,7 @@
   (let
     [buf : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 2)]
-    [src : (Array u8) (make-array u8 4)]
+    [src : (Array u8) (array.make-array u8 4)]
     (begin
       (test.assert-i64-eq
         (byte_buf_core.byte-buf-builder-len (& buf))
@@ -73,7 +75,7 @@
       (let
         [text : String (byte_buf_core.byte-buf-builder-finish-string (& buf))]
         (begin
-          (test.assert-i64-eq (string-length text) 7 "string length")
+          (test.assert-i64-eq (string.string-length text) 7 "string length")
           (assert-u8-eq (string-byte text 1) 0 "string nul")
           (assert-u8-eq (string-byte text 2) 128 "string high")
           (assert-u8-eq (string-byte text 4) 255 "string max")

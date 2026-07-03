@@ -18,26 +18,20 @@
 ;# Usage: `(import stdlib.hashmap)`
 ;#
 ;# Generic source syntax such as `HashMap<K,V>` is intentionally not exposed
-;# yet; TypeLisp still uses `comptime-decl` generator requests instead of
-;# source-level generics or traits. These maps
-;# are the stdlib choice for ordinary program data keyed by `String` or `i64`;
-;# compiler-internal symbol tables may keep using specialized maps when their
-;# value domain or lifecycle is tighter than a public stdlib collection.
+;# yet; TypeLisp uses stdlib module macros and checked-in concrete families
+;# instead of source-level generics or traits. These maps are the stdlib choice
+;# for ordinary program data keyed by `String` or `i64`; compiler-internal
+;# symbol tables may keep using specialized maps when their value domain or
+;# lifecycle is tighter than a public stdlib collection.
 ;#
-;# `stdlib/hashmap-family` generation keys include a key descriptor identity in
-;# addition to key and value `type-key` strings. The built-in descriptors are:
-;# - `stdlib/hashmap/string-key-v1`: owned `String` keys, `hash.string-key`,
-;#   `hash.key-string-eq?`, borrowed key lookup/contains/remove wrappers, and
-;#   borrowed value lookup results tied to the map lifetime.
-;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash.i64`,
-;#   `hash.key-i64-eq?`, no borrowed-key wrappers, and generated borrowed
-;#   value lookup results tied to the map lifetime.
-;# - `stdlib/hashmap/aggregate-key-v1`: owned nominal struct/enum keys. Hashing
-;#   and equality are derived from supported fields/payloads in declaration
-;#   order (`i64`, `bool`, `char`, `String`, and nested supported nominal
-;#   aggregates). No borrowed-key wrappers are emitted.
-;# Unsupported key types are intentionally rejected by the generator request
-;# path instead of falling back to a trait or implicit `Hash`/`Eq` bound.
+;# The checked-in base families cover `String` and `i64` keys plus the aggregate
+;# fixture families used by inline tests. String-key maps support borrowed key
+;# lookup/contains/remove wrappers and borrowed value lookup results tied to the
+;# map lifetime. i64-key maps use scalar keys directly and still expose borrowed
+;# value lookup. Aggregate fixture keys derive deterministic hash/equality from
+;# declaration-order struct fields or enum variant tag plus declaration-order
+;# payloads for supported members (`i64`, `bool`, `char`, `String`, and nested
+;# supported nominal aggregates).
 ;#
 ;# ```typelisp
 ;# (import stdlib.hashmap)
@@ -52,21 +46,23 @@
 ;# ```
 (module stdlib.hashmap)
 
+(import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.hash as hash_mod)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
 
 ;: Stable descriptor identity for generated `String`-key hashmap families.
-(define (hashmap-string-key-descriptor-key) : String
+(define (string-key-descriptor-key) : String
   "stdlib/hashmap/string-key-v1")
 
 ;: Stable descriptor identity for generated `i64`-key hashmap families.
-(define (hashmap-i64-key-descriptor-key) : String
+(define (i64-key-descriptor-key) : String
   "stdlib/hashmap/i64-key-v1")
 
 ;: Stable descriptor identity for generated nominal aggregate-key hashmap families.
-(define (hashmap-aggregate-key-descriptor-key) : String
+(define (aggregate-key-descriptor-key) : String
   "stdlib/hashmap/aggregate-key-v1")
 
 ;: Emit the module-shaped hashmap surface for supported key/value pairs.
@@ -76,17 +72,20 @@
 ;: implementation while presenting the new `&`/`&mut` collection API shape.
 (defmacro (hashmap [K : type] [V : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var
-        (string-append
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append
           "stdlib.hashmap.generated."
-          (string-append (type-key K) (string-append "." (type-key V)))))]
+          (comptime.string-append
+            (type-key K)
+            (comptime.string-append "." (type-key V)))))]
     (match (type-key K)
       ["String"
         (match (type-key V)
           ["i64"
             `(begin
               (module ,module-name)
+              (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (defstruct Map
                 (inner base.StringI64Map))
@@ -116,7 +115,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array-length (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -258,6 +257,7 @@
           ["String"
             `(begin
               (module ,module-name)
+              (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (import stdlib.string)
               (defstruct Map
@@ -288,7 +288,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array-length (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -507,12 +507,7 @@
                 [map : (&mut map Map)]
                 [key : String]
                 [value : ,V]) : unit
-                (let
-                  [inner : base.StringHashPayloadMap
-                    (clone (struct-get map inner))]
-                  (set!
-                    (struct-get map inner)
-                    (base.string-hash-payload-map-put inner key value))))
+                (base.string-hash-payload-map-put! (inner-mut map) key value))
               (define (insert-or-update
                 [map : (&mut map Map)]
                 [key : String]
@@ -521,20 +516,11 @@
               (define (remove-borrowed
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
-                (let
-                  [inner : base.StringHashPayloadMap
-                    (clone (struct-get map inner))]
-                  (match (base.string-hash-payload-map-remove-borrowed
-                    inner
-                    key)
-                    [(base.StringHashPayloadMapRemoveOk next)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (RemoveOk))]
-                    [(base.StringHashPayloadMapRemoveMissing next)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (RemoveMissing))])))
+                (if (base.string-hash-payload-map-remove-borrowed!
+                  (inner-mut map)
+                  key)
+                  (RemoveOk)
+                  (RemoveMissing)))
               (define (remove [map : (&mut map Map)] [key : String]) : RemoveResult
                 (remove-borrowed map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
@@ -545,21 +531,15 @@
                 [map : (&mut map Map)]
                 [key : String]
                 [default-value : ,V]) : EntryOrInsertResult
-                (let
-                  [inner : base.StringHashPayloadMap
-                    (clone (struct-get map inner))]
-                  (match (base.string-hash-payload-map-entry-or-insert
-                    inner
-                    key
-                    default-value)
-                    [(base.StringHashPayloadMapEntryOrInsertFound next value)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (EntryOrInsertFound value))]
-                    [(base.StringHashPayloadMapEntryOrInsertInserted next value)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (EntryOrInsertInserted value))])))
+                (match (base.string-hash-payload-map-get-borrowed-ref
+                  (& (struct-get map inner))
+                  (& key))
+                  [(base.StringHashPayloadMapFound value)
+                    (EntryOrInsertFound value)]
+                  [(base.StringHashPayloadMapMissing)
+                    (begin
+                      (insert map key default-value)
+                      (EntryOrInsertInserted default-value))]))
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -593,6 +573,7 @@
           ["i64"
             `(begin
               (module ,module-name)
+              (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (defstruct Map
                 (inner base.I64I64Map))
@@ -622,7 +603,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array-length (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -734,6 +715,7 @@
           ["String"
             `(begin
               (module ,module-name)
+              (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (import stdlib.string)
               (defstruct Map
@@ -764,7 +746,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array-length (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -953,28 +935,16 @@
                   [(LookupFound _) true]
                   [(LookupMissing) false]))
               (define (insert [map : (&mut map Map)] [key : i64] [value : ,V]) : unit
-                (let
-                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
-                  (set!
-                    (struct-get map inner)
-                    (base.i64-hash-state-map-put inner key value))))
+                (base.i64-hash-state-map-put! (inner-mut map) key value))
               (define (insert-or-update
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : ,V]) : unit
                 (insert map key value))
               (define (remove [map : (&mut map Map)] [key : i64]) : RemoveResult
-                (let
-                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
-                  (match (base.i64-hash-state-map-remove inner key)
-                    [(base.I64HashStateMapRemoveOk next)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (RemoveOk))]
-                    [(base.I64HashStateMapRemoveMissing next)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (RemoveMissing))])))
+                (if (base.i64-hash-state-map-remove! (inner-mut map) key)
+                  (RemoveOk)
+                  (RemoveMissing)))
               (define (remove-ok? [result : RemoveResult]) : bool
                 (match result
                   [(RemoveOk) true]
@@ -983,20 +953,14 @@
                 [map : (&mut map Map)]
                 [key : i64]
                 [default-value : ,V]) : EntryOrInsertResult
-                (let
-                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
-                  (match (base.i64-hash-state-map-entry-or-insert
-                    inner
-                    key
-                    default-value)
-                    [(base.I64HashStateMapEntryOrInsertFound next value)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (EntryOrInsertFound value))]
-                    [(base.I64HashStateMapEntryOrInsertInserted next value)
-                      (begin
-                        (set! (struct-get map inner) next)
-                        (EntryOrInsertInserted value))])))
+                (match (base.i64-hash-state-map-get-ref
+                  (& (struct-get map inner))
+                  key)
+                  [(base.I64HashStateMapFound value) (EntryOrInsertFound value)]
+                  [(base.I64HashStateMapMissing)
+                    (begin
+                      (insert map key default-value)
+                      (EntryOrInsertInserted default-value))]))
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -1112,30 +1076,21 @@
                     [map : (&mut map Map)]
                     [key : ,K]
                     [value : i64]) : unit
-                    (let
-                      [inner : base.HashNestedKeyI64Map
-                        (clone (struct-get map inner))]
-                      (set!
-                        (struct-get map inner)
-                        (base.hash-nested-key-i64-map-put inner key value))))
+                    (base.hash-nested-key-i64-map-put!
+                      (inner-mut map)
+                      key
+                      value))
                   (define (insert-or-update
                     [map : (&mut map Map)]
                     [key : ,K]
                     [value : i64]) : unit
                     (insert map key value))
                   (define (remove [map : (&mut map Map)] [key : ,K]) : RemoveResult
-                    (let
-                      [inner : base.HashNestedKeyI64Map
-                        (clone (struct-get map inner))]
-                      (match (base.hash-nested-key-i64-map-remove inner key)
-                        [(base.HashNestedKeyI64MapRemoveOk next)
-                          (begin
-                            (set! (struct-get map inner) next)
-                            (RemoveOk))]
-                        [(base.HashNestedKeyI64MapRemoveMissing next)
-                          (begin
-                            (set! (struct-get map inner) next)
-                            (RemoveMissing))])))
+                    (if (base.hash-nested-key-i64-map-remove!
+                      (inner-mut map)
+                      key)
+                      (RemoveOk)
+                      (RemoveMissing)))
                   (define (remove-ok? [result : RemoveResult]) : bool
                     (match result
                       [(RemoveOk) true]
@@ -1144,23 +1099,15 @@
                     [map : (&mut map Map)]
                     [key : ,K]
                     [default-value : i64]) : EntryOrInsertResult
-                    (let
-                      [inner : base.HashNestedKeyI64Map
-                        (clone (struct-get map inner))]
-                      (match (base.hash-nested-key-i64-map-entry-or-insert
-                        inner
-                        key
-                        default-value)
-                        [(base.HashNestedKeyI64MapEntryOrInsertFound next value)
-                          (begin
-                            (set! (struct-get map inner) next)
-                            (EntryOrInsertFound value))]
-                        [(base.HashNestedKeyI64MapEntryOrInsertInserted
-                            next
-                            value)
-                          (begin
-                            (set! (struct-get map inner) next)
-                            (EntryOrInsertInserted value))])))
+                    (match (base.hash-nested-key-i64-map-get-ref
+                      (& (struct-get map inner))
+                      key)
+                      [(base.HashNestedKeyI64MapFound value)
+                        (EntryOrInsertFound value)]
+                      [(base.HashNestedKeyI64MapMissing)
+                        (begin
+                          (insert map key default-value)
+                          (EntryOrInsertInserted default-value))]))
                   (define (entry-or-insert-inserted?
                     [result : EntryOrInsertResult]) : bool
                     (match result
@@ -1511,11 +1458,14 @@
   [slots : (Array StringI64MapSlot)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (array-set! slots index (StringI64MapEmpty))
-      (stdlib.hashmap.string-i64-map-fill-empty slots (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (array-set! slots i (StringI64MapEmpty))
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Create an empty map with `capacity` rounded up to a positive power of two.
 (define (string-i64-map-with-capacity [capacity : i64]) : StringI64Map
@@ -1523,7 +1473,7 @@
     [rounded-capacity : i64
       (stdlib.hashmap.string-i64-map-round-capacity capacity)]
     [slots : (Array StringI64MapSlot)
-      (make-array StringI64MapSlot rounded-capacity)]
+      (array.make-array StringI64MapSlot rounded-capacity)]
     (begin
       (stdlib.hashmap.string-i64-map-fill-empty slots 0 rounded-capacity)
       (StringI64Map slots 0 0))))
@@ -2075,25 +2025,23 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (stdlib.hashmap.string-i64-map-slot-at src index)
-        [(StringI64MapOccupied key value hash)
-          (stdlib.hashmap.string-i64-map-insert-into-empty
-            dst
-            dst-capacity
-            key
-            value
-            hash)]
-        [(StringI64MapEmpty) unit]
-        [(StringI64MapTombstone) unit])
-      (stdlib.hashmap.string-i64-map-rehash-from
-        src
-        dst
-        dst-capacity
-        (+ index 1)
-        count))))
+      (while (< i count)
+        (begin
+          (match (stdlib.hashmap.string-i64-map-slot-at src i)
+            [(StringI64MapOccupied key value hash)
+              (stdlib.hashmap.string-i64-map-insert-into-empty
+                dst
+                dst-capacity
+                key
+                value
+                hash)]
+            [(StringI64MapEmpty) unit]
+            [(StringI64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Borrowed-source variant used by in-place resize helpers.
 (define (string-i64-map-rehash-from-ref
@@ -2102,25 +2050,23 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (array-ref src index)
-        [(StringI64MapOccupied key value hash)
-          (stdlib.hashmap.string-i64-map-insert-into-empty
-            dst
-            dst-capacity
-            key
-            value
-            hash)]
-        [(StringI64MapEmpty) unit]
-        [(StringI64MapTombstone) unit])
-      (stdlib.hashmap.string-i64-map-rehash-from-ref
-        src
-        dst
-        dst-capacity
-        (+ index 1)
-        count))))
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(StringI64MapOccupied key value hash)
+              (stdlib.hashmap.string-i64-map-insert-into-empty
+                dst
+                dst-capacity
+                key
+                value
+                hash)]
+            [(StringI64MapEmpty) unit]
+            [(StringI64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Rebuild `map` as a fresh power-of-two table holding only its live entries
 ;: (tombstones dropped, so the deleted count resets to 0). The backing array is
@@ -2136,7 +2082,7 @@
     [rounded-capacity : i64
       (stdlib.hashmap.string-i64-map-round-capacity requested-capacity)]
     [dst : (Array StringI64MapSlot)
-      (make-array StringI64MapSlot rounded-capacity)]
+      (array.make-array StringI64MapSlot rounded-capacity)]
     (begin
       (stdlib.hashmap.string-i64-map-fill-empty dst 0 rounded-capacity)
       (stdlib.hashmap.string-i64-map-rehash-from
@@ -2222,7 +2168,7 @@
     [rounded-capacity : i64
       (stdlib.hashmap.string-i64-map-round-capacity requested-capacity)]
     [dst : (Array StringI64MapSlot)
-      (make-array StringI64MapSlot rounded-capacity)]
+      (array.make-array StringI64MapSlot rounded-capacity)]
     (begin
       (stdlib.hashmap.string-i64-map-fill-empty dst 0 rounded-capacity)
       (stdlib.hashmap.string-i64-map-rehash-from-ref
@@ -2475,7 +2421,9 @@
 ;: Borrow `map` mutably and return a live mutable entry for borrowed `key`.
 ;: The handle can update an existing entry in place; missing entries are
 ;: reported as absent and are not inserted by the handle API.
-(defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
+(defmacro (string-i64-map-get-mut-entry-borrowed
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
   `(string-i64-map-mut-entry-from-info
     (string-i64-map-mut-entry-info
       (struct-get ,map slots)
@@ -2540,26 +2488,21 @@
   [slots : (Array StringI64MapSlot)]
   [index : i64]
   [capacity : i64]) : i64
-  (if (>= index capacity)
-    capacity
-    (match (stdlib.hashmap.string-i64-map-slot-at slots index)
-      [(StringI64MapOccupied _ _ _) index]
-      [(StringI64MapEmpty)
-        (stdlib.hashmap.string-i64-map-next-occupied-from
-          slots
-          (+ index 1)
-          capacity)]
-      [(StringI64MapTombstone)
-        (stdlib.hashmap.string-i64-map-next-occupied-from
-          slots
-          (+ index 1)
-          capacity)])))
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i capacity)
+        (match (stdlib.hashmap.string-i64-map-slot-at slots i)
+          [(StringI64MapOccupied _ _ _) (return i)]
+          [(StringI64MapEmpty) (set! i (+ i 1))]
+          [(StringI64MapTombstone) (set! i (+ i 1))]))
+      capacity)))
 
 ;: Iteration cursor: the index of the first occupied slot at or after `from`
 ;: (in ascending bucket order), or the capacity when no live entry remains.
 ;: A negative `from` is clamped to 0.
 ;:
-;: v1 iterates in *bucket order* Ã¢â‚¬â€ ascending slot index, skipping empty and
+;: v1 iterates in *bucket order* - ascending slot index, skipping empty and
 ;: tombstone slots. This order is deterministic for a fixed table state but is
 ;: NOT insertion order, and it can change across a resize/rehash (#827). Walk
 ;: live entries by starting at `(string-i64-map-next-occupied map 0)` and
@@ -2632,33 +2575,2043 @@
     (StringI64MapEntryNone)
     (match (array-ref (struct-get map slots) index)
       [(StringI64MapOccupied key value _)
-        (StringI64MapEntrySome (string.string-copy (& key)) value)]
+        (StringI64MapEntrySome (string.copy (& key)) value)]
       [(StringI64MapEmpty) (StringI64MapEntryNone)]
       [(StringI64MapTombstone) (StringI64MapEntryNone)])))
 
-;: Generated `HashMap<String,String>` family request. The full public API is
-;: produced by the `stdlib/hashmap-family` declaration generator.
-(comptime-decl
-  (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key
-    (type String)) "stdlib/hashmap/string-key-v1")
-  (defstruct StringStringMap
-    (__hashmap_family_request i64)))
+;: Checked-in `StringStringMap` base family.
+(defenum StringStringMapSlot
+  (StringStringMapEmpty)
+  (StringStringMapTombstone)
+  (StringStringMapOccupied String String i64))
 
-;: Generated `HashMap<i64,i64>` family request. The full public API is
-;: produced by the `stdlib/hashmap-family` declaration generator.
-(comptime-decl
-  (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key
-    (type i64)) "stdlib/hashmap/i64-key-v1")
-  (defstruct I64I64Map
-    (__hashmap_family_request i64)))
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapProbe
+  (StringStringMapProbeFound i64)
+  (StringStringMapProbeAbsent i64)
+  (StringStringMapProbeFull))
 
-;: Generated `HashMap<i64,String>` family request. The full public API is
-;: produced by the `stdlib/hashmap-family` declaration generator.
-(comptime-decl
-  (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key
-    (type String)) "stdlib/hashmap/i64-key-v1")
-  (defstruct I64StringMap
-    (__hashmap_family_request i64)))
+;: Generated concrete hashmap family helper.
+(define (string-string-map-hash-normalize [value : i64]) : i64
+  (let
+    [m : i64 2147483647]
+    [raw : i64 (% value 2147483647)]
+    (if (< raw 0)
+      (+ raw m)
+      raw)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-hash-key [key : (& key str)]) : i64
+  (let
+    [n : i64 (__tl_string_length key)]
+    [i : i64 0]
+    [hash : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            hash
+            (%
+              (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)
+              2147483647))
+          (set! i (+ i 1))))
+      hash)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-power-two-capacity? [capacity : i64]) : bool
+  (if (> capacity 0)
+    (= (bit-and capacity (- capacity 1)) 0)
+    false))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-round-capacity [capacity : i64]) : i64
+  (let
+    [rounded : i64 1]
+    (begin
+      (while (< rounded capacity)
+        (set! rounded (* rounded 2)))
+      rounded)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-normalized-bucket-index
+  [hash : i64]
+  [capacity : i64]) : i64
+  (bit-and hash (- capacity 1)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-bucket-index [hash : i64] [capacity : i64]) : i64
+  (string-string-map-normalized-bucket-index
+    (string-string-map-hash-normalize hash)
+    capacity))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-next-index [index : i64] [capacity : i64]) : i64
+  (let
+    [next : i64 (+ index 1)]
+    (if (>= next capacity)
+      0
+      next)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-insert-slot
+  [first-tombstone : i64]
+  [empty-index : i64]) : i64
+  (if (>= first-tombstone 0)
+    first-tombstone
+    empty-index))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-key-eq?
+  [left : (& left str)]
+  [right : (& right str)]) : bool
+  (__tl_string_eq left right))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-probe-borrowed-from
+  [slots : (Array StringStringMapSlot)]
+  [capacity : i64]
+  [key : (& key str)]
+  [hash : i64]
+  [index : i64]
+  [steps : i64]
+  [first-tombstone : i64]) : StringStringMapProbe
+  (let
+    [cursor : i64 index]
+    [walked : i64 steps]
+    [first : i64 first-tombstone]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(StringStringMapEmpty)
+            (return
+              (StringStringMapProbeAbsent
+                (string-string-map-insert-slot first cursor)))]
+          [(StringStringMapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first 0)
+                  (set! first cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(StringStringMapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (string-string-map-key-eq? (& slot-key) key)
+              false)
+              (return (StringStringMapProbeFound cursor))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first 0)
+        (StringStringMapProbeAbsent first)
+        (StringStringMapProbeFull)))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-probe-borrowed
+  [slots : (Array StringStringMapSlot)]
+  [capacity : i64]
+  [key : (& key str)]
+  [hash : i64]) : StringStringMapProbe
+  (if (<= capacity 0)
+    (StringStringMapProbeFull)
+    (string-string-map-probe-borrowed-from
+      slots
+      capacity
+      key
+      hash
+      (string-string-map-normalized-bucket-index hash capacity)
+      0
+      -1)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-probe
+  [slots : (Array StringStringMapSlot)]
+  [capacity : i64]
+  [key : String]
+  [hash : i64]) : StringStringMapProbe
+  (string-string-map-probe-borrowed slots capacity (& key) hash))
+
+;: Generated concrete hashmap family helper.
+(defstruct StringStringMap
+  (slots (Array StringStringMapSlot))
+  (len i64)
+  (deleted i64))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapLookup
+  (StringStringMapMissing)
+  (StringStringMapFound String))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapBorrowedValueLookup
+  (:lifetimes map)
+  (StringStringMapBorrowedValueMissing)
+  (StringStringMapBorrowedValueFound (& map str)))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapInsertResult
+  (StringStringMapInsertOk StringStringMap)
+  (StringStringMapInsertFull StringStringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapRemoveResult
+  (StringStringMapRemoveOk StringStringMap)
+  (StringStringMapRemoveMissing StringStringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapUpdateResult
+  (StringStringMapUpdateOk StringStringMap)
+  (StringStringMapUpdateMissing StringStringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapEntryOrInsertResult
+  (StringStringMapEntryOrInsertFound StringStringMap String)
+  (StringStringMapEntryOrInsertInserted StringStringMap String))
+
+;: Generated concrete hashmap family helper.
+(defstruct StringStringMapMutEntryInfo
+  (index i64)
+  (present bool)
+  (key String)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(defstruct StringStringMapMutEntry
+  (:lifetimes map)
+  (slots (Array StringStringMapSlot))
+  (borrow (&mut map (Array StringStringMapSlot)))
+  (index i64)
+  (present bool)
+  (key String)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-slots [map : StringStringMap]) : (Array
+    StringStringMapSlot)
+  (struct-get map slots))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-len [map : StringStringMap]) : i64
+  (struct-get map len))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-capacity [map : StringStringMap]) : i64
+  (array-length (struct-get map slots)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-deleted [map : StringStringMap]) : i64
+  (struct-get map deleted))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-fill-empty
+  [slots : (Array StringStringMapSlot)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! slots index (StringStringMapEmpty))
+      (string-string-map-fill-empty slots (+ index 1) count))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-with-capacity [capacity : i64]) : StringStringMap
+  (let
+    [rounded-capacity : i64 (string-string-map-round-capacity capacity)]
+    [slots : (Array StringStringMapSlot)
+      (make-array StringStringMapSlot rounded-capacity)]
+    (begin
+      (string-string-map-fill-empty slots 0 rounded-capacity)
+      (StringStringMap slots 0 0))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-borrowed-value-missing
+  [map : (& map StringStringMap)]) : (StringStringMapBorrowedValueLookup map)
+  (StringStringMapBorrowedValueMissing))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-borrowed-value-found [value : (& map str)]) : (StringStringMapBorrowedValueLookup
+    map)
+  (StringStringMapBorrowedValueFound value))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-get-borrowed
+  [map : StringStringMap]
+  [key : (& key str)]) : StringStringMapLookup
+  (let
+    [slots : (Array StringStringMapSlot) (string-string-map-slots map)]
+    (match (string-string-map-probe-borrowed
+      slots
+      (string-string-map-capacity map)
+      key
+      (string-string-map-hash-key key))
+      [(StringStringMapProbeFound index)
+        (match (array-ref slots index)
+          [(StringStringMapOccupied _ value _) (StringStringMapFound value)]
+          [(StringStringMapEmpty) (StringStringMapMissing)]
+          [(StringStringMapTombstone) (StringStringMapMissing)])]
+      [(StringStringMapProbeAbsent _) (StringStringMapMissing)]
+      [(StringStringMapProbeFull) (StringStringMapMissing)])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-get [map : StringStringMap] [key : String]) : StringStringMapLookup
+  (string-string-map-get-borrowed map (& key)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-get-value-borrowed
+  [map : (& map StringStringMap)]
+  [key : (& key str)]) : (StringStringMapBorrowedValueLookup map)
+  (let
+    [capacity : i64 (array-length (struct-get map slots))]
+    (if (<= capacity 0)
+      (string-string-map-borrowed-value-missing map)
+      (let
+        [hash : i64 (string-string-map-hash-key key)]
+        [cursor : i64 (string-string-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref (struct-get map slots) cursor)
+              [(StringStringMapEmpty)
+                (return (string-string-map-borrowed-value-missing map))]
+              [(StringStringMapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringStringMapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-string-map-key-eq? (& slot-key) key)
+                  false)
+                  (match (& (array-ref (struct-get map slots) cursor))
+                    [(StringStringMapOccupied _ value _)
+                      (return (string-string-map-borrowed-value-found value))]
+                    [(StringStringMapEmpty)
+                      (return (string-string-map-borrowed-value-missing map))]
+                    [(StringStringMapTombstone)
+                      (return (string-string-map-borrowed-value-missing map))])
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1)))))]))
+          (string-string-map-borrowed-value-missing map))))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-contains-borrowed?
+  [map : StringStringMap]
+  [key : (& key str)]) : bool
+  (match (string-string-map-get-borrowed map key)
+    [(StringStringMapFound _) true]
+    [(StringStringMapMissing) false]))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-contains? [map : StringStringMap] [key : String]) : bool
+  (string-string-map-contains-borrowed? map (& key)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-slot-tombstone? [slot : StringStringMapSlot]) : bool
+  (match slot
+    [(StringStringMapTombstone) true]
+    [(StringStringMapEmpty) false]
+    [(StringStringMapOccupied _ _ _) false]))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-insert
+  [map : StringStringMap]
+  [key : String]
+  [value : String]) : StringStringMapInsertResult
+  (let
+    [slots : (Array StringStringMapSlot) (string-string-map-slots map)]
+    [hash : i64 (string-string-map-hash-key (& key))]
+    (match (string-string-map-probe-borrowed
+      slots
+      (string-string-map-capacity map)
+      (& key)
+      hash)
+      [(StringStringMapProbeFound index)
+        (begin
+          (array-set! slots index (StringStringMapOccupied key value hash))
+          (StringStringMapInsertOk map))]
+      [(StringStringMapProbeAbsent index)
+        (let
+          [reused-tombstone : bool
+            (string-string-map-slot-tombstone? (array-ref slots index))]
+          (begin
+            (array-set! slots index (StringStringMapOccupied key value hash))
+            (set! (struct-get map len) (+ (string-string-map-len map) 1))
+            (if reused-tombstone
+              (set!
+                (struct-get map deleted)
+                (- (string-string-map-deleted map) 1))
+              unit)
+            (StringStringMapInsertOk map)))]
+      [(StringStringMapProbeFull) (StringStringMapInsertFull map)])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-remove-borrowed
+  [map : StringStringMap]
+  [key : (& key str)]) : StringStringMapRemoveResult
+  (let
+    [slots : (Array StringStringMapSlot) (string-string-map-slots map)]
+    (match (string-string-map-probe-borrowed
+      slots
+      (string-string-map-capacity map)
+      key
+      (string-string-map-hash-key key))
+      [(StringStringMapProbeFound index)
+        (begin
+          (array-set! slots index (StringStringMapTombstone))
+          (set! (struct-get map len) (- (string-string-map-len map) 1))
+          (set! (struct-get map deleted) (+ (string-string-map-deleted map) 1))
+          (StringStringMapRemoveOk map))]
+      [(StringStringMapProbeAbsent _) (StringStringMapRemoveMissing map)]
+      [(StringStringMapProbeFull) (StringStringMapRemoveMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-remove [map : StringStringMap] [key : String]) : StringStringMapRemoveResult
+  (string-string-map-remove-borrowed map (& key)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-update-borrowed-if-present
+  [map : StringStringMap]
+  [key : (& key str)]
+  [value : String]) : StringStringMapUpdateResult
+  (let
+    [slots : (Array StringStringMapSlot) (string-string-map-slots map)]
+    [hash : i64 (string-string-map-hash-key key)]
+    (match (string-string-map-probe-borrowed
+      slots
+      (string-string-map-capacity map)
+      key
+      hash)
+      [(StringStringMapProbeFound index)
+        (match (array-ref slots index)
+          [(StringStringMapOccupied slot-key _ slot-hash)
+            (begin
+              (array-set!
+                slots
+                index
+                (StringStringMapOccupied slot-key value slot-hash))
+              (StringStringMapUpdateOk map))]
+          [(StringStringMapEmpty) (StringStringMapUpdateMissing map)]
+          [(StringStringMapTombstone) (StringStringMapUpdateMissing map)])]
+      [(StringStringMapProbeAbsent _) (StringStringMapUpdateMissing map)]
+      [(StringStringMapProbeFull) (StringStringMapUpdateMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-update-if-present
+  [map : StringStringMap]
+  [key : String]
+  [value : String]) : StringStringMapUpdateResult
+  (string-string-map-update-borrowed-if-present map (& key) value))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-insert-into-empty
+  [slots : (Array StringStringMapSlot)]
+  [capacity : i64]
+  [key : String]
+  [value : String]
+  [hash : i64]) : unit
+  (if (<= capacity 0)
+    unit
+    (let
+      [cursor : i64 (string-string-map-normalized-bucket-index hash capacity)]
+      [walked : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< walked capacity))
+          (match (array-ref slots cursor)
+            [(StringStringMapEmpty)
+              (begin
+                (array-set!
+                  slots
+                  cursor
+                  (StringStringMapOccupied key value hash))
+                (set! done true))]
+            [_
+              (begin
+                (set! cursor (string-string-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        unit))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-rehash-from
+  [src : (Array StringStringMapSlot)]
+  [dst : (Array StringStringMapSlot)]
+  [dst-capacity : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (match (array-ref src index)
+        [(StringStringMapOccupied key value hash)
+          (string-string-map-insert-into-empty dst dst-capacity key value hash)]
+        [(StringStringMapEmpty) unit]
+        [(StringStringMapTombstone) unit])
+      (string-string-map-rehash-from src dst dst-capacity (+ index 1) count))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-resized [map : StringStringMap] [new-capacity : i64]) : StringStringMap
+  (let
+    [src : (Array StringStringMapSlot) (string-string-map-slots map)]
+    [old-capacity : i64 (string-string-map-capacity map)]
+    [requested-capacity : i64
+      (if (> (string-string-map-len map) new-capacity)
+        (string-string-map-len map)
+        new-capacity)]
+    [rounded-capacity : i64
+      (string-string-map-round-capacity requested-capacity)]
+    [dst : (Array StringStringMapSlot)
+      (make-array StringStringMapSlot rounded-capacity)]
+    (begin
+      (string-string-map-fill-empty dst 0 rounded-capacity)
+      (string-string-map-rehash-from src dst rounded-capacity 0 old-capacity)
+      (set! (struct-get map slots) dst)
+      (set! (struct-get map deleted) 0)
+      map)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-grow-capacity [capacity : i64]) : i64
+  (if (< capacity 4)
+    8
+    (* (string-string-map-round-capacity capacity) 2)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-grow [map : StringStringMap]) : StringStringMap
+  (string-string-map-resized
+    map
+    (string-string-map-grow-capacity (string-string-map-capacity map))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-needs-grow? [map : StringStringMap]) : bool
+  (let
+    [capacity : i64 (string-string-map-capacity map)]
+    [used : i64 (+ (string-string-map-len map) (string-string-map-deleted map))]
+    (if (<= capacity 0)
+      true
+      (>= (* used 4) (* capacity 3)))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-put
+  [map : StringStringMap]
+  [key : String]
+  [value : String]) : StringStringMap
+  (let
+    [grown : StringStringMap
+      (if (string-string-map-needs-grow? map)
+        (string-string-map-grow map)
+        map)]
+    (match (string-string-map-insert grown key value)
+      [(StringStringMapInsertOk updated) updated]
+      [(StringStringMapInsertFull full)
+        (match (string-string-map-insert
+          (string-string-map-grow full)
+          key
+          value)
+          [(StringStringMapInsertOk u) u]
+          [(StringStringMapInsertFull u) u])])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-insert-or-update
+  [map : StringStringMap]
+  [key : String]
+  [value : String]) : StringStringMap
+  (string-string-map-put map key value))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-entry-or-insert
+  [map : StringStringMap]
+  [key : String]
+  [default-value : String]) : StringStringMapEntryOrInsertResult
+  (let
+    [slots : (Array StringStringMapSlot) (string-string-map-slots map)]
+    [hash : i64 (string-string-map-hash-key (& key))]
+    (match (string-string-map-probe-borrowed
+      slots
+      (string-string-map-capacity map)
+      (& key)
+      hash)
+      [(StringStringMapProbeFound index)
+        (match (array-ref slots index)
+          [(StringStringMapOccupied _ value _)
+            (StringStringMapEntryOrInsertFound map value)]
+          [(StringStringMapEmpty)
+            (let
+              [updated : StringStringMap
+                (string-string-map-put map key default-value)]
+              (StringStringMapEntryOrInsertInserted updated default-value))]
+          [(StringStringMapTombstone)
+            (let
+              [updated : StringStringMap
+                (string-string-map-put map key default-value)]
+              (StringStringMapEntryOrInsertInserted updated default-value))])]
+      [(StringStringMapProbeAbsent _)
+        (let
+          [updated : StringStringMap
+            (string-string-map-put map key default-value)]
+          (StringStringMapEntryOrInsertInserted updated default-value))]
+      [(StringStringMapProbeFull)
+        (let
+          [updated : StringStringMap
+            (string-string-map-put map key default-value)]
+          (StringStringMapEntryOrInsertInserted updated default-value))])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-mut-entry-info
+  [slots : (Array StringStringMapSlot)]
+  [capacity : i64]
+  [key : (& key str)]) : StringStringMapMutEntryInfo
+  (if (<= capacity 0)
+    (StringStringMapMutEntryInfo -1 false "" 0)
+    (let
+      [hash : i64 (string-string-map-hash-key key)]
+      [cursor : i64 (string-string-map-bucket-index hash capacity)]
+      [walked : i64 0]
+      [found : i64 -1]
+      [present : bool false]
+      [entry-key : String ""]
+      [entry-hash : i64 0]
+      [done : bool false]
+      (begin
+        (while (if (< walked capacity)
+          (not done)
+          false)
+          (match (array-ref slots cursor)
+            [(StringStringMapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (string-string-map-key-eq? (& slot-key) key)
+                false)
+                (begin
+                  (set! found cursor)
+                  (set! present true)
+                  (set! entry-key slot-key)
+                  (set! entry-hash slot-hash)
+                  (set! done true))
+                (begin
+                  (set! cursor (string-string-map-next-index cursor capacity))
+                  (set! walked (+ walked 1))))]
+            [(StringStringMapEmpty) (set! done true)]
+            [(StringStringMapTombstone)
+              (begin
+                (set! cursor (string-string-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        (StringStringMapMutEntryInfo found present entry-key entry-hash)))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-mut-entry-from-info
+  [info : StringStringMapMutEntryInfo]
+  [slots : (Array StringStringMapSlot)]
+  [borrow : (&mut map (Array StringStringMapSlot))]) : (StringStringMapMutEntry
+    map)
+  (StringStringMapMutEntry
+    slots
+    borrow
+    (struct-get info index)
+    (struct-get info present)
+    (struct-get info key)
+    (struct-get info hash)))
+
+;: Generated concrete hashmap family helper.
+(defmacro (string-string-map-get-mut-entry-borrowed
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
+  `(string-string-map-mut-entry-from-info
+    (string-string-map-mut-entry-info
+      (struct-get ,map slots)
+      (array-length (struct-get ,map slots))
+      ,key)
+    (struct-get ,map slots)
+    (&mut (struct-get ,map slots))))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-mut-entry-present?
+  [entry : (StringStringMapMutEntry map)]) : bool
+  (struct-get entry present))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-mut-entry-value-or
+  [entry : (StringStringMapMutEntry map)]
+  [fallback : String]) : String
+  (if (string-string-map-mut-entry-present? entry)
+    (match (array-ref (struct-get entry slots) (struct-get entry index))
+      [(StringStringMapOccupied _ value _) value]
+      [(StringStringMapEmpty) fallback]
+      [(StringStringMapTombstone) fallback])
+    fallback))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-mut-entry-set!
+  [entry : (StringStringMapMutEntry map)]
+  [value : String]) : unit
+  (if (string-string-map-mut-entry-present? entry)
+    (array-set!
+      (struct-get entry slots)
+      (struct-get entry index)
+      (StringStringMapOccupied
+        (struct-get entry key)
+        value
+        (struct-get entry hash)))
+    unit))
+
+;: Generated concrete hashmap family helper.
+(defenum StringStringMapEntry
+  (StringStringMapEntryNone)
+  (StringStringMapEntrySome String String))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-next-occupied-from
+  [slots : (Array StringStringMapSlot)]
+  [index : i64]
+  [capacity : i64]) : i64
+  (if (>= index capacity)
+    capacity
+    (match (array-ref slots index)
+      [(StringStringMapOccupied _ _ _) index]
+      [(StringStringMapEmpty)
+        (string-string-map-next-occupied-from slots (+ index 1) capacity)]
+      [(StringStringMapTombstone)
+        (string-string-map-next-occupied-from slots (+ index 1) capacity)])))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-next-occupied [map : StringStringMap] [from : i64]) : i64
+  (string-string-map-next-occupied-from
+    (string-string-map-slots map)
+    (if (< from 0)
+      0
+      from)
+    (string-string-map-capacity map)))
+
+;: Generated concrete hashmap family helper.
+(define (string-string-map-entry-at [map : StringStringMap] [index : i64]) : StringStringMapEntry
+  (if (if (< index 0)
+    true
+    (>= index (string-string-map-capacity map)))
+    (StringStringMapEntryNone)
+    (match (array-ref (string-string-map-slots map) index)
+      [(StringStringMapOccupied key value _)
+        (StringStringMapEntrySome key value)]
+      [(StringStringMapEmpty) (StringStringMapEntryNone)]
+      [(StringStringMapTombstone) (StringStringMapEntryNone)])))
+
+;: Checked-in `I64I64Map` base family.
+(defenum I64I64MapSlot
+  (I64I64MapEmpty)
+  (I64I64MapTombstone)
+  (I64I64MapOccupied i64 i64 i64))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapProbe
+  (I64I64MapProbeFound i64)
+  (I64I64MapProbeAbsent i64)
+  (I64I64MapProbeFull))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-hash-normalize [value : i64]) : i64
+  (let
+    [m : i64 2147483647]
+    [raw : i64 (% value 2147483647)]
+    (if (< raw 0)
+      (+ raw m)
+      raw)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-hash-key [key : i64]) : i64
+  (i64-i64-map-hash-normalize (* key 6364136223846793005)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-power-two-capacity? [capacity : i64]) : bool
+  (if (> capacity 0)
+    (= (bit-and capacity (- capacity 1)) 0)
+    false))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-round-capacity [capacity : i64]) : i64
+  (let
+    [rounded : i64 1]
+    (begin
+      (while (< rounded capacity)
+        (set! rounded (* rounded 2)))
+      rounded)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
+  (bit-and hash (- capacity 1)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
+  (i64-i64-map-normalized-bucket-index
+    (i64-i64-map-hash-normalize hash)
+    capacity))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-next-index [index : i64] [capacity : i64]) : i64
+  (let
+    [next : i64 (+ index 1)]
+    (if (>= next capacity)
+      0
+      next)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
+  (if (>= first-tombstone 0)
+    first-tombstone
+    empty-index))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-probe-from
+  [slots : (Array I64I64MapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [hash : i64]
+  [index : i64]
+  [steps : i64]
+  [first-tombstone : i64]) : I64I64MapProbe
+  (let
+    [cursor : i64 index]
+    [walked : i64 steps]
+    [first : i64 first-tombstone]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(I64I64MapEmpty)
+            (return
+              (I64I64MapProbeAbsent (i64-i64-map-insert-slot first cursor)))]
+          [(I64I64MapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first 0)
+                  (set! first cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(I64I64MapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (= slot-key key)
+              false)
+              (return (I64I64MapProbeFound cursor))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first 0)
+        (I64I64MapProbeAbsent first)
+        (I64I64MapProbeFull)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-probe
+  [slots : (Array I64I64MapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [hash : i64]) : I64I64MapProbe
+  (if (<= capacity 0)
+    (I64I64MapProbeFull)
+    (i64-i64-map-probe-from
+      slots
+      capacity
+      key
+      hash
+      (i64-i64-map-normalized-bucket-index hash capacity)
+      0
+      -1)))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64I64Map
+  (slots (Array I64I64MapSlot))
+  (len i64)
+  (deleted i64))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapLookup
+  (I64I64MapMissing)
+  (I64I64MapFound i64))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapBorrowedValueLookup
+  (:lifetimes map)
+  (I64I64MapBorrowedValueMissing)
+  (I64I64MapBorrowedValueFound (& map i64)))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapInsertResult
+  (I64I64MapInsertOk I64I64Map)
+  (I64I64MapInsertFull I64I64Map))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapRemoveResult
+  (I64I64MapRemoveOk I64I64Map)
+  (I64I64MapRemoveMissing I64I64Map))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapUpdateResult
+  (I64I64MapUpdateOk I64I64Map)
+  (I64I64MapUpdateMissing I64I64Map))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapEntryOrInsertResult
+  (I64I64MapEntryOrInsertFound I64I64Map i64)
+  (I64I64MapEntryOrInsertInserted I64I64Map i64))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64I64MapMutEntryInfo
+  (index i64)
+  (present bool)
+  (key i64)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64I64MapMutEntry
+  (:lifetimes map)
+  (slots (Array I64I64MapSlot))
+  (borrow (&mut map (Array I64I64MapSlot)))
+  (index i64)
+  (present bool)
+  (key i64)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-slots [map : I64I64Map]) : (Array I64I64MapSlot)
+  (struct-get map slots))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-len [map : I64I64Map]) : i64
+  (struct-get map len))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-capacity [map : I64I64Map]) : i64
+  (array-length (struct-get map slots)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-deleted [map : I64I64Map]) : i64
+  (struct-get map deleted))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-fill-empty
+  [slots : (Array I64I64MapSlot)]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! slots i (I64I64MapEmpty))
+          (set! i (+ i 1))))
+      unit)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-with-capacity [capacity : i64]) : I64I64Map
+  (let
+    [rounded-capacity : i64 (i64-i64-map-round-capacity capacity)]
+    [slots : (Array I64I64MapSlot) (make-array I64I64MapSlot rounded-capacity)]
+    (begin
+      (i64-i64-map-fill-empty slots 0 rounded-capacity)
+      (I64I64Map slots 0 0))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-borrowed-value-missing [map : (& map I64I64Map)]) : (I64I64MapBorrowedValueLookup
+    map)
+  (I64I64MapBorrowedValueMissing))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-borrowed-value-found [value : (& map i64)]) : (I64I64MapBorrowedValueLookup
+    map)
+  (I64I64MapBorrowedValueFound value))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-get [map : I64I64Map] [key : i64]) : I64I64MapLookup
+  (let
+    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    (match (i64-i64-map-probe
+      slots
+      (i64-i64-map-capacity map)
+      key
+      (i64-i64-map-hash-key key))
+      [(I64I64MapProbeFound index)
+        (match (array-ref slots index)
+          [(I64I64MapOccupied _ value _) (I64I64MapFound value)]
+          [(I64I64MapEmpty) (I64I64MapMissing)]
+          [(I64I64MapTombstone) (I64I64MapMissing)])]
+      [(I64I64MapProbeAbsent _) (I64I64MapMissing)]
+      [(I64I64MapProbeFull) (I64I64MapMissing)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-get-value-borrowed [map : (& map I64I64Map)] [key : i64]) : (I64I64MapBorrowedValueLookup
+    map)
+  (let
+    [capacity : i64 (array-length (struct-get map slots))]
+    (if (<= capacity 0)
+      (i64-i64-map-borrowed-value-missing map)
+      (let
+        [hash : i64 (i64-i64-map-hash-key key)]
+        [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref (struct-get map slots) cursor)
+              [(I64I64MapEmpty)
+                (return (i64-i64-map-borrowed-value-missing map))]
+              [(I64I64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(I64I64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (= slot-key key)
+                  false)
+                  (match (& (array-ref (struct-get map slots) cursor))
+                    [(I64I64MapOccupied _ value _)
+                      (return (i64-i64-map-borrowed-value-found value))]
+                    [(I64I64MapEmpty)
+                      (return (i64-i64-map-borrowed-value-missing map))]
+                    [(I64I64MapTombstone)
+                      (return (i64-i64-map-borrowed-value-missing map))])
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1)))))]))
+          (i64-i64-map-borrowed-value-missing map))))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-contains? [map : I64I64Map] [key : i64]) : bool
+  (match (i64-i64-map-get map key)
+    [(I64I64MapFound _) true]
+    [(I64I64MapMissing) false]))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-slot-tombstone? [slot : I64I64MapSlot]) : bool
+  (match slot
+    [(I64I64MapTombstone) true]
+    [(I64I64MapEmpty) false]
+    [(I64I64MapOccupied _ _ _) false]))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-insert [map : I64I64Map] [key : i64] [value : i64]) : I64I64MapInsertResult
+  (let
+    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    [hash : i64 (i64-i64-map-hash-key key)]
+    (match (i64-i64-map-probe slots (i64-i64-map-capacity map) key hash)
+      [(I64I64MapProbeFound index)
+        (begin
+          (array-set! slots index (I64I64MapOccupied key value hash))
+          (I64I64MapInsertOk map))]
+      [(I64I64MapProbeAbsent index)
+        (let
+          [reused-tombstone : bool
+            (i64-i64-map-slot-tombstone? (array-ref slots index))]
+          (begin
+            (array-set! slots index (I64I64MapOccupied key value hash))
+            (set! (struct-get map len) (+ (i64-i64-map-len map) 1))
+            (if reused-tombstone
+              (set! (struct-get map deleted) (- (i64-i64-map-deleted map) 1))
+              unit)
+            (I64I64MapInsertOk map)))]
+      [(I64I64MapProbeFull) (I64I64MapInsertFull map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-remove [map : I64I64Map] [key : i64]) : I64I64MapRemoveResult
+  (let
+    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    (match (i64-i64-map-probe
+      slots
+      (i64-i64-map-capacity map)
+      key
+      (i64-i64-map-hash-key key))
+      [(I64I64MapProbeFound index)
+        (begin
+          (array-set! slots index (I64I64MapTombstone))
+          (set! (struct-get map len) (- (i64-i64-map-len map) 1))
+          (set! (struct-get map deleted) (+ (i64-i64-map-deleted map) 1))
+          (I64I64MapRemoveOk map))]
+      [(I64I64MapProbeAbsent _) (I64I64MapRemoveMissing map)]
+      [(I64I64MapProbeFull) (I64I64MapRemoveMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-update-if-present
+  [map : I64I64Map]
+  [key : i64]
+  [value : i64]) : I64I64MapUpdateResult
+  (let
+    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    [hash : i64 (i64-i64-map-hash-key key)]
+    (match (i64-i64-map-probe slots (i64-i64-map-capacity map) key hash)
+      [(I64I64MapProbeFound index)
+        (match (array-ref slots index)
+          [(I64I64MapOccupied slot-key _ slot-hash)
+            (begin
+              (array-set!
+                slots
+                index
+                (I64I64MapOccupied slot-key value slot-hash))
+              (I64I64MapUpdateOk map))]
+          [(I64I64MapEmpty) (I64I64MapUpdateMissing map)]
+          [(I64I64MapTombstone) (I64I64MapUpdateMissing map)])]
+      [(I64I64MapProbeAbsent _) (I64I64MapUpdateMissing map)]
+      [(I64I64MapProbeFull) (I64I64MapUpdateMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-insert-into-empty
+  [slots : (Array I64I64MapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [value : i64]
+  [hash : i64]) : unit
+  (if (<= capacity 0)
+    unit
+    (let
+      [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+      [walked : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< walked capacity))
+          (match (array-ref slots cursor)
+            [(I64I64MapEmpty)
+              (begin
+                (array-set! slots cursor (I64I64MapOccupied key value hash))
+                (set! done true))]
+            [_
+              (begin
+                (set! cursor (i64-i64-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        unit))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-rehash-from
+  [src : (Array I64I64MapSlot)]
+  [dst : (Array I64I64MapSlot)]
+  [dst-capacity : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(I64I64MapOccupied key value hash)
+              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+            [(I64I64MapEmpty) unit]
+            [(I64I64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-resized [map : I64I64Map] [new-capacity : i64]) : I64I64Map
+  (let
+    [src : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    [old-capacity : i64 (i64-i64-map-capacity map)]
+    [requested-capacity : i64
+      (if (> (i64-i64-map-len map) new-capacity)
+        (i64-i64-map-len map)
+        new-capacity)]
+    [rounded-capacity : i64 (i64-i64-map-round-capacity requested-capacity)]
+    [dst : (Array I64I64MapSlot) (make-array I64I64MapSlot rounded-capacity)]
+    (begin
+      (i64-i64-map-fill-empty dst 0 rounded-capacity)
+      (i64-i64-map-rehash-from src dst rounded-capacity 0 old-capacity)
+      (set! (struct-get map slots) dst)
+      (set! (struct-get map deleted) 0)
+      map)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-grow-capacity [capacity : i64]) : i64
+  (if (< capacity 4)
+    8
+    (* (i64-i64-map-round-capacity capacity) 2)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-grow [map : I64I64Map]) : I64I64Map
+  (i64-i64-map-resized
+    map
+    (i64-i64-map-grow-capacity (i64-i64-map-capacity map))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-needs-grow? [map : I64I64Map]) : bool
+  (let
+    [capacity : i64 (i64-i64-map-capacity map)]
+    [used : i64 (+ (i64-i64-map-len map) (i64-i64-map-deleted map))]
+    (if (<= capacity 0)
+      true
+      (>= (* used 4) (* capacity 3)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-put [map : I64I64Map] [key : i64] [value : i64]) : I64I64Map
+  (let
+    [grown : I64I64Map
+      (if (i64-i64-map-needs-grow? map)
+        (i64-i64-map-grow map)
+        map)]
+    (match (i64-i64-map-insert grown key value)
+      [(I64I64MapInsertOk updated) updated]
+      [(I64I64MapInsertFull full)
+        (match (i64-i64-map-insert (i64-i64-map-grow full) key value)
+          [(I64I64MapInsertOk u) u]
+          [(I64I64MapInsertFull u) u])])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-insert-or-update
+  [map : I64I64Map]
+  [key : i64]
+  [value : i64]) : I64I64Map
+  (i64-i64-map-put map key value))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-entry-or-insert
+  [map : I64I64Map]
+  [key : i64]
+  [default-value : i64]) : I64I64MapEntryOrInsertResult
+  (let
+    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
+    [hash : i64 (i64-i64-map-hash-key key)]
+    (match (i64-i64-map-probe slots (i64-i64-map-capacity map) key hash)
+      [(I64I64MapProbeFound index)
+        (match (array-ref slots index)
+          [(I64I64MapOccupied _ value _)
+            (I64I64MapEntryOrInsertFound map value)]
+          [(I64I64MapEmpty)
+            (let
+              [updated : I64I64Map (i64-i64-map-put map key default-value)]
+              (I64I64MapEntryOrInsertInserted updated default-value))]
+          [(I64I64MapTombstone)
+            (let
+              [updated : I64I64Map (i64-i64-map-put map key default-value)]
+              (I64I64MapEntryOrInsertInserted updated default-value))])]
+      [(I64I64MapProbeAbsent _)
+        (let
+          [updated : I64I64Map (i64-i64-map-put map key default-value)]
+          (I64I64MapEntryOrInsertInserted updated default-value))]
+      [(I64I64MapProbeFull)
+        (let
+          [updated : I64I64Map (i64-i64-map-put map key default-value)]
+          (I64I64MapEntryOrInsertInserted updated default-value))])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-mut-entry-info
+  [slots : (Array I64I64MapSlot)]
+  [capacity : i64]
+  [key : i64]) : I64I64MapMutEntryInfo
+  (if (<= capacity 0)
+    (I64I64MapMutEntryInfo -1 false 0 0)
+    (let
+      [hash : i64 (i64-i64-map-hash-key key)]
+      [cursor : i64 (i64-i64-map-bucket-index hash capacity)]
+      [walked : i64 0]
+      [found : i64 -1]
+      [present : bool false]
+      [entry-key : i64 0]
+      [entry-hash : i64 0]
+      [done : bool false]
+      (begin
+        (while (if (< walked capacity)
+          (not done)
+          false)
+          (match (array-ref slots cursor)
+            [(I64I64MapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (= slot-key key)
+                false)
+                (begin
+                  (set! found cursor)
+                  (set! present true)
+                  (set! entry-key slot-key)
+                  (set! entry-hash slot-hash)
+                  (set! done true))
+                (begin
+                  (set! cursor (i64-i64-map-next-index cursor capacity))
+                  (set! walked (+ walked 1))))]
+            [(I64I64MapEmpty) (set! done true)]
+            [(I64I64MapTombstone)
+              (begin
+                (set! cursor (i64-i64-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        (I64I64MapMutEntryInfo found present entry-key entry-hash)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-mut-entry-from-info
+  [info : I64I64MapMutEntryInfo]
+  [slots : (Array I64I64MapSlot)]
+  [borrow : (&mut map (Array I64I64MapSlot))]) : (I64I64MapMutEntry map)
+  (I64I64MapMutEntry
+    slots
+    borrow
+    (struct-get info index)
+    (struct-get info present)
+    (struct-get info key)
+    (struct-get info hash)))
+
+;: Generated concrete hashmap family helper.
+(defmacro (i64-i64-map-get-mut-entry
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
+  `(i64-i64-map-mut-entry-from-info
+    (i64-i64-map-mut-entry-info
+      (struct-get ,map slots)
+      (array-length (struct-get ,map slots))
+      ,key)
+    (struct-get ,map slots)
+    (&mut (struct-get ,map slots))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-mut-entry-present? [entry : (I64I64MapMutEntry map)]) : bool
+  (struct-get entry present))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-mut-entry-value-or
+  [entry : (I64I64MapMutEntry map)]
+  [fallback : i64]) : i64
+  (if (i64-i64-map-mut-entry-present? entry)
+    (match (array-ref (struct-get entry slots) (struct-get entry index))
+      [(I64I64MapOccupied _ value _) value]
+      [(I64I64MapEmpty) fallback]
+      [(I64I64MapTombstone) fallback])
+    fallback))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-mut-entry-set!
+  [entry : (I64I64MapMutEntry map)]
+  [value : i64]) : unit
+  (if (i64-i64-map-mut-entry-present? entry)
+    (array-set!
+      (struct-get entry slots)
+      (struct-get entry index)
+      (I64I64MapOccupied (struct-get entry key) value (struct-get entry hash)))
+    unit))
+
+;: Generated concrete hashmap family helper.
+(defenum I64I64MapEntry
+  (I64I64MapEntryNone)
+  (I64I64MapEntrySome i64 i64))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-next-occupied-from
+  [slots : (Array I64I64MapSlot)]
+  [index : i64]
+  [capacity : i64]) : i64
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i capacity)
+        (match (array-ref slots i)
+          [(I64I64MapOccupied _ _ _) (return i)]
+          [(I64I64MapEmpty) (set! i (+ i 1))]
+          [(I64I64MapTombstone) (set! i (+ i 1))]))
+      capacity)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-next-occupied [map : I64I64Map] [from : i64]) : i64
+  (i64-i64-map-next-occupied-from
+    (i64-i64-map-slots map)
+    (if (< from 0)
+      0
+      from)
+    (i64-i64-map-capacity map)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-i64-map-entry-at [map : I64I64Map] [index : i64]) : I64I64MapEntry
+  (if (if (< index 0)
+    true
+    (>= index (i64-i64-map-capacity map)))
+    (I64I64MapEntryNone)
+    (match (array-ref (i64-i64-map-slots map) index)
+      [(I64I64MapOccupied key value _) (I64I64MapEntrySome key value)]
+      [(I64I64MapEmpty) (I64I64MapEntryNone)]
+      [(I64I64MapTombstone) (I64I64MapEntryNone)])))
+
+;: Checked-in `I64StringMap` base family.
+(defenum I64StringMapSlot
+  (I64StringMapEmpty)
+  (I64StringMapTombstone)
+  (I64StringMapOccupied i64 String i64))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapProbe
+  (I64StringMapProbeFound i64)
+  (I64StringMapProbeAbsent i64)
+  (I64StringMapProbeFull))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-hash-normalize [value : i64]) : i64
+  (let
+    [m : i64 2147483647]
+    [raw : i64 (% value 2147483647)]
+    (if (< raw 0)
+      (+ raw m)
+      raw)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-hash-key [key : i64]) : i64
+  (i64-string-map-hash-normalize (* key 6364136223846793005)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-power-two-capacity? [capacity : i64]) : bool
+  (if (> capacity 0)
+    (= (bit-and capacity (- capacity 1)) 0)
+    false))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-round-capacity [capacity : i64]) : i64
+  (let
+    [rounded : i64 1]
+    (begin
+      (while (< rounded capacity)
+        (set! rounded (* rounded 2)))
+      rounded)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
+  (bit-and hash (- capacity 1)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-bucket-index [hash : i64] [capacity : i64]) : i64
+  (i64-string-map-normalized-bucket-index
+    (i64-string-map-hash-normalize hash)
+    capacity))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-next-index [index : i64] [capacity : i64]) : i64
+  (let
+    [next : i64 (+ index 1)]
+    (if (>= next capacity)
+      0
+      next)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
+  (if (>= first-tombstone 0)
+    first-tombstone
+    empty-index))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-probe-from
+  [slots : (Array I64StringMapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [hash : i64]
+  [index : i64]
+  [steps : i64]
+  [first-tombstone : i64]) : I64StringMapProbe
+  (let
+    [cursor : i64 index]
+    [walked : i64 steps]
+    [first : i64 first-tombstone]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(I64StringMapEmpty)
+            (return
+              (I64StringMapProbeAbsent
+                (i64-string-map-insert-slot first cursor)))]
+          [(I64StringMapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first 0)
+                  (set! first cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(I64StringMapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (= slot-key key)
+              false)
+              (return (I64StringMapProbeFound cursor))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first 0)
+        (I64StringMapProbeAbsent first)
+        (I64StringMapProbeFull)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-probe
+  [slots : (Array I64StringMapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [hash : i64]) : I64StringMapProbe
+  (if (<= capacity 0)
+    (I64StringMapProbeFull)
+    (i64-string-map-probe-from
+      slots
+      capacity
+      key
+      hash
+      (i64-string-map-normalized-bucket-index hash capacity)
+      0
+      -1)))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64StringMap
+  (slots (Array I64StringMapSlot))
+  (len i64)
+  (deleted i64))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapLookup
+  (I64StringMapMissing)
+  (I64StringMapFound String))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapBorrowedValueLookup
+  (:lifetimes map)
+  (I64StringMapBorrowedValueMissing)
+  (I64StringMapBorrowedValueFound (& map str)))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapInsertResult
+  (I64StringMapInsertOk I64StringMap)
+  (I64StringMapInsertFull I64StringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapRemoveResult
+  (I64StringMapRemoveOk I64StringMap)
+  (I64StringMapRemoveMissing I64StringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapUpdateResult
+  (I64StringMapUpdateOk I64StringMap)
+  (I64StringMapUpdateMissing I64StringMap))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapEntryOrInsertResult
+  (I64StringMapEntryOrInsertFound I64StringMap String)
+  (I64StringMapEntryOrInsertInserted I64StringMap String))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64StringMapMutEntryInfo
+  (index i64)
+  (present bool)
+  (key i64)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(defstruct I64StringMapMutEntry
+  (:lifetimes map)
+  (slots (Array I64StringMapSlot))
+  (borrow (&mut map (Array I64StringMapSlot)))
+  (index i64)
+  (present bool)
+  (key i64)
+  (hash i64))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-slots [map : I64StringMap]) : (Array I64StringMapSlot)
+  (struct-get map slots))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-len [map : I64StringMap]) : i64
+  (struct-get map len))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-capacity [map : I64StringMap]) : i64
+  (array-length (struct-get map slots)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-deleted [map : I64StringMap]) : i64
+  (struct-get map deleted))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-fill-empty
+  [slots : (Array I64StringMapSlot)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! slots index (I64StringMapEmpty))
+      (i64-string-map-fill-empty slots (+ index 1) count))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-with-capacity [capacity : i64]) : I64StringMap
+  (let
+    [rounded-capacity : i64 (i64-string-map-round-capacity capacity)]
+    [slots : (Array I64StringMapSlot)
+      (make-array I64StringMapSlot rounded-capacity)]
+    (begin
+      (i64-string-map-fill-empty slots 0 rounded-capacity)
+      (I64StringMap slots 0 0))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-borrowed-value-missing [map : (& map I64StringMap)]) : (I64StringMapBorrowedValueLookup
+    map)
+  (I64StringMapBorrowedValueMissing))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-borrowed-value-found [value : (& map str)]) : (I64StringMapBorrowedValueLookup
+    map)
+  (I64StringMapBorrowedValueFound value))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-get [map : I64StringMap] [key : i64]) : I64StringMapLookup
+  (let
+    [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    (match (i64-string-map-probe
+      slots
+      (i64-string-map-capacity map)
+      key
+      (i64-string-map-hash-key key))
+      [(I64StringMapProbeFound index)
+        (match (array-ref slots index)
+          [(I64StringMapOccupied _ value _) (I64StringMapFound value)]
+          [(I64StringMapEmpty) (I64StringMapMissing)]
+          [(I64StringMapTombstone) (I64StringMapMissing)])]
+      [(I64StringMapProbeAbsent _) (I64StringMapMissing)]
+      [(I64StringMapProbeFull) (I64StringMapMissing)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-get-value-borrowed
+  [map : (& map I64StringMap)]
+  [key : i64]) : (I64StringMapBorrowedValueLookup map)
+  (let
+    [capacity : i64 (array-length (struct-get map slots))]
+    (if (<= capacity 0)
+      (i64-string-map-borrowed-value-missing map)
+      (let
+        [hash : i64 (i64-string-map-hash-key key)]
+        [cursor : i64 (i64-string-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref (struct-get map slots) cursor)
+              [(I64StringMapEmpty)
+                (return (i64-string-map-borrowed-value-missing map))]
+              [(I64StringMapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(I64StringMapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (= slot-key key)
+                  false)
+                  (match (& (array-ref (struct-get map slots) cursor))
+                    [(I64StringMapOccupied _ value _)
+                      (return (i64-string-map-borrowed-value-found value))]
+                    [(I64StringMapEmpty)
+                      (return (i64-string-map-borrowed-value-missing map))]
+                    [(I64StringMapTombstone)
+                      (return (i64-string-map-borrowed-value-missing map))])
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1)))))]))
+          (i64-string-map-borrowed-value-missing map))))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-contains? [map : I64StringMap] [key : i64]) : bool
+  (match (i64-string-map-get map key)
+    [(I64StringMapFound _) true]
+    [(I64StringMapMissing) false]))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-slot-tombstone? [slot : I64StringMapSlot]) : bool
+  (match slot
+    [(I64StringMapTombstone) true]
+    [(I64StringMapEmpty) false]
+    [(I64StringMapOccupied _ _ _) false]))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-insert
+  [map : I64StringMap]
+  [key : i64]
+  [value : String]) : I64StringMapInsertResult
+  (let
+    [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    [hash : i64 (i64-string-map-hash-key key)]
+    (match (i64-string-map-probe slots (i64-string-map-capacity map) key hash)
+      [(I64StringMapProbeFound index)
+        (begin
+          (array-set! slots index (I64StringMapOccupied key value hash))
+          (I64StringMapInsertOk map))]
+      [(I64StringMapProbeAbsent index)
+        (let
+          [reused-tombstone : bool
+            (i64-string-map-slot-tombstone? (array-ref slots index))]
+          (begin
+            (array-set! slots index (I64StringMapOccupied key value hash))
+            (set! (struct-get map len) (+ (i64-string-map-len map) 1))
+            (if reused-tombstone
+              (set! (struct-get map deleted) (- (i64-string-map-deleted map) 1))
+              unit)
+            (I64StringMapInsertOk map)))]
+      [(I64StringMapProbeFull) (I64StringMapInsertFull map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-remove [map : I64StringMap] [key : i64]) : I64StringMapRemoveResult
+  (let
+    [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    (match (i64-string-map-probe
+      slots
+      (i64-string-map-capacity map)
+      key
+      (i64-string-map-hash-key key))
+      [(I64StringMapProbeFound index)
+        (begin
+          (array-set! slots index (I64StringMapTombstone))
+          (set! (struct-get map len) (- (i64-string-map-len map) 1))
+          (set! (struct-get map deleted) (+ (i64-string-map-deleted map) 1))
+          (I64StringMapRemoveOk map))]
+      [(I64StringMapProbeAbsent _) (I64StringMapRemoveMissing map)]
+      [(I64StringMapProbeFull) (I64StringMapRemoveMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-update-if-present
+  [map : I64StringMap]
+  [key : i64]
+  [value : String]) : I64StringMapUpdateResult
+  (let
+    [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    [hash : i64 (i64-string-map-hash-key key)]
+    (match (i64-string-map-probe slots (i64-string-map-capacity map) key hash)
+      [(I64StringMapProbeFound index)
+        (match (array-ref slots index)
+          [(I64StringMapOccupied slot-key _ slot-hash)
+            (begin
+              (array-set!
+                slots
+                index
+                (I64StringMapOccupied slot-key value slot-hash))
+              (I64StringMapUpdateOk map))]
+          [(I64StringMapEmpty) (I64StringMapUpdateMissing map)]
+          [(I64StringMapTombstone) (I64StringMapUpdateMissing map)])]
+      [(I64StringMapProbeAbsent _) (I64StringMapUpdateMissing map)]
+      [(I64StringMapProbeFull) (I64StringMapUpdateMissing map)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-insert-into-empty
+  [slots : (Array I64StringMapSlot)]
+  [capacity : i64]
+  [key : i64]
+  [value : String]
+  [hash : i64]) : unit
+  (if (<= capacity 0)
+    unit
+    (let
+      [cursor : i64 (i64-string-map-normalized-bucket-index hash capacity)]
+      [walked : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< walked capacity))
+          (match (array-ref slots cursor)
+            [(I64StringMapEmpty)
+              (begin
+                (array-set! slots cursor (I64StringMapOccupied key value hash))
+                (set! done true))]
+            [_
+              (begin
+                (set! cursor (i64-string-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        unit))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-rehash-from
+  [src : (Array I64StringMapSlot)]
+  [dst : (Array I64StringMapSlot)]
+  [dst-capacity : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (match (array-ref src index)
+        [(I64StringMapOccupied key value hash)
+          (i64-string-map-insert-into-empty dst dst-capacity key value hash)]
+        [(I64StringMapEmpty) unit]
+        [(I64StringMapTombstone) unit])
+      (i64-string-map-rehash-from src dst dst-capacity (+ index 1) count))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-resized [map : I64StringMap] [new-capacity : i64]) : I64StringMap
+  (let
+    [src : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    [old-capacity : i64 (i64-string-map-capacity map)]
+    [requested-capacity : i64
+      (if (> (i64-string-map-len map) new-capacity)
+        (i64-string-map-len map)
+        new-capacity)]
+    [rounded-capacity : i64 (i64-string-map-round-capacity requested-capacity)]
+    [dst : (Array I64StringMapSlot)
+      (make-array I64StringMapSlot rounded-capacity)]
+    (begin
+      (i64-string-map-fill-empty dst 0 rounded-capacity)
+      (i64-string-map-rehash-from src dst rounded-capacity 0 old-capacity)
+      (set! (struct-get map slots) dst)
+      (set! (struct-get map deleted) 0)
+      map)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-grow-capacity [capacity : i64]) : i64
+  (if (< capacity 4)
+    8
+    (* (i64-string-map-round-capacity capacity) 2)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-grow [map : I64StringMap]) : I64StringMap
+  (i64-string-map-resized
+    map
+    (i64-string-map-grow-capacity (i64-string-map-capacity map))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-needs-grow? [map : I64StringMap]) : bool
+  (let
+    [capacity : i64 (i64-string-map-capacity map)]
+    [used : i64 (+ (i64-string-map-len map) (i64-string-map-deleted map))]
+    (if (<= capacity 0)
+      true
+      (>= (* used 4) (* capacity 3)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-put [map : I64StringMap] [key : i64] [value : String]) : I64StringMap
+  (let
+    [grown : I64StringMap
+      (if (i64-string-map-needs-grow? map)
+        (i64-string-map-grow map)
+        map)]
+    (match (i64-string-map-insert grown key value)
+      [(I64StringMapInsertOk updated) updated]
+      [(I64StringMapInsertFull full)
+        (match (i64-string-map-insert (i64-string-map-grow full) key value)
+          [(I64StringMapInsertOk u) u]
+          [(I64StringMapInsertFull u) u])])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-insert-or-update
+  [map : I64StringMap]
+  [key : i64]
+  [value : String]) : I64StringMap
+  (i64-string-map-put map key value))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-entry-or-insert
+  [map : I64StringMap]
+  [key : i64]
+  [default-value : String]) : I64StringMapEntryOrInsertResult
+  (let
+    [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
+    [hash : i64 (i64-string-map-hash-key key)]
+    (match (i64-string-map-probe slots (i64-string-map-capacity map) key hash)
+      [(I64StringMapProbeFound index)
+        (match (array-ref slots index)
+          [(I64StringMapOccupied _ value _)
+            (I64StringMapEntryOrInsertFound map value)]
+          [(I64StringMapEmpty)
+            (let
+              [updated : I64StringMap
+                (i64-string-map-put map key default-value)]
+              (I64StringMapEntryOrInsertInserted updated default-value))]
+          [(I64StringMapTombstone)
+            (let
+              [updated : I64StringMap
+                (i64-string-map-put map key default-value)]
+              (I64StringMapEntryOrInsertInserted updated default-value))])]
+      [(I64StringMapProbeAbsent _)
+        (let
+          [updated : I64StringMap (i64-string-map-put map key default-value)]
+          (I64StringMapEntryOrInsertInserted updated default-value))]
+      [(I64StringMapProbeFull)
+        (let
+          [updated : I64StringMap (i64-string-map-put map key default-value)]
+          (I64StringMapEntryOrInsertInserted updated default-value))])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-mut-entry-info
+  [slots : (Array I64StringMapSlot)]
+  [capacity : i64]
+  [key : i64]) : I64StringMapMutEntryInfo
+  (if (<= capacity 0)
+    (I64StringMapMutEntryInfo -1 false 0 0)
+    (let
+      [hash : i64 (i64-string-map-hash-key key)]
+      [cursor : i64 (i64-string-map-bucket-index hash capacity)]
+      [walked : i64 0]
+      [found : i64 -1]
+      [present : bool false]
+      [entry-key : i64 0]
+      [entry-hash : i64 0]
+      [done : bool false]
+      (begin
+        (while (if (< walked capacity)
+          (not done)
+          false)
+          (match (array-ref slots cursor)
+            [(I64StringMapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (= slot-key key)
+                false)
+                (begin
+                  (set! found cursor)
+                  (set! present true)
+                  (set! entry-key slot-key)
+                  (set! entry-hash slot-hash)
+                  (set! done true))
+                (begin
+                  (set! cursor (i64-string-map-next-index cursor capacity))
+                  (set! walked (+ walked 1))))]
+            [(I64StringMapEmpty) (set! done true)]
+            [(I64StringMapTombstone)
+              (begin
+                (set! cursor (i64-string-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        (I64StringMapMutEntryInfo found present entry-key entry-hash)))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-mut-entry-from-info
+  [info : I64StringMapMutEntryInfo]
+  [slots : (Array I64StringMapSlot)]
+  [borrow : (&mut map (Array I64StringMapSlot))]) : (I64StringMapMutEntry map)
+  (I64StringMapMutEntry
+    slots
+    borrow
+    (struct-get info index)
+    (struct-get info present)
+    (struct-get info key)
+    (struct-get info hash)))
+
+;: Generated concrete hashmap family helper.
+(defmacro (i64-string-map-get-mut-entry
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
+  `(i64-string-map-mut-entry-from-info
+    (i64-string-map-mut-entry-info
+      (struct-get ,map slots)
+      (array-length (struct-get ,map slots))
+      ,key)
+    (struct-get ,map slots)
+    (&mut (struct-get ,map slots))))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-mut-entry-present? [entry : (I64StringMapMutEntry map)]) : bool
+  (struct-get entry present))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-mut-entry-value-or
+  [entry : (I64StringMapMutEntry map)]
+  [fallback : String]) : String
+  (if (i64-string-map-mut-entry-present? entry)
+    (match (array-ref (struct-get entry slots) (struct-get entry index))
+      [(I64StringMapOccupied _ value _) value]
+      [(I64StringMapEmpty) fallback]
+      [(I64StringMapTombstone) fallback])
+    fallback))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-mut-entry-set!
+  [entry : (I64StringMapMutEntry map)]
+  [value : String]) : unit
+  (if (i64-string-map-mut-entry-present? entry)
+    (array-set!
+      (struct-get entry slots)
+      (struct-get entry index)
+      (I64StringMapOccupied
+        (struct-get entry key)
+        value
+        (struct-get entry hash)))
+    unit))
+
+;: Generated concrete hashmap family helper.
+(defenum I64StringMapEntry
+  (I64StringMapEntryNone)
+  (I64StringMapEntrySome i64 String))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-next-occupied-from
+  [slots : (Array I64StringMapSlot)]
+  [index : i64]
+  [capacity : i64]) : i64
+  (if (>= index capacity)
+    capacity
+    (match (array-ref slots index)
+      [(I64StringMapOccupied _ _ _) index]
+      [(I64StringMapEmpty)
+        (i64-string-map-next-occupied-from slots (+ index 1) capacity)]
+      [(I64StringMapTombstone)
+        (i64-string-map-next-occupied-from slots (+ index 1) capacity)])))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-next-occupied [map : I64StringMap] [from : i64]) : i64
+  (i64-string-map-next-occupied-from
+    (i64-string-map-slots map)
+    (if (< from 0)
+      0
+      from)
+    (i64-string-map-capacity map)))
+
+;: Generated concrete hashmap family helper.
+(define (i64-string-map-entry-at [map : I64StringMap] [index : i64]) : I64StringMapEntry
+  (if (if (< index 0)
+    true
+    (>= index (i64-string-map-capacity map)))
+    (I64StringMapEntryNone)
+    (match (array-ref (i64-string-map-slots map) index)
+      [(I64StringMapOccupied key value _) (I64StringMapEntrySome key value)]
+      [(I64StringMapEmpty) (I64StringMapEntryNone)]
+      [(I64StringMapTombstone) (I64StringMapEntryNone)])))
 
 ;: Mutable-entry reference handle used by the String -> String module wrapper.
 (defstruct StringStringMapMutEntryRef
@@ -2717,7 +4670,7 @@
                 (if (if (= slot-hash hash)
                   (string-string-map-key-eq? (& slot-key) key)
                   false)
-                  (return (StringStringMapFound (string.string-copy (& value))))
+                  (return (StringStringMapFound (string.copy (& value))))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -2744,8 +4697,8 @@
           (string-string-map-insert-into-empty
             dst
             dst-capacity
-            (string.string-copy (& key))
-            (string.string-copy (& value))
+            (string.copy (& key))
+            (string.copy (& value))
             hash)]
         [(StringStringMapEmpty) unit]
         [(StringStringMapTombstone) unit])
@@ -2764,7 +4717,7 @@
     [rounded-capacity : i64
       (string-string-map-round-capacity requested-capacity)]
     [dst : (Array StringStringMapSlot)
-      (make-array StringStringMapSlot rounded-capacity)]
+      (array.make-array StringStringMapSlot rounded-capacity)]
     (begin
       (string-string-map-fill-empty dst 0 rounded-capacity)
       (string-string-map-rehash-from-ref
@@ -2946,9 +4899,7 @@
     (StringStringMapEntryNone)
     (match (array-ref (struct-get map slots) index)
       [(StringStringMapOccupied key value _)
-        (StringStringMapEntrySome
-          (string.string-copy (& key))
-          (string.string-copy (& value)))]
+        (StringStringMapEntrySome (string.copy (& key)) (string.copy (& value)))]
       [(StringStringMapEmpty) (StringStringMapEntryNone)]
       [(StringStringMapTombstone) (StringStringMapEntryNone)])))
 
@@ -3020,7 +4971,7 @@
   [fallback : String]) : String
   (if (string-string-map-mut-entry-ref-present? entry)
     (match (array-ref (struct-get entry borrow) (struct-get entry index))
-      [(StringStringMapOccupied _ value _) (string.string-copy (& value))]
+      [(StringStringMapOccupied _ value _) (string.copy (& value))]
       [(StringStringMapEmpty) fallback]
       [(StringStringMapTombstone) fallback])
     fallback))
@@ -3086,15 +5037,18 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (array-ref src index)
-        [(I64I64MapOccupied key value hash)
-          (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
-        [(I64I64MapEmpty) unit]
-        [(I64I64MapTombstone) unit])
-      (i64-i64-map-rehash-from-ref src dst dst-capacity (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(I64I64MapOccupied key value hash)
+              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+            [(I64I64MapEmpty) unit]
+            [(I64I64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Resize a generated i64 -> i64 map in place.
 (define (i64-i64-map-resize! [map : (&mut map I64I64Map)] [new-capacity : i64]) : unit
@@ -3105,7 +5059,8 @@
         (struct-get map len)
         new-capacity)]
     [rounded-capacity : i64 (i64-i64-map-round-capacity requested-capacity)]
-    [dst : (Array I64I64MapSlot) (make-array I64I64MapSlot rounded-capacity)]
+    [dst : (Array I64I64MapSlot)
+      (array.make-array I64I64MapSlot rounded-capacity)]
     (begin
       (i64-i64-map-fill-empty dst 0 rounded-capacity)
       (i64-i64-map-rehash-from-ref
@@ -3386,7 +5341,7 @@
                 (if (if (= slot-hash hash)
                   (= slot-key key)
                   false)
-                  (return (I64StringMapFound (string.string-copy (& value))))
+                  (return (I64StringMapFound (string.copy (& value))))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -3414,7 +5369,7 @@
             dst
             dst-capacity
             key
-            (string.string-copy (& value))
+            (string.copy (& value))
             hash)]
         [(I64StringMapEmpty) unit]
         [(I64StringMapTombstone) unit])
@@ -3432,7 +5387,7 @@
         new-capacity)]
     [rounded-capacity : i64 (i64-string-map-round-capacity requested-capacity)]
     [dst : (Array I64StringMapSlot)
-      (make-array I64StringMapSlot rounded-capacity)]
+      (array.make-array I64StringMapSlot rounded-capacity)]
     (begin
       (i64-string-map-fill-empty dst 0 rounded-capacity)
       (i64-string-map-rehash-from-ref
@@ -3606,7 +5561,7 @@
     (I64StringMapEntryNone)
     (match (array-ref (struct-get map slots) index)
       [(I64StringMapOccupied key value _)
-        (I64StringMapEntrySome key (string.string-copy (& value)))]
+        (I64StringMapEntrySome key (string.copy (& value)))]
       [(I64StringMapEmpty) (I64StringMapEntryNone)]
       [(I64StringMapTombstone) (I64StringMapEntryNone)])))
 
@@ -3677,7 +5632,7 @@
   [fallback : String]) : String
   (if (i64-string-map-mut-entry-ref-present? entry)
     (match (array-ref (struct-get entry borrow) (struct-get entry index))
-      [(I64StringMapOccupied _ value _) (string.string-copy (& value))]
+      [(I64StringMapOccupied _ value _) (string.copy (& value))]
       [(I64StringMapEmpty) fallback]
       [(I64StringMapTombstone) fallback])
     fallback))
@@ -3742,29 +5697,3331 @@
     (point HashPoint)
     (tag HashTag)))
 
+;: Checked-in `StringHashPayloadMap` fixture family.
 (cfg
   test
-  (comptime-decl
-    (:generated stdlib/hashmap-family StringHashPayloadMap (type-key
-      (type String)) (type-key (type HashPayload)) "stdlib/hashmap/string-key-v1")
-    (defstruct StringHashPayloadMap
-      (__hashmap_family_request i64))))
+  (defenum StringHashPayloadMapSlot
+    (StringHashPayloadMapEmpty)
+    (StringHashPayloadMapTombstone)
+    (StringHashPayloadMapOccupied String HashPayload i64)))
 
 (cfg
   test
-  (comptime-decl
-    (:generated stdlib/hashmap-family I64HashStateMap (type-key (type i64)) (type-key
-      (type HashState)) "stdlib/hashmap/i64-key-v1")
-    (defstruct I64HashStateMap
-      (__hashmap_family_request i64))))
+  (defenum StringHashPayloadMapProbe
+    (StringHashPayloadMapProbeFound i64)
+    (StringHashPayloadMapProbeAbsent i64)
+    (StringHashPayloadMapProbeFull)))
 
 (cfg
   test
-  (comptime-decl
-    (:generated stdlib/hashmap-family HashNestedKeyI64Map (type-key
-      (type HashNestedKey)) (type-key (type i64)) "stdlib/hashmap/aggregate-key-v1")
-    (defstruct HashNestedKeyI64Map
-      (__hashmap_family_request i64))))
+  (define (string-hash-payload-map-hash-normalize [value : i64]) : i64
+    (let
+      [m : i64 2147483647]
+      [raw : i64 (% value 2147483647)]
+      (if (< raw 0)
+        (+ raw m)
+        raw))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-hash-key [key : (& key str)]) : i64
+    (let
+      [n : i64 (__tl_string_length key)]
+      [i : i64 0]
+      [hash : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set!
+              hash
+              (%
+                (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)
+                2147483647))
+            (set! i (+ i 1))))
+        hash))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-power-two-capacity? [capacity : i64]) : bool
+    (if (> capacity 0)
+      (= (bit-and capacity (- capacity 1)) 0)
+      false)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-round-capacity [capacity : i64]) : i64
+    (let
+      [rounded : i64 1]
+      (begin
+        (while (< rounded capacity)
+          (set! rounded (* rounded 2)))
+        rounded))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-normalized-bucket-index
+    [hash : i64]
+    [capacity : i64]) : i64
+    (bit-and hash (- capacity 1))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-bucket-index [hash : i64] [capacity : i64]) : i64
+    (string-hash-payload-map-normalized-bucket-index
+      (string-hash-payload-map-hash-normalize hash)
+      capacity)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-next-index [index : i64] [capacity : i64]) : i64
+    (let
+      [next : i64 (+ index 1)]
+      (if (>= next capacity)
+        0
+        next))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-insert-slot
+    [first-tombstone : i64]
+    [empty-index : i64]) : i64
+    (if (>= first-tombstone 0)
+      first-tombstone
+      empty-index)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-key-eq?
+    [left : (& left str)]
+    [right : (& right str)]) : bool
+    (__tl_string_eq left right)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-probe-borrowed-from
+    [slots : (Array StringHashPayloadMapSlot)]
+    [capacity : i64]
+    [key : (& key str)]
+    [hash : i64]
+    [index : i64]
+    [steps : i64]
+    [first-tombstone : i64]) : StringHashPayloadMapProbe
+    (let
+      [cursor : i64 index]
+      [walked : i64 steps]
+      [first : i64 first-tombstone]
+      (begin
+        (while (< walked capacity)
+          (match (array-ref slots cursor)
+            [(StringHashPayloadMapEmpty)
+              (return
+                (StringHashPayloadMapProbeAbsent
+                  (string-hash-payload-map-insert-slot first cursor)))]
+            [(StringHashPayloadMapTombstone)
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (if (< first 0)
+                    (set! first cursor)
+                    unit)
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1))))]
+            [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (string-hash-payload-map-key-eq? (& slot-key) key)
+                false)
+                (return (StringHashPayloadMapProbeFound cursor))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))]))
+        (if (>= first 0)
+          (StringHashPayloadMapProbeAbsent first)
+          (StringHashPayloadMapProbeFull))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-probe-borrowed
+    [slots : (Array StringHashPayloadMapSlot)]
+    [capacity : i64]
+    [key : (& key str)]
+    [hash : i64]) : StringHashPayloadMapProbe
+    (if (<= capacity 0)
+      (StringHashPayloadMapProbeFull)
+      (string-hash-payload-map-probe-borrowed-from
+        slots
+        capacity
+        key
+        hash
+        (string-hash-payload-map-normalized-bucket-index hash capacity)
+        0
+        -1))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-probe
+    [slots : (Array StringHashPayloadMapSlot)]
+    [capacity : i64]
+    [key : String]
+    [hash : i64]) : StringHashPayloadMapProbe
+    (string-hash-payload-map-probe-borrowed slots capacity (& key) hash)))
+
+(cfg
+  test
+  (defstruct StringHashPayloadMap
+    (slots (Array StringHashPayloadMapSlot))
+    (len i64)
+    (deleted i64)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapLookup
+    (StringHashPayloadMapMissing)
+    (StringHashPayloadMapFound HashPayload)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapBorrowedValueLookup
+    (:lifetimes map)
+    (StringHashPayloadMapBorrowedValueMissing)
+    (StringHashPayloadMapBorrowedValueFound (& map HashPayload))))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapInsertResult
+    (StringHashPayloadMapInsertOk StringHashPayloadMap)
+    (StringHashPayloadMapInsertFull StringHashPayloadMap)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapRemoveResult
+    (StringHashPayloadMapRemoveOk StringHashPayloadMap)
+    (StringHashPayloadMapRemoveMissing StringHashPayloadMap)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapUpdateResult
+    (StringHashPayloadMapUpdateOk StringHashPayloadMap)
+    (StringHashPayloadMapUpdateMissing StringHashPayloadMap)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapEntryOrInsertResult
+    (StringHashPayloadMapEntryOrInsertFound StringHashPayloadMap HashPayload)
+    (StringHashPayloadMapEntryOrInsertInserted StringHashPayloadMap HashPayload)))
+
+(cfg
+  test
+  (defstruct StringHashPayloadMapMutEntryInfo
+    (index i64)
+    (present bool)
+    (key String)
+    (hash i64)))
+
+(cfg
+  test
+  (defstruct StringHashPayloadMapMutEntry
+    (:lifetimes map)
+    (slots (Array StringHashPayloadMapSlot))
+    (borrow (&mut map (Array StringHashPayloadMapSlot)))
+    (index i64)
+    (present bool)
+    (key String)
+    (hash i64)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-slots [map : StringHashPayloadMap]) : (Array
+      StringHashPayloadMapSlot)
+    (struct-get map slots)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-len [map : StringHashPayloadMap]) : i64
+    (struct-get map len)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-capacity [map : StringHashPayloadMap]) : i64
+    (array-length (struct-get map slots))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-deleted [map : StringHashPayloadMap]) : i64
+    (struct-get map deleted)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-fill-empty
+    [slots : (Array StringHashPayloadMapSlot)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! slots index (StringHashPayloadMapEmpty))
+        (string-hash-payload-map-fill-empty slots (+ index 1) count)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-with-capacity [capacity : i64]) : StringHashPayloadMap
+    (let
+      [rounded-capacity : i64 (string-hash-payload-map-round-capacity capacity)]
+      [slots : (Array StringHashPayloadMapSlot)
+        (make-array StringHashPayloadMapSlot rounded-capacity)]
+      (begin
+        (string-hash-payload-map-fill-empty slots 0 rounded-capacity)
+        (StringHashPayloadMap slots 0 0)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-borrowed-value-missing
+    [map : (& map StringHashPayloadMap)]) : (StringHashPayloadMapBorrowedValueLookup
+      map)
+    (StringHashPayloadMapBorrowedValueMissing)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-borrowed-value-found
+    [value : (& map HashPayload)]) : (StringHashPayloadMapBorrowedValueLookup
+      map)
+    (StringHashPayloadMapBorrowedValueFound value)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-get-borrowed
+    [map : StringHashPayloadMap]
+    [key : (& key str)]) : StringHashPayloadMapLookup
+    (let
+      [slots : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      (match (string-hash-payload-map-probe-borrowed
+        slots
+        (string-hash-payload-map-capacity map)
+        key
+        (string-hash-payload-map-hash-key key))
+        [(StringHashPayloadMapProbeFound index)
+          (match (array-ref slots index)
+            [(StringHashPayloadMapOccupied _ value _)
+              (StringHashPayloadMapFound value)]
+            [(StringHashPayloadMapEmpty) (StringHashPayloadMapMissing)]
+            [(StringHashPayloadMapTombstone) (StringHashPayloadMapMissing)])]
+        [(StringHashPayloadMapProbeAbsent _) (StringHashPayloadMapMissing)]
+        [(StringHashPayloadMapProbeFull) (StringHashPayloadMapMissing)]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-get
+    [map : StringHashPayloadMap]
+    [key : String]) : StringHashPayloadMapLookup
+    (string-hash-payload-map-get-borrowed map (& key))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-get-borrowed-ref
+    [map : (& map StringHashPayloadMap)]
+    [key : (& key str)]) : StringHashPayloadMapLookup
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (StringHashPayloadMapMissing)
+        (let
+          [hash : i64 (string-hash-payload-map-hash-key key)]
+          [cursor : i64
+            (string-hash-payload-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(StringHashPayloadMapEmpty)
+                  (return (StringHashPayloadMapMissing))]
+                [(StringHashPayloadMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(StringHashPayloadMapOccupied slot-key value slot-hash)
+                  (if (if (= slot-hash hash)
+                    (string-hash-payload-map-key-eq? (& slot-key) key)
+                    false)
+                    (return (StringHashPayloadMapFound (clone value)))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (StringHashPayloadMapMissing)))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-get-value-borrowed
+    [map : (& map StringHashPayloadMap)]
+    [key : (& key str)]) : (StringHashPayloadMapBorrowedValueLookup map)
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (string-hash-payload-map-borrowed-value-missing map)
+        (let
+          [hash : i64 (string-hash-payload-map-hash-key key)]
+          [cursor : i64
+            (string-hash-payload-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(StringHashPayloadMapEmpty)
+                  (return (string-hash-payload-map-borrowed-value-missing map))]
+                [(StringHashPayloadMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (string-hash-payload-map-key-eq? (& slot-key) key)
+                    false)
+                    (match (& (array-ref (struct-get map slots) cursor))
+                      [(StringHashPayloadMapOccupied _ value _)
+                        (return
+                          (string-hash-payload-map-borrowed-value-found value))]
+                      [(StringHashPayloadMapEmpty)
+                        (return
+                          (string-hash-payload-map-borrowed-value-missing map))]
+                      [(StringHashPayloadMapTombstone)
+                        (return
+                          (string-hash-payload-map-borrowed-value-missing map))])
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (string-hash-payload-map-borrowed-value-missing map)))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-contains-borrowed?
+    [map : StringHashPayloadMap]
+    [key : (& key str)]) : bool
+    (match (string-hash-payload-map-get-borrowed map key)
+      [(StringHashPayloadMapFound _) true]
+      [(StringHashPayloadMapMissing) false])))
+
+(cfg
+  test
+  (define (string-hash-payload-map-contains?
+    [map : StringHashPayloadMap]
+    [key : String]) : bool
+    (string-hash-payload-map-contains-borrowed? map (& key))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-slot-tombstone?
+    [slot : StringHashPayloadMapSlot]) : bool
+    (match slot
+      [(StringHashPayloadMapTombstone) true]
+      [(StringHashPayloadMapEmpty) false]
+      [(StringHashPayloadMapOccupied _ _ _) false])))
+
+(cfg
+  test
+  (define (string-hash-payload-map-insert
+    [map : StringHashPayloadMap]
+    [key : String]
+    [value : HashPayload]) : StringHashPayloadMapInsertResult
+    (let
+      [slots : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      [hash : i64 (string-hash-payload-map-hash-key (& key))]
+      (match (string-hash-payload-map-probe-borrowed
+        slots
+        (string-hash-payload-map-capacity map)
+        (& key)
+        hash)
+        [(StringHashPayloadMapProbeFound index)
+          (begin
+            (array-set!
+              slots
+              index
+              (StringHashPayloadMapOccupied key value hash))
+            (StringHashPayloadMapInsertOk map))]
+        [(StringHashPayloadMapProbeAbsent index)
+          (let
+            [reused-tombstone : bool
+              (string-hash-payload-map-slot-tombstone? (array-ref slots index))]
+            (begin
+              (array-set!
+                slots
+                index
+                (StringHashPayloadMapOccupied key value hash))
+              (set!
+                (struct-get map len)
+                (+ (string-hash-payload-map-len map) 1))
+              (if reused-tombstone
+                (set!
+                  (struct-get map deleted)
+                  (- (string-hash-payload-map-deleted map) 1))
+                unit)
+              (StringHashPayloadMapInsertOk map)))]
+        [(StringHashPayloadMapProbeFull) (StringHashPayloadMapInsertFull map)]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-remove-borrowed
+    [map : StringHashPayloadMap]
+    [key : (& key str)]) : StringHashPayloadMapRemoveResult
+    (let
+      [slots : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      (match (string-hash-payload-map-probe-borrowed
+        slots
+        (string-hash-payload-map-capacity map)
+        key
+        (string-hash-payload-map-hash-key key))
+        [(StringHashPayloadMapProbeFound index)
+          (begin
+            (array-set! slots index (StringHashPayloadMapTombstone))
+            (set! (struct-get map len) (- (string-hash-payload-map-len map) 1))
+            (set!
+              (struct-get map deleted)
+              (+ (string-hash-payload-map-deleted map) 1))
+            (StringHashPayloadMapRemoveOk map))]
+        [(StringHashPayloadMapProbeAbsent _)
+          (StringHashPayloadMapRemoveMissing map)]
+        [(StringHashPayloadMapProbeFull)
+          (StringHashPayloadMapRemoveMissing map)]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-remove
+    [map : StringHashPayloadMap]
+    [key : String]) : StringHashPayloadMapRemoveResult
+    (string-hash-payload-map-remove-borrowed map (& key))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-update-borrowed-if-present
+    [map : StringHashPayloadMap]
+    [key : (& key str)]
+    [value : HashPayload]) : StringHashPayloadMapUpdateResult
+    (let
+      [slots : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      [hash : i64 (string-hash-payload-map-hash-key key)]
+      (match (string-hash-payload-map-probe-borrowed
+        slots
+        (string-hash-payload-map-capacity map)
+        key
+        hash)
+        [(StringHashPayloadMapProbeFound index)
+          (match (array-ref slots index)
+            [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+              (begin
+                (array-set!
+                  slots
+                  index
+                  (StringHashPayloadMapOccupied slot-key value slot-hash))
+                (StringHashPayloadMapUpdateOk map))]
+            [(StringHashPayloadMapEmpty)
+              (StringHashPayloadMapUpdateMissing map)]
+            [(StringHashPayloadMapTombstone)
+              (StringHashPayloadMapUpdateMissing map)])]
+        [(StringHashPayloadMapProbeAbsent _)
+          (StringHashPayloadMapUpdateMissing map)]
+        [(StringHashPayloadMapProbeFull)
+          (StringHashPayloadMapUpdateMissing map)]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-update-if-present
+    [map : StringHashPayloadMap]
+    [key : String]
+    [value : HashPayload]) : StringHashPayloadMapUpdateResult
+    (string-hash-payload-map-update-borrowed-if-present map (& key) value)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-insert-into-empty
+    [slots : (Array StringHashPayloadMapSlot)]
+    [capacity : i64]
+    [key : String]
+    [value : HashPayload]
+    [hash : i64]) : unit
+    (if (<= capacity 0)
+      unit
+      (let
+        [cursor : i64
+          (string-hash-payload-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< walked capacity))
+            (match (array-ref slots cursor)
+              [(StringHashPayloadMapEmpty)
+                (begin
+                  (array-set!
+                    slots
+                    cursor
+                    (StringHashPayloadMapOccupied key value hash))
+                  (set! done true))]
+              [_
+                (begin
+                  (set!
+                    cursor
+                    (string-hash-payload-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          unit)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-rehash-from
+    [src : (Array StringHashPayloadMapSlot)]
+    [dst : (Array StringHashPayloadMapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(StringHashPayloadMapOccupied key value hash)
+            (string-hash-payload-map-insert-into-empty
+              dst
+              dst-capacity
+              key
+              value
+              hash)]
+          [(StringHashPayloadMapEmpty) unit]
+          [(StringHashPayloadMapTombstone) unit])
+        (string-hash-payload-map-rehash-from
+          src
+          dst
+          dst-capacity
+          (+ index 1)
+          count)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-rehash-from-ref
+    [src : (& src (Array StringHashPayloadMapSlot))]
+    [dst : (Array StringHashPayloadMapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(StringHashPayloadMapOccupied key value hash)
+            (string-hash-payload-map-insert-into-empty
+              dst
+              dst-capacity
+              (string.copy (& key))
+              (clone value)
+              hash)]
+          [(StringHashPayloadMapEmpty) unit]
+          [(StringHashPayloadMapTombstone) unit])
+        (string-hash-payload-map-rehash-from-ref
+          src
+          dst
+          dst-capacity
+          (+ index 1)
+          count)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-resized
+    [map : StringHashPayloadMap]
+    [new-capacity : i64]) : StringHashPayloadMap
+    (let
+      [src : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      [old-capacity : i64 (string-hash-payload-map-capacity map)]
+      [requested-capacity : i64
+        (if (> (string-hash-payload-map-len map) new-capacity)
+          (string-hash-payload-map-len map)
+          new-capacity)]
+      [rounded-capacity : i64
+        (string-hash-payload-map-round-capacity requested-capacity)]
+      [dst : (Array StringHashPayloadMapSlot)
+        (make-array StringHashPayloadMapSlot rounded-capacity)]
+      (begin
+        (string-hash-payload-map-fill-empty dst 0 rounded-capacity)
+        (string-hash-payload-map-rehash-from
+          src
+          dst
+          rounded-capacity
+          0
+          old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)
+        map))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-grow-capacity [capacity : i64]) : i64
+    (if (< capacity 4)
+      8
+      (* (string-hash-payload-map-round-capacity capacity) 2))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-grow [map : StringHashPayloadMap]) : StringHashPayloadMap
+    (string-hash-payload-map-resized
+      map
+      (string-hash-payload-map-grow-capacity
+        (string-hash-payload-map-capacity map)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-needs-grow? [map : StringHashPayloadMap]) : bool
+    (let
+      [capacity : i64 (string-hash-payload-map-capacity map)]
+      [used : i64
+        (+
+          (string-hash-payload-map-len map)
+          (string-hash-payload-map-deleted map))]
+      (if (<= capacity 0)
+        true
+        (>= (* used 4) (* capacity 3))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-resized!
+    [map : (&mut map StringHashPayloadMap)]
+    [new-capacity : i64]) : unit
+    (let
+      [old-capacity : i64 (array-length (struct-get map slots))]
+      [requested-capacity : i64
+        (if (> (struct-get map len) new-capacity)
+          (struct-get map len)
+          new-capacity)]
+      [rounded-capacity : i64
+        (string-hash-payload-map-round-capacity requested-capacity)]
+      [dst : (Array StringHashPayloadMapSlot)
+        (make-array StringHashPayloadMapSlot rounded-capacity)]
+      (begin
+        (string-hash-payload-map-fill-empty dst 0 rounded-capacity)
+        (string-hash-payload-map-rehash-from-ref
+          (& (struct-get map slots))
+          dst
+          rounded-capacity
+          0
+          old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-put!
+    [map : (&mut map StringHashPayloadMap)]
+    [key : String]
+    [value : HashPayload]) : unit
+    (let
+      [capacity-before : i64 (array-length (struct-get map slots))]
+      [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
+      (begin
+        (if (if (<= capacity-before 0)
+          true
+          (>= (* used-before 4) (* capacity-before 3)))
+          (string-hash-payload-map-resized!
+            map
+            (string-hash-payload-map-grow-capacity capacity-before))
+          unit)
+        (let
+          [slots : (&mut map (Array StringHashPayloadMapSlot))
+            (&mut (struct-get map slots))]
+          [capacity : i64 (array-length slots)]
+          [hash : i64 (string-hash-payload-map-hash-key (& key))]
+          (if (<= capacity 0)
+            unit
+            (let
+              [cursor : i64
+                (string-hash-payload-map-normalized-bucket-index hash capacity)]
+              [walked : i64 0]
+              [first : i64 -1]
+              (begin
+                (while (< walked capacity)
+                  (match (array-ref slots cursor)
+                    [(StringHashPayloadMapEmpty)
+                      (let
+                        [index : i64
+                          (if (>= first 0)
+                            first
+                            cursor)]
+                        [reused-tombstone : bool (>= first 0)]
+                        (begin
+                          (array-set!
+                            slots
+                            index
+                            (StringHashPayloadMapOccupied key value hash))
+                          (set! (struct-get map len) (+ (struct-get map len) 1))
+                          (if reused-tombstone
+                            (set!
+                              (struct-get map deleted)
+                              (- (struct-get map deleted) 1))
+                            unit)
+                          (return unit)))]
+                    [(StringHashPayloadMapTombstone)
+                      (let
+                        [next : i64 (+ cursor 1)]
+                        (begin
+                          (if (< first 0)
+                            (set! first cursor)
+                            unit)
+                          (set!
+                            cursor
+                            (if (>= next capacity)
+                              0
+                              next))
+                          (set! walked (+ walked 1))))]
+                    [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+                      (if (if (= slot-hash hash)
+                        (string-hash-payload-map-key-eq? (& slot-key) (& key))
+                        false)
+                        (begin
+                          (array-set!
+                            slots
+                            cursor
+                            (StringHashPayloadMapOccupied key value hash))
+                          (return unit))
+                        (let
+                          [next : i64 (+ cursor 1)]
+                          (begin
+                            (set!
+                              cursor
+                              (if (>= next capacity)
+                                0
+                                next))
+                            (set! walked (+ walked 1)))))]))
+                (if (>= first 0)
+                  (begin
+                    (array-set!
+                      slots
+                      first
+                      (StringHashPayloadMapOccupied key value hash))
+                    (set! (struct-get map len) (+ (struct-get map len) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (- (struct-get map deleted) 1)))
+                  unit)))))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-remove-borrowed!
+    [map : (&mut map StringHashPayloadMap)]
+    [key : (& key str)]) : bool
+    (let
+      [slots : (&mut map (Array StringHashPayloadMapSlot))
+        (&mut (struct-get map slots))]
+      [capacity : i64 (array-length slots)]
+      (if (<= capacity 0)
+        false
+        (let
+          [hash : i64 (string-hash-payload-map-hash-key key)]
+          [cursor : i64
+            (string-hash-payload-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref slots cursor)
+                [(StringHashPayloadMapEmpty) (return false)]
+                [(StringHashPayloadMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (string-hash-payload-map-key-eq? (& slot-key) key)
+                    false)
+                    (begin
+                      (array-set! slots cursor (StringHashPayloadMapTombstone))
+                      (set! (struct-get map len) (- (struct-get map len) 1))
+                      (set!
+                        (struct-get map deleted)
+                        (+ (struct-get map deleted) 1))
+                      (return true))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            false))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-put
+    [map : StringHashPayloadMap]
+    [key : String]
+    [value : HashPayload]) : StringHashPayloadMap
+    (let
+      [grown : StringHashPayloadMap
+        (if (string-hash-payload-map-needs-grow? map)
+          (string-hash-payload-map-grow map)
+          map)]
+      (match (string-hash-payload-map-insert grown key value)
+        [(StringHashPayloadMapInsertOk updated) updated]
+        [(StringHashPayloadMapInsertFull full)
+          (match (string-hash-payload-map-insert
+            (string-hash-payload-map-grow full)
+            key
+            value)
+            [(StringHashPayloadMapInsertOk u) u]
+            [(StringHashPayloadMapInsertFull u) u])]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-insert-or-update
+    [map : StringHashPayloadMap]
+    [key : String]
+    [value : HashPayload]) : StringHashPayloadMap
+    (string-hash-payload-map-put map key value)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-entry-or-insert
+    [map : StringHashPayloadMap]
+    [key : String]
+    [default-value : HashPayload]) : StringHashPayloadMapEntryOrInsertResult
+    (let
+      [slots : (Array StringHashPayloadMapSlot)
+        (string-hash-payload-map-slots map)]
+      [hash : i64 (string-hash-payload-map-hash-key (& key))]
+      (match (string-hash-payload-map-probe-borrowed
+        slots
+        (string-hash-payload-map-capacity map)
+        (& key)
+        hash)
+        [(StringHashPayloadMapProbeFound index)
+          (match (array-ref slots index)
+            [(StringHashPayloadMapOccupied _ value _)
+              (StringHashPayloadMapEntryOrInsertFound map value)]
+            [(StringHashPayloadMapEmpty)
+              (let
+                [updated : StringHashPayloadMap
+                  (string-hash-payload-map-put map key default-value)]
+                (StringHashPayloadMapEntryOrInsertInserted
+                  updated
+                  default-value))]
+            [(StringHashPayloadMapTombstone)
+              (let
+                [updated : StringHashPayloadMap
+                  (string-hash-payload-map-put map key default-value)]
+                (StringHashPayloadMapEntryOrInsertInserted
+                  updated
+                  default-value))])]
+        [(StringHashPayloadMapProbeAbsent _)
+          (let
+            [updated : StringHashPayloadMap
+              (string-hash-payload-map-put map key default-value)]
+            (StringHashPayloadMapEntryOrInsertInserted updated default-value))]
+        [(StringHashPayloadMapProbeFull)
+          (let
+            [updated : StringHashPayloadMap
+              (string-hash-payload-map-put map key default-value)]
+            (StringHashPayloadMapEntryOrInsertInserted updated default-value))]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-mut-entry-info
+    [slots : (Array StringHashPayloadMapSlot)]
+    [capacity : i64]
+    [key : (& key str)]) : StringHashPayloadMapMutEntryInfo
+    (if (<= capacity 0)
+      (StringHashPayloadMapMutEntryInfo -1 false "" 0)
+      (let
+        [hash : i64 (string-hash-payload-map-hash-key key)]
+        [cursor : i64 (string-hash-payload-map-bucket-index hash capacity)]
+        [walked : i64 0]
+        [found : i64 -1]
+        [present : bool false]
+        [entry-key : String ""]
+        [entry-hash : i64 0]
+        [done : bool false]
+        (begin
+          (while (if (< walked capacity)
+            (not done)
+            false)
+            (match (array-ref slots cursor)
+              [(StringHashPayloadMapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-hash-payload-map-key-eq? (& slot-key) key)
+                  false)
+                  (begin
+                    (set! found cursor)
+                    (set! present true)
+                    (set! entry-key slot-key)
+                    (set! entry-hash slot-hash)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (string-hash-payload-map-next-index cursor capacity))
+                    (set! walked (+ walked 1))))]
+              [(StringHashPayloadMapEmpty) (set! done true)]
+              [(StringHashPayloadMapTombstone)
+                (begin
+                  (set!
+                    cursor
+                    (string-hash-payload-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          (StringHashPayloadMapMutEntryInfo found present entry-key entry-hash))))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-mut-entry-from-info
+    [info : StringHashPayloadMapMutEntryInfo]
+    [slots : (Array StringHashPayloadMapSlot)]
+    [borrow : (&mut map (Array StringHashPayloadMapSlot))]) : (StringHashPayloadMapMutEntry
+      map)
+    (StringHashPayloadMapMutEntry
+      slots
+      borrow
+      (struct-get info index)
+      (struct-get info present)
+      (struct-get info key)
+      (struct-get info hash))))
+
+(cfg
+  test
+  (defmacro (string-hash-payload-map-get-mut-entry-borrowed
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
+    `(string-hash-payload-map-mut-entry-from-info
+      (string-hash-payload-map-mut-entry-info
+        (struct-get ,map slots)
+        (array-length (struct-get ,map slots))
+        ,key)
+      (struct-get ,map slots)
+      (&mut (struct-get ,map slots)))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-mut-entry-present?
+    [entry : (StringHashPayloadMapMutEntry map)]) : bool
+    (struct-get entry present)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-mut-entry-value-or
+    [entry : (StringHashPayloadMapMutEntry map)]
+    [fallback : HashPayload]) : HashPayload
+    (if (string-hash-payload-map-mut-entry-present? entry)
+      (match (array-ref (struct-get entry slots) (struct-get entry index))
+        [(StringHashPayloadMapOccupied _ value _) value]
+        [(StringHashPayloadMapEmpty) fallback]
+        [(StringHashPayloadMapTombstone) fallback])
+      fallback)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-mut-entry-set!
+    [entry : (StringHashPayloadMapMutEntry map)]
+    [value : HashPayload]) : unit
+    (if (string-hash-payload-map-mut-entry-present? entry)
+      (array-set!
+        (struct-get entry slots)
+        (struct-get entry index)
+        (StringHashPayloadMapOccupied
+          (struct-get entry key)
+          value
+          (struct-get entry hash)))
+      unit)))
+
+(cfg
+  test
+  (defenum StringHashPayloadMapEntry
+    (StringHashPayloadMapEntryNone)
+    (StringHashPayloadMapEntrySome String HashPayload)))
+
+(cfg
+  test
+  (define (string-hash-payload-map-next-occupied-from
+    [slots : (Array StringHashPayloadMapSlot)]
+    [index : i64]
+    [capacity : i64]) : i64
+    (if (>= index capacity)
+      capacity
+      (match (array-ref slots index)
+        [(StringHashPayloadMapOccupied _ _ _) index]
+        [(StringHashPayloadMapEmpty)
+          (string-hash-payload-map-next-occupied-from
+            slots
+            (+ index 1)
+            capacity)]
+        [(StringHashPayloadMapTombstone)
+          (string-hash-payload-map-next-occupied-from
+            slots
+            (+ index 1)
+            capacity)]))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-next-occupied
+    [map : StringHashPayloadMap]
+    [from : i64]) : i64
+    (string-hash-payload-map-next-occupied-from
+      (string-hash-payload-map-slots map)
+      (if (< from 0)
+        0
+        from)
+      (string-hash-payload-map-capacity map))))
+
+(cfg
+  test
+  (define (string-hash-payload-map-entry-at
+    [map : StringHashPayloadMap]
+    [index : i64]) : StringHashPayloadMapEntry
+    (if (if (< index 0)
+      true
+      (>= index (string-hash-payload-map-capacity map)))
+      (StringHashPayloadMapEntryNone)
+      (match (array-ref (string-hash-payload-map-slots map) index)
+        [(StringHashPayloadMapOccupied key value _)
+          (StringHashPayloadMapEntrySome key value)]
+        [(StringHashPayloadMapEmpty) (StringHashPayloadMapEntryNone)]
+        [(StringHashPayloadMapTombstone) (StringHashPayloadMapEntryNone)]))))
+
+;: Checked-in `I64HashStateMap` fixture family.
+(cfg
+  test
+  (defenum I64HashStateMapSlot
+    (I64HashStateMapEmpty)
+    (I64HashStateMapTombstone)
+    (I64HashStateMapOccupied i64 HashState i64)))
+
+(cfg
+  test
+  (defenum I64HashStateMapProbe
+    (I64HashStateMapProbeFound i64)
+    (I64HashStateMapProbeAbsent i64)
+    (I64HashStateMapProbeFull)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-hash-normalize [value : i64]) : i64
+    (let
+      [m : i64 2147483647]
+      [raw : i64 (% value 2147483647)]
+      (if (< raw 0)
+        (+ raw m)
+        raw))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-hash-key [key : i64]) : i64
+    (i64-hash-state-map-hash-normalize (* key 6364136223846793005))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-power-two-capacity? [capacity : i64]) : bool
+    (if (> capacity 0)
+      (= (bit-and capacity (- capacity 1)) 0)
+      false)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-round-capacity [capacity : i64]) : i64
+    (let
+      [rounded : i64 1]
+      (begin
+        (while (< rounded capacity)
+          (set! rounded (* rounded 2)))
+        rounded))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-normalized-bucket-index
+    [hash : i64]
+    [capacity : i64]) : i64
+    (bit-and hash (- capacity 1))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-bucket-index [hash : i64] [capacity : i64]) : i64
+    (i64-hash-state-map-normalized-bucket-index
+      (i64-hash-state-map-hash-normalize hash)
+      capacity)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-next-index [index : i64] [capacity : i64]) : i64
+    (let
+      [next : i64 (+ index 1)]
+      (if (>= next capacity)
+        0
+        next))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-insert-slot
+    [first-tombstone : i64]
+    [empty-index : i64]) : i64
+    (if (>= first-tombstone 0)
+      first-tombstone
+      empty-index)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-probe-from
+    [slots : (Array I64HashStateMapSlot)]
+    [capacity : i64]
+    [key : i64]
+    [hash : i64]
+    [index : i64]
+    [steps : i64]
+    [first-tombstone : i64]) : I64HashStateMapProbe
+    (let
+      [cursor : i64 index]
+      [walked : i64 steps]
+      [first : i64 first-tombstone]
+      (begin
+        (while (< walked capacity)
+          (match (array-ref slots cursor)
+            [(I64HashStateMapEmpty)
+              (return
+                (I64HashStateMapProbeAbsent
+                  (i64-hash-state-map-insert-slot first cursor)))]
+            [(I64HashStateMapTombstone)
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (if (< first 0)
+                    (set! first cursor)
+                    unit)
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1))))]
+            [(I64HashStateMapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (= slot-key key)
+                false)
+                (return (I64HashStateMapProbeFound cursor))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))]))
+        (if (>= first 0)
+          (I64HashStateMapProbeAbsent first)
+          (I64HashStateMapProbeFull))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-probe
+    [slots : (Array I64HashStateMapSlot)]
+    [capacity : i64]
+    [key : i64]
+    [hash : i64]) : I64HashStateMapProbe
+    (if (<= capacity 0)
+      (I64HashStateMapProbeFull)
+      (i64-hash-state-map-probe-from
+        slots
+        capacity
+        key
+        hash
+        (i64-hash-state-map-normalized-bucket-index hash capacity)
+        0
+        -1))))
+
+(cfg
+  test
+  (defstruct I64HashStateMap
+    (slots (Array I64HashStateMapSlot))
+    (len i64)
+    (deleted i64)))
+
+(cfg
+  test
+  (defenum I64HashStateMapLookup
+    (I64HashStateMapMissing)
+    (I64HashStateMapFound HashState)))
+
+(cfg
+  test
+  (defenum I64HashStateMapBorrowedValueLookup
+    (:lifetimes map)
+    (I64HashStateMapBorrowedValueMissing)
+    (I64HashStateMapBorrowedValueFound (& map HashState))))
+
+(cfg
+  test
+  (defenum I64HashStateMapInsertResult
+    (I64HashStateMapInsertOk I64HashStateMap)
+    (I64HashStateMapInsertFull I64HashStateMap)))
+
+(cfg
+  test
+  (defenum I64HashStateMapRemoveResult
+    (I64HashStateMapRemoveOk I64HashStateMap)
+    (I64HashStateMapRemoveMissing I64HashStateMap)))
+
+(cfg
+  test
+  (defenum I64HashStateMapUpdateResult
+    (I64HashStateMapUpdateOk I64HashStateMap)
+    (I64HashStateMapUpdateMissing I64HashStateMap)))
+
+(cfg
+  test
+  (defenum I64HashStateMapEntryOrInsertResult
+    (I64HashStateMapEntryOrInsertFound I64HashStateMap HashState)
+    (I64HashStateMapEntryOrInsertInserted I64HashStateMap HashState)))
+
+(cfg
+  test
+  (defstruct I64HashStateMapMutEntryInfo
+    (index i64)
+    (present bool)
+    (key i64)
+    (hash i64)))
+
+(cfg
+  test
+  (defstruct I64HashStateMapMutEntry
+    (:lifetimes map)
+    (slots (Array I64HashStateMapSlot))
+    (borrow (&mut map (Array I64HashStateMapSlot)))
+    (index i64)
+    (present bool)
+    (key i64)
+    (hash i64)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-slots [map : I64HashStateMap]) : (Array
+      I64HashStateMapSlot)
+    (struct-get map slots)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-len [map : I64HashStateMap]) : i64
+    (struct-get map len)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-capacity [map : I64HashStateMap]) : i64
+    (array-length (struct-get map slots))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-deleted [map : I64HashStateMap]) : i64
+    (struct-get map deleted)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-fill-empty
+    [slots : (Array I64HashStateMapSlot)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! slots index (I64HashStateMapEmpty))
+        (i64-hash-state-map-fill-empty slots (+ index 1) count)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-with-capacity [capacity : i64]) : I64HashStateMap
+    (let
+      [rounded-capacity : i64 (i64-hash-state-map-round-capacity capacity)]
+      [slots : (Array I64HashStateMapSlot)
+        (make-array I64HashStateMapSlot rounded-capacity)]
+      (begin
+        (i64-hash-state-map-fill-empty slots 0 rounded-capacity)
+        (I64HashStateMap slots 0 0)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-borrowed-value-missing
+    [map : (& map I64HashStateMap)]) : (I64HashStateMapBorrowedValueLookup map)
+    (I64HashStateMapBorrowedValueMissing)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-borrowed-value-found [value : (& map HashState)]) : (I64HashStateMapBorrowedValueLookup
+      map)
+    (I64HashStateMapBorrowedValueFound value)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-get [map : I64HashStateMap] [key : i64]) : I64HashStateMapLookup
+    (let
+      [slots : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      (match (i64-hash-state-map-probe
+        slots
+        (i64-hash-state-map-capacity map)
+        key
+        (i64-hash-state-map-hash-key key))
+        [(I64HashStateMapProbeFound index)
+          (match (array-ref slots index)
+            [(I64HashStateMapOccupied _ value _) (I64HashStateMapFound value)]
+            [(I64HashStateMapEmpty) (I64HashStateMapMissing)]
+            [(I64HashStateMapTombstone) (I64HashStateMapMissing)])]
+        [(I64HashStateMapProbeAbsent _) (I64HashStateMapMissing)]
+        [(I64HashStateMapProbeFull) (I64HashStateMapMissing)]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-get-ref
+    [map : (& map I64HashStateMap)]
+    [key : i64]) : I64HashStateMapLookup
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (I64HashStateMapMissing)
+        (let
+          [hash : i64 (i64-hash-state-map-hash-key key)]
+          [cursor : i64
+            (i64-hash-state-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(I64HashStateMapEmpty) (return (I64HashStateMapMissing))]
+                [(I64HashStateMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(I64HashStateMapOccupied slot-key value slot-hash)
+                  (if (if (= slot-hash hash)
+                    (= slot-key key)
+                    false)
+                    (return (I64HashStateMapFound (clone value)))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (I64HashStateMapMissing)))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-get-value-borrowed
+    [map : (& map I64HashStateMap)]
+    [key : i64]) : (I64HashStateMapBorrowedValueLookup map)
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (i64-hash-state-map-borrowed-value-missing map)
+        (let
+          [hash : i64 (i64-hash-state-map-hash-key key)]
+          [cursor : i64
+            (i64-hash-state-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(I64HashStateMapEmpty)
+                  (return (i64-hash-state-map-borrowed-value-missing map))]
+                [(I64HashStateMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(I64HashStateMapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (= slot-key key)
+                    false)
+                    (match (& (array-ref (struct-get map slots) cursor))
+                      [(I64HashStateMapOccupied _ value _)
+                        (return (i64-hash-state-map-borrowed-value-found value))]
+                      [(I64HashStateMapEmpty)
+                        (return (i64-hash-state-map-borrowed-value-missing map))]
+                      [(I64HashStateMapTombstone)
+                        (return (i64-hash-state-map-borrowed-value-missing map))])
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (i64-hash-state-map-borrowed-value-missing map)))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-contains? [map : I64HashStateMap] [key : i64]) : bool
+    (match (i64-hash-state-map-get map key)
+      [(I64HashStateMapFound _) true]
+      [(I64HashStateMapMissing) false])))
+
+(cfg
+  test
+  (define (i64-hash-state-map-slot-tombstone? [slot : I64HashStateMapSlot]) : bool
+    (match slot
+      [(I64HashStateMapTombstone) true]
+      [(I64HashStateMapEmpty) false]
+      [(I64HashStateMapOccupied _ _ _) false])))
+
+(cfg
+  test
+  (define (i64-hash-state-map-insert
+    [map : I64HashStateMap]
+    [key : i64]
+    [value : HashState]) : I64HashStateMapInsertResult
+    (let
+      [slots : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      [hash : i64 (i64-hash-state-map-hash-key key)]
+      (match (i64-hash-state-map-probe
+        slots
+        (i64-hash-state-map-capacity map)
+        key
+        hash)
+        [(I64HashStateMapProbeFound index)
+          (begin
+            (array-set! slots index (I64HashStateMapOccupied key value hash))
+            (I64HashStateMapInsertOk map))]
+        [(I64HashStateMapProbeAbsent index)
+          (let
+            [reused-tombstone : bool
+              (i64-hash-state-map-slot-tombstone? (array-ref slots index))]
+            (begin
+              (array-set! slots index (I64HashStateMapOccupied key value hash))
+              (set! (struct-get map len) (+ (i64-hash-state-map-len map) 1))
+              (if reused-tombstone
+                (set!
+                  (struct-get map deleted)
+                  (- (i64-hash-state-map-deleted map) 1))
+                unit)
+              (I64HashStateMapInsertOk map)))]
+        [(I64HashStateMapProbeFull) (I64HashStateMapInsertFull map)]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-remove [map : I64HashStateMap] [key : i64]) : I64HashStateMapRemoveResult
+    (let
+      [slots : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      (match (i64-hash-state-map-probe
+        slots
+        (i64-hash-state-map-capacity map)
+        key
+        (i64-hash-state-map-hash-key key))
+        [(I64HashStateMapProbeFound index)
+          (begin
+            (array-set! slots index (I64HashStateMapTombstone))
+            (set! (struct-get map len) (- (i64-hash-state-map-len map) 1))
+            (set!
+              (struct-get map deleted)
+              (+ (i64-hash-state-map-deleted map) 1))
+            (I64HashStateMapRemoveOk map))]
+        [(I64HashStateMapProbeAbsent _) (I64HashStateMapRemoveMissing map)]
+        [(I64HashStateMapProbeFull) (I64HashStateMapRemoveMissing map)]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-update-if-present
+    [map : I64HashStateMap]
+    [key : i64]
+    [value : HashState]) : I64HashStateMapUpdateResult
+    (let
+      [slots : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      [hash : i64 (i64-hash-state-map-hash-key key)]
+      (match (i64-hash-state-map-probe
+        slots
+        (i64-hash-state-map-capacity map)
+        key
+        hash)
+        [(I64HashStateMapProbeFound index)
+          (match (array-ref slots index)
+            [(I64HashStateMapOccupied slot-key _ slot-hash)
+              (begin
+                (array-set!
+                  slots
+                  index
+                  (I64HashStateMapOccupied slot-key value slot-hash))
+                (I64HashStateMapUpdateOk map))]
+            [(I64HashStateMapEmpty) (I64HashStateMapUpdateMissing map)]
+            [(I64HashStateMapTombstone) (I64HashStateMapUpdateMissing map)])]
+        [(I64HashStateMapProbeAbsent _) (I64HashStateMapUpdateMissing map)]
+        [(I64HashStateMapProbeFull) (I64HashStateMapUpdateMissing map)]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-insert-into-empty
+    [slots : (Array I64HashStateMapSlot)]
+    [capacity : i64]
+    [key : i64]
+    [value : HashState]
+    [hash : i64]) : unit
+    (if (<= capacity 0)
+      unit
+      (let
+        [cursor : i64
+          (i64-hash-state-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< walked capacity))
+            (match (array-ref slots cursor)
+              [(I64HashStateMapEmpty)
+                (begin
+                  (array-set!
+                    slots
+                    cursor
+                    (I64HashStateMapOccupied key value hash))
+                  (set! done true))]
+              [_
+                (begin
+                  (set! cursor (i64-hash-state-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          unit)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-rehash-from
+    [src : (Array I64HashStateMapSlot)]
+    [dst : (Array I64HashStateMapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(I64HashStateMapOccupied key value hash)
+            (i64-hash-state-map-insert-into-empty
+              dst
+              dst-capacity
+              key
+              value
+              hash)]
+          [(I64HashStateMapEmpty) unit]
+          [(I64HashStateMapTombstone) unit])
+        (i64-hash-state-map-rehash-from src dst dst-capacity (+ index 1) count)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-rehash-from-ref
+    [src : (& src (Array I64HashStateMapSlot))]
+    [dst : (Array I64HashStateMapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(I64HashStateMapOccupied key value hash)
+            (i64-hash-state-map-insert-into-empty
+              dst
+              dst-capacity
+              key
+              (clone value)
+              hash)]
+          [(I64HashStateMapEmpty) unit]
+          [(I64HashStateMapTombstone) unit])
+        (i64-hash-state-map-rehash-from-ref
+          src
+          dst
+          dst-capacity
+          (+ index 1)
+          count)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-resized
+    [map : I64HashStateMap]
+    [new-capacity : i64]) : I64HashStateMap
+    (let
+      [src : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      [old-capacity : i64 (i64-hash-state-map-capacity map)]
+      [requested-capacity : i64
+        (if (> (i64-hash-state-map-len map) new-capacity)
+          (i64-hash-state-map-len map)
+          new-capacity)]
+      [rounded-capacity : i64
+        (i64-hash-state-map-round-capacity requested-capacity)]
+      [dst : (Array I64HashStateMapSlot)
+        (make-array I64HashStateMapSlot rounded-capacity)]
+      (begin
+        (i64-hash-state-map-fill-empty dst 0 rounded-capacity)
+        (i64-hash-state-map-rehash-from src dst rounded-capacity 0 old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)
+        map))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-grow-capacity [capacity : i64]) : i64
+    (if (< capacity 4)
+      8
+      (* (i64-hash-state-map-round-capacity capacity) 2))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-grow [map : I64HashStateMap]) : I64HashStateMap
+    (i64-hash-state-map-resized
+      map
+      (i64-hash-state-map-grow-capacity (i64-hash-state-map-capacity map)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-needs-grow? [map : I64HashStateMap]) : bool
+    (let
+      [capacity : i64 (i64-hash-state-map-capacity map)]
+      [used : i64
+        (+ (i64-hash-state-map-len map) (i64-hash-state-map-deleted map))]
+      (if (<= capacity 0)
+        true
+        (>= (* used 4) (* capacity 3))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-resized!
+    [map : (&mut map I64HashStateMap)]
+    [new-capacity : i64]) : unit
+    (let
+      [old-capacity : i64 (array-length (struct-get map slots))]
+      [requested-capacity : i64
+        (if (> (struct-get map len) new-capacity)
+          (struct-get map len)
+          new-capacity)]
+      [rounded-capacity : i64
+        (i64-hash-state-map-round-capacity requested-capacity)]
+      [dst : (Array I64HashStateMapSlot)
+        (make-array I64HashStateMapSlot rounded-capacity)]
+      (begin
+        (i64-hash-state-map-fill-empty dst 0 rounded-capacity)
+        (i64-hash-state-map-rehash-from-ref
+          (& (struct-get map slots))
+          dst
+          rounded-capacity
+          0
+          old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-put!
+    [map : (&mut map I64HashStateMap)]
+    [key : i64]
+    [value : HashState]) : unit
+    (let
+      [capacity-before : i64 (array-length (struct-get map slots))]
+      [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
+      (begin
+        (if (if (<= capacity-before 0)
+          true
+          (>= (* used-before 4) (* capacity-before 3)))
+          (i64-hash-state-map-resized!
+            map
+            (i64-hash-state-map-grow-capacity capacity-before))
+          unit)
+        (let
+          [slots : (&mut map (Array I64HashStateMapSlot))
+            (&mut (struct-get map slots))]
+          [capacity : i64 (array-length slots)]
+          [hash : i64 (i64-hash-state-map-hash-key key)]
+          (if (<= capacity 0)
+            unit
+            (let
+              [cursor : i64
+                (i64-hash-state-map-normalized-bucket-index hash capacity)]
+              [walked : i64 0]
+              [first : i64 -1]
+              (begin
+                (while (< walked capacity)
+                  (match (array-ref slots cursor)
+                    [(I64HashStateMapEmpty)
+                      (let
+                        [index : i64
+                          (if (>= first 0)
+                            first
+                            cursor)]
+                        [reused-tombstone : bool (>= first 0)]
+                        (begin
+                          (array-set!
+                            slots
+                            index
+                            (I64HashStateMapOccupied key value hash))
+                          (set! (struct-get map len) (+ (struct-get map len) 1))
+                          (if reused-tombstone
+                            (set!
+                              (struct-get map deleted)
+                              (- (struct-get map deleted) 1))
+                            unit)
+                          (return unit)))]
+                    [(I64HashStateMapTombstone)
+                      (let
+                        [next : i64 (+ cursor 1)]
+                        (begin
+                          (if (< first 0)
+                            (set! first cursor)
+                            unit)
+                          (set!
+                            cursor
+                            (if (>= next capacity)
+                              0
+                              next))
+                          (set! walked (+ walked 1))))]
+                    [(I64HashStateMapOccupied slot-key _ slot-hash)
+                      (if (if (= slot-hash hash)
+                        (= slot-key key)
+                        false)
+                        (begin
+                          (array-set!
+                            slots
+                            cursor
+                            (I64HashStateMapOccupied key value hash))
+                          (return unit))
+                        (let
+                          [next : i64 (+ cursor 1)]
+                          (begin
+                            (set!
+                              cursor
+                              (if (>= next capacity)
+                                0
+                                next))
+                            (set! walked (+ walked 1)))))]))
+                (if (>= first 0)
+                  (begin
+                    (array-set!
+                      slots
+                      first
+                      (I64HashStateMapOccupied key value hash))
+                    (set! (struct-get map len) (+ (struct-get map len) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (- (struct-get map deleted) 1)))
+                  unit)))))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-remove!
+    [map : (&mut map I64HashStateMap)]
+    [key : i64]) : bool
+    (let
+      [slots : (&mut map (Array I64HashStateMapSlot))
+        (&mut (struct-get map slots))]
+      [capacity : i64 (array-length slots)]
+      (if (<= capacity 0)
+        false
+        (let
+          [hash : i64 (i64-hash-state-map-hash-key key)]
+          [cursor : i64
+            (i64-hash-state-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref slots cursor)
+                [(I64HashStateMapEmpty) (return false)]
+                [(I64HashStateMapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(I64HashStateMapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (= slot-key key)
+                    false)
+                    (begin
+                      (array-set! slots cursor (I64HashStateMapTombstone))
+                      (set! (struct-get map len) (- (struct-get map len) 1))
+                      (set!
+                        (struct-get map deleted)
+                        (+ (struct-get map deleted) 1))
+                      (return true))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            false))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-put
+    [map : I64HashStateMap]
+    [key : i64]
+    [value : HashState]) : I64HashStateMap
+    (let
+      [grown : I64HashStateMap
+        (if (i64-hash-state-map-needs-grow? map)
+          (i64-hash-state-map-grow map)
+          map)]
+      (match (i64-hash-state-map-insert grown key value)
+        [(I64HashStateMapInsertOk updated) updated]
+        [(I64HashStateMapInsertFull full)
+          (match (i64-hash-state-map-insert
+            (i64-hash-state-map-grow full)
+            key
+            value)
+            [(I64HashStateMapInsertOk u) u]
+            [(I64HashStateMapInsertFull u) u])]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-insert-or-update
+    [map : I64HashStateMap]
+    [key : i64]
+    [value : HashState]) : I64HashStateMap
+    (i64-hash-state-map-put map key value)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-entry-or-insert
+    [map : I64HashStateMap]
+    [key : i64]
+    [default-value : HashState]) : I64HashStateMapEntryOrInsertResult
+    (let
+      [slots : (Array I64HashStateMapSlot) (i64-hash-state-map-slots map)]
+      [hash : i64 (i64-hash-state-map-hash-key key)]
+      (match (i64-hash-state-map-probe
+        slots
+        (i64-hash-state-map-capacity map)
+        key
+        hash)
+        [(I64HashStateMapProbeFound index)
+          (match (array-ref slots index)
+            [(I64HashStateMapOccupied _ value _)
+              (I64HashStateMapEntryOrInsertFound map value)]
+            [(I64HashStateMapEmpty)
+              (let
+                [updated : I64HashStateMap
+                  (i64-hash-state-map-put map key default-value)]
+                (I64HashStateMapEntryOrInsertInserted updated default-value))]
+            [(I64HashStateMapTombstone)
+              (let
+                [updated : I64HashStateMap
+                  (i64-hash-state-map-put map key default-value)]
+                (I64HashStateMapEntryOrInsertInserted updated default-value))])]
+        [(I64HashStateMapProbeAbsent _)
+          (let
+            [updated : I64HashStateMap
+              (i64-hash-state-map-put map key default-value)]
+            (I64HashStateMapEntryOrInsertInserted updated default-value))]
+        [(I64HashStateMapProbeFull)
+          (let
+            [updated : I64HashStateMap
+              (i64-hash-state-map-put map key default-value)]
+            (I64HashStateMapEntryOrInsertInserted updated default-value))]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-mut-entry-info
+    [slots : (Array I64HashStateMapSlot)]
+    [capacity : i64]
+    [key : i64]) : I64HashStateMapMutEntryInfo
+    (if (<= capacity 0)
+      (I64HashStateMapMutEntryInfo -1 false 0 0)
+      (let
+        [hash : i64 (i64-hash-state-map-hash-key key)]
+        [cursor : i64 (i64-hash-state-map-bucket-index hash capacity)]
+        [walked : i64 0]
+        [found : i64 -1]
+        [present : bool false]
+        [entry-key : i64 0]
+        [entry-hash : i64 0]
+        [done : bool false]
+        (begin
+          (while (if (< walked capacity)
+            (not done)
+            false)
+            (match (array-ref slots cursor)
+              [(I64HashStateMapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (= slot-key key)
+                  false)
+                  (begin
+                    (set! found cursor)
+                    (set! present true)
+                    (set! entry-key slot-key)
+                    (set! entry-hash slot-hash)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (i64-hash-state-map-next-index cursor capacity))
+                    (set! walked (+ walked 1))))]
+              [(I64HashStateMapEmpty) (set! done true)]
+              [(I64HashStateMapTombstone)
+                (begin
+                  (set! cursor (i64-hash-state-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          (I64HashStateMapMutEntryInfo found present entry-key entry-hash))))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-mut-entry-from-info
+    [info : I64HashStateMapMutEntryInfo]
+    [slots : (Array I64HashStateMapSlot)]
+    [borrow : (&mut map (Array I64HashStateMapSlot))]) : (I64HashStateMapMutEntry
+      map)
+    (I64HashStateMapMutEntry
+      slots
+      borrow
+      (struct-get info index)
+      (struct-get info present)
+      (struct-get info key)
+      (struct-get info hash))))
+
+(cfg
+  test
+  (defmacro (i64-hash-state-map-get-mut-entry
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
+    `(i64-hash-state-map-mut-entry-from-info
+      (i64-hash-state-map-mut-entry-info
+        (struct-get ,map slots)
+        (array-length (struct-get ,map slots))
+        ,key)
+      (struct-get ,map slots)
+      (&mut (struct-get ,map slots)))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-mut-entry-present?
+    [entry : (I64HashStateMapMutEntry map)]) : bool
+    (struct-get entry present)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-mut-entry-value-or
+    [entry : (I64HashStateMapMutEntry map)]
+    [fallback : HashState]) : HashState
+    (if (i64-hash-state-map-mut-entry-present? entry)
+      (match (array-ref (struct-get entry slots) (struct-get entry index))
+        [(I64HashStateMapOccupied _ value _) value]
+        [(I64HashStateMapEmpty) fallback]
+        [(I64HashStateMapTombstone) fallback])
+      fallback)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-mut-entry-set!
+    [entry : (I64HashStateMapMutEntry map)]
+    [value : HashState]) : unit
+    (if (i64-hash-state-map-mut-entry-present? entry)
+      (array-set!
+        (struct-get entry slots)
+        (struct-get entry index)
+        (I64HashStateMapOccupied
+          (struct-get entry key)
+          value
+          (struct-get entry hash)))
+      unit)))
+
+(cfg
+  test
+  (defenum I64HashStateMapEntry
+    (I64HashStateMapEntryNone)
+    (I64HashStateMapEntrySome i64 HashState)))
+
+(cfg
+  test
+  (define (i64-hash-state-map-next-occupied-from
+    [slots : (Array I64HashStateMapSlot)]
+    [index : i64]
+    [capacity : i64]) : i64
+    (if (>= index capacity)
+      capacity
+      (match (array-ref slots index)
+        [(I64HashStateMapOccupied _ _ _) index]
+        [(I64HashStateMapEmpty)
+          (i64-hash-state-map-next-occupied-from slots (+ index 1) capacity)]
+        [(I64HashStateMapTombstone)
+          (i64-hash-state-map-next-occupied-from slots (+ index 1) capacity)]))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-next-occupied
+    [map : I64HashStateMap]
+    [from : i64]) : i64
+    (i64-hash-state-map-next-occupied-from
+      (i64-hash-state-map-slots map)
+      (if (< from 0)
+        0
+        from)
+      (i64-hash-state-map-capacity map))))
+
+(cfg
+  test
+  (define (i64-hash-state-map-entry-at [map : I64HashStateMap] [index : i64]) : I64HashStateMapEntry
+    (if (if (< index 0)
+      true
+      (>= index (i64-hash-state-map-capacity map)))
+      (I64HashStateMapEntryNone)
+      (match (array-ref (i64-hash-state-map-slots map) index)
+        [(I64HashStateMapOccupied key value _)
+          (I64HashStateMapEntrySome key value)]
+        [(I64HashStateMapEmpty) (I64HashStateMapEntryNone)]
+        [(I64HashStateMapTombstone) (I64HashStateMapEntryNone)]))))
+
+;: Checked-in `HashNestedKeyI64Map` fixture family.
+(cfg
+  test
+  (defenum HashNestedKeyI64MapSlot
+    (HashNestedKeyI64MapEmpty)
+    (HashNestedKeyI64MapTombstone)
+    (HashNestedKeyI64MapOccupied HashNestedKey i64 i64)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapProbe
+    (HashNestedKeyI64MapProbeFound i64)
+    (HashNestedKeyI64MapProbeAbsent i64)
+    (HashNestedKeyI64MapProbeFull)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-hash-normalize [value : i64]) : i64
+    (let
+      [m : i64 2147483647]
+      [raw : i64 (% value 2147483647)]
+      (if (< raw 0)
+        (+ raw m)
+        raw))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-hash-combine [seed : i64] [component : i64]) : i64
+    (hash-nested-key-i64-map-hash-normalize
+      (+
+        (+
+          (* (hash-nested-key-i64-map-hash-normalize seed) 131)
+          (hash-nested-key-i64-map-hash-normalize component))
+        1))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-string-hash [key : (& key str)]) : i64
+    (let
+      [n : i64 (__tl_string_length key)]
+      [i : i64 0]
+      [hash : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set!
+              hash
+              (%
+                (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)
+                2147483647))
+            (set! i (+ i 1))))
+        hash))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-string-key-eq?
+    [left : (& left str)]
+    [right : (& right str)]) : bool
+    (__tl_string_eq left right)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-hash-key [key : (& key HashNestedKey)]) : i64
+    (hash-nested-key-i64-map-hash-combine
+      (hash-nested-key-i64-map-hash-combine
+        0
+        (hash-nested-key-i64-map-hash-combine
+          (hash-nested-key-i64-map-hash-combine
+            (hash-nested-key-i64-map-hash-combine
+              (hash-nested-key-i64-map-hash-combine
+                0
+                (hash-nested-key-i64-map-hash-normalize
+                  (struct-get (struct-get key point) x)))
+              (if (struct-get (struct-get key point) enabled)
+                1
+                0))
+            (hash-nested-key-i64-map-string-hash
+              (& (struct-get (struct-get key point) label))))
+          (hash-nested-key-i64-map-hash-normalize
+            (cast (struct-get (struct-get key point) code) : i64))))
+      (match (struct-get key tag)
+        [(HashTagNone)
+          (hash-nested-key-i64-map-hash-combine
+            0
+            (hash-nested-key-i64-map-hash-normalize 0))]
+        [(HashTagNumber hashmap-payload-1-0)
+          (hash-nested-key-i64-map-hash-combine
+            (hash-nested-key-i64-map-hash-combine
+              0
+              (hash-nested-key-i64-map-hash-normalize 1))
+            (hash-nested-key-i64-map-hash-normalize hashmap-payload-1-0))]
+        [(HashTagOtherNumber hashmap-payload-2-0)
+          (hash-nested-key-i64-map-hash-combine
+            (hash-nested-key-i64-map-hash-combine
+              0
+              (hash-nested-key-i64-map-hash-normalize 2))
+            (hash-nested-key-i64-map-hash-normalize hashmap-payload-2-0))]
+        [(HashTagText
+            hashmap-payload-3-0
+            hashmap-payload-3-1
+            hashmap-payload-3-2)
+          (hash-nested-key-i64-map-hash-combine
+            (hash-nested-key-i64-map-hash-combine
+              (hash-nested-key-i64-map-hash-combine
+                (hash-nested-key-i64-map-hash-combine
+                  0
+                  (hash-nested-key-i64-map-hash-normalize 3))
+                (if hashmap-payload-3-0
+                  1
+                  0))
+              (hash-nested-key-i64-map-string-hash (& hashmap-payload-3-1)))
+            (hash-nested-key-i64-map-hash-normalize
+              (cast hashmap-payload-3-2 : i64)))]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-key-eq?
+    [left : (& left HashNestedKey)]
+    [right : (& right HashNestedKey)]) : bool
+    (if (if (=
+      (struct-get (struct-get left point) x)
+      (struct-get (struct-get right point) x))
+      (if (=
+        (struct-get (struct-get left point) enabled)
+        (struct-get (struct-get right point) enabled))
+        (if (hash-nested-key-i64-map-string-key-eq?
+          (& (struct-get (struct-get left point) label))
+          (& (struct-get (struct-get right point) label)))
+          (if (=
+            (cast (struct-get (struct-get left point) code) : i64)
+            (cast (struct-get (struct-get right point) code) : i64))
+            true
+            false)
+          false)
+        false)
+      false)
+      (if (match (struct-get left tag)
+        [(HashTagNone)
+          (match (struct-get right tag)
+            [(HashTagNone) true]
+            [_ false])]
+        [(HashTagNumber hashmap-left-1-0)
+          (match (struct-get right tag)
+            [(HashTagNumber hashmap-right-1-0)
+              (if (= hashmap-left-1-0 hashmap-right-1-0)
+                true
+                false)]
+            [_ false])]
+        [(HashTagOtherNumber hashmap-left-2-0)
+          (match (struct-get right tag)
+            [(HashTagOtherNumber hashmap-right-2-0)
+              (if (= hashmap-left-2-0 hashmap-right-2-0)
+                true
+                false)]
+            [_ false])]
+        [(HashTagText hashmap-left-3-0 hashmap-left-3-1 hashmap-left-3-2)
+          (match (struct-get right tag)
+            [(HashTagText hashmap-right-3-0 hashmap-right-3-1 hashmap-right-3-2)
+              (if (= hashmap-left-3-0 hashmap-right-3-0)
+                (if (hash-nested-key-i64-map-string-key-eq?
+                  (& hashmap-left-3-1)
+                  (& hashmap-right-3-1))
+                  (if (=
+                    (cast hashmap-left-3-2 : i64)
+                    (cast hashmap-right-3-2 : i64))
+                    true
+                    false)
+                  false)
+                false)]
+            [_ false])])
+        true
+        false)
+      false)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-power-two-capacity? [capacity : i64]) : bool
+    (if (> capacity 0)
+      (= (bit-and capacity (- capacity 1)) 0)
+      false)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-round-capacity [capacity : i64]) : i64
+    (let
+      [rounded : i64 1]
+      (begin
+        (while (< rounded capacity)
+          (set! rounded (* rounded 2)))
+        rounded))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-normalized-bucket-index
+    [hash : i64]
+    [capacity : i64]) : i64
+    (bit-and hash (- capacity 1))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
+    (hash-nested-key-i64-map-normalized-bucket-index
+      (hash-nested-key-i64-map-hash-normalize hash)
+      capacity)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-next-index [index : i64] [capacity : i64]) : i64
+    (let
+      [next : i64 (+ index 1)]
+      (if (>= next capacity)
+        0
+        next))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-insert-slot
+    [first-tombstone : i64]
+    [empty-index : i64]) : i64
+    (if (>= first-tombstone 0)
+      first-tombstone
+      empty-index)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-probe-from
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [capacity : i64]
+    [key : (& key HashNestedKey)]
+    [hash : i64]
+    [index : i64]
+    [steps : i64]
+    [first-tombstone : i64]) : HashNestedKeyI64MapProbe
+    (let
+      [cursor : i64 index]
+      [walked : i64 steps]
+      [first : i64 first-tombstone]
+      (begin
+        (while (< walked capacity)
+          (match (array-ref slots cursor)
+            [(HashNestedKeyI64MapEmpty)
+              (return
+                (HashNestedKeyI64MapProbeAbsent
+                  (hash-nested-key-i64-map-insert-slot first cursor)))]
+            [(HashNestedKeyI64MapTombstone)
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (if (< first 0)
+                    (set! first cursor)
+                    unit)
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1))))]
+            [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                false)
+                (return (HashNestedKeyI64MapProbeFound cursor))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))]))
+        (if (>= first 0)
+          (HashNestedKeyI64MapProbeAbsent first)
+          (HashNestedKeyI64MapProbeFull))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-probe
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [capacity : i64]
+    [key : (& key HashNestedKey)]
+    [hash : i64]) : HashNestedKeyI64MapProbe
+    (if (<= capacity 0)
+      (HashNestedKeyI64MapProbeFull)
+      (hash-nested-key-i64-map-probe-from
+        slots
+        capacity
+        key
+        hash
+        (hash-nested-key-i64-map-normalized-bucket-index hash capacity)
+        0
+        -1))))
+
+(cfg
+  test
+  (defstruct HashNestedKeyI64Map
+    (slots (Array HashNestedKeyI64MapSlot))
+    (len i64)
+    (deleted i64)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapLookup
+    (HashNestedKeyI64MapMissing)
+    (HashNestedKeyI64MapFound i64)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapBorrowedValueLookup
+    (:lifetimes map)
+    (HashNestedKeyI64MapBorrowedValueMissing)
+    (HashNestedKeyI64MapBorrowedValueFound (& map i64))))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapInsertResult
+    (HashNestedKeyI64MapInsertOk HashNestedKeyI64Map)
+    (HashNestedKeyI64MapInsertFull HashNestedKeyI64Map)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapRemoveResult
+    (HashNestedKeyI64MapRemoveOk HashNestedKeyI64Map)
+    (HashNestedKeyI64MapRemoveMissing HashNestedKeyI64Map)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapUpdateResult
+    (HashNestedKeyI64MapUpdateOk HashNestedKeyI64Map)
+    (HashNestedKeyI64MapUpdateMissing HashNestedKeyI64Map)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapEntryOrInsertResult
+    (HashNestedKeyI64MapEntryOrInsertFound HashNestedKeyI64Map i64)
+    (HashNestedKeyI64MapEntryOrInsertInserted HashNestedKeyI64Map i64)))
+
+(cfg
+  test
+  (defstruct HashNestedKeyI64MapMutEntryInfo
+    (index i64)
+    (present bool)
+    (key HashNestedKey)
+    (hash i64)))
+
+(cfg
+  test
+  (defstruct HashNestedKeyI64MapMutEntry
+    (:lifetimes map)
+    (slots (Array HashNestedKeyI64MapSlot))
+    (borrow (&mut map (Array HashNestedKeyI64MapSlot)))
+    (index i64)
+    (present bool)
+    (key HashNestedKey)
+    (hash i64)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-slots [map : HashNestedKeyI64Map]) : (Array
+      HashNestedKeyI64MapSlot)
+    (struct-get map slots)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-len [map : HashNestedKeyI64Map]) : i64
+    (struct-get map len)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-capacity [map : HashNestedKeyI64Map]) : i64
+    (array-length (struct-get map slots))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-deleted [map : HashNestedKeyI64Map]) : i64
+    (struct-get map deleted)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-fill-empty
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! slots index (HashNestedKeyI64MapEmpty))
+        (hash-nested-key-i64-map-fill-empty slots (+ index 1) count)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-with-capacity [capacity : i64]) : HashNestedKeyI64Map
+    (let
+      [rounded-capacity : i64 (hash-nested-key-i64-map-round-capacity capacity)]
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (make-array HashNestedKeyI64MapSlot rounded-capacity)]
+      (begin
+        (hash-nested-key-i64-map-fill-empty slots 0 rounded-capacity)
+        (HashNestedKeyI64Map slots 0 0)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-borrowed-value-missing
+    [map : (& map HashNestedKeyI64Map)]) : (HashNestedKeyI64MapBorrowedValueLookup
+      map)
+    (HashNestedKeyI64MapBorrowedValueMissing)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-borrowed-value-found [value : (& map i64)]) : (HashNestedKeyI64MapBorrowedValueLookup
+      map)
+    (HashNestedKeyI64MapBorrowedValueFound value)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-get
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]) : HashNestedKeyI64MapLookup
+    (let
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      (match (hash-nested-key-i64-map-probe
+        slots
+        (hash-nested-key-i64-map-capacity map)
+        (& key)
+        (hash-nested-key-i64-map-hash-key (& key)))
+        [(HashNestedKeyI64MapProbeFound index)
+          (match (array-ref slots index)
+            [(HashNestedKeyI64MapOccupied _ value _)
+              (HashNestedKeyI64MapFound value)]
+            [(HashNestedKeyI64MapEmpty) (HashNestedKeyI64MapMissing)]
+            [(HashNestedKeyI64MapTombstone) (HashNestedKeyI64MapMissing)])]
+        [(HashNestedKeyI64MapProbeAbsent _) (HashNestedKeyI64MapMissing)]
+        [(HashNestedKeyI64MapProbeFull) (HashNestedKeyI64MapMissing)]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-get-ref
+    [map : (& map HashNestedKeyI64Map)]
+    [key : HashNestedKey]) : HashNestedKeyI64MapLookup
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (HashNestedKeyI64MapMissing)
+        (let
+          [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+          [cursor : i64
+            (hash-nested-key-i64-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(HashNestedKeyI64MapEmpty)
+                  (return (HashNestedKeyI64MapMissing))]
+                [(HashNestedKeyI64MapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(HashNestedKeyI64MapOccupied slot-key value slot-hash)
+                  (if (if (= slot-hash hash)
+                    (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                    false)
+                    (return (HashNestedKeyI64MapFound value))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (HashNestedKeyI64MapMissing)))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-get-value-borrowed
+    [map : (& map HashNestedKeyI64Map)]
+    [key : HashNestedKey]) : (HashNestedKeyI64MapBorrowedValueLookup map)
+    (let
+      [capacity : i64 (array-length (struct-get map slots))]
+      (if (<= capacity 0)
+        (hash-nested-key-i64-map-borrowed-value-missing map)
+        (let
+          [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+          [cursor : i64
+            (hash-nested-key-i64-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref (struct-get map slots) cursor)
+                [(HashNestedKeyI64MapEmpty)
+                  (return (hash-nested-key-i64-map-borrowed-value-missing map))]
+                [(HashNestedKeyI64MapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                    false)
+                    (match (& (array-ref (struct-get map slots) cursor))
+                      [(HashNestedKeyI64MapOccupied _ value _)
+                        (return
+                          (hash-nested-key-i64-map-borrowed-value-found value))]
+                      [(HashNestedKeyI64MapEmpty)
+                        (return
+                          (hash-nested-key-i64-map-borrowed-value-missing map))]
+                      [(HashNestedKeyI64MapTombstone)
+                        (return
+                          (hash-nested-key-i64-map-borrowed-value-missing map))])
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (hash-nested-key-i64-map-borrowed-value-missing map)))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-contains?
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]) : bool
+    (match (hash-nested-key-i64-map-get map key)
+      [(HashNestedKeyI64MapFound _) true]
+      [(HashNestedKeyI64MapMissing) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-slot-tombstone?
+    [slot : HashNestedKeyI64MapSlot]) : bool
+    (match slot
+      [(HashNestedKeyI64MapTombstone) true]
+      [(HashNestedKeyI64MapEmpty) false]
+      [(HashNestedKeyI64MapOccupied _ _ _) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-insert
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]
+    [value : i64]) : HashNestedKeyI64MapInsertResult
+    (let
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+      (match (hash-nested-key-i64-map-probe
+        slots
+        (hash-nested-key-i64-map-capacity map)
+        (& key)
+        hash)
+        [(HashNestedKeyI64MapProbeFound index)
+          (begin
+            (array-set!
+              slots
+              index
+              (HashNestedKeyI64MapOccupied key value hash))
+            (HashNestedKeyI64MapInsertOk map))]
+        [(HashNestedKeyI64MapProbeAbsent index)
+          (let
+            [reused-tombstone : bool
+              (hash-nested-key-i64-map-slot-tombstone? (array-ref slots index))]
+            (begin
+              (array-set!
+                slots
+                index
+                (HashNestedKeyI64MapOccupied key value hash))
+              (set!
+                (struct-get map len)
+                (+ (hash-nested-key-i64-map-len map) 1))
+              (if reused-tombstone
+                (set!
+                  (struct-get map deleted)
+                  (- (hash-nested-key-i64-map-deleted map) 1))
+                unit)
+              (HashNestedKeyI64MapInsertOk map)))]
+        [(HashNestedKeyI64MapProbeFull) (HashNestedKeyI64MapInsertFull map)]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-remove
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]) : HashNestedKeyI64MapRemoveResult
+    (let
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      (match (hash-nested-key-i64-map-probe
+        slots
+        (hash-nested-key-i64-map-capacity map)
+        (& key)
+        (hash-nested-key-i64-map-hash-key (& key)))
+        [(HashNestedKeyI64MapProbeFound index)
+          (begin
+            (array-set! slots index (HashNestedKeyI64MapTombstone))
+            (set! (struct-get map len) (- (hash-nested-key-i64-map-len map) 1))
+            (set!
+              (struct-get map deleted)
+              (+ (hash-nested-key-i64-map-deleted map) 1))
+            (HashNestedKeyI64MapRemoveOk map))]
+        [(HashNestedKeyI64MapProbeAbsent _)
+          (HashNestedKeyI64MapRemoveMissing map)]
+        [(HashNestedKeyI64MapProbeFull) (HashNestedKeyI64MapRemoveMissing map)]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-update-if-present
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]
+    [value : i64]) : HashNestedKeyI64MapUpdateResult
+    (let
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+      (match (hash-nested-key-i64-map-probe
+        slots
+        (hash-nested-key-i64-map-capacity map)
+        (& key)
+        hash)
+        [(HashNestedKeyI64MapProbeFound index)
+          (match (array-ref slots index)
+            [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+              (begin
+                (array-set!
+                  slots
+                  index
+                  (HashNestedKeyI64MapOccupied slot-key value slot-hash))
+                (HashNestedKeyI64MapUpdateOk map))]
+            [(HashNestedKeyI64MapEmpty) (HashNestedKeyI64MapUpdateMissing map)]
+            [(HashNestedKeyI64MapTombstone)
+              (HashNestedKeyI64MapUpdateMissing map)])]
+        [(HashNestedKeyI64MapProbeAbsent _)
+          (HashNestedKeyI64MapUpdateMissing map)]
+        [(HashNestedKeyI64MapProbeFull) (HashNestedKeyI64MapUpdateMissing map)]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-insert-into-empty
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [capacity : i64]
+    [key : HashNestedKey]
+    [value : i64]
+    [hash : i64]) : unit
+    (if (<= capacity 0)
+      unit
+      (let
+        [cursor : i64
+          (hash-nested-key-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< walked capacity))
+            (match (array-ref slots cursor)
+              [(HashNestedKeyI64MapEmpty)
+                (begin
+                  (array-set!
+                    slots
+                    cursor
+                    (HashNestedKeyI64MapOccupied key value hash))
+                  (set! done true))]
+              [_
+                (begin
+                  (set!
+                    cursor
+                    (hash-nested-key-i64-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          unit)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-rehash-from
+    [src : (Array HashNestedKeyI64MapSlot)]
+    [dst : (Array HashNestedKeyI64MapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(HashNestedKeyI64MapOccupied key value hash)
+            (hash-nested-key-i64-map-insert-into-empty
+              dst
+              dst-capacity
+              key
+              value
+              hash)]
+          [(HashNestedKeyI64MapEmpty) unit]
+          [(HashNestedKeyI64MapTombstone) unit])
+        (hash-nested-key-i64-map-rehash-from
+          src
+          dst
+          dst-capacity
+          (+ index 1)
+          count)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-rehash-from-ref
+    [src : (& src (Array HashNestedKeyI64MapSlot))]
+    [dst : (Array HashNestedKeyI64MapSlot)]
+    [dst-capacity : i64]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (match (array-ref src index)
+          [(HashNestedKeyI64MapOccupied key value hash)
+            (hash-nested-key-i64-map-insert-into-empty
+              dst
+              dst-capacity
+              (clone key)
+              value
+              hash)]
+          [(HashNestedKeyI64MapEmpty) unit]
+          [(HashNestedKeyI64MapTombstone) unit])
+        (hash-nested-key-i64-map-rehash-from-ref
+          src
+          dst
+          dst-capacity
+          (+ index 1)
+          count)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-resized
+    [map : HashNestedKeyI64Map]
+    [new-capacity : i64]) : HashNestedKeyI64Map
+    (let
+      [src : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      [old-capacity : i64 (hash-nested-key-i64-map-capacity map)]
+      [requested-capacity : i64
+        (if (> (hash-nested-key-i64-map-len map) new-capacity)
+          (hash-nested-key-i64-map-len map)
+          new-capacity)]
+      [rounded-capacity : i64
+        (hash-nested-key-i64-map-round-capacity requested-capacity)]
+      [dst : (Array HashNestedKeyI64MapSlot)
+        (make-array HashNestedKeyI64MapSlot rounded-capacity)]
+      (begin
+        (hash-nested-key-i64-map-fill-empty dst 0 rounded-capacity)
+        (hash-nested-key-i64-map-rehash-from
+          src
+          dst
+          rounded-capacity
+          0
+          old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)
+        map))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-grow-capacity [capacity : i64]) : i64
+    (if (< capacity 4)
+      8
+      (* (hash-nested-key-i64-map-round-capacity capacity) 2))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-grow [map : HashNestedKeyI64Map]) : HashNestedKeyI64Map
+    (hash-nested-key-i64-map-resized
+      map
+      (hash-nested-key-i64-map-grow-capacity
+        (hash-nested-key-i64-map-capacity map)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-needs-grow? [map : HashNestedKeyI64Map]) : bool
+    (let
+      [capacity : i64 (hash-nested-key-i64-map-capacity map)]
+      [used : i64
+        (+
+          (hash-nested-key-i64-map-len map)
+          (hash-nested-key-i64-map-deleted map))]
+      (if (<= capacity 0)
+        true
+        (>= (* used 4) (* capacity 3))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-resized!
+    [map : (&mut map HashNestedKeyI64Map)]
+    [new-capacity : i64]) : unit
+    (let
+      [old-capacity : i64 (array-length (struct-get map slots))]
+      [requested-capacity : i64
+        (if (> (struct-get map len) new-capacity)
+          (struct-get map len)
+          new-capacity)]
+      [rounded-capacity : i64
+        (hash-nested-key-i64-map-round-capacity requested-capacity)]
+      [dst : (Array HashNestedKeyI64MapSlot)
+        (make-array HashNestedKeyI64MapSlot rounded-capacity)]
+      (begin
+        (hash-nested-key-i64-map-fill-empty dst 0 rounded-capacity)
+        (hash-nested-key-i64-map-rehash-from-ref
+          (& (struct-get map slots))
+          dst
+          rounded-capacity
+          0
+          old-capacity)
+        (set! (struct-get map slots) dst)
+        (set! (struct-get map deleted) 0)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-put!
+    [map : (&mut map HashNestedKeyI64Map)]
+    [key : HashNestedKey]
+    [value : i64]) : unit
+    (let
+      [capacity-before : i64 (array-length (struct-get map slots))]
+      [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
+      (begin
+        (if (if (<= capacity-before 0)
+          true
+          (>= (* used-before 4) (* capacity-before 3)))
+          (hash-nested-key-i64-map-resized!
+            map
+            (hash-nested-key-i64-map-grow-capacity capacity-before))
+          unit)
+        (let
+          [slots : (&mut map (Array HashNestedKeyI64MapSlot))
+            (&mut (struct-get map slots))]
+          [capacity : i64 (array-length slots)]
+          [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+          (if (<= capacity 0)
+            unit
+            (let
+              [cursor : i64
+                (hash-nested-key-i64-map-normalized-bucket-index hash capacity)]
+              [walked : i64 0]
+              [first : i64 -1]
+              (begin
+                (while (< walked capacity)
+                  (match (array-ref slots cursor)
+                    [(HashNestedKeyI64MapEmpty)
+                      (let
+                        [index : i64
+                          (if (>= first 0)
+                            first
+                            cursor)]
+                        [reused-tombstone : bool (>= first 0)]
+                        (begin
+                          (array-set!
+                            slots
+                            index
+                            (HashNestedKeyI64MapOccupied key value hash))
+                          (set! (struct-get map len) (+ (struct-get map len) 1))
+                          (if reused-tombstone
+                            (set!
+                              (struct-get map deleted)
+                              (- (struct-get map deleted) 1))
+                            unit)
+                          (return unit)))]
+                    [(HashNestedKeyI64MapTombstone)
+                      (let
+                        [next : i64 (+ cursor 1)]
+                        (begin
+                          (if (< first 0)
+                            (set! first cursor)
+                            unit)
+                          (set!
+                            cursor
+                            (if (>= next capacity)
+                              0
+                              next))
+                          (set! walked (+ walked 1))))]
+                    [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+                      (if (if (= slot-hash hash)
+                        (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                        false)
+                        (begin
+                          (array-set!
+                            slots
+                            cursor
+                            (HashNestedKeyI64MapOccupied key value hash))
+                          (return unit))
+                        (let
+                          [next : i64 (+ cursor 1)]
+                          (begin
+                            (set!
+                              cursor
+                              (if (>= next capacity)
+                                0
+                                next))
+                            (set! walked (+ walked 1)))))]))
+                (if (>= first 0)
+                  (begin
+                    (array-set!
+                      slots
+                      first
+                      (HashNestedKeyI64MapOccupied key value hash))
+                    (set! (struct-get map len) (+ (struct-get map len) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (- (struct-get map deleted) 1)))
+                  unit)))))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-remove!
+    [map : (&mut map HashNestedKeyI64Map)]
+    [key : HashNestedKey]) : bool
+    (let
+      [slots : (&mut map (Array HashNestedKeyI64MapSlot))
+        (&mut (struct-get map slots))]
+      [capacity : i64 (array-length slots)]
+      (if (<= capacity 0)
+        false
+        (let
+          [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+          [cursor : i64
+            (hash-nested-key-i64-map-normalized-bucket-index hash capacity)]
+          [walked : i64 0]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref slots cursor)
+                [(HashNestedKeyI64MapEmpty) (return false)]
+                [(HashNestedKeyI64MapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                    false)
+                    (begin
+                      (array-set! slots cursor (HashNestedKeyI64MapTombstone))
+                      (set! (struct-get map len) (- (struct-get map len) 1))
+                      (set!
+                        (struct-get map deleted)
+                        (+ (struct-get map deleted) 1))
+                      (return true))
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            false))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-put
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]
+    [value : i64]) : HashNestedKeyI64Map
+    (let
+      [grown : HashNestedKeyI64Map
+        (if (hash-nested-key-i64-map-needs-grow? map)
+          (hash-nested-key-i64-map-grow map)
+          map)]
+      (match (hash-nested-key-i64-map-insert grown key value)
+        [(HashNestedKeyI64MapInsertOk updated) updated]
+        [(HashNestedKeyI64MapInsertFull full)
+          (match (hash-nested-key-i64-map-insert
+            (hash-nested-key-i64-map-grow full)
+            key
+            value)
+            [(HashNestedKeyI64MapInsertOk u) u]
+            [(HashNestedKeyI64MapInsertFull u) u])]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-insert-or-update
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]
+    [value : i64]) : HashNestedKeyI64Map
+    (hash-nested-key-i64-map-put map key value)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-entry-or-insert
+    [map : HashNestedKeyI64Map]
+    [key : HashNestedKey]
+    [default-value : i64]) : HashNestedKeyI64MapEntryOrInsertResult
+    (let
+      [slots : (Array HashNestedKeyI64MapSlot)
+        (hash-nested-key-i64-map-slots map)]
+      [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+      (match (hash-nested-key-i64-map-probe
+        slots
+        (hash-nested-key-i64-map-capacity map)
+        (& key)
+        hash)
+        [(HashNestedKeyI64MapProbeFound index)
+          (match (array-ref slots index)
+            [(HashNestedKeyI64MapOccupied _ value _)
+              (HashNestedKeyI64MapEntryOrInsertFound map value)]
+            [(HashNestedKeyI64MapEmpty)
+              (let
+                [updated : HashNestedKeyI64Map
+                  (hash-nested-key-i64-map-put map key default-value)]
+                (HashNestedKeyI64MapEntryOrInsertInserted updated default-value))]
+            [(HashNestedKeyI64MapTombstone)
+              (let
+                [updated : HashNestedKeyI64Map
+                  (hash-nested-key-i64-map-put map key default-value)]
+                (HashNestedKeyI64MapEntryOrInsertInserted updated default-value))])]
+        [(HashNestedKeyI64MapProbeAbsent _)
+          (let
+            [updated : HashNestedKeyI64Map
+              (hash-nested-key-i64-map-put map key default-value)]
+            (HashNestedKeyI64MapEntryOrInsertInserted updated default-value))]
+        [(HashNestedKeyI64MapProbeFull)
+          (let
+            [updated : HashNestedKeyI64Map
+              (hash-nested-key-i64-map-put map key default-value)]
+            (HashNestedKeyI64MapEntryOrInsertInserted updated default-value))]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-mut-entry-info
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [capacity : i64]
+    [key : HashNestedKey]) : HashNestedKeyI64MapMutEntryInfo
+    (if (<= capacity 0)
+      (HashNestedKeyI64MapMutEntryInfo -1 false (init : HashNestedKey) 0)
+      (let
+        [hash : i64 (hash-nested-key-i64-map-hash-key (& key))]
+        [cursor : i64 (hash-nested-key-i64-map-bucket-index hash capacity)]
+        [walked : i64 0]
+        [found : i64 -1]
+        [present : bool false]
+        [entry-key : HashNestedKey (init : HashNestedKey)]
+        [entry-hash : i64 0]
+        [done : bool false]
+        (begin
+          (while (if (< walked capacity)
+            (not done)
+            false)
+            (match (array-ref slots cursor)
+              [(HashNestedKeyI64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (hash-nested-key-i64-map-key-eq? (& slot-key) (& key))
+                  false)
+                  (begin
+                    (set! found cursor)
+                    (set! present true)
+                    (set! entry-key slot-key)
+                    (set! entry-hash slot-hash)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (hash-nested-key-i64-map-next-index cursor capacity))
+                    (set! walked (+ walked 1))))]
+              [(HashNestedKeyI64MapEmpty) (set! done true)]
+              [(HashNestedKeyI64MapTombstone)
+                (begin
+                  (set!
+                    cursor
+                    (hash-nested-key-i64-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          (HashNestedKeyI64MapMutEntryInfo found present entry-key entry-hash))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-mut-entry-from-info
+    [info : HashNestedKeyI64MapMutEntryInfo]
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [borrow : (&mut map (Array HashNestedKeyI64MapSlot))]) : (HashNestedKeyI64MapMutEntry
+      map)
+    (HashNestedKeyI64MapMutEntry
+      slots
+      borrow
+      (struct-get info index)
+      (struct-get info present)
+      (struct-get info key)
+      (struct-get info hash))))
+
+(cfg
+  test
+  (defmacro (hash-nested-key-i64-map-get-mut-entry
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
+    `(hash-nested-key-i64-map-mut-entry-from-info
+      (hash-nested-key-i64-map-mut-entry-info
+        (struct-get ,map slots)
+        (array-length (struct-get ,map slots))
+        ,key)
+      (struct-get ,map slots)
+      (&mut (struct-get ,map slots)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-mut-entry-present?
+    [entry : (HashNestedKeyI64MapMutEntry map)]) : bool
+    (struct-get entry present)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-mut-entry-value-or
+    [entry : (HashNestedKeyI64MapMutEntry map)]
+    [fallback : i64]) : i64
+    (if (hash-nested-key-i64-map-mut-entry-present? entry)
+      (match (array-ref (struct-get entry slots) (struct-get entry index))
+        [(HashNestedKeyI64MapOccupied _ value _) value]
+        [(HashNestedKeyI64MapEmpty) fallback]
+        [(HashNestedKeyI64MapTombstone) fallback])
+      fallback)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-mut-entry-set!
+    [entry : (HashNestedKeyI64MapMutEntry map)]
+    [value : i64]) : unit
+    (if (hash-nested-key-i64-map-mut-entry-present? entry)
+      (array-set!
+        (struct-get entry slots)
+        (struct-get entry index)
+        (HashNestedKeyI64MapOccupied
+          (struct-get entry key)
+          value
+          (struct-get entry hash)))
+      unit)))
+
+(cfg
+  test
+  (defenum HashNestedKeyI64MapEntry
+    (HashNestedKeyI64MapEntryNone)
+    (HashNestedKeyI64MapEntrySome HashNestedKey i64)))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-next-occupied-from
+    [slots : (Array HashNestedKeyI64MapSlot)]
+    [index : i64]
+    [capacity : i64]) : i64
+    (if (>= index capacity)
+      capacity
+      (match (array-ref slots index)
+        [(HashNestedKeyI64MapOccupied _ _ _) index]
+        [(HashNestedKeyI64MapEmpty)
+          (hash-nested-key-i64-map-next-occupied-from
+            slots
+            (+ index 1)
+            capacity)]
+        [(HashNestedKeyI64MapTombstone)
+          (hash-nested-key-i64-map-next-occupied-from
+            slots
+            (+ index 1)
+            capacity)]))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-next-occupied
+    [map : HashNestedKeyI64Map]
+    [from : i64]) : i64
+    (hash-nested-key-i64-map-next-occupied-from
+      (hash-nested-key-i64-map-slots map)
+      (if (< from 0)
+        0
+        from)
+      (hash-nested-key-i64-map-capacity map))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-map-entry-at
+    [map : HashNestedKeyI64Map]
+    [index : i64]) : HashNestedKeyI64MapEntry
+    (if (if (< index 0)
+      true
+      (>= index (hash-nested-key-i64-map-capacity map)))
+      (HashNestedKeyI64MapEntryNone)
+      (match (array-ref (hash-nested-key-i64-map-slots map) index)
+        [(HashNestedKeyI64MapOccupied key value _)
+          (HashNestedKeyI64MapEntrySome key value)]
+        [(HashNestedKeyI64MapEmpty) (HashNestedKeyI64MapEntryNone)]
+        [(HashNestedKeyI64MapTombstone) (HashNestedKeyI64MapEntryNone)]))))
 
 (cfg
   test
@@ -3850,7 +9107,7 @@
 (cfg
   test
   (define (new-slots [n : i64]) : (Array StringI64MapSlot)
-    (stdlib.hashmap.fill-empty (make-array StringI64MapSlot n) n)))
+    (stdlib.hashmap.fill-empty (array.make-array StringI64MapSlot n) n)))
 
 ;; Lookup/insert-result extractors (concrete returns, no panic in a match arm).
 (cfg
@@ -4565,17 +9822,17 @@
   (test
     hashmap-descriptor-contract
     (begin
-      ;; --- hashmap-family key descriptor contract (#2056) ---
+      ;; --- hashmap key descriptor contract (#2056) ---
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-string-key-descriptor-key)
+        (string-key-descriptor-key)
         "stdlib/hashmap/string-key-v1"
         "String key descriptor identity")
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-i64-key-descriptor-key)
+        (i64-key-descriptor-key)
         "stdlib/hashmap/i64-key-v1"
         "i64 key descriptor identity")
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-aggregate-key-descriptor-key)
+        (aggregate-key-descriptor-key)
         "stdlib/hashmap/aggregate-key-v1"
         "aggregate key descriptor identity")
       unit)))
@@ -4585,7 +9842,7 @@
   (test
     hashmap-aggregate-key-fixtures
     (begin
-      ;; --- hashmap-family aggregate key fixtures (#2729) ---
+      ;; --- hashmap aggregate key fixtures (#2729) ---
       (let
         [c0 : HashNestedKeyI64Map
           (stdlib.hashmap.hash-nested-key-i64-map-with-capacity 1)]
@@ -4818,9 +10075,9 @@
 (cfg
   test
   (test
-    hashmap-extra-family-requests
+    hashmap-i64-string-family
     (begin
-      ;; --- hashmap-family marker request fixture beyond shipped families ---
+      ;; --- i64-to-String checked-in family fixture ---
       (let
         [fixture0 : I64StringMap (i64-string-map-with-capacity 2)]
         [fixture1 : I64StringMap (i64-string-map-put fixture0 7 "seven")]
@@ -4828,13 +10085,13 @@
           (test.assert-i64-eq
             (i64-string-map-len fixture1)
             1
-            "i64->String fixture generated len helper")
+            "i64->String fixture len helper")
           (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (match (i64-string-map-get fixture1 7)
               [(I64StringMapFound value) value]
               [(I64StringMapMissing) "missing"])
             "seven"
-            "i64->String fixture generated get helper")
+            "i64->String fixture get helper")
           (test.assert-i64-eq
             (stdlib.hashmap.i64-string-borrowed-value-length-or
               (i64-string-map-get-value-borrowed (& fixture1) 7)
@@ -4843,7 +10100,7 @@
             "i64->String fixture borrowed value helper")
           (test.assert-false
             (i64-string-map-contains? fixture1 9)
-            "i64->String fixture generated contains helper")))
+            "i64->String fixture contains helper")))
       unit)))
 
 (cfg
@@ -4851,7 +10108,7 @@
   (test
     hashmap-aggregate-value-fixtures
     (begin
-      ;; --- hashmap-family aggregate value fixtures (#2728) ---
+      ;; --- hashmap aggregate value fixtures (#2728) ---
       (let
         [alpha : String "alpha"]
         [payload0 : StringHashPayloadMap

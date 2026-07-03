@@ -12,10 +12,8 @@
   (let
     [a : (Array P) (array.make-array P 0)]
     (begin
-      (array.array-push! a (P 30 5))
-      (array.array-push! a (P 100 7))
+      (array-push! a (P 30 5))
+      (array-push! a (P 100 7))
       (+
-        (struct-get (array.array-ref a 0) x)
-        (+
-          (struct-get (array.array-ref a 0) y)
-          (struct-get (array.array-ref a 1) y))))))
+        (struct-get (array-ref a 0) x)
+        (+ (struct-get (array-ref a 0) y) (struct-get (array-ref a 1) y))))))

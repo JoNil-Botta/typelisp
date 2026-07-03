@@ -18,25 +18,29 @@
 ;# ```
 (module stdlib.str_cat)
 
+(import stdlib.comptime)
+(import stdlib.array)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 (cfg test (import stdlib.hashmap))
+(cfg test (import stdlib.str_cat_runtime as str_cat_runtime))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
 ;: `parts` is a dynamic array expression and `index` is the next runtime index
 ;: expression. Each step returns an expression that threads the filled array to
 ;: the next step.
-(defmacro (str-cat-pack [parts : Expr] [index : Expr] [args : String ...]) : Expr
-  (if (expr-list-empty? args)
+(defmacro (pack [parts : (Array String)] [index : i64] [args : String ...]) : (Array
+    String)
+  (if (comptime.expr-list-empty? args)
     parts
-    `(str-cat-pack
-      (stdlib.string.string-concat-all-pack-part
+    `(pack
+      (stdlib.string.concat-all-pack-part
         ,parts
         ,index
-        ,(expr-list-head args))
+        ,(comptime.expr-list-head args))
       (+ ,index 1)
-      ,@(expr-list-tail args))))
+      ,@(comptime.expr-list-tail args))))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
@@ -45,48 +49,53 @@
 ;: Longer arities are packed into one dynamic parts array and copied by
 ;: `string-concat-all`, so they no longer allocate chunk intermediates.
 (defmacro (str-cat [args : String ...]) : String
-  (if (expr-list-empty? args)
+  (if (comptime.expr-list-empty? args)
     `""
     (let
-      [a : Expr (expr-list-head args)]
-      [rest1 : ExprList (expr-list-tail args)]
-      (if (expr-list-empty? rest1)
+      [a : comptime.Expr (comptime.expr-list-head args)]
+      [rest1 : comptime.ExprList (comptime.expr-list-tail args)]
+      (if (comptime.expr-list-empty? rest1)
         a
         (let
-          [b : Expr (expr-list-head rest1)]
-          [rest2 : ExprList (expr-list-tail rest1)]
-          (if (expr-list-empty? rest2)
-            `(stdlib.string.string-concat3 ,a ,b "")
+          [b : comptime.Expr (comptime.expr-list-head rest1)]
+          [rest2 : comptime.ExprList (comptime.expr-list-tail rest1)]
+          (if (comptime.expr-list-empty? rest2)
+            `(stdlib.string.concat3 ,a ,b "")
             (let
-              [c : Expr (expr-list-head rest2)]
-              [rest3 : ExprList (expr-list-tail rest2)]
-              (if (expr-list-empty? rest3)
-                `(stdlib.string.string-concat3 ,a ,b ,c)
+              [c : comptime.Expr (comptime.expr-list-head rest2)]
+              [rest3 : comptime.ExprList (comptime.expr-list-tail rest2)]
+              (if (comptime.expr-list-empty? rest3)
+                `(stdlib.string.concat3 ,a ,b ,c)
                 (let
-                  [d : Expr (expr-list-head rest3)]
-                  [rest4 : ExprList (expr-list-tail rest3)]
-                  (if (expr-list-empty? rest4)
-                    `(stdlib.string.string-concat4 ,a ,b ,c ,d)
+                  [d : comptime.Expr (comptime.expr-list-head rest3)]
+                  [rest4 : comptime.ExprList (comptime.expr-list-tail rest3)]
+                  (if (comptime.expr-list-empty? rest4)
+                    `(stdlib.string.concat4 ,a ,b ,c ,d)
                     (let
-                      [e : Expr (expr-list-head rest4)]
-                      [rest5 : ExprList (expr-list-tail rest4)]
-                      (if (expr-list-empty? rest5)
-                        `(stdlib.string.string-concat5 ,a ,b ,c ,d ,e)
-                        `(stdlib.string.string-concat-all
-                          (str-cat-pack
-                            (make-array
-                              String
-                              ,(expr-int (expr-list-length args)))
-                            0
-                            ,@args))))))))))))))
+                      [e : comptime.Expr (comptime.expr-list-head rest4)]
+                      [rest5 : comptime.ExprList
+                        (comptime.expr-list-tail rest4)]
+                      (if (comptime.expr-list-empty? rest5)
+                        `(stdlib.string.concat5 ,a ,b ,c ,d ,e)
+                        (let
+                          [string-type : comptime.Expr
+                            (comptime.expr-var "String")]
+                          [count : comptime.Expr
+                            (comptime.expr-int (comptime.expr-list-length args))]
+                          `(stdlib.string.concat-all
+                            (pack
+                              (stdlib.array.make-array ,string-type ,count)
+                              0
+                              ,@args)))))))))))))))
 
-;: Exported only so imported `str-cat` expansions can finish their internal
-;: recursive pack step.
 ;; Inline coverage migrated from stdlib/tests/str_cat_api.tl (#3082).
+;; Published stage0 compilers have a hardcoded `stdlib.str_cat` test fast path
+;; that emits legacy helper names, so the cfg-test fixture exercises the same
+;; checked-in macro body through the bootstrap-safe runtime module name.
 (cfg
   test
   (define (str-cat-api-eq [got : String] [want : String]) : i64
-    (if (string.string-eq got want)
+    (if (string.eq got want)
       1
       0)))
 
@@ -99,23 +108,39 @@
       [empty : String ""]
       [score : i64 0]
       (begin
-        (set! score (+ score (str-cat-api-eq (str-cat) "")))
-        (set! score (+ score (str-cat-api-eq (str-cat a) "foo")))
-        (set! score (+ score (str-cat-api-eq (str-cat a b) "foobar")))
-        (set! score (+ score (str-cat-api-eq (str-cat b "!" b) "bar!bar")))
-        (set! score (+ score (str-cat-api-eq (str-cat empty a empty) "foo")))
+        (set! score (+ score (str-cat-api-eq (str_cat_runtime.str-cat) "")))
+        (set!
+          score
+          (+ score (str-cat-api-eq (str_cat_runtime.str-cat a) "foo")))
+        (set!
+          score
+          (+ score (str-cat-api-eq (str_cat_runtime.str-cat a b) "foobar")))
+        (set!
+          score
+          (+ score (str-cat-api-eq (str_cat_runtime.str-cat b "!" b) "bar!bar")))
         (set!
           score
           (+
             score
-            (str-cat-api-eq (str-cat "1" "2" "3" "4" "5" "6" "7") "1234567")))
+            (str-cat-api-eq (str_cat_runtime.str-cat empty a empty) "foo")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat "1" "2" "3" "4" "5" "6" "7")
+              "1234567")))
         ;; A str-cat-produced value remains a valid operand to another flat
         ;; str-cat call.
         (let
-          [middle : String (str-cat "-" b "-")]
+          [middle : String (str_cat_runtime.str-cat "-" b "-")]
           (set!
             score
-            (+ score (str-cat-api-eq (str-cat a middle a) "foo-bar-foo"))))
+            (+
+              score
+              (str-cat-api-eq
+                (str_cat_runtime.str-cat a middle a)
+                "foo-bar-foo"))))
         (let
           [__tl_str_cat_parts : String "baz"]
           (set!
@@ -123,7 +148,7 @@
             (+
               score
               (str-cat-api-eq
-                (str-cat
+                (str_cat_runtime.str-cat
                   __tl_str_cat_parts
                   "!"
                   __tl_str_cat_parts

@@ -6,7 +6,7 @@
   (CompilerEmbeddedStdlibSomeSource String))
 
 (define (embedded-eq? [left : String] [right : String]) : bool
-  (string.string-eq left right))
+  (string.eq left right))
 
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
 (include-str compiler-embedded-stdlib-atomic "stdlib/atomic.tl")
@@ -34,7 +34,6 @@
 (include-str compiler-embedded-stdlib-queue "stdlib/queue.tl")
 (include-str compiler-embedded-stdlib-random "stdlib/random.tl")
 (include-str compiler-embedded-stdlib-result "stdlib/result.tl")
-(include-str compiler-embedded-stdlib-result_family "stdlib/result_family.tl")
 (include-str compiler-embedded-stdlib-runtime "stdlib/runtime.tl")
 (include-str compiler-embedded-stdlib-serialize "stdlib/serialize.tl")
 (include-str compiler-embedded-stdlib-sort "stdlib/sort.tl")
@@ -76,6 +75,7 @@
 (include-str compiler-embedded-stdlib-tests-vector-slice-escape "stdlib/tests/vector_slice_escape.tl")
 (include-str compiler-embedded-stdlib-text-buf "stdlib/text_buf.tl")
 (include-str compiler-embedded-stdlib-text-buf-borrowed "stdlib/text_buf_borrowed.tl")
+(include-str compiler-embedded-stdlib-text-buf-family "stdlib/text_buf_family.tl")
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
 (include-str compiler-embedded-stdlib-vector-slice "stdlib/vector_slice.tl")
 
@@ -134,8 +134,6 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
     [(embedded-eq? suffix "result.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-result)]
-    [(embedded-eq? suffix "result_family.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-result_family)]
     [(embedded-eq? suffix "runtime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
     [(embedded-eq? suffix "serialize.tl")
@@ -157,6 +155,9 @@
     [(embedded-eq? suffix "text_buf_borrowed.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-text-buf-borrowed)]
+    [(embedded-eq? suffix "text_buf_family.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-text-buf-family)]
     [(embedded-eq? suffix "vector.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [(embedded-eq? suffix "vector_slice.tl")

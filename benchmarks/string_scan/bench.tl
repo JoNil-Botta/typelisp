@@ -13,6 +13,7 @@
 ;# constant. The hash accumulator is carried across rounds, so the per-round
 ;# scan is not loop-invariant and cannot be folded into a closed form.
 (import "stdlib/io.tl")
+(import stdlib.string)
 
 (define scan-text : String
   "the quick brown fox jumps over the lazy dog 0123456789")
@@ -25,13 +26,13 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ (* acc 131) (cast (string-ref text i) : i64)))
+          (set! acc (+ (* acc 131) (cast (string.string-ref text i) : i64)))
           (set! i (+ i 1))))
       acc)))
 
 (define (main) : i64
   (let
-    [n : i64 (string-length scan-text)]
+    [n : i64 (string.string-length scan-text)]
     [rounds : i64 (+ base-rounds (arg-count))]
     [acc : i64 1]
     [r : i64 0]

@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 (define atomic-counter-iterations : i64
   128)
@@ -23,7 +23,7 @@
   [ctx : (Array i64)]
   [slot : i64]
   [value : i64]) : unit
-  (array.array-set! ctx slot value))
+  (array-set! ctx slot value))
 
 (define (atomic-counter-worker [ctx : i64]) : i64
   (let
@@ -53,8 +53,8 @@
   [a : Thread]
   [b : Thread]) : i64
   (let
-    [a-code : i64 (atomic-counter-join-code (thread-join a))]
-    [b-code : i64 (atomic-counter-join-code (thread-join b))]
+    [a-code : i64 (atomic-counter-join-code (thread.join a))]
+    [b-code : i64 (atomic-counter-join-code (thread.join b))]
     [value : i64 (atomic-counter-final-value counter)]
     (cond
       [(not (= a-code 0)) 1]
@@ -69,17 +69,17 @@
     [ctx-b : (Array i64) (array.make-array i64 2)]
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
     (begin
-      (array.array-set! counter 0 0)
+      (array-set! counter 0 0)
       (atomic-counter-write-slot! ctx-a 0 counter-addr)
       (atomic-counter-write-slot! ctx-a 1 atomic-counter-iterations)
       (atomic-counter-write-slot! ctx-b 0 counter-addr)
       (atomic-counter-write-slot! ctx-b 1 atomic-counter-iterations)
-      (match (thread-spawn
+      (match (thread.spawn
         atomic-counter-worker
         (atomic-counter-array-i64-addr ctx-a))
         [(ThreadSpawnErr _) 4]
         [(ThreadSpawnOk a)
-          (match (thread-spawn
+          (match (thread.spawn
             atomic-counter-worker
             (atomic-counter-array-i64-addr ctx-b))
             [(ThreadSpawnErr _) 5]

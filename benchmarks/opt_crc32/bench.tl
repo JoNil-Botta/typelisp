@@ -39,7 +39,7 @@
     (begin
       (while (< n 256)
         (begin
-          (array.array-set! table n (crc-table-entry n))
+          (array-set! table n (crc-table-entry n))
           (set! n (+ n 1))))
       table)))
 
@@ -51,9 +51,9 @@
       (while (< i len)
         (begin
           (let
-            [byte : i64 (cast (array.array-ref buf i) : i64)]
+            [byte : i64 (cast (array-ref buf i) : i64)]
             [index : i64 (bit-and (bit-xor crc byte) crc-byte-mask)]
-            (set! crc (bit-xor (shr crc 8) (array.array-ref table index))))
+            (set! crc (bit-xor (shr crc 8) (array-ref table index))))
           (set! i (+ i 1))))
       (bit-xor crc crc-low-mask))))
 
@@ -63,7 +63,7 @@
     (begin
       (while (< i len)
         (begin
-          (array.array-set! buf i (cast (bit-and (+ (* i 167) 13) 255) : u8))
+          (array-set! buf i (cast (bit-and (+ (* i 167) 13) 255) : u8))
           (set! i (+ i 1))))
       unit)))
 
@@ -77,18 +77,15 @@
       (crc-fill buf len)
       (while (< round rounds)
         (begin
-          (array.array-set!
-            buf
-            (% round len)
-            (cast (bit-and (+ round 1) 255) : u8))
+          (array-set! buf (% round len) (cast (bit-and (+ round 1) 255) : u8))
           (set! acc (bit-and (+ acc (crc-update table buf len)) crc-low-mask))
           (set! round (+ round 1))))
       acc)))
 
 (define (main) : i64
   (let
-    [len : i64 (string->int (arg 1))]
-    [rounds : i64 (string->int (arg 2))]
+    [len : i64 (>int (arg 1))]
+    [rounds : i64 (>int (arg 2))]
     (begin
       (print (crc-bench len rounds))
       0)))

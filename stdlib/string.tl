@@ -14,11 +14,14 @@
 ;# (define ok : bool
 ;#   (let
 ;#     [s : String "  alpha  "]
-;#     [haystack : String (string.string-trim-left (& s))]
+;#     [haystack : String (string.trim-left (& s))]
 ;#     [needle : String "ph"]
-;#     (string.string-contains (& haystack) (& needle))))
+;#     (string.contains (& haystack) (& needle))))
 ;# ```
 (module stdlib.string)
+
+(import stdlib.array)
+(import stdlib.comptime)
 
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
@@ -63,23 +66,23 @@
 ;: capability cfg is enabled.
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_length [text : Expr]) : i64
+  (defmacro (__tl_string_length [text : comptime.Expr]) : i64
     `(string-length ,text)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_ref [text : Expr] [index : Expr]) : char
+  (defmacro (__tl_string_ref [text : comptime.Expr] [index : comptime.Expr]) : char
     `(string-ref ,text ,index)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_eq [left : Expr] [right : Expr]) : bool
-    `(string-eq ,left ,right)))
+  (defmacro (__tl_string_eq [left : comptime.Expr] [right : comptime.Expr]) : bool
+    `(eq ,left ,right)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_to_int [text : Expr]) : i64
-    `(string->int ,text)))
+  (defmacro (__tl_string_to_int [text : comptime.Expr]) : i64
+    `(>int ,text)))
 
 ;: Return the byte length of borrowed or owned text without allocating.
 (cfg
@@ -191,10 +194,44 @@
   (unsafe
     (string-runtime-copy-bytes! (ptr-offset dst doff) src n)))
 
+;: Copy `n` bytes from owned `chunk` into `dst` at byte offset `start`.
+(define (str-copy-owned-bytes-into
+  [chunk : String]
+  [dst : (MutPtr u8)]
+  [start : i64]
+  [n : i64]) : unit
+  (let
+    [src : (Ptr u8)
+      (unsafe
+        (string-data (& chunk)))]
+    [words : i64 (/ n 8)]
+    [src64 : (Ptr i64)
+      (unsafe
+        (ptr-cast src : (Ptr i64)))]
+    [dst64 : (MutPtr i64)
+      (unsafe
+        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
+    [w : i64 0]
+    [b : i64 (* words 8)]
+    (begin
+      (while (< w words)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1))))
+      (while (< b n)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ start b))
+              (ptr-read (ptr-offset src b))))
+          (set! b (+ b 1))))
+      unit)))
+
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 len)]
+    [buf : (Array u8) (array.make-array u8 len)]
     [src : (Ptr u8)
       (unsafe
         (string-data text))]
@@ -212,12 +249,12 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
-(define (string-append [left : (& left str)] [right : (& right str)]) : String
+(define (append [left : (& left str)] [right : (& right str)]) : String
   (let
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
     [total-len : i64 (+ left-len right-len)]
-    [buf : (Array u8) (make-array u8 total-len)]
+    [buf : (Array u8) (array.make-array u8 total-len)]
     [left-src : (Ptr u8)
       (unsafe
         (string-data left))]
@@ -234,15 +271,15 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
 
 ;: Return a fresh active-arena copy of borrowed text.
-(define (string-copy [text : (& text str)]) : String
+(define (copy [text : (& text str)]) : String
   (substring text 0 (__tl_string_length text)))
 
-;: Alias for `string-append`.
-(define (string-concat [left : (& left str)] [right : (& right str)]) : String
-  (string-append left right))
+;: Alias for `append`.
+(define (concat [left : (& left str)] [right : (& right str)]) : String
+  (append left right))
 
 ;: Return a fresh active-arena String by concatenating all owned strings in order.
-(define (string-concat-all [parts : (Array String)]) : String
+(define (concat-all [parts : (Array String)]) : String
   (let
     [count : i64 (array-length parts)]
     [len-index : i64 0]
@@ -255,7 +292,7 @@
             (set! total-len (+ total-len (__tl_string_length part)))
             (set! len-index (+ len-index 1)))))
       (let
-        [buf : (Array u8) (make-array u8 total-len)]
+        [buf : (Array u8) (array.make-array u8 total-len)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data buf))]
@@ -279,7 +316,7 @@
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Store `value` in `parts` and return `parts` for macro-generated pack chains.
-(define (string-concat-all-pack-part
+(define (concat-all-pack-part
   [parts : (Array String)]
   [index : i64]
   [value : String]) : (Array String)
@@ -288,15 +325,51 @@
     parts))
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
-(define (string-concat3 [a : String] [b : String] [c : String]) : String
-  (string-concat5 a b c "" ""))
+(define (concat3 [a : String] [b : String] [c : String]) : String
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [total-len : i64 (+ a-len (+ b-len c-len))]
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Return a fresh active-arena String by concatenating four owned strings.
-(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-concat5 a b c d ""))
+(define (concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [d-len : i64 (__tl_string_length d)]
+    [total-len : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Return a fresh active-arena String by concatenating five owned strings.
-(define (string-concat5
+(define (concat5
   [a : String]
   [b : String]
   [c : String]
@@ -309,48 +382,58 @@
     [d-len : i64 (__tl_string_length d)]
     [e-len : i64 (__tl_string_length e)]
     [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
-    [buf : (Array u8) (make-array u8 total-len)]
-    [dst : (MutPtr u8)
-      (unsafe
-        (array-data buf))]
-    [off : i64 0]
-    (begin
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& a)))
-        dst
-        off
-        a-len)
-      (set! off (+ off a-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& b)))
-        dst
-        off
-        b-len)
-      (set! off (+ off b-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& c)))
-        dst
-        off
-        c-len)
-      (set! off (+ off c-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& d)))
-        dst
-        off
-        d-len)
-      (set! off (+ off d-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& e)))
-        dst
-        off
-        e-len)
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (str-copy-owned-bytes-into
+            e
+            dst
+            (+ a-len (+ b-len (+ c-len d-len)))
+            e-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+
+;: Stage0 bootstrap compatibility for str-cat fast-path output.
+;; lint-allow: redundant-function-name
+(define (string-concat-all [parts : (Array String)]) : String
+  (concat-all parts))
+
+;: Stage0 bootstrap compatibility for str-cat fast-path output.
+;; lint-allow: redundant-function-name
+(define (string-concat-all-pack-part
+  [parts : (Array String)]
+  [index : i64]
+  [value : String]) : (Array String)
+  (concat-all-pack-part parts index value))
+
+;: Stage0 bootstrap compatibility for str-cat fast-path output.
+;; lint-allow: redundant-function-name
+(define (string-concat3 [a : String] [b : String] [c : String]) : String
+  (concat3 a b c))
+
+;: Stage0 bootstrap compatibility for str-cat fast-path output.
+;; lint-allow: redundant-function-name
+(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (concat4 a b c d))
+
+;: Stage0 bootstrap compatibility for str-cat fast-path output.
+;; lint-allow: redundant-function-name
+(define (string-concat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (concat5 a b c d e))
 
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring [text : (& text str)] [start : i64] [len : i64]) : String
@@ -372,13 +455,13 @@
 ;: Borrowed alias for `substring-view`.
 (cfg
   feature-str-view
-  (define (string-slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
+  (define (slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
       text
       str)
     (substring-view text start len)))
 
 ;: Alias for `substring`.
-(define (string-slice [text : (& text str)] [start : i64] [len : i64]) : String
+(define (slice [text : (& text str)] [start : i64] [len : i64]) : String
   (substring text start len))
 
 ;: Compare two chars for equality.
@@ -396,7 +479,7 @@
 ;: Return the first byte index at or after start, or -1 when absent.
 (cfg
   feature-tl-memchr
-  (define (string-index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
+  (define (index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
     (let
       [n : i64 (__tl_string_length text)]
       (if (or (< start 0) (>= start n))
@@ -415,7 +498,7 @@
 ;: Return the first byte index at or after start, or -1 when absent.
 (cfg
   (not feature-tl-memchr)
-  (define (string-index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
+  (define (index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
     (let
       [n : i64 (__tl_string_length text)]
       [i : i64 start]
@@ -436,7 +519,7 @@
         found))))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
-(define (string-eq [left : (& left str)] [right : (& right str)]) : bool
+(define (eq [left : (& left str)] [right : (& right str)]) : bool
   (let
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
@@ -474,12 +557,12 @@
                       same))
                   false)))))))))
 
-;: Alias for `string-eq`.
+;: Alias for `eq`.
 (define (string=? [left : (& left str)] [right : (& right str)]) : bool
-  (string-eq left right))
+  (eq left right))
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
-(define (string->int [text : (& text str)]) : i64
+(define (>int [text : (& text str)]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_to_int text)
@@ -507,7 +590,7 @@
 ;: Return a borrowed view of text with leading whitespace removed.
 (cfg
   feature-str-view
-  (define (string-trim-left-view [s : (& s str)]) : (& s str)
+  (define (trim-left-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
       [i : i64 0]
@@ -520,7 +603,7 @@
         (substring-view s i (- n i))))))
 
 ;: Trim leading whitespace from borrowed text.
-(define (string-trim-left [s : (& s str)]) : String
+(define (trim-left [s : (& s str)]) : String
   (let
     [n : i64 (__tl_string_length s)]
     [i : i64 0]
@@ -535,7 +618,7 @@
 ;: Return a borrowed view of text with trailing whitespace removed.
 (cfg
   feature-str-view
-  (define (string-trim-right-view [s : (& s str)]) : (& s str)
+  (define (trim-right-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
       [i : i64 (- n 1)]
@@ -548,7 +631,7 @@
         (substring-view s 0 (+ i 1))))))
 
 ;: Trim trailing whitespace from borrowed text.
-(define (string-trim-right [s : (& s str)]) : String
+(define (trim-right [s : (& s str)]) : String
   (let
     [n : i64 (__tl_string_length s)]
     [i : i64 (- n 1)]
@@ -563,7 +646,7 @@
 ;: Return a borrowed view of text with leading and trailing whitespace removed.
 (cfg
   feature-str-view
-  (define (string-trim-view [s : (& s str)]) : (& s str)
+  (define (trim-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
       [start : i64 0]
@@ -582,7 +665,7 @@
         (substring-view s start (- (+ end 1) start))))))
 
 ;: Trim whitespace from both ends of borrowed text.
-(define (string-trim [s : (& s str)]) : String
+(define (trim [s : (& s str)]) : String
   (let
     [n : i64 (__tl_string_length s)]
     [start : i64 0]
@@ -601,9 +684,7 @@
       (substring s start (- (+ end 1) start)))))
 
 ;: Return true if haystack contains needle at any position.
-(define (string-contains
-  [haystack : (& haystack str)]
-  [needle : (& needle str)]) : bool
+(define (contains [haystack : (& haystack str)] [needle : (& needle str)]) : bool
   (let
     [hlen : i64 (__tl_string_length haystack)]
     [nlen : i64 (__tl_string_length needle)]
@@ -622,14 +703,14 @@
             found))))))
 
 ;: Return true if borrowed haystack contains the character c.
-(define (string-contains-char [haystack : (& haystack str)] [c : char]) : bool
-  (>= (string-index-of-byte haystack 0 (cast c : u8)) 0))
+(define (contains-char [haystack : (& haystack str)] [c : char]) : bool
+  (>= (index-of-byte haystack 0 (cast c : u8)) 0))
 
 ;: Replace first occurrence of old with new in s.
 ;:
 ;: Returns s unchanged if old is not present. Full multi-replace needs a string
 ;: builder.
-(define (string-replace [s : String] [old : String] [new : String]) : String
+(define (replace [s : String] [old : String] [new : String]) : String
   (let
     [hlen : i64 (__tl_string_length s)]
     [olen : i64 (__tl_string_length old)]
@@ -649,7 +730,7 @@
               (set! found true)
               (set! i (+ i 1))))))
       (if found
-        (string-concat3
+        (concat3
           (substring s 0 i)
           new
           (substring s (+ i olen) (- (- hlen i) olen)))
@@ -705,45 +786,39 @@
       outer
       (let
         [s : String "  outer  "]
-        [outer-trimmed : String (stdlib.string.string-trim (& s))]
+        [outer-trimmed : String (stdlib.string.trim (& s))]
         [outer-slice : String (stdlib.string.substring (& s) 2 5)]
         [outer-suffix : String "-append"]
         [outer-appended : String
-          (stdlib.string.string-append (& outer-trimmed) (& outer-suffix))]
+          (stdlib.string.append (& outer-trimmed) (& outer-suffix))]
         [outer-number : String (stdlib.string.int->string 12345)]
         [outer-expected : String "outer"]
         [outer-appended-expected : String "outer-append"]
         [outer-number-expected : String "12345"]
         (begin
-          (if (stdlib.string.string-eq (& outer-trimmed) (& outer-expected))
+          (if (stdlib.string.eq (& outer-trimmed) (& outer-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq (& outer-slice) (& outer-expected))
+          (if (stdlib.string.eq (& outer-slice) (& outer-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq
-            (& outer-appended)
-            (& outer-appended-expected))
+          (if (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq
-            (& outer-number)
-            (& outer-number-expected))
+          (if (stdlib.string.eq (& outer-number) (& outer-number-expected))
             unit
             (fail))
           (with-arena
             inner
             (let
               [inner-replaced : String
-                (stdlib.string.string-replace "alpha" "ph" "ren")]
-              [inner-slice : String (stdlib.string.string-slice "alphabet" 2 3)]
-              [inner-appended : String
-                (stdlib.string.string-append "inner" "-append")]
-              [inner-concat : String
-                (stdlib.string.string-concat "inner" "-concat")]
+                (stdlib.string.replace "alpha" "ph" "ren")]
+              [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
+              [inner-appended : String (stdlib.string.append "inner" "-append")]
+              [inner-concat : String (stdlib.string.concat "inner" "-concat")]
               [inner-number : String (stdlib.string.int->string -6789)]
               [inner-borrowed : String
-                (stdlib.string.string-append (& inner-slice) (& inner-replaced))]
+                (stdlib.string.append (& inner-slice) (& inner-replaced))]
               [inner-replaced-expected : String "alrena"]
               [inner-slice-expected : String "pha"]
               [inner-appended-expected : String "inner-append"]
@@ -751,32 +826,30 @@
               [inner-number-expected : String "-6789"]
               [inner-borrowed-expected : String "phaalrena"]
               (begin
-                (if (stdlib.string.string-eq
+                (if (stdlib.string.eq
                   (& inner-replaced)
                   (& inner-replaced-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq
-                  (& inner-slice)
-                  (& inner-slice-expected))
+                (if (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq
+                (if (stdlib.string.eq
                   (& inner-appended)
                   (& inner-appended-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq
+                (if (stdlib.string.eq
                   (& inner-concat)
                   (& inner-concat-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq
+                (if (stdlib.string.eq
                   (& inner-number)
                   (& inner-number-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq
+                (if (stdlib.string.eq
                   (& inner-borrowed)
                   (& inner-borrowed-expected))
                   unit
@@ -805,33 +878,33 @@
 (cfg
   test
   (define (string-test-trim-left [s : String]) : String
-    (string-trim-left (& s))))
+    (trim-left (& s))))
 
 (cfg
   test
   (define (string-test-trim-right [s : String]) : String
-    (string-trim-right (& s))))
+    (trim-right (& s))))
 
 (cfg
   test
   (define (string-test-trim [s : String]) : String
-    (string-trim (& s))))
+    (trim (& s))))
 
 (cfg
   test
   (define (string-test-contains [haystack : String] [needle : String]) : bool
-    (string-contains (& haystack) (& needle))))
+    (contains (& haystack) (& needle))))
 
 (cfg
   test
   (define (string-test-contains-char [haystack : String] [c : char]) : bool
-    (string-contains-char (& haystack) c)))
+    (contains-char (& haystack) c)))
 
 (cfg
   test
   (define (string-test-with-nul) : String
     (let
-      [bytes : (Array u8) (make-array u8 3)]
+      [bytes : (Array u8) (array.make-array u8 3)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data bytes))]
@@ -845,27 +918,27 @@
 (cfg
   test
   (define (string-test-eq-explicit-borrow [left : String] [right : String]) : bool
-    (string-eq (& left) (& right))))
+    (eq (& left) (& right))))
 
 (cfg
   test
   (define (string-test-to-int-explicit-borrow [text : String]) : i64
-    (string->int (& text))))
+    (>int (& text))))
 
 (cfg
   test
   (define (string-test-copy-explicit-borrow [text : String]) : String
-    (string-copy (& text))))
+    (copy (& text))))
 
 (cfg
   test
   (define (string-test-append-explicit-borrow [left : String] [right : String]) : String
-    (string-append (& left) (& right))))
+    (append (& left) (& right))))
 
 (cfg
   test
   (define (string-test-concat-explicit-borrow [left : String] [right : String]) : String
-    (string-concat (& left) (& right))))
+    (concat (& left) (& right))))
 
 (cfg
   test
@@ -873,7 +946,7 @@
     [left : String]
     [right : String]) : bool
     (let
-      [joined : String (string-append left right)]
+      [joined : String (append left right)]
       (and
         (string=? joined "owned-param")
         (and (string=? left "owned") (string=? right "-param"))))))
@@ -881,13 +954,13 @@
 (cfg
   test
   (define (string-test-concat-all-empty) : String
-    (string-concat-all (make-array String 0))))
+    (concat-all (array.make-array String 0))))
 
 (cfg
   test
   (define (string-test-concat-all-many) : String
     (let
-      [parts : (Array String) (make-array String 6)]
+      [parts : (Array String) (array.make-array String 6)]
       (begin
         (array-set! parts 0 "ab")
         (array-set! parts 1 "")
@@ -895,7 +968,7 @@
         (array-set! parts 3 "ef")
         (array-set! parts 4 "")
         (array-set! parts 5 "gh")
-        (string-concat-all parts)))))
+        (concat-all parts)))))
 
 (cfg
   test
@@ -908,7 +981,7 @@
     [text : String]
     [start : i64]
     [len : i64]) : String
-    (string-slice (& text) start len)))
+    (slice (& text) start len)))
 
 (cfg
   test
@@ -919,7 +992,7 @@
       [start : i64]
       [len : i64]
       [expected : String]) : bool
-      (string-eq (substring-view (& text) start len) (& expected)))))
+      (eq (substring-view (& text) start len) (& expected)))))
 
 (cfg
   test
@@ -940,28 +1013,28 @@
       [start : i64]
       [len : i64]
       [expected : String]) : bool
-      (string-eq (string-slice-view (& text) start len) (& expected)))))
+      (eq (slice-view (& text) start len) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
-      (string-eq (string-trim-left-view (& s)) (& expected)))))
+      (eq (trim-left-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
-      (string-eq (string-trim-right-view (& s)) (& expected)))))
+      (eq (trim-right-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
-      (string-eq (string-trim-view (& s)) (& expected)))))
+      (eq (trim-view (& s)) (& expected)))))
 
 (cfg
   test
@@ -984,108 +1057,101 @@
       (test.assert-false
         (char-eq 'A' 'B')
         "different chars do not compare equal")
-      (test.assert-true (string-eq "" "") "empty strings compare equal")
+      (test.assert-true (eq "" "") "empty strings compare equal")
+      (test.assert-true (eq "hello" "hello") "same strings compare equal")
       (test.assert-true
-        (string-eq "hello" "hello")
-        "same strings compare equal")
-      (test.assert-true
-        (string=? "alias" (string-append "ali" "as"))
-        "string=? aliases string-eq")
+        (string=? "alias" (append "ali" "as"))
+        "string=? aliases eq")
       (string-test-assert-owned-string-eq
-        (string-append "" "")
+        (append "" "")
         ""
-        "string-append handles two empty strings")
+        "append handles two empty strings")
       (string-test-assert-owned-string-eq
-        (string-append "" "right")
+        (append "" "right")
         "right"
-        "string-append handles empty left")
+        "append handles empty left")
       (string-test-assert-owned-string-eq
-        (string-append "left" "")
+        (append "left" "")
         "left"
-        "string-append handles empty right")
+        "append handles empty right")
       (string-test-assert-owned-string-eq
-        (string-append "foo" "bar")
+        (append "foo" "bar")
         "foobar"
-        "string-append concatenates short strings")
+        "append concatenates short strings")
       (string-test-assert-owned-string-eq
-        (string-append
+        (append
           "abcdefghijklmnopqrstuvwxyz"
           "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "string-append concatenates long strings")
+        "append concatenates long strings")
       (string-test-assert-owned-string-eq
-        (string-concat "con" "cat")
+        (concat "con" "cat")
         "concat"
-        "string-concat aliases string-append")
+        "concat aliases append")
       (string-test-assert-owned-string-eq
         (string-test-concat-all-empty)
         ""
-        "string-concat-all handles an empty parts array")
+        "concat-all handles an empty parts array")
       (string-test-assert-owned-string-eq
         (string-test-concat-all-many)
         "abcdefgh"
-        "string-concat-all concatenates many parts")
+        "concat-all concatenates many parts")
       (string-test-assert-owned-string-eq
-        (string-concat3 "a" "b" "c")
+        (concat3 "a" "b" "c")
         "abc"
-        "string-concat3 concatenates three strings")
+        "concat3 concatenates three strings")
       (string-test-assert-owned-string-eq
-        (string-concat4 "a" "b" "c" "d")
+        (concat4 "a" "b" "c" "d")
         "abcd"
-        "string-concat4 concatenates four strings")
+        "concat4 concatenates four strings")
       (string-test-assert-owned-string-eq
-        (string-concat5 "a" "b" "c" "d" "e")
+        (concat5 "a" "b" "c" "d" "e")
         "abcde"
-        "string-concat5 concatenates five strings")
+        "concat5 concatenates five strings")
       (string-test-assert-owned-string-eq
         (string-test-copy-explicit-borrow "borrow-copy")
         "borrow-copy"
-        "string-copy copies explicitly borrowed text")
+        "copy copies explicitly borrowed text")
       (string-test-assert-owned-string-eq
         (string-test-append-explicit-borrow "bor" "row")
         "borrow"
-        "string-append concatenates explicitly borrowed inputs")
+        "append concatenates explicitly borrowed inputs")
       (string-test-assert-owned-string-eq
         (string-test-concat-explicit-borrow "" "borrowed")
         "borrowed"
-        "string-concat handles empty explicitly borrowed input")
+        "concat handles empty explicitly borrowed input")
       (let
         [left : String "owned"]
         [right : String "-place"]
-        [joined : String (string-append left right)]
+        [joined : String (append left right)]
         (begin
           (string-test-assert-owned-string-eq
             joined
             "owned-place"
-            "string-append auto-borrows owned places")
+            "append auto-borrows owned places")
           (string-test-assert-owned-string-eq
             left
             "owned"
-            "string-append leaves the left owned place usable")
+            "append leaves the left owned place usable")
           (string-test-assert-owned-string-eq
             right
             "-place"
-            "string-append leaves the right owned place usable")))
+            "append leaves the right owned place usable")))
       (test.assert-true
         (string-test-append-auto-borrow-param "owned" "-param")
-        "string-append auto-borrows owned parameters")
-      (test.assert-false (string-eq "hello" "world") "different strings differ")
-      (test.assert-false (string-eq "hi" "high") "length mismatch differs")
+        "append auto-borrows owned parameters")
+      (test.assert-false (eq "hello" "world") "different strings differ")
+      (test.assert-false (eq "hi" "high") "length mismatch differs")
       (test.assert-true
-        (string-test-eq-explicit-borrow
-          "borrow"
-          (string-concat3 "bor" "row" ""))
+        (string-test-eq-explicit-borrow "borrow" (concat3 "bor" "row" ""))
         "explicitly borrowed string equality compares contents")
       (test.assert-false
         (string-test-eq-explicit-borrow "borrow" "borrows")
         "explicitly borrowed string equality rejects length mismatch")
-      (test.assert-i64-eq (string->int "") 0 "empty string parses as zero")
-      (test.assert-i64-eq
-        (string->int "-")
-        0
-        "minus-only string parses as zero")
-      (test.assert-i64-eq (string->int "123") 123 "positive integer parses")
-      (test.assert-i64-eq (string->int "-42") -42 "negative integer parses")
+      (test.assert-i64-eq (>int "") 0 "empty string parses as zero")
+      (test.assert-i64-eq (>int "-") 0 "minus-only string parses as zero")
+      (test.assert-i64-eq (>int "123") 123 "positive integer parses")
+      (test.assert-i64-eq (>int "-42") -42 "negative integer parses")
       (test.assert-i64-eq
         (string-test-to-int-explicit-borrow "12a")
         169
@@ -1115,9 +1181,9 @@
         "cde"
         "public substring copies middle slice")
       (string-test-assert-owned-string-eq
-        (string-slice "abcdef" 6 0)
+        (slice "abcdef" 6 0)
         ""
-        "public string-slice copies empty boundary slice")
+        "public slice copies empty boundary slice")
       (string-test-assert-owned-string-eq
         (string-test-substring "abcdef" 0 6)
         "abcdef"
@@ -1125,7 +1191,7 @@
       (string-test-assert-owned-string-eq
         (string-test-slice-explicit-borrow "abcdef" 5 1)
         "f"
-        "explicitly borrowed string-slice copies final byte")
+        "explicitly borrowed slice copies final byte")
       (string-test-assert-owned-string-eq
         (string-test-substring
           "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1209,53 +1275,53 @@
         (string-test-contains-char "" 'z')
         "contains-char handles empty string")
       (test.assert-i64-eq
-        (string-index-of-byte "hello" 0 (cast 'h' : u8))
+        (index-of-byte "hello" 0 (cast 'h' : u8))
         0
-        "string-index-of-byte finds first byte")
+        "index-of-byte finds first byte")
       (test.assert-i64-eq
-        (string-index-of-byte "hello" 3 (cast 'l' : u8))
+        (index-of-byte "hello" 3 (cast 'l' : u8))
         3
-        "string-index-of-byte honors nonzero start")
+        "index-of-byte honors nonzero start")
       (test.assert-i64-eq
-        (string-index-of-byte "hello" 0 (cast 'z' : u8))
+        (index-of-byte "hello" 0 (cast 'z' : u8))
         -1
-        "string-index-of-byte reports miss")
+        "index-of-byte reports miss")
       (test.assert-i64-eq
-        (string-index-of-byte "hello" 5 (cast 'o' : u8))
+        (index-of-byte "hello" 5 (cast 'o' : u8))
         -1
-        "string-index-of-byte rejects start at length")
+        "index-of-byte rejects start at length")
       (test.assert-i64-eq
-        (string-index-of-byte "hello" -1 (cast 'h' : u8))
+        (index-of-byte "hello" -1 (cast 'h' : u8))
         -1
-        "string-index-of-byte rejects negative start")
+        "index-of-byte rejects negative start")
       (test.assert-i64-eq
-        (string-index-of-byte "" 0 (cast 'h' : u8))
+        (index-of-byte "" 0 (cast 'h' : u8))
         -1
-        "string-index-of-byte handles empty string")
+        "index-of-byte handles empty string")
       (let
         [with-nul : String (string-test-with-nul)]
         (test.assert-i64-eq
-          (string-index-of-byte (& with-nul) 0 (cast 0 : u8))
+          (index-of-byte (& with-nul) 0 (cast 0 : u8))
           1
-          "string-index-of-byte finds embedded nul"))
+          "index-of-byte finds embedded nul"))
       (string-test-assert-owned-string-eq
-        (string-replace "hello" "ell" "ipp")
+        (replace "hello" "ell" "ipp")
         "hippo"
         "replace middle")
       (string-test-assert-owned-string-eq
-        (string-replace "hello" "he" "ye")
+        (replace "hello" "he" "ye")
         "yello"
         "replace prefix")
       (string-test-assert-owned-string-eq
-        (string-replace "hello" "lo" "p")
+        (replace "hello" "lo" "p")
         "help"
         "replace suffix")
       (string-test-assert-owned-string-eq
-        (string-replace "hello" "zz" "yy")
+        (replace "hello" "zz" "yy")
         "hello"
         "replace miss returns input")
       (string-test-assert-owned-string-eq
-        (string-replace "abc" "" "x")
+        (replace "abc" "" "x")
         "xabc"
         "replace empty needle prefixes")
       (test.assert-true

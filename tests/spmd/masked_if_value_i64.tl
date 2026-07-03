@@ -7,7 +7,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (- (* i 3) 17))
+        (array-set! xs i (- (* i 3) 17))
         (set! i (+ i 1))))))
 
 (define (init-out [out : (Array i64)] [n : i64]) : unit
@@ -15,30 +15,30 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! out i -99)
+        (array-set! out i -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (if (< (array.array-ref xs i) 0)
+      (if (< (array-ref xs i) 0)
         0
-        (+ (array.array-ref xs i) 1)))))
+        (+ (array-ref xs i) 1)))))
 
 (define (fill-scalar [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
-          (if (< (array.array-ref xs i) 0)
+          (if (< (array-ref xs i) 0)
             0
-            (+ (array.array-ref xs i) 1)))
+            (+ (array-ref xs i) 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -48,7 +48,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

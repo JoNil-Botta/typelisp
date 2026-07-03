@@ -1,6 +1,6 @@
 (import stdlib.array)
-(import "stdlib/thread.tl")
-(import (thread-handle i64) as thread_i64)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 
 (defstruct SafeThreadPair
   (left i64)
@@ -26,7 +26,7 @@
         (+
           (struct-get pair left)
           (+
-            (array.array-ref items 0)
+            (array-ref items 0)
             (+
               (choice-score choice)
               (+ (tuple-ref coords 0) (tuple-ref coords 1)))))))

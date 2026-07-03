@@ -29,6 +29,8 @@
 ;# ```
 (module stdlib.sort)
 
+(import stdlib.comptime)
+
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -79,8 +81,9 @@
 (defmacro (vec [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
-    [module-name : Expr
-      (expr-var (string-append "stdlib.vector.generated." type-key-name))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.vector.generated." type-key-name))]
     [kind : String (type-kind T)]
     [scalar? : bool
       (match kind
@@ -98,6 +101,7 @@
     (if scalar?
       `(begin
         (module ,module-name)
+        (import stdlib.array)
         (define (sort! [v : (&mut v Vec)]) : unit
           (let
             [n : i64 (len-mut v)]
@@ -118,6 +122,7 @@
                   (set! i (+ i 1))))))))
       `(begin
         (module ,module-name)
+        (import stdlib.array)
         (define (sort! [v : (&mut v Vec)] [less? : (-> ,T ,T bool)]) : unit
           (let
             [n : i64 (len-mut v)]

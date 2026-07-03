@@ -1,21 +1,21 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.json)
 (import stdlib.string)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains?
-  [items : vector.StringVec]
+  [items : svec.StringVector]
   [needle : String]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
     (begin
-      (while (< idx (vector.string-vec-len items))
-        (if (string.string-eq (vector.string-vec-get items idx "") needle)
+      (while (< idx (svec.len (& items)))
+        (if (string.eq (svec.get (& items) idx "") needle)
           (begin
             (set! found true)
-            (set! idx (vector.string-vec-len items)))
+            (set! idx (svec.len (& items))))
           (set! idx (+ idx 1))))
       found)))
 
@@ -23,11 +23,10 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : vector.StringVec
-      (lsp-collect-def-names src (vector.string-vec-new))]
-    [keywords : vector.StringVec (lsp-split-spaces (lsp-completion-keywords))]
-    [builtins : vector.StringVec (lsp-split-spaces (lsp-completion-builtins))]
-    [types : vector.StringVec (lsp-split-spaces (lsp-completion-types))]
+    [names : svec.StringVector (lsp-collect-def-names src (svec.new))]
+    [keywords : svec.StringVector (lsp-split-spaces (lsp-completion-keywords))]
+    [builtins : svec.StringVector (lsp-split-spaces (lsp-completion-builtins))]
+    [types : svec.StringVector (lsp-split-spaces (lsp-completion-types))]
     (and
       (lsp-smoke-string-vec-contains? names "square")
       (lsp-smoke-string-vec-contains? names "answer")
@@ -66,17 +65,17 @@
         (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
           [hints : json.JsonList (lsp-inlay-build src 0 0)]
-          [rendered : String (json.json-stringify (lsp-json-array hints))]
+          [rendered : String (json.stringify (lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
           (begin
             (tc-inlay-hints-disable!)
             (and
-              (= (json.json-list-count hints) 2)
-              (string.string-contains (& rendered) (& type-label))
-              (string.string-contains (& rendered) (& total-pos))
-              (string.string-contains (& rendered) (& next-pos)))))))))
+              (= (json.list-count hints) 2)
+              (string.contains (& rendered) (& type-label))
+              (string.contains (& rendered) (& total-pos))
+              (string.contains (& rendered) (& next-pos)))))))))
 
 (define (lsp-formatting-smoke-ok?) : bool
   (let
@@ -85,32 +84,38 @@
       [(ResultFormatString.Ok formatted)
         (let
           [rendered : String
-            (json.json-stringify (lsp-formatting-edit messy formatted))]
+            (json.stringify (lsp-formatting-edit messy formatted))]
           [sig : String "(define (f) : i64"]
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
           (and
-            (string.string-contains (& formatted) (& sig))
-            (string.string-contains (& rendered) (& newtext-key))
-            (string.string-contains (& rendered) (& range-key))))]
+            (string.contains (& formatted) (& sig))
+            (string.contains (& rendered) (& newtext-key))
+            (string.contains (& rendered) (& range-key))))]
       [(ResultFormatString.Err _) false])))
+
+(define (lsp-format-edit-text-smoke-ok?) : bool
+  (let
+    [messy : String "(define   (f)  :  i64   (+ 1   2))"]
+    [invalid : String "(define (f) : i64"]
+    [formatted : String (lsp-format-edit-text messy)]
+    [fallback : String (lsp-format-edit-text invalid)]
+    [sig : String "(define (f) : i64"]
+    (and
+      (string.contains (& formatted) (& sig))
+      (not (string.eq formatted messy))
+      (string.eq fallback invalid))))
 
 (define (lsp-check-smoke-ok?) : bool
   (let
     [ok-src : String "(define (main) : i64 42)"]
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
-      (match (compiler-check-source-with-roots
-        "ok.tl"
-        ok-src
-        (vector.string-vec-new))
+      (match (compiler-check-source-with-roots "ok.tl" ok-src (svec.new))
         [(ResultCompilerCheck.Ok _) true]
         [(ResultCompilerCheck.Err _) false])]
     [bad-result : bool
-      (match (compiler-check-source-with-roots
-        "bad.tl"
-        bad-src
-        (vector.string-vec-new))
+      (match (compiler-check-source-with-roots "bad.tl" bad-src (svec.new))
         [(ResultCompilerCheck.Ok _) false]
         [(ResultCompilerCheck.Err _) true])]
     (and ok-result bad-result)))
@@ -124,10 +129,7 @@
       false
       (begin
         (tc-inlay-hints-enable!)
-        (match (compiler-check-source-with-roots
-          "test.tl"
-          src
-          (vector.string-vec-new))
+        (match (compiler-check-source-with-roots "test.tl" src (svec.new))
           [(ResultCompilerCheck.Ok _) unit]
           [(ResultCompilerCheck.Err _) unit])
         (let
@@ -144,9 +146,7 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set!
-                      found-ok
-                      (string.string-eq (tc-inlay-hint-type-at i) "i32"))
+                    (set! found-ok (string.eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let
@@ -154,7 +154,7 @@
               (if (>= near-idx 0)
                 (set!
                   near-ok
-                  (string.string-eq (tc-inlay-hint-type-at near-idx) "i32"))
+                  (string.eq (tc-inlay-hint-type-at near-idx) "i32"))
                 unit))
             (tc-inlay-hints-disable!)
             (and found-ok near-ok)))))))
@@ -170,10 +170,10 @@
         0
         (string.string-length src)
         json.JsonListNil)]
-    [rendered : String (json.json-stringify (lsp-json-array refs))]
-    [count-ok : bool (= (json.json-list-count refs) 2)]
+    [rendered : String (json.stringify (lsp-json-array refs))]
+    [count-ok : bool (= (json.list-count refs) 2)]
     [needle0 : String "\"line\":0"]
-    [line0-ok : bool (string.string-contains (& rendered) (& needle0))]
+    [line0-ok : bool (string.contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
 (define (lsp-document-decls-cache-empty-ok?) : bool
@@ -219,12 +219,12 @@
     (and
       (= (lsp-decl-list-len (& first-decls)) 1)
       (= (lsp-decl-list-len (& second-decls)) 2)
-      (string.string-eq (struct-get wide name) "wide")
+      (string.eq (struct-get wide name) "wide")
       (= (struct-get wide form-start-line) 5)
       (= (struct-get wide form-start-col) 1)
       (= (struct-get wide name-line) 5)
       (= (struct-get wide name-col) 10)
-      (string.string-eq (struct-get next name) "next")
+      (string.eq (struct-get next name) "next")
       (= (struct-get next form-start-line) 6)
       (= (struct-get next form-start-col) 1)
       (= (struct-get next name-line) 6)
@@ -239,6 +239,7 @@
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
         (unless (lsp-formatting-smoke-ok?) (return 8))
+        (unless (lsp-format-edit-text-smoke-ok?) (return 14))
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))

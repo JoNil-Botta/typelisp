@@ -1,15 +1,16 @@
 ;; compiler_load_decls_nil_smoke.tl - Regression for #3172.
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_load.tl")
+(import sym_i64_env)
 
 (define (main) : i64
   (match (compiler-load-decls-with-module-and-roots-cfg-root
-    AstDeclNil
+    (ast-decl-list-new)
     "src/tests/compiler_load_decls_nil_smoke.tl"
     ""
     ""
-    (sym-i64-empty)
-    (vector.string-vec-new)
+    (sym_i64_env.sym-i64-empty)
+    (svec.new)
     "src/tests"
     (compiler-cfg-empty))
     [(ResultCompilerLoadWithPaths.Ok _ _ _ _) 42]

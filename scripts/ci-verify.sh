@@ -278,6 +278,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 opt2-built CLI compile + cross-fixpoint 
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
+run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh
 # The current cli.tl emits stage1-qualified symbols, so the manifest uses the
 # stage1 expectation mode on both hosts.
 run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
@@ -288,6 +289,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-cod
 run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
+run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
 run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness

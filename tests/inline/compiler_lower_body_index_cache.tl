@@ -9,16 +9,16 @@
     (begin
       (set!
         lower-active-global-name-cache
-        (lower-name-cache-from-env LowerNameNil))
+        (lower-name-cache-from-env LowerNameEnv.Nil))
       (match (lower-compiler-source
         "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))")
-        [(OkCompilerLower _ _)
+        [(ResultCompilerLower.Ok _ _)
           (begin
             (set! lower-active-global-name-cache prev-name-cache)
             42)]
-        [(ErrCompilerLower diag)
+        [(ResultCompilerLower.Err diag)
           (io.panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (test

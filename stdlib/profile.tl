@@ -5,10 +5,12 @@
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
 (module stdlib.profile)
 
+(import stdlib.array)
+
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `now-ms` does not allocate on every sample.
 (define profile-now-scratch : (Array i64)
-  (make-array i64 2))
+  (array.make-array i64 2))
 
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
@@ -113,7 +115,7 @@
 ;: Allocate an array so allocation counters have observable work.
 (define (test-allocation) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 4)]
+    [items : (Array i64) (array.make-array i64 4)]
     (begin
       (array-set! items 0 12)
       items)))

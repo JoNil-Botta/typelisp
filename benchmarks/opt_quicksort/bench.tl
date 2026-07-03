@@ -19,20 +19,20 @@
 
 (define (qs-swap [xs : (Array i64)] [i : i64] [j : i64]) : unit
   (let
-    [tmp : i64 (array.array-ref xs i)]
+    [tmp : i64 (array-ref xs i)]
     (begin
-      (array.array-set! xs i (array.array-ref xs j))
-      (array.array-set! xs j tmp))))
+      (array-set! xs i (array-ref xs j))
+      (array-set! xs j tmp))))
 
 (define (qs-partition [xs : (Array i64)] [lo : i64] [hi : i64]) : i64
   (let
-    [pivot : i64 (array.array-ref xs hi)]
+    [pivot : i64 (array-ref xs hi)]
     [store : i64 lo]
     [scan : i64 lo]
     (begin
       (while (< scan hi)
         (begin
-          (if (< (array.array-ref xs scan) pivot)
+          (if (< (array-ref xs scan) pivot)
             (begin
               (qs-swap xs store scan)
               (set! store (+ store 1)))
@@ -58,7 +58,7 @@
       (while (< i n)
         (begin
           (set! state (bit-and (+ (* state 1103515245) 12345) qs-mask))
-          (array.array-set! xs i state)
+          (array-set! xs i state)
           (set! i (+ i 1))))
       state)))
 
@@ -69,7 +69,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! hash (% (+ (* hash 131) (array.array-ref xs i)) qs-modulus))
+          (set! hash (% (+ (* hash 131) (array-ref xs i)) qs-modulus))
           (set! i (+ i 1))))
       hash)))
 
@@ -90,8 +90,8 @@
 
 (define (main) : i64
   (let
-    [n : i64 (string->int (arg 1))]
-    [rounds : i64 (string->int (arg 2))]
+    [n : i64 (>int (arg 1))]
+    [rounds : i64 (>int (arg 2))]
     (begin
       (print (qs-bench n rounds))
       0)))

@@ -1,12 +1,12 @@
-(import "stdlib/sync.tl")
+(import stdlib.sync)
 (import "stdlib/string.tl")
 
 (define (main) : i64
-  (match (channel-string-create 1)
-    [(ChannelStringCreateErr _) 1]
-    [(ChannelStringCreateOk channel)
+  (match (sync.channel-string-create 1)
+    [(sync.ChannelStringCreateErr _) 1]
+    [(sync.ChannelStringCreateOk channel)
       (let
-        [message : String (string-append "not-" "transferable")]
-        (match (channel-string-send channel message)
-          [(ChannelStringSendOk) 42]
-          [(ChannelStringSendErr _) 2]))]))
+        [message : String (append "not-" "transferable")]
+        (match (sync.channel-string-send channel message)
+          [(sync.ChannelStringSendOk) 42]
+          [(sync.ChannelStringSendErr _) 2]))]))

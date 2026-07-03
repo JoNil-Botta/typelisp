@@ -48,6 +48,7 @@ unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_rejec
 unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|unbound name string-eq
 unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|unbound name string->int
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
+generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
@@ -84,8 +85,13 @@ byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
-manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena-rewind requires unsafe context
+manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported
+while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
+while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
+while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while
+while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
+while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
@@ -143,6 +149,8 @@ spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_r
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
 spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
 spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
+spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
+spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support uniform while
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String
@@ -172,6 +180,11 @@ struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match
 struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
+serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
+serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
+serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
+serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
+serialize_unsupported_tuple_root_reject|check-fail|tests/safety/serialize_unsupported_tuple_root_reject.tl|-|serialize: unsupported root type
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
@@ -189,7 +202,7 @@ thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_
 thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
 thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
-thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|tests/safety/thread_spawn_i64_shadowed_atomic_arena_lib.tl|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_borrowed_str_capture_reject|check-fail|tests/safety/thread_spawn_i64_borrowed_str_capture_reject.tl|-|lambda cannot capture immutable reference
@@ -202,10 +215,22 @@ thread_spawn_unrelated_dotted_spawn_ok|check-ok|tests/safety/thread_spawn_unrela
 thread_join_i64_double_reject|check-fail|tests/safety/thread_join_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_bool_string_capture_reject|check-fail|tests/safety/thread_spawn_bool_string_capture_reject.tl|-|thread_bool.spawn cannot capture `text` of type String
 thread_join_bool_double_reject|check-fail|tests/safety/thread_join_bool_double_reject.tl|-|use of moved value `worker`
-thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_capture_reject.tl|-|thread-spawn-string cannot capture `text` of type String
+thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_capture_reject.tl|-|thread.spawn-string cannot capture `text` of type String
 thread_join_string_double_reject|check-fail|tests/safety/thread_join_string_double_reject.tl|-|use of moved value `worker`
-thread_spawn_array_i64_capture_reject|check-fail|tests/safety/thread_spawn_array_i64_capture_reject.tl|-|thread-spawn-array-i64 cannot capture `items` of type (Array i64)
+thread_spawn_array_i64_capture_reject|check-fail|tests/safety/thread_spawn_array_i64_capture_reject.tl|-|thread.spawn-array-i64 cannot capture `items` of type (Array i64)
 thread_join_array_i64_double_reject|check-fail|tests/safety/thread_join_array_i64_double_reject.tl|-|use of moved value `worker`
-thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|thread-spawn-box-i64 cannot capture `cell` of type (Box i64)
+thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|thread.spawn-box-i64 cannot capture `cell` of type (Box i64)
 thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
+arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
+arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
+arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
+arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_atomic_destroy_after_channel_send_reject|check-fail|tests/safety/arena_atomic_destroy_after_channel_send_reject.tl|-|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
+arena_atomic_destroy_value_use_after_reject|check-fail|tests/safety/arena_atomic_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct arena owner
+arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct arena owner
+arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
+arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`

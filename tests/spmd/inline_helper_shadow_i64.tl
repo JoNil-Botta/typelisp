@@ -10,8 +10,8 @@
   (foreach
     ([i : i64 0 n])
     (let
-      [lane : i64 (array.array-ref xs i)]
-      (array.array-set! out i (bump-with-shadow lane)))))
+      [lane : i64 (array-ref xs i)]
+      (array-set! out i (bump-with-shadow lane)))))
 
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let
@@ -20,7 +20,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! sum (+ sum (array.array-ref xs i)))
+          (set! sum (+ sum (array-ref xs i)))
           (set! i (+ i 1))))
       sum)))
 
@@ -33,7 +33,7 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set! xs i (+ i 1))
+          (array-set! xs i (+ i 1))
           (set! i (+ i 1))))
       (fill-inline-shadow xs out n)
       (if (= (sum-array out n) 104)

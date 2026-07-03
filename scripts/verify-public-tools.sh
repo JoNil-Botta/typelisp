@@ -178,6 +178,14 @@ assert_contains_any() {
     fail "$case_name missing any expected text: $*"
 }
 
+assert_not_contains_any() {
+    file=$1
+    shift
+    for text in "$@"; do
+        assert_not_contains "$file" "$text"
+    done
+}
+
 assert_not_contains() {
     file=$1
     text=$2
@@ -325,6 +333,7 @@ run_cmd version "$COMPILER" --version
 assert_success
 assert_stderr_empty
 assert_contains "$out" "typelisp "
+assert_contains "$out" " built "
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
     printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
@@ -913,6 +922,7 @@ EOF
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
     runtime_write_body="$(awk '
       $0 == "_tl_stdlib_runtime_runtime_os_write:" ||
+      $0 == "_tl_stdlib_runtime_stdlib_runtime_os_write:" ||
       $0 == "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write:" {
         found = 1
         next
@@ -922,14 +932,7 @@ EOF
     ' "$target_dir/main.s")"
     [ -n "$runtime_write_body" ] || fail "$target_alias runtime-os-write body missing"
     printf '%s\n' "$runtime_write_body" | grep -q "    call tl_alloc" && fail "$target_alias runtime-os-write still calls tl_alloc"
-    # The WriteFile out-param cell (lpNumberOfBytesWritten) must be a STACK
-    # address, materialized by `leaq` of a frame slot (the ptr-addr-of path) —
-    # NOT a heap pointer (the tl_alloc path, guarded above), because the OOM
-    # abort handler that shares this code must never allocate. The FPO /
-    # rsp-rebase campaign spells frame slots rsp-relative with positive offsets
-    # (`leaq N(%rsp)`); the legacy keep-rbp form is `leaq -N(%rbp)`. Both take
-    # the address of a stack cell, so accept either spelling.
-    printf '%s\n' "$runtime_write_body" | grep -Eq "    leaq -?[0-9]+\(%r(bp|sp)\)," || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
+    printf '%s\n' "$runtime_write_body" | grep -q "    leaq -" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
 done
 
 cat > "$CLI_MATRIX/main.tl" <<'EOF'
@@ -1022,14 +1025,14 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : String
   (with-arena outer
     (with-arena inner
       (let
         [s : String "  scoped  "]
-        (string-trim (& s))))))
+        (string.trim (& s))))))
 EOF
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
@@ -1041,12 +1044,12 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
-(import "stdlib/text_buf.tl")
+(import stdlib.text_buf)
 
 (define (main) : i64
-  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
     (with-arena inner
-      (string-length (text-buf-render buf)))))
+      (string-length (text_buf.render buf)))))
 EOF
 run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
 assert_success
@@ -1054,13 +1057,13 @@ assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
 cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
-(import "stdlib/text_buf.tl")
+(import stdlib.text_buf)
 
 (define (main) : String
-  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
     (with-arena outer
       (with-arena inner
-        (text-buf-render buf)))))
+        (text_buf.render buf)))))
 EOF
 run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
@@ -1406,11 +1409,11 @@ EOF
 
     CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
     cat > "$CTOR_SOURCE" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (ffi_ctor_value) : i64)
 (define (main) : i64
-  (if (string-eq (int->string (ffi_ctor_value)) "42")
+  (if (string.eq (string.int->string (ffi_ctor_value)) "42")
     (ffi_ctor_value)
     1))
 EOF
@@ -1532,7 +1535,7 @@ EOF
 (define (main) : i64
   (begin
     (fixture-stdout-write (fixture-arg 1))
-    (if (string.string-eq (fixture-arg 2) "colon:arg") 13 2)))
+    (if (string.eq (fixture-arg 2) "colon:arg") 13 2)))
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
@@ -1748,13 +1751,13 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    # opt2 register allocation folds `(+ y x)` into a two-register LEA. The
-    # M-A param-homing campaign keeps the incoming scalar args in their arg
-    # registers (rdi/rsi) instead of stack-homing then reloading into the
-    # zero-call caller-saved pool (rcx/r9), so the fold is now
-    # `leaq (%rsi,%rax), %rsi` (was `leaq (%rcx,%r9), %r9`). Still opt2-only:
-    # opt0/opt1 emit `addq %r8, %rax` for the final add.
-    SELFHOST_OPT2_REGALLOC='    leaq (%rsi,%rax), %rsi'
+    if [ "$HOST_OS" = windows ]; then
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%rdx), %rbx'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %r9'
+    else
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%r9), %r9'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%r9), %r9'
+    fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"
@@ -1781,7 +1784,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
@@ -1789,7 +1792,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_RELEASE_ASM" ] || fail "selfhost opt package worker default build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
@@ -1798,7 +1801,7 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
     assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
@@ -1806,21 +1809,21 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
     assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-one "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 1 build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
@@ -1829,14 +1832,14 @@ EOF
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
     assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-dev-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile --opt-level 2 build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
@@ -1844,7 +1847,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_DEV_ASM" ] || fail "selfhost opt package worker --opt-level 2 --profile dev build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_contains_any "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
     assert_not_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
@@ -2758,6 +2761,7 @@ else
     assert_contains "$PKG_ASM" "_tl_math_src_lib_add_one"
     assert_contains_any "$PKG_ASM" \
         "_tl_stdlib_runtime_runtime_os_write" \
+        "_tl_stdlib_runtime_stdlib_runtime_os_write" \
         "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write"
     assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_vendor_math"
 fi

@@ -8,15 +8,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! out i -99)
+        (array-set! out i -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
-      (array.array-set! out i i)
-      (array.array-set! out i (+ i 1)))))
+      (array-set! out i i)
+      (array-set! out i (+ i 1)))))
 
 (define (fill-scalar [out : (Array i64)] [n : i64]) : unit
   (let
@@ -24,8 +24,8 @@
     (while (< i n)
       (begin
         (if (< i 6)
-          (array.array-set! out i i)
-          (array.array-set! out i (+ i 1)))
+          (array-set! out i i)
+          (array-set! out i (+ i 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -35,7 +35,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

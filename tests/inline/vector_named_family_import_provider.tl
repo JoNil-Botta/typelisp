@@ -4,7 +4,7 @@
 (defstruct ImportedVecFamilyPoint
   (x i64))
 
-(vf.vector-family
+(vf.family
   ImportedVecFamilyPoint
   ImportedVecFamilyPointVec
   imported-vec-family-point-vec)
@@ -13,7 +13,7 @@
   (uri String)
   (points ImportedVecFamilyPointVec))
 
-(vf.vector-family
+(vf.family
   ImportedVecFamilyDoc
   ImportedVecFamilyDocVec
   imported-vec-family-doc-vec)

@@ -1,8 +1,8 @@
 ;: SPEC byte view contract: out-of-range byte view reads trap.
-(import "stdlib/byte_buf.tl")
+(import stdlib.byte_buf)
 
 (define (main) : i64
   (let
-    [buf : ByteBuf (byte-buf-from-string "ab")]
-    [view : (& buf bytes) (byte-buf-as-bytes (& buf))]
-    (cast (bytes-ref view 2) : i64)))
+    [buf : byte_buf.ByteBuf (byte_buf.from-string "ab")]
+    [view : (& buf bytes) (byte_buf.as-bytes (& buf))]
+    (cast (byte_buf.bytes-ref view 2) : i64)))

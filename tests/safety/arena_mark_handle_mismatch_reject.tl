@@ -1,5 +1,5 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
 (define (main) : unit
   (unsafe
-    (arena-rewind (arena-current))))
+    (arena.rewind (arena.current))))

@@ -7,11 +7,16 @@
   (Int i64)
   (Float f64)
   (Text String)
-  (Object (Box FieldList)))
+  (Object (Box FieldList))
+  (Sequence (Box ValueList)))
 
 (defenum FieldList
   (FieldNil)
   (FieldCons String Value (Box FieldList)))
+
+(defenum ValueList
+  (ValueNil)
+  (ValueCons Value (Box ValueList)))
 
 (defenum Lookup
   (Found Value)
@@ -21,9 +26,24 @@
   (match fields
     [FieldNil (Missing)]
     [(FieldCons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (Found value)
         (field-list-get (box-get rest) name))]))
+
+(define (value-list-count [items : ValueList]) : i64
+  (match items
+    [(ValueNil) 0]
+    [(ValueCons _ rest) (+ 1 (value-list-count (box-get rest)))]))
+
+(define (value-list-get [items : ValueList] [index : i64]) : Lookup
+  (if (< index 0)
+    (Missing)
+    (match items
+      [(ValueNil) (Missing)]
+      [(ValueCons head rest)
+        (if (= index 0)
+          (Found head)
+          (value-list-get (box-get rest) (- index 1)))])))
 
 (defmacro (encode-bool [value : bool]) : Value
   `(serialize_toy_format.Bool ,value))
@@ -79,6 +99,33 @@
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
     [_ (return (,err-ctor "toy format: expected object"))]))
+
+(defmacro (sequence-empty) : ValueList
+  `ValueNil)
+
+(defmacro (sequence-element [_index : Expr] [value : Expr] [rest : Expr]) : ValueList
+  `(serialize_toy_format.ValueCons ,value (box ,rest)))
+
+(defmacro (sequence-finish [items : Expr]) : Value
+  `(serialize_toy_format.Sequence (box ,items)))
+
+(defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
+  `(match ,value
+    [(serialize_toy_format.Sequence items)
+      (serialize_toy_format.value-list-count (box-get items))]
+    [_ (return (,err-ctor "toy format: expected sequence"))]))
+
+(defmacro (sequence-element-value
+  [value : Expr]
+  [index : Expr]
+  [err-ctor : Expr]) : Expr
+  `(match ,value
+    [(serialize_toy_format.Sequence items)
+      (match (serialize_toy_format.value-list-get (box-get items) ,index)
+        [(serialize_toy_format.Found found) found]
+        [(serialize_toy_format.Missing)
+          (return (,err-ctor "toy format: missing sequence element"))])]
+    [_ (return (,err-ctor "toy format: expected sequence"))]))
 
 (defmacro (extra-decls [_T : type]) : Decls
   `(begin))

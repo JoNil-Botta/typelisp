@@ -9,10 +9,10 @@
     (begin
       (foreach
         ([lane : i64 0 n])
-        (array.array-set! out lane (+ (* (program-count) 10) (program-index))))
+        (array-set! out lane (+ (* (program-count) 10) (program-index))))
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref out i)))
+          (set! acc (+ acc (array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 

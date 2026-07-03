@@ -1,6 +1,5 @@
 ;; compile_profile_macro_detail.tl - Fixture for compile-profile macro rows.
 (import "stdlib/string.tl")
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 (import "stdlib/str_cat.tl" module stdlib.str_cat as sc)
 
 (define (profile-macro-detail-short-cat) : String
@@ -10,14 +9,14 @@
   (sc.str-cat "a" "b" "c" "d" "e" "f"))
 
 (define (profile-macro-detail-bool [flag : bool]) : bool
-  (core.and flag (core.or false true) true))
+  (and flag (or false true) true))
 
 (define (main) : i64
-  (if (core.cond
+  (if (cond
     [(profile-macro-detail-bool true)
-      (string-eq (profile-macro-detail-short-cat) "ab")]
+      (eq (profile-macro-detail-short-cat) "ab")]
     [else false])
-    (if (string-eq (profile-macro-detail-packed-cat) "abcdef")
+    (if (eq (profile-macro-detail-packed-cat) "abcdef")
       42
       1)
     1))

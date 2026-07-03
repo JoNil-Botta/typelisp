@@ -14,12 +14,12 @@
 (defenum DocSiteModule
   (Module String String))
 
-(vector-family DocSiteModule DocSiteModuleList doc-site-module-list)
+(family DocSiteModule DocSiteModuleList doc-site-module-list)
 
 (defenum DocSiteGuidePage
   (GuidePage String String String String))
 
-(vector-family DocSiteGuidePage DocSiteGuidePageList doc-site-guide-page-list)
+(family DocSiteGuidePage DocSiteGuidePageList doc-site-guide-page-list)
 
 (defenum DocSiteApiTree
   (ApiTree String String DocSiteModuleList))
@@ -28,7 +28,7 @@
   (Guide String DocSiteGuidePageList)
   (ApiTree DocSiteApiTree))
 
-(vector-family DocSiteSection DocSiteSectionList doc-site-section-list)
+(family DocSiteSection DocSiteSectionList doc-site-section-list)
 
 (define doc-site-status-ok : i64
   0)
@@ -226,7 +226,7 @@
     (begin
       (while (and (< i n) (not found))
         (begin
-          (if (string-eq
+          (if (eq
             output
             (doc-site-module-output (doc-site-module-list-ref modules i)))
             (set! found true)
@@ -236,11 +236,11 @@
 
 (define (doc-site-output-reserved? [output : String]) : bool
   (or
-    (string-eq output "index.html")
-    (string-eq output "readme.html")
-    (string-eq output "spec.html")
-    (string-eq output "stdlib.html")
-    (string-eq output "typelisp-docs.css")))
+    (eq output "index.html")
+    (eq output "readme.html")
+    (eq output "spec.html")
+    (eq output "stdlib.html")
+    (eq output "typelisp-docs.css")))
 
 (define (doc-site-output-list-has-duplicate? [modules : DocSiteModuleList]) : bool
   (let
@@ -325,7 +325,7 @@
         (let
           [guide : DocSiteGuidePage (doc-site-guide-page-list-ref guides i)]
           (begin
-            (if (string-eq target (doc-site-guide-source guide))
+            (if (eq target (doc-site-guide-source guide))
               (set! output (doc-site-guide-output guide))
               unit)
             (set! i (+ i 1)))))
@@ -343,7 +343,7 @@
         (let
           [module : DocSiteModule (doc-site-module-list-ref modules i)]
           (begin
-            (if (string-eq target (doc-site-module-source module))
+            (if (eq target (doc-site-module-source module))
               (set! output (doc-site-module-output module))
               unit)
             (set! i (+ i 1)))))
@@ -762,7 +762,7 @@ pre {
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref source i))
+          (if (path-separator? (string-ref source i))
             (begin
               (set! start (+ i 1))
               (set! end n))
@@ -774,7 +774,7 @@ pre {
       (substring source start (- end start)))))
 
 (define (doc-site-sidebar-link-open [href : String] [current : String]) : String
-  (if (string-eq href current)
+  (if (eq href current)
     (str-cat
       "<a class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\""
       (doc-html-escape href)
@@ -788,7 +788,7 @@ pre {
   [href : String]
   [label : String]
   [current : String]) : String
-  (if (string-eq href current)
+  (if (eq href current)
     (str-cat
       "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\""
       (doc-html-escape href)
@@ -990,21 +990,21 @@ pre {
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (doc-extract-source (read-file source))
-      (panic (string-append "doc-site: missing input module: " source)))))
+      (panic (append "doc-site: missing input module: " source)))))
 
 (define (doc-site-read-markdown [source : String]) : String
   (let
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (read-file source)
-      (panic (string-append "doc-site: missing language reference: " source)))))
+      (panic (append "doc-site: missing language reference: " source)))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
     [status : i64 (write-file-status path contents)]
     (if (= status doc-site-status-ok)
       unit
-      (doc-site-panic-unit (string-append "doc-site: could not write: " path)))))
+      (doc-site-panic-unit (append "doc-site: could not write: " path)))))
 
 (define (doc-site-ensure-dir [path : String]) : unit
   (if (= (string-length path) 0)
@@ -1013,10 +1013,10 @@ pre {
       [(OkIoUnit) unit]
       [(ErrIoUnit _)
         (doc-site-panic-unit
-          (string-append "doc-site: could not create output directory: " path))])))
+          (append "doc-site: could not create output directory: " path))])))
 
 (define (doc-site-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (path-join (& left) (& right)))
 
 (define (doc-site-write-module-page
   [output-dir : String]

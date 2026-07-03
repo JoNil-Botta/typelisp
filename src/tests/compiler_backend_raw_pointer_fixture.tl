@@ -6,11 +6,12 @@
 (import "../compiler_backend_tests.tl")
 
 (define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : ResultCompilerBackend
-  (if (string.string-eq target-name "linux-x86_64")
-    (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
-    (if (string.string-eq target-name "windows-x86_64")
-      (compiler-backend-raw-pointer-fixture-emit (BackendTargetWindows))
-      (ErrCompilerBackend
+  (if (string.eq target-name "linux-x86_64")
+    (compiler-backend-raw-pointer-fixture-emit (CompilerBackendTarget.Linux))
+    (if (string.eq target-name "windows-x86_64")
+      (compiler-backend-raw-pointer-fixture-emit
+        (CompilerBackendTarget.Windows))
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -28,11 +29,11 @@
           "linux-x86_64"
           (io.arg 2))]
       (match (compiler-backend-raw-pointer-fixture-for-name target-name)
-        [(OkCompilerBackend asm)
+        [(ResultCompilerBackend.Ok asm)
           (begin
             (io.write-file (io.arg 1) asm)
             0)]
-        [(ErrCompilerBackend diag)
+        [(ResultCompilerBackend.Err diag)
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)]))))

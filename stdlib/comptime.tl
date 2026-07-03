@@ -2,15 +2,16 @@
 ;#
 ;# This module owns the stdlib-side declarations for the well-known comptime
 ;# types described by SPEC 3.7.2.2. The current compiler still stores macro
-;# syntax internally as `AstTyExpr` / `CtfeExpr`; it verifies these declarations
+;# syntax internally as `AstType.Expr` / `CompilerCtfeValue.Expr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation while
 ;# the CTFE value migration lands.
 ;#
-;# CTFE still intercepts constructor, sequence, and reflection helper calls
-;# because it cannot yet interpret arbitrary stdlib function calls and several
-;# constructors attach compiler provenance. Simple `Expr`/`ExprClause`
-;# inspectors below are ordinary source bodies so macro code can migrate toward
-;# public pattern matching without growing the bridge surface.
+;# CTFE still intercepts constructors, reflection helpers, and sequence
+;# operations that must rebuild provenance-carrying syntax, because it cannot yet
+;# interpret arbitrary stdlib function calls and several constructors attach
+;# compiler provenance. Simple `Expr`/`ExprClause` inspectors and dense sequence
+;# accessors below are ordinary source bodies so macro code can migrate toward
+;# public field and array access without growing the bridge surface.
 (module stdlib.comptime)
 
 ;# `feature-plain-comptime-well-known` is the end-state source surface. The
@@ -126,6 +127,68 @@
     (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
     (defstruct ExprBindingClauseList
       (items (Array ExprBindingClause))
+      (len i64))))
+
+;: Match pattern syntax value built during macro CTFE.
+(cfg
+  feature-plain-comptime-well-known
+  (defenum Pattern
+    (PatternWildcard)
+    (PatternBinding String)
+    (PatternVariant String PatternList)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known Pattern "v0")
+    (defenum Pattern
+      (PatternWildcard)
+      (PatternBinding String)
+      (PatternVariant String PatternList))))
+
+;: Dense ordered sequence of match pattern syntax values.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct PatternList
+    (items (Array Pattern))
+    (len i64)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known PatternList "v0")
+    (defstruct PatternList
+      (items (Array Pattern))
+      (len i64))))
+
+;: Generated match arm made from a pattern and result expression.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct MatchArm
+    (pattern Pattern)
+    (body Expr)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known MatchArm "v0")
+    (defstruct MatchArm
+      (pattern Pattern)
+      (body Expr))))
+
+;: Dense ordered sequence of generated match arms.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct MatchArmList
+    (items (Array MatchArm))
+    (len i64)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known MatchArmList "v0")
+    (defstruct MatchArmList
+      (items (Array MatchArm))
       (len i64))))
 
 ;: Dense ordered sequence of reflected type descriptors.
@@ -308,6 +371,10 @@
 (define (expr-struct-get [target : Expr] [field : String]) : Expr
   (expr-struct-get target field))
 
+;: Build a tuple element access expression during macro CTFE.
+(define (expr-tuple-ref [target : Expr] [index : i64]) : Expr
+  (expr-tuple-ref target index))
+
 ;: Build a struct field assignment expression during macro CTFE.
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))
@@ -324,8 +391,13 @@
 (define (int->string [_value : i64]) : String
   "")
 
-;: Abort macro CTFE with a source-located diagnostic.
+;: Compiler-recognized compatibility entry for macro CTFE diagnostics.
+;; lint-allow: redundant-function-name
 (define (comptime-error [message : String]) : never
+  (comptime-error message))
+
+;: Abort macro CTFE with a source-located diagnostic.
+(define (error [message : String]) : never
   (comptime-error message))
 
 ;: Mark an expression for unquote-splicing during macro CTFE.
@@ -336,9 +408,49 @@
 (define (expr-if [cond : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
   (expr-if cond then-expr else-expr))
 
+;: Build a wildcard match pattern during macro CTFE.
+(define (pattern-wildcard) : Pattern
+  (pattern-wildcard))
+
+;: Build a match pattern that binds the scrutinee or payload to `name`.
+(define (pattern-binding [name : String]) : Pattern
+  (pattern-binding name))
+
+;: Build an enum variant pattern by name and payload patterns.
+(define (pattern-variant [name : String] [payloads : PatternList]) : Pattern
+  (pattern-variant name payloads))
+
+;: Build an empty pattern list.
+(define (pattern-list-empty) : PatternList
+  (pattern-list-empty))
+
+;: Prepend a pattern to a pattern list.
+(define (pattern-list-cons [head : Pattern] [tail : PatternList]) : PatternList
+  (pattern-list-cons head tail))
+
+;: Build a match arm from a generated pattern and result expression.
+(define (match-arm [pattern : Pattern] [body : Expr]) : MatchArm
+  (match-arm pattern body))
+
+;: Build an empty match arm list.
+(define (match-arm-list-empty) : MatchArmList
+  (match-arm-list-empty))
+
+;: Prepend a match arm to a match arm list.
+(define (match-arm-list-cons [head : MatchArm] [tail : MatchArmList]) : MatchArmList
+  (match-arm-list-cons head tail))
+
+;: Build a match expression from a scrutinee expression and generated arms.
+(define (expr-match [scrutinee : Expr] [arms : MatchArmList]) : Expr
+  (expr-match scrutinee arms))
+
 ;: Return the produced type of a captured expression during macro CTFE.
 (define (expr-type [value : Expr]) : Expr
   value)
+
+;: Return the public value-level reflection descriptor for a type operand.
+(define (type-info [ty : Expr]) : TypeInfo
+  (type-info ty))
 
 ;: Return the canonical identity string for a module strategy operand.
 (define (module-name [module : String]) : String
@@ -390,23 +502,31 @@
 
 ;: Return true when an expression list has no items.
 (define (expr-list-empty? [items : ExprList]) : bool
-  (expr-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of items in an expression list.
 (define (expr-list-length [items : ExprList]) : i64
-  (expr-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty expression list.
 (define (expr-list-head [items : ExprList]) : Expr
-  (expr-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error "expr-list-head expects non-empty ExprList")))
 
 ;: Return all but the first item from a non-empty expression list.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-list-tail [items : ExprList]) : ExprList
   (expr-list-tail items))
 
 ;: Return an expression list item by index.
 (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
-  (expr-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
@@ -420,57 +540,72 @@
 
 ;: Return true when a clause list has no items.
 (define (expr-clause-list-empty? [items : ExprClauseList]) : bool
-  (expr-clause-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of clauses in a clause list.
 (define (expr-clause-list-length [items : ExprClauseList]) : i64
-  (expr-clause-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty clause list.
 (define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
-  (expr-clause-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error "expr-clause-list-head expects non-empty ExprClauseList")))
 
 ;: Return all but the first item from a non-empty clause list.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
   (expr-clause-list-tail items))
 
 ;: Return a clause list item by index.
 (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
-  (expr-clause-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-clause-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-clause-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert clause first expressions into an expression list.
+;: This remains intrinsic because conversion rebuilds bracket-clause syntax
+;: expressions with compiler-owned provenance.
 (define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
   (expr-clause-list->expr-list items))
 
 ;: Return the user-facing binding name from a binding clause.
 (define (expr-binding-clause-name [clause : ExprBindingClause]) : String
-  (expr-binding-clause-name clause))
+  (struct-get clause name))
 
 ;: Return true when a binding clause includes an explicit type annotation.
 (define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
-  (expr-binding-clause-has-type? clause))
+  (struct-get clause has-type))
 
 ;: Return the explicit type annotation syntax from a typed binding clause.
 (define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
-  (expr-binding-clause-type clause))
+  (struct-get clause ty))
 
 ;: Return the initializer expression from a binding clause.
 (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
-  (expr-binding-clause-init clause))
+  (struct-get clause init))
 
 ;: Return true when a binding-clause list has no items.
 (define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
-  (expr-binding-clause-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
-  (expr-binding-clause-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty binding-clause list.
 (define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
-  (expr-binding-clause-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error
+      "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")))
 
 ;: Return all but the first item from a non-empty binding-clause list.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
   (expr-binding-clause-list-tail items))
 
@@ -478,8 +613,14 @@
 (define (expr-binding-clause-list-nth
   [items : ExprBindingClauseList]
   [index : i64]) : ExprBindingClause
-  (expr-binding-clause-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-binding-clause-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-binding-clause-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
+;: This remains intrinsic because conversion rebuilds bracket-clause syntax
+;: expressions with compiler-owned provenance.
 (define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList
   (expr-binding-clause-list->expr-list items))

@@ -2,83 +2,82 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
-(import stdlib.vector)
+(import "../string_vec_core.tl" module string_vec_core as svec)
 (import "../compiler_driver_core.tl")
+(import sym_i64_env)
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
-(defstruct StringVec (len i64) (first String))
-(define (string-vec-new) : StringVec
-  (StringVec 0 \"\"))
-(define (string-vec-push [v : StringVec] [value : String]) : StringVec
-  (StringVec (+ (struct-get v len) 1) value))
-(define (string-vec-get [v : StringVec] [index : i64] [fallback : String]) : String
-  (if (< index (struct-get v len))
-    (struct-get v first)
-    fallback))
+(define (local-vector-string) : String \"a\")
 (module main)
 (import stdlib.vector)
 (define (main) : i64
-  (__tl_string_length
-    (vector.string-vec-get
-      (vector.string-vec-push (vector.string-vec-new) \"a\")
-      0
-      \"\")))")
+  (__tl_string_length (vector.local-vector-string)))")
 
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-smoke-imported-local-vector-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) root)]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) root)
+          items))]
     (begin
       (compiler-load-test-mkdir root)
       (io.write-file
         dep
         "(module stdlib.maybe_string)
-(defenum MaybeString (NoString) (SomeString String))
+(defenum MaybeString (No) (Some String))
 (define (maybe-string-single [value : String]) : MaybeString
-  (SomeString value))")
+  (MaybeString.Some value))")
       (io.write-file
         entry
         "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
     (match (maybe_string.maybe-string-single \"a\")
-      [(maybe_string.NoString) \"\"]
-      [(maybe_string.SomeString head) head])))")
+      [(maybe_string.MaybeString.No) \"\"]
+      [(maybe_string.MaybeString.Some head) head])))")
       (match (compiler-load-file-with-paths-and-roots
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         roots)
         [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (lower-compiler-program-with-decl-paths
             entry
             (ast-program decls)
             paths)
-            [(OkCompilerLower _ _) true]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Ok _ _) true]
+            [(ResultCompilerLower.Err diag)
               (panic (compiler-diagnostic-message (box-get diag)))])]
         [(ResultCompilerLoadWithPaths.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
-      (BackendTargetLinux)
+      (CompilerBackendTarget.Linux)
       roots
-      (BackendModeScalar)
-      (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
+      (CompilerBackendMode.Scalar)
+      (compiler-driver-target-cfgs
+        (CompilerBackendTarget.Linux)
+        (compiler-cfg-empty)))
       [(ResultCompilerDriverLowered.Ok _ _ _) true]
       [(ResultCompilerDriverLowered.Err _) false])))
 
@@ -87,6 +86,7 @@
   `(begin
     (module generated.lower_vector_user_no_main)
     (import stdlib.vector)
+(import (vector.vector String) as svec)
     (defstruct T
       (value i64))
     (import (vector T) as vec)
@@ -107,24 +107,28 @@
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
     [path : String "target/lower_module_macro_vector_no_main.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (io.write-file
         path
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         roots
         0
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriver.Ok _) true]
         [(ResultCompilerDriver.Err diag)
@@ -133,26 +137,30 @@
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
     [path : String "target/lower_direct_no_main_symbols.tl"]
-    [roots : vector.StringVec
-      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
     (begin
       (io.write-file path "(define (no-main-direct-helper) : i64 7)")
       (lower-no-main-entry-prune-set! true)
       (compiler-driver-reset-file-state!)
       (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
         path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         true
         roots
         0
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriverBuffer.Ok buf)
           (let
-            [asm : String (text_buf.text-buf-render buf)]
+            [asm : String (text_buf.render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
-            (string.string-contains (& asm) (& needle)))]
+            (string.contains (& asm) (& needle)))]
         [(ResultCompilerDriverBuffer.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
@@ -180,14 +188,14 @@
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parse-ast-source (compiler-lower-module-entry-main-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
-        AstDeclPathNil)
-        [(OkCompilerLower lowered _)
+        (ast-decl-path-list-new))
+        [(ResultCompilerLower.Ok lowered _)
           (match lowered
-            [(IrProgram _ functions _)
+            [(CompilerIrProgram.Program _ functions _)
               (begin
                 (unless
                   (lower-test-function-defined? functions "main")
@@ -220,9 +228,9 @@
                       (if (= bare-count 1)
                         (panic "lower: module entry main uses bare helper")
                         (panic "lower: module entry main helper call missing"))))))])]
-        [(ErrCompilerLower diag)
+        [(ResultCompilerLower.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))])]
-    [(ErrAstProgram _) (panic "lower: module entry main parse failed")]))
+    [(ResultAstProgram.Err _) (panic "lower: module entry main parse failed")]))
 
 (define (compiler-lower-smoke-self-test) : unit
   (begin
@@ -256,7 +264,7 @@
       (compiler-lower-error-ok?
         "(import stdlib.comptime)
 (define (main) : i64
-  (comptime.comptime-error \"runtime forbidden\"))"
+  (comptime.error \"runtime forbidden\"))"
         "lower: comptime-error is compile-time only")
       (panic "lower: comptime-error runtime diagnostic smoke mismatch"))
     (unless

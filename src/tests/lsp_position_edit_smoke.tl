@@ -17,12 +17,8 @@
     (and
       (= foo-start 0)
       (= bar-start 23)
-      (string.string-eq
-        (string.substring text foo-start 22)
-        "(define (foo) : i64 1)")
-      (string.string-eq
-        (string.substring text bar-start 22)
-        "(define (bar) : i64 2)"))))
+      (string.eq (string.substring text foo-start 22) "(define (foo) : i64 1)")
+      (string.eq (string.substring text bar-start 22) "(define (bar) : i64 2)"))))
 
 (define (lsp-find-form-end-at-offset-ok?) : bool
   (= (lsp-find-form-end-at-offset "(define (foo) : i64 1)" 0) 22))
@@ -50,17 +46,17 @@
     [text : String "(define (foo) : i64 (+ 1 2))"]
     [form : String (lsp-read-form-at-position text 0 24 0)]
     ; cursor on "(+ 1 2)"
-    (string.string-eq form "(+ 1 2)")))
+    (string.eq form "(+ 1 2)")))
 
 (define (lsp-read-form-outer-ok?) : bool
   (let
     [text : String "(define (foo) : i64 (+ 1 2))"]
     [form : String (lsp-read-form-at-position text 0 24 1)]
     ; outer=1
-    (string.string-eq form "(define (foo) : i64 (+ 1 2))")))
+    (string.eq form "(define (foo) : i64 (+ 1 2))")))
 
 (define (lsp-read-form-missing-ok?) : bool
-  (string.string-eq (lsp-read-form-at-position "   " 0 1 0) ""))
+  (string.eq (lsp-read-form-at-position "   " 0 1 0) ""))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-is-whitespace
@@ -77,17 +73,13 @@
 ;; lsp-extract-define-name
 ;; --------------------------------------------------------------------------
 (define (lsp-extract-define-name-fun-ok?) : bool
-  (string.string-eq
-    (lsp-extract-define-name "(define (foo (x i64)) : i64 1)")
-    "foo"))
+  (string.eq (lsp-extract-define-name "(define (foo (x i64)) : i64 1)") "foo"))
 
 (define (lsp-extract-define-name-var-ok?) : bool
-  (string.string-eq
-    (lsp-extract-define-name "(define answer : i64 42)")
-    "answer"))
+  (string.eq (lsp-extract-define-name "(define answer : i64 42)") "answer"))
 
 (define (lsp-extract-define-name-nondefine-ok?) : bool
-  (string.string-eq (lsp-extract-define-name "(let [x : i64 1] x)") ""))
+  (string.eq (lsp-extract-define-name "(let [x : i64 1] x)") ""))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-find-and-extract-name
@@ -96,8 +88,8 @@
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
     (and
-      (string.string-eq (lsp-find-and-extract-name text 0 5) "foo")
-      (string.string-eq (lsp-find-and-extract-name text 1 5) "bar"))))
+      (string.eq (lsp-find-and-extract-name text 0 5) "foo")
+      (string.eq (lsp-find-and-extract-name text 1 5) "bar"))))
 
 ;; Test structuralMove destination helper: move foo after baz
 (define (lsp-structural-move-destination-ok?) : bool
@@ -119,7 +111,7 @@
             80)]
         [expected : String
           "(define (bar) : i64\n  2)\n\n(define (baz) : i64\n  3)\n\n(define (foo) : i64\n  1)"]
-        (string.string-eq moved expected))
+        (string.eq moved expected))
       false)))
 
 (define (main) : i64

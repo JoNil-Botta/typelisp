@@ -1,26 +1,24 @@
 ; maybe_result.tl - Monomorphic Maybe/Result convention witness for #228.
 (import "stdlib/string.tl")
-(import "stdlib/result.tl")
+(import stdlib.result)
 (import (result i64 String) as result_i64_string)
+(import stdlib.option)
+(import (option i64) as option_i64)
 
-(defenum MaybeI64
-  (NoneI64)
-  (SomeI64 i64))
-
-(define (find-answer [name : String]) : MaybeI64
-  (if (string-eq name "answer")
-    (SomeI64 42)
-    NoneI64))
+(define (find-answer [name : String]) : option_i64.Option
+  (if (eq name "answer")
+    (option_i64.Some 42)
+    option_i64.None))
 
 (define (read-small [text : String]) : result_i64_string.Result
-  (if (string-eq text "7")
+  (if (eq text "7")
     (result_i64_string.ok 7)
-    (result_i64_string.err (string-append "bad:" text))))
+    (result_i64_string.err (append "bad:" text))))
 
-(define (maybe-score [m : MaybeI64] [fallback : i64]) : i64
+(define (maybe-score [m : option_i64.Option] [fallback : i64]) : i64
   (match m
-    [(SomeI64 value) value]
-    [(NoneI64) fallback]))
+    [(option_i64.Some value) value]
+    [(option_i64.None) fallback]))
 
 (define (result-score [r : result_i64_string.Result]) : i64
   (match r

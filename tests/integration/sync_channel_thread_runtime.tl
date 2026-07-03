@@ -1,7 +1,7 @@
 (import stdlib.array)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 (define sync-integration-count : i64
   64)
@@ -28,7 +28,7 @@
     (begin
       (while (< i (channel_i64.raw-field-count))
         (begin
-          (array.array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
+          (array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
           (set! i (+ i 1))))
       (channel_i64.load-raw raw 0))))
 
@@ -89,8 +89,8 @@
   [count : i64]) : unit
   (begin
     (channel_i64.store-raw! channel ctx 0)
-    (array.array-set! ctx (channel_i64.raw-field-count) base)
-    (array.array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
+    (array-set! ctx (channel_i64.raw-field-count) base)
+    (array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
 
 (define (sync-integration-receive-sum
   [channel : channel_i64.Channel]
@@ -120,8 +120,8 @@
   (let
     [received : i64
       (sync-integration-receive-sum channel (* sync-integration-count 2))]
-    [a-code : i64 (sync-integration-join-code (thread-join a))]
-    [b-code : i64 (sync-integration-join-code (thread-join b))]
+    [a-code : i64 (sync-integration-join-code (thread.join a))]
+    [b-code : i64 (sync-integration-join-code (thread.join b))]
     [a-expected : i64 (sync-integration-sum 100 sync-integration-count)]
     [b-expected : i64 (sync-integration-sum 1000 sync-integration-count)]
     [closed : bool (channel_i64.close channel)]
@@ -141,12 +141,12 @@
     (begin
       (sync-integration-pack-context! ctx-a channel 100 sync-integration-count)
       (sync-integration-pack-context! ctx-b channel 1000 sync-integration-count)
-      (match (thread-spawn
+      (match (thread.spawn
         sync-integration-producer
         (sync-integration-array-i64-addr ctx-a))
         [(ThreadSpawnErr _) 6]
         [(ThreadSpawnOk a)
-          (match (thread-spawn
+          (match (thread.spawn
             sync-integration-producer
             (sync-integration-array-i64-addr ctx-b))
             [(ThreadSpawnErr _) 7]

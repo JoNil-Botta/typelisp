@@ -17,7 +17,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (string->int (arg 1))]
+    [n : i64 (>int (arg 1))]
     (begin
       (print (bench n))
       0)))

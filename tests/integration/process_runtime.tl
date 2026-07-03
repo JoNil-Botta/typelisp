@@ -1,11 +1,11 @@
 (import "stdlib/io.tl")
 (import "stdlib/env.tl")
-(import "stdlib/process.tl")
-(import "stdlib/process_borrowed.tl")
+(import stdlib.process)
+(import stdlib.process_borrowed)
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
-(import "stdlib/vector.tl")
-(import "stdlib/string.tl")
+(import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -14,214 +14,228 @@
   (assert-string-eq (& actual) (& expected) message))
 
 (define (assert-process-output-result
-  [result : ResultProcessOutput]
+  [result : process.ResultProcessOutput]
   [expected-status : i64]
   [expected-stdout : String]
   [expected-stderr : String]) : unit
   (match result
-    [(OkProcessOutput output)
+    [(process.OkProcessOutput output)
       (begin
         (assert-i64-eq
-          (process-output-status output)
+          (process.output-status output)
           expected-status
           "process output status")
         (assert-owned-string-eq
-          (process-output-stdout output)
+          (process.output-stdout output)
           expected-stdout
           "process output stdout")
         (assert-owned-string-eq
-          (process-output-stderr output)
+          (process.output-stderr output)
           expected-stderr
           "process output stderr"))]
-    [(ErrProcessOutput error) (panic (process-error-message error))]))
+    [(process.ErrProcessOutput error) (panic (process.error-message error))]))
 
-(define (assert-process-spawn-failed [result : ResultProcessOutput]) : unit
+(define (assert-process-spawn-failed [result : process.ResultProcessOutput]) : unit
   (match result
-    [(ErrProcessOutput error)
+    [(process.ErrProcessOutput error)
       (begin
         (assert-true
-          (process-error-spawn-failed? error)
+          (process.error-spawn-failed? error)
           "process missing executable spawn failed")
         (assert-owned-string-eq
-          (process-error-message error)
+          (process.error-message error)
           "process: spawn failed"
           "process spawn failed message"))]
-    [(OkProcessOutput _) (panic "process missing executable should fail")]))
+    [(process.OkProcessOutput _)
+      (panic "process missing executable should fail")]))
 
-(define (assert-process-child-result [result : ResultProcessChild]) : ProcessChild
+(define (assert-process-child-result [result : process.ResultProcessChild]) : process.ProcessChild
   (match result
-    [(OkProcessChild child) child]
-    [(ErrProcessChild error) (panic (process-error-message error))]))
+    [(process.OkProcessChild child) child]
+    [(process.ErrProcessChild error) (panic (process.error-message error))]))
 
-(define (assert-process-child-spawn-failed [result : ResultProcessChild]) : unit
+(define (assert-process-child-spawn-failed
+  [result : process.ResultProcessChild]) : unit
   (match result
-    [(ErrProcessChild error)
+    [(process.ErrProcessChild error)
       (begin
         (assert-true
-          (process-error-spawn-failed? error)
+          (process.error-spawn-failed? error)
           "process async missing executable spawn failed")
         (assert-owned-string-eq
-          (process-error-message error)
+          (process.error-message error)
           "process: spawn failed"
           "process async spawn failed message"))]
-    [(OkProcessChild _) (panic "process async missing executable should fail")]))
+    [(process.OkProcessChild _)
+      (panic "process async missing executable should fail")]))
 
-(define (assert-process-child-unsupported [result : ResultProcessChild]) : unit
+(define (assert-process-child-unsupported [result : process.ResultProcessChild]) : unit
   (match result
-    [(ErrProcessChild error)
+    [(process.ErrProcessChild error)
       (begin
         (assert-true
-          (process-error-unsupported? error)
+          (process.error-unsupported? error)
           "process async unsupported")
         (assert-owned-string-eq
-          (process-error-message error)
+          (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async unsupported message"))]
-    [(OkProcessChild _) (panic "process async should be unsupported")]))
+    [(process.OkProcessChild _) (panic "process async should be unsupported")]))
 
-(define (assert-process-output-unsupported [result : ResultProcessOutput]) : unit
+(define (assert-process-output-unsupported
+  [result : process.ResultProcessOutput]) : unit
   (match result
-    [(ErrProcessOutput error)
+    [(process.ErrProcessOutput error)
       (begin
         (assert-true
-          (process-error-unsupported? error)
+          (process.error-unsupported? error)
           "process async wait unsupported")
         (assert-owned-string-eq
-          (process-error-message error)
+          (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async wait unsupported message"))]
-    [(OkProcessOutput _) (panic "process async wait should be unsupported")]))
+    [(process.OkProcessOutput _)
+      (panic "process async wait should be unsupported")]))
 
-(define (windows-process-command) : ProcessCommand
-  (process-command
+(define (windows-process-command) : process.ProcessCommand
+  (process.command
     "C:\\Windows\\System32\\cmd.exe"
-    (process-args-cons
+    (process.args-cons
       "/C"
-      (process-args-cons
+      (process.args-cons
         "echo stdout=ok&& 1>&2 echo stderr=err&& exit /b 7"
-        (process-args-empty)))))
+        (process.args-empty)))))
 
-(define (windows-env-command) : ProcessCommand
-  (process-command-with-env
-    (process-command
+(define (windows-env-command) : process.ProcessCommand
+  (process.command-with-env
+    (process.command
       "C:\\Windows\\System32\\cmd.exe"
-      (process-args-cons
+      (process.args-cons
         "/C"
-        (process-args-cons
+        (process.args-cons
           "echo %TYPELISP_PROCESS_RUNTIME_ENV%"
-          (process-args-empty))))
+          (process.args-empty))))
     "TYPELISP_PROCESS_RUNTIME_ENV"
     "process-env-value"))
 
-(define (windows-env-vec-command) : ProcessCommand
-  (process-command-with-env-vec
-    (process-command
-      "C:\\Windows\\System32\\cmd.exe"
-      (process-args-cons
-        "/C"
-        (process-args-cons
-          "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
-          (process-args-empty))))
-    (process-env-vec-append
-      (process-env-vec-new)
-      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-      "process-env-vec-value")))
-
-(define (windows-argv-vec-command) : ProcessCommand
-  (process-command-from-argv-vec
-    "C:\\Windows\\System32\\cmd.exe"
-    (string-vec-push
-      (string-vec-push (string-vec-with-capacity 2) "/C")
-      "echo argv-vec=ok")))
-
-(define (windows-borrowed-argv-output [exe : String] [argv : String]) : ResultProcessOutput
+(define (windows-env-vec-command) : process.ProcessCommand
   (let
-    [args : (ProcessBorrowedStringList argv)
-      (process-borrowed-args-append
-        (process-borrowed-args-single (substring-view (& argv) 0 2))
-        (process-borrowed-args-single
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append
+        (&mut env)
+        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+        "process-env-vec-value")
+      (process.command-with-env-vec
+        (process.command
+          "C:\\Windows\\System32\\cmd.exe"
+          (process.args-cons
+            "/C"
+            (process.args-cons
+              "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+              (process.args-empty))))
+        (& env)))))
+
+(define (windows-argv-vec-command) : process.ProcessCommand
+  (let
+    [argv : svec.Vec (svec.with-capacity 2)]
+    (begin
+      (svec.push (&mut argv) "/C")
+      (svec.push (&mut argv) "echo argv-vec=ok")
+      (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
+
+(define (windows-borrowed-argv-output [exe : String] [argv : String]) : process.ResultProcessOutput
+  (let
+    [args : (process_borrowed.ProcessBorrowedStringList argv)
+      (process_borrowed.args-append
+        (process_borrowed.args-single (substring-view (& argv) 0 2))
+        (process_borrowed.args-single
           (substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
-    (process-borrowed-output (process-borrowed-command (& exe) args))))
+    (process_borrowed.output (process_borrowed.command (& exe) args))))
 
-(define (windows-missing-command) : ProcessCommand
-  (process-command
+(define (windows-missing-command) : process.ProcessCommand
+  (process.command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
-    (process-args-empty)))
+    (process.args-empty)))
 
-(define (linux-process-command) : ProcessCommand
-  (process-command "/usr/bin/printf" (process-args-single "stdout=ok")))
+(define (linux-process-command) : process.ProcessCommand
+  (process.command "/usr/bin/printf" (process.args-single "stdout=ok")))
 
-(define (linux-env-command) : ProcessCommand
-  (process-command-with-env
-    (process-command
+(define (linux-env-command) : process.ProcessCommand
+  (process.command-with-env
+    (process.command
       "/usr/bin/printenv"
-      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV"))
+      (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV"))
     "TYPELISP_PROCESS_RUNTIME_ENV"
     "process-env-value"))
 
-(define (linux-env-vec-command) : ProcessCommand
-  (process-command-with-env-vec
-    (process-command
-      "/usr/bin/printenv"
-      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
-    (process-env-vec-append
-      (process-env-vec-new)
-      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-      "process-env-vec-value")))
-
-(define (linux-argv-vec-command) : ProcessCommand
-  (process-command-from-argv-vec
-    "/usr/bin/printf"
-    (string-vec-push
-      (string-vec-push
-        (string-vec-push (string-vec-with-capacity 3) "%s:%s")
-        "argv")
-      "vec")))
-
-(define (linux-borrowed-argv-output [exe : String] [argv : String]) : ResultProcessOutput
+(define (linux-env-vec-command) : process.ProcessCommand
   (let
-    [args : (ProcessBorrowedStringList argv)
-      (process-borrowed-args-append
-        (process-borrowed-args-single (substring-view (& argv) 0 5))
-        (process-borrowed-args-append
-          (process-borrowed-args-single (substring-view (& argv) 5 8))
-          (process-borrowed-args-single (substring-view (& argv) 13 4))))]
-    (process-borrowed-output (process-borrowed-command (& exe) args))))
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append
+        (&mut env)
+        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+        "process-env-vec-value")
+      (process.command-with-env-vec
+        (process.command
+          "/usr/bin/printenv"
+          (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+        (& env)))))
 
-(define (linux-async-process-command [text : String]) : ProcessCommand
-  (process-command "/usr/bin/printf" (process-args-single text)))
+(define (linux-argv-vec-command) : process.ProcessCommand
+  (let
+    [argv : svec.Vec (svec.with-capacity 3)]
+    (begin
+      (svec.push (&mut argv) "%s:%s")
+      (svec.push (&mut argv) "argv")
+      (svec.push (&mut argv) "vec")
+      (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
 
-(define (linux-borrowed-process-output [exe : String] [text : String]) : ResultProcessOutput
-  (process-borrowed-output
-    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+(define (linux-borrowed-argv-output [exe : String] [argv : String]) : process.ResultProcessOutput
+  (let
+    [args : (process_borrowed.ProcessBorrowedStringList argv)
+      (process_borrowed.args-append
+        (process_borrowed.args-single (substring-view (& argv) 0 5))
+        (process_borrowed.args-append
+          (process_borrowed.args-single (substring-view (& argv) 5 8))
+          (process_borrowed.args-single (substring-view (& argv) 13 4))))]
+    (process_borrowed.output (process_borrowed.command (& exe) args))))
 
-(define (linux-borrowed-process-start [exe : String] [text : String]) : ResultProcessChild
-  (process-borrowed-start
-    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+(define (linux-async-process-command [text : String]) : process.ProcessCommand
+  (process.command "/usr/bin/printf" (process.args-single text)))
 
-(define (linux-missing-command) : ProcessCommand
-  (process-command "/definitely-missing-typelisp" (process-args-empty)))
+(define (linux-borrowed-process-output [exe : String] [text : String]) : process.ResultProcessOutput
+  (process_borrowed.output
+    (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))))
+
+(define (linux-borrowed-process-start [exe : String] [text : String]) : process.ResultProcessChild
+  (process_borrowed.start
+    (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))))
+
+(define (linux-missing-command) : process.ProcessCommand
+  (process.command "/definitely-missing-typelisp" (process.args-empty)))
 
 (define (main) : i64
-  (if (string-eq (env-path-separator) ";")
+  (if (eq (path-separator) ";")
     (begin
       (assert-process-output-result
-        (process-output (windows-process-command))
+        (process.output (windows-process-command))
         7
         "stdout=ok\r\n"
         "stderr=err\r\n")
       (assert-process-output-result
-        (process-output (windows-env-command))
+        (process.output (windows-env-command))
         0
         "process-env-value\r\n"
         "")
       (assert-process-output-result
-        (process-output (windows-env-vec-command))
+        (process.output (windows-env-vec-command))
         0
         "process-env-vec-value\r\n"
         "")
       (assert-process-output-result
-        (process-output (windows-argv-vec-command))
+        (process.output (windows-argv-vec-command))
         0
         "argv-vec=ok\r\n"
         "")
@@ -232,29 +246,30 @@
         0
         "borrowed-argv=ok\r\n"
         "")
-      (assert-process-spawn-failed (process-output (windows-missing-command)))
+      (assert-process-spawn-failed (process.output (windows-missing-command)))
       (assert-process-child-unsupported
-        (process-start (windows-process-command)))
-      (assert-process-output-unsupported (process-wait (ProcessChild 1 2 3)))
+        (process.start (windows-process-command)))
+      (assert-process-output-unsupported
+        (process.wait (process.ProcessChild 1 2 3)))
       42)
     (begin
       (assert-process-output-result
-        (process-output (linux-process-command))
+        (process.output (linux-process-command))
         0
         "stdout=ok"
         "")
       (assert-process-output-result
-        (process-output (linux-env-command))
+        (process.output (linux-env-command))
         0
         "process-env-value\n"
         "")
       (assert-process-output-result
-        (process-output (linux-env-vec-command))
+        (process.output (linux-env-vec-command))
         0
         "process-env-vec-value\n"
         "")
       (assert-process-output-result
-        (process-output (linux-argv-vec-command))
+        (process.output (linux-argv-vec-command))
         0
         "argv:vec"
         "")
@@ -268,28 +283,28 @@
         0
         "borrowed-stdout=ok"
         "")
-      (assert-process-spawn-failed (process-output (linux-missing-command)))
+      (assert-process-spawn-failed (process.output (linux-missing-command)))
       (let
-        [first : ProcessChild
+        [first : process.ProcessChild
           (assert-process-child-result
-            (process-start (linux-async-process-command "async-one")))]
-        [second : ProcessChild
+            (process.start (linux-async-process-command "async-one")))]
+        [second : process.ProcessChild
           (assert-process-child-result
-            (process-start (linux-async-process-command "async-two")))]
-        [third : ProcessChild
+            (process.start (linux-async-process-command "async-two")))]
+        [third : process.ProcessChild
           (assert-process-child-result
             (linux-borrowed-process-start "/usr/bin/printf" "borrowed-async"))]
         (begin
           (assert-process-output-result
-            (process-wait third)
+            (process.wait third)
             0
             "borrowed-async"
             "")
-          (assert-process-output-result (process-wait second) 0 "async-two" "")
-          (assert-process-output-result (process-wait first) 0 "async-one" "")))
+          (assert-process-output-result (process.wait second) 0 "async-two" "")
+          (assert-process-output-result (process.wait first) 0 "async-one" "")))
       (assert-process-child-spawn-failed
-        (process-start
-          (process-command
+        (process.start
+          (process.command
             "/definitely-missing-typelisp-async"
-            (process-args-empty))))
+            (process.args-empty))))
       42)))

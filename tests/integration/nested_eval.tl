@@ -67,10 +67,10 @@
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
         (cond
-          [(string-eq name "+") (+ a b)]
-          [(string-eq name "-") (- a b)]
-          [(string-eq name "*") (* a b)]
-          [(string-eq name "/") (/ a b)]
+          [(eq name "+") (+ a b)]
+          [(eq name "-") (- a b)]
+          [(eq name "*") (* a b)]
+          [(eq name "/") (/ a b)]
           [else (panic "eval: unknown operator")]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested `SexprAtom.Sym` above did not match, so we land

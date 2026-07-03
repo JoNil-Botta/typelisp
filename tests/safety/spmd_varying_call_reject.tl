@@ -7,6 +7,4 @@
 (define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (let
     [f : (-> i64 i64) inc]
-    (foreach
-      ([i : i64 0 n])
-      (array.array-set! out i (f (array.array-ref xs i))))))
+    (foreach ([i : i64 0 n]) (array-set! out i (f (array-ref xs i))))))

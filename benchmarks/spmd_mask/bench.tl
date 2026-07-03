@@ -25,7 +25,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! a i (+ i 1))
+        (array-set! a i (+ i 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64
@@ -41,12 +41,12 @@
         (begin
           (foreach
             ([i : i64 0 array-len])
-            (array.array-set!
+            (array-set!
               out
               i
-              (if (= (bit-and (array.array-ref a i) 1) 1)
-                (+ (array.array-ref a i) r)
-                (- (array.array-ref a i) r))))
-          (set! acc (+ acc (array.array-ref out (bit-and r (- array-len 1)))))
+              (if (= (bit-and (array-ref a i) 1) 1)
+                (+ (array-ref a i) r)
+                (- (array-ref a i) r))))
+          (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
           (set! r (+ r 1))))
       (bit-and acc 255))))

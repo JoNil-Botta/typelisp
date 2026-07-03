@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 (define (integration-array-i64-addr [items : (Array i64)]) : i64
   (unsafe
@@ -37,9 +37,9 @@
         (let
           [buf : (Array i64) (array.make-array i64 16)]
           (begin
-            (array.array-set! buf 0 (+ value i))
-            (array.array-set! buf 15 (+ (array.array-ref buf 0) 7))
-            (set! sum (+ sum (array.array-ref buf 15)))
+            (array-set! buf 0 (+ value i))
+            (array-set! buf 15 (+ (array-ref buf 0) 7))
+            (set! sum (+ sum (array-ref buf 15)))
             (set! i (+ i 1)))))
       (integration-write-i64! out-addr 0 sum)
       sum)))
@@ -59,10 +59,10 @@
   [out-c : (Array i64)]
   [out-d : (Array i64)]) : i64
   (let
-    [a-code : i64 (integration-join-code (thread-join a))]
-    [b-code : i64 (integration-join-code (thread-join b))]
-    [c-code : i64 (integration-join-code (thread-join c))]
-    [d-code : i64 (integration-join-code (thread-join d))]
+    [a-code : i64 (integration-join-code (thread.join a))]
+    [b-code : i64 (integration-join-code (thread.join b))]
+    [c-code : i64 (integration-join-code (thread.join c))]
+    [d-code : i64 (integration-join-code (thread.join d))]
     [a-expected : i64 (integration-worker-expected 11)]
     [b-expected : i64 (integration-worker-expected 31)]
     [c-expected : i64 (integration-worker-expected 41)]
@@ -72,10 +72,10 @@
       [(not (= b-code b-expected)) 4]
       [(not (= c-code c-expected)) 5]
       [(not (= d-code d-expected)) 6]
-      [(not (= (array.array-ref out-a 0) a-expected)) 7]
-      [(not (= (array.array-ref out-b 0) b-expected)) 8]
-      [(not (= (array.array-ref out-c 0) c-expected)) 9]
-      [(not (= (array.array-ref out-d 0) d-expected)) 10]
+      [(not (= (array-ref out-a 0) a-expected)) 7]
+      [(not (= (array-ref out-b 0) b-expected)) 8]
+      [(not (= (array-ref out-c 0) c-expected)) 9]
+      [(not (= (array-ref out-d 0) d-expected)) 10]
       [else 42])))
 
 (define (integration-run-threads
@@ -87,20 +87,20 @@
   [ctx-b : (Array i64)]
   [ctx-c : (Array i64)]
   [ctx-d : (Array i64)]) : i64
-  (match (thread-spawn integration-worker (integration-array-i64-addr ctx-a))
+  (match (thread.spawn integration-worker (integration-array-i64-addr ctx-a))
     [(ThreadSpawnErr _) 11]
     [(ThreadSpawnOk a)
-      (match (thread-spawn
+      (match (thread.spawn
         integration-worker
         (integration-array-i64-addr ctx-b))
         [(ThreadSpawnErr _) 12]
         [(ThreadSpawnOk b)
-          (match (thread-spawn
+          (match (thread.spawn
             integration-worker
             (integration-array-i64-addr ctx-c))
             [(ThreadSpawnErr _) 13]
             [(ThreadSpawnOk c)
-              (match (thread-spawn
+              (match (thread.spawn
                 integration-worker
                 (integration-array-i64-addr ctx-d))
                 [(ThreadSpawnErr _) 14]
@@ -118,15 +118,15 @@
     [ctx-c : (Array i64) (array.make-array i64 2)]
     [ctx-d : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! ctx-a 0 (integration-array-i64-addr out-a))
-      (array.array-set! ctx-a 1 11)
-      (array.array-set! ctx-b 0 (integration-array-i64-addr out-b))
-      (array.array-set! ctx-b 1 31)
-      (array.array-set! ctx-c 0 (integration-array-i64-addr out-c))
-      (array.array-set! ctx-c 1 41)
-      (array.array-set! ctx-d 0 (integration-array-i64-addr out-d))
-      (array.array-set! ctx-d 1 59)
-      (if (< (thread-default-worker-count) 1)
+      (array-set! ctx-a 0 (integration-array-i64-addr out-a))
+      (array-set! ctx-a 1 11)
+      (array-set! ctx-b 0 (integration-array-i64-addr out-b))
+      (array-set! ctx-b 1 31)
+      (array-set! ctx-c 0 (integration-array-i64-addr out-c))
+      (array-set! ctx-c 1 41)
+      (array-set! ctx-d 0 (integration-array-i64-addr out-d))
+      (array-set! ctx-d 1 59)
+      (if (< (thread.default-worker-count) 1)
         1
         (integration-run-threads
           out-a

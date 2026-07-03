@@ -5,7 +5,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (cast (- (* i 37) 500) : i16))
+        (array-set! xs i (cast (- (* i 37) 500) : i16))
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
@@ -16,9 +16,9 @@
   [one : i16]) : unit
   (foreach
     ([i : i64 0 n])
-    (if (< (array.array-ref xs i) pivot)
-      (array.array-set! out i pivot)
-      (array.array-set! out i (+ (array.array-ref xs i) one)))))
+    (if (< (array-ref xs i) pivot)
+      (array-set! out i pivot)
+      (array-set! out i (+ (array-ref xs i) one)))))
 
 (define (fill-i16-scalar
   [xs : (Array i16)]
@@ -30,9 +30,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (if (< (array.array-ref xs i) pivot)
-          (array.array-set! out i pivot)
-          (array.array-set! out i (+ (array.array-ref xs i) one)))
+        (if (< (array-ref xs i) pivot)
+          (array-set! out i pivot)
+          (array-set! out i (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
 (define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
@@ -42,7 +42,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -66,7 +66,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (cast (+ (* i 37) 10) : u16))
+        (array-set! xs i (cast (+ (* i 37) 10) : u16))
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
@@ -77,9 +77,9 @@
   [one : u16]) : unit
   (foreach
     ([i : i64 0 n])
-    (if (< (array.array-ref xs i) limit)
-      (array.array-set! out i limit)
-      (array.array-set! out i (+ (array.array-ref xs i) one)))))
+    (if (< (array-ref xs i) limit)
+      (array-set! out i limit)
+      (array-set! out i (+ (array-ref xs i) one)))))
 
 (define (fill-u16-scalar
   [xs : (Array u16)]
@@ -91,9 +91,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (if (< (array.array-ref xs i) limit)
-          (array.array-set! out i limit)
-          (array.array-set! out i (+ (array.array-ref xs i) one)))
+        (if (< (array-ref xs i) limit)
+          (array-set! out i limit)
+          (array-set! out i (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
 (define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
@@ -103,7 +103,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

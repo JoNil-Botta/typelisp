@@ -3,13 +3,15 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.vector)
+(import "string_vec_core.tl" module string_vec_core as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_backend.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
+(import sym_i64_env)
 
 (defenum ResultCompilerDriver
   (Ok String)
@@ -34,7 +36,7 @@
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
-  (builtin-ids (Array CompilerBuiltinIdsState))
+  (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
   (pool-arena (Array i64)))
@@ -48,17 +50,17 @@
       (array.make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
-    [builtin-cell : (Array CompilerBuiltinIdsState)
-      (array.make-array CompilerBuiltinIdsState 1)]
+    [builtin-cell : (Array cbi.CompilerBuiltinIdsState)
+      (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set! expr-cell 0 expr-pool)
-      (array.array-set! type-cell 0 type-pool)
-      (array.array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
-      (array.array-set! lower-cell 0 (compiler-lower-arena-state-new))
-      (array.array-set! pool-arena-cell 0 pool-arena)
+      (array-set! expr-cell 0 expr-pool)
+      (array-set! type-cell 0 type-pool)
+      (array-set! builtin-cell 0 (cbi.state-new))
+      (array-set! lower-cell 0 (compiler-lower-arena-state-new))
+      (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
@@ -77,19 +79,29 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
+(define compiler-driver-compile-expr-pool-initial-capacity : i64
+  2097152)
+(define compiler-driver-compile-type-pool-initial-capacity : i64
+  262144)
+
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        compiler-driver-compile-expr-pool-initial-capacity
+        compiler-driver-compile-type-pool-initial-capacity
+        pool-arena)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
-        (ast-expr-node-pool-state-init 2097152 pool-arena)
-        (ast-type-node-pool-state-init 262144 pool-arena)
-        pool-arena)]
+        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref (struct-get pools type-pool) 0)
+        (ast-node-pool-context-base-arena pools))]
     (begin
-      (compiler-builtin-ids-state-capture-from-globals!
-        (array.array-ref (struct-get state builtin-ids) 0))
+      (cbi.state-capture-from-globals!
+        (array-ref (struct-get state builtin-ids) 0))
       (compiler-lower-arena-state-capture-from-globals!
-        (array.array-ref (struct-get state lower-arenas) 0))
+        (array-ref (struct-get state lower-arenas) 0))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
@@ -123,9 +135,7 @@
   (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
-  (ast-node-pools-state-install!
-    (array.array-ref (struct-get state expr-pool) 0)
-    (array.array-ref (struct-get state type-pool) 0)))
+  (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -133,11 +143,18 @@
     (struct-get state type-pool)))
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
-  (array.array-ref (struct-get state pool-arena) 0))
+  (array-ref (struct-get state pool-arena) 0))
 
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
   (not (= (compiler-driver-state-owned-pool-arena state) 0)))
+
+(define (compiler-driver-state-clear-pool-backed-caches!) : unit
+  (begin
+    (compiler-load-session-floors-set! 0 0 0)
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)))
 
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -148,22 +165,25 @@
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
       [new-arena : i64 (arena.tl_arena_make)]
+      [pools : AstNodePoolContext
+        (ast-node-pool-context-new-with-capacities-in-arena
+          compiler-driver-compile-expr-pool-initial-capacity
+          compiler-driver-compile-type-pool-initial-capacity
+          new-arena)]
       (begin
-        (compiler-load-session-floors-set! 0 0 0)
-        (compiler-load-program-cache-clear!)
-        (compiler-load-runtime-prelude-cache-clear!)
-        (if (tc-prefix-snapshot-cache-active?)
-          unit
-          (tc-prefix-snapshot-cache-clear!))
-        (array.array-set! (struct-get state pool-arena) 0 new-arena)
-        (array.array-set!
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (array-set!
+          (struct-get state pool-arena)
+          0
+          (ast-node-pool-context-base-arena pools))
+        (array-set!
           (struct-get state expr-pool)
           0
-          (ast-expr-node-pool-state-init 2097152 new-arena))
-        (array.array-set!
+          (array-ref (struct-get pools expr-pool) 0))
+        (array-set!
           (struct-get state type-pool)
           0
-          (ast-type-node-pool-state-init 262144 new-arena))
+          (array-ref (struct-get pools type-pool) 0))
         (compiler-driver-state-install-pools! state)
         (unsafe
           (arena.tl_arena_destroy old-arena))))))
@@ -177,35 +197,43 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (compiler-builtin-ids-state-install!
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-install!
-    (array.array-ref (struct-get state lower-arenas) 0)))
+    (array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-capture-active-pools!
   [state : CompilerDriverState]) : unit
   (begin
-    (array.array-set!
-      (struct-get state expr-pool)
-      0
-      (ast-node-pool-state-capture))
-    (array.array-set!
-      (struct-get state type-pool)
-      0
-      (ty-node-pool-state-capture))))
+    (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
+    (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
-  (compiler-builtin-ids-state-capture-from-globals!
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-builtin-generation [state : CompilerDriverState]) : i64
+  (cbi.state-generation (array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-builtin-ids-data-addr
+  [state : CompilerDriverState]) : i64
+  (cbi.state-ids-data-addr (array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-builtin-reset!) : unit
+  (cbi.compiler-builtin-reset!))
+
+(define (compiler-driver-builtin-typecheck-string-length-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-typecheck-string-length-id? name-id))
+
+(define (compiler-driver-builtin-typecheck-array-length-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-typecheck-array-length-id? name-id))
 
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-capture-from-globals!
-    (array.array-ref (struct-get state lower-arenas) 0)))
+    (array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-install-transients!
   [state : CompilerDriverState]) : unit
@@ -254,7 +282,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]) : unit
+  [seen : sym_i64_env.SymI64Env]) : unit
   (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-pools
@@ -262,7 +290,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (compiler-load-runtime-prelude-cache-store-with-pools
     key
@@ -283,7 +311,7 @@
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (compiler-typecheck-reset-intern-owned-state!)
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
@@ -292,7 +320,7 @@
 
 (define (compiler-driver-reset-analysis-state!) : unit
   (begin
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     (lower-arenas-release!)))
@@ -309,7 +337,7 @@
         (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
-        (compiler-builtin-reset!)
+        (cbi.compiler-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)
@@ -364,7 +392,7 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-field [value : i64]) : String
-    (string.string-append "|" (string.int->string value))))
+    (string.append "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -374,19 +402,17 @@
     [alloc-delta : i64]
     [live-delta : i64]
     [peak-delta : i64]) : String
-    (string.string-append
+    (string.append
       "compile-profile|"
-      (string.string-append
+      (string.append
         phase
-        (string.string-append
+        (string.append
           (compiler-driver-profile-field elapsed-ms)
-          (string.string-append
+          (string.append
             (compiler-driver-profile-field alloc-delta)
-            (string.string-append
+            (string.append
               (compiler-driver-profile-field live-delta)
-              (string.string-append
-                (compiler-driver-profile-field peak-delta)
-                "\n"))))))))
+              (string.append (compiler-driver-profile-field peak-delta) "\n"))))))))
 
 (cfg
   compile-profile
@@ -448,32 +474,32 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]) : CompilerLowerMode
   (match mode
-    [(BackendModeAvx2)
+    [(CompilerBackendMode.Avx2)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx2)])]
-    [(BackendModeAvx512)
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxAvx2)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsAvx2)])]
+    [(CompilerBackendMode.Avx512)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx512)])]
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxAvx512)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsAvx512)])]
     [_
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
-        [(BackendTargetWindows) (CompilerLowerWindowsScalar)])]))
+        [(CompilerBackendTarget.Linux) (CompilerLowerMode.LinuxScalar)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsScalar)])]))
 
-(define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
       "target-linux")
     "os-linux"))
 
-(define (compiler-driver-enable-windows-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-windows-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
     "os-windows"))
 
-(define (compiler-driver-enable-language-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable
@@ -492,11 +518,12 @@
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
-  [cfgs : SymI64Env]) : SymI64Env
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-driver-enable-language-cfgs
     (match target
-      [(BackendTargetLinux) (compiler-driver-enable-linux-cfgs cfgs)]
-      [(BackendTargetWindows) (compiler-driver-enable-windows-cfgs cfgs)])))
+      [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
+      [(CompilerBackendTarget.Windows)
+        (compiler-driver-enable-windows-cfgs cfgs)])))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -542,7 +569,7 @@
     spans
     target
     has-target
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     opt-level
     emit-entry))
 
@@ -593,19 +620,19 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriver.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -622,18 +649,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackend asm)
+                  [(ResultCompilerBackend.Ok asm)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriver.Ok asm))]
-                  [(ErrCompilerBackend diag)
+                  [(ResultCompilerBackend.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -653,19 +680,19 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverBuffer.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -681,11 +708,11 @@
                     emit-entry)
                   (compiler-backend-emit-program-target-with-mode-buffer
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry))
-                  [(OkCompilerBackendBuffer buf)
+                  [(ResultCompilerBackendBuffer.Ok buf)
                     (let
                       [peepholed : text_buf.TextBuf
                         (compiler-backend-peephole-text-buf buf)]
@@ -694,7 +721,7 @@
                           compile-profile
                           (compiler-driver-profile-finish-phase "backend"))
                         (ResultCompilerDriverBuffer.Ok peepholed)))]
-                  [(ErrCompilerBackendBuffer diag)
+                  [(ResultCompilerBackendBuffer.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -715,19 +742,19 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverObject.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -744,18 +771,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-object-image-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackendObject image)
+                  [(ResultCompilerBackendObject.Ok image)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriverObject.Ok image))]
-                  [(ErrCompilerBackendObject diag)
+                  [(ResultCompilerBackendObject.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -776,19 +803,19 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverPic.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -805,18 +832,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-pic-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackendPic output)
+                  [(ResultCompilerBackendPic.Ok output)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriverPic.Ok output))]
-                  [(ErrCompilerBackendPic diag)
+                  [(ResultCompilerBackendPic.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -838,18 +865,23 @@
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriver
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -862,17 +894,22 @@
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry))]
+      (let
+        [out : ResultCompilerDriverBuffer
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverBuffer.Err diag)]))
 
@@ -887,18 +924,23 @@
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriverObject
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverObject.Err diag)]))
 
@@ -913,18 +955,23 @@
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriverPic
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
 
 ;; The implicit prelude prepended before every entry program. It is two
@@ -938,11 +985,11 @@
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
 (define (compiler-driver-load-runtime-prelude-cold
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg
     "stdlib/runtime.tl"
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -973,8 +1020,8 @@
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
@@ -982,7 +1029,7 @@
         (unsafe
           (arena.tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string.string-copy (& key))]
+          [persistent-key : String (string.copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
@@ -1001,8 +1048,8 @@
     loaded))
 
 (define (compiler-driver-load-runtime-prelude
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
       [key : String
@@ -1019,8 +1066,8 @@
 
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1053,8 +1100,8 @@
 (define (compiler-driver-load-source-with-runtime
   [input-path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
@@ -1086,10 +1133,10 @@
 
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1120,12 +1167,12 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
     "stdlib/runtime.tl"
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs
     pools)
@@ -1158,8 +1205,8 @@
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
   [key : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
@@ -1168,7 +1215,7 @@
         (unsafe
           (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
-          [persistent-key : String (string.string-copy (& key))]
+          [persistent-key : String (string.copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold-with-pools
               stdlib-roots
@@ -1191,8 +1238,8 @@
     loaded))
 
 (define (compiler-driver-load-runtime-prelude-with-pools
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
@@ -1214,8 +1261,8 @@
 
 (define (compiler-driver-load-file-with-runtime-with-pools
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
     stdlib-roots
@@ -1252,8 +1299,8 @@
 (define (compiler-driver-load-source-with-runtime-with-pools
   [input-path : String]
   [source : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
     stdlib-roots
@@ -1269,7 +1316,7 @@
         source
         prelude-seen
         stdlib-roots
-        AstNoModuleName
+        AstMaybeModuleName.No
         cfgs
         pools)
         [(ResultCompilerLoadWithPaths.Ok
@@ -1291,11 +1338,11 @@
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs
     pools)
@@ -1330,9 +1377,9 @@
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
@@ -1348,18 +1395,18 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(OkCompilerLower program spans)
+          [(ResultCompilerLower.Ok program spans)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (if (ty-node-pool-exhausted?)
+              (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
                 (compiler-driver-lowered-from-active-pools program spans)))]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLower.Err diag)
             (begin
               (cfg
                 compile-profile
@@ -1373,9 +1420,9 @@
 (define (compiler-driver-load-and-lower-pic-image
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
@@ -1391,18 +1438,18 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(OkCompilerLower program spans)
+          [(ResultCompilerLower.Ok program spans)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (if (ty-node-pool-exhausted?)
+              (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
                 (compiler-driver-lowered-from-active-pools program spans)))]
-          [(ErrCompilerLower diag)
+          [(ResultCompilerLower.Err diag)
             (begin
               (cfg
                 compile-profile
@@ -1417,9 +1464,9 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     (match (compiler-driver-load-file-with-runtime-with-pools
@@ -1443,12 +1490,12 @@
               stdlib-roots
               cfgs)
             pools)
-            [(OkCompilerLower program spans)
+            [(ResultCompilerLower.Ok program spans)
               (begin
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (if (ty-node-pool-exhausted?)
+                (if (ast-node-pool-reader-type-exhausted?)
                   (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -1456,7 +1503,7 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -1471,9 +1518,9 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
@@ -1497,12 +1544,12 @@
               stdlib-roots
               cfgs)
             pools)
-            [(OkCompilerLower program spans)
+            [(ResultCompilerLower.Ok program spans)
               (begin
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (if (ty-node-pool-exhausted?)
+                (if (ast-node-pool-reader-type-exhausted?)
                   (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -1510,7 +1557,7 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ErrCompilerLower diag)
+            [(ResultCompilerLower.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -1529,13 +1576,13 @@
     input-path
     target
     has-target
-    (vector.string-vec-new)))
+    (svec.new)))
 
 (define (compiler-driver-emit-file-with-target-and-roots
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
     target
@@ -1547,7 +1594,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-and-mode
     input-path
@@ -1555,13 +1602,13 @@
     has-target
     stdlib-roots
     opt-level
-    (BackendModeScalar)))
+    (CompilerBackendMode.Scalar)))
 
 (define (compiler-driver-emit-file-with-target-roots-level-and-mode
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
@@ -1578,10 +1625,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
     input-path
     target
@@ -1596,7 +1643,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -1614,10 +1661,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriver
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
@@ -1643,10 +1690,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -1667,10 +1714,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
@@ -1693,10 +1740,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
@@ -1719,10 +1766,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -1745,10 +1792,10 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
@@ -1771,7 +1818,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -1793,7 +1840,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -1806,7 +1853,7 @@
     has-target
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     manifest-dir
     package-owner
     deps
@@ -1844,9 +1891,9 @@
     (ast-program decls)
     paths
     (compiler-driver-lower-mode-for-target target mode))
-    [(OkCompilerLower program spans)
+    [(ResultCompilerLower.Ok program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
-    [(ErrCompilerLower diag) (ResultCompilerDriverLowered.Err diag)]))
+    [(ResultCompilerLower.Err diag) (ResultCompilerDriverLowered.Err diag)]))
 
 (define (compiler-driver-emit-package-loaded-object-image
   [input-path : String]
@@ -1872,7 +1919,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
@@ -1899,7 +1946,7 @@
           "typecheck-prefix-lower"
           stdlib-roots
           (compiler-driver-target-cfgs target (compiler-cfg-empty))))
-        [(OkCompilerLower program spans)
+        [(ResultCompilerLower.Ok program spans)
           (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
             input-path
             (compiler-driver-lowered-from-active-pools program spans)
@@ -1909,16 +1956,16 @@
             opt-level
             emit-entry
             crt-entry)]
-        [(ErrCompilerLower diag) (ResultCompilerDriver.Err diag)])]
+        [(ResultCompilerLower.Err diag) (ResultCompilerDriver.Err diag)])]
     [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-runtime-cfg
     input-path
     stdlib-roots
@@ -1930,7 +1977,7 @@
 (define (compiler-driver-load-package-file-with-runtime
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerLoadWithPaths
@@ -1945,7 +1992,7 @@
 (define (compiler-driver-load-package-file-with-runtime-owned
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -1974,12 +2021,12 @@
 
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-package-file-with-runtime-cfg
     input-path
     stdlib-roots
@@ -2003,11 +2050,9 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
-  (string.string-append
+  (string.append
     name
-    (string.string-append
-      " "
-      (string.string-append (string.int->string value) "\n"))))
+    (string.append " " (string.append (string.int->string value) "\n"))))
 
 (define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
   (let
@@ -2015,7 +2060,7 @@
     (begin
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "globals"
@@ -2023,7 +2068,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "functions"
@@ -2031,7 +2076,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "externs"
@@ -2039,7 +2084,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "blocks"
@@ -2047,7 +2092,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "instructions"
@@ -2055,7 +2100,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "vars"
@@ -2063,7 +2108,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
@@ -2071,7 +2116,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
@@ -2079,7 +2124,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
@@ -2087,7 +2132,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
@@ -2095,13 +2140,13 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
             (compiler-ir-summary-phi-input-entries summary))
           ""))
-      (string.string-concat3
+      (string.concat3
         out
         (compiler-driver-ir-summary-line
           "score"
@@ -2112,14 +2157,14 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [opt-level : i64]) : ResultCompilerDriver
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram optimized _)
+      [(CompilerOptimizedProgram.Program optimized _)
         (begin
           (compiler-driver-release-lowered-ir! opt-level)
-          (if (ty-node-pool-exhausted?)
+          (if (ast-node-pool-reader-type-exhausted?)
             (ResultCompilerDriver.Err
               (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
             (ResultCompilerDriver.Ok
@@ -2131,17 +2176,22 @@
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-ir-summary-lowered-with-level
-          program
-          spans
-          opt-level))]
+      (let
+        [out : ResultCompilerDriver
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-ir-summary-lowered-with-level
+              program
+              spans
+              opt-level))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
     input-path
@@ -2152,10 +2202,10 @@
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   ;; Emit-IR needs the macro prelude but must remain runtime-free so
   ;; target parity checks compare user IR rather than OS-specific runtime IR.
   (compiler-driver-emit-ir-summary-lowered-result-with-level
@@ -2171,10 +2221,10 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-lowered-result-with-level
     (compiler-driver-load-and-lower-pic-image-with-state
       state
@@ -2187,36 +2237,39 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     cfgs))
 
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))
+  (compiler-driver-emit-file-with-target
+    input-path
+    (CompilerBackendTarget.Linux)
+    false))
 
 (define (compiler-driver-emit-file-with-roots
   [input-path : String]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots))
 
 (define (compiler-driver-emit-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level))
@@ -2229,7 +2282,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     target
@@ -2239,7 +2292,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots-and-level
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -2251,7 +2304,7 @@
 (define (compiler-driver-write-text-buf
   [output-path : String]
   [buf : text_buf.TextBuf]) : i64
-  (text_buf.text-buf-write-file output-path buf))
+  (text_buf.write-file output-path buf))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
@@ -2264,9 +2317,7 @@
         (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-string
-          (string.string-append
-            "Wrote "
-            (string.string-append output-path "\n")))
+          (string.append "Wrote " (string.append output-path "\n")))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
@@ -2290,9 +2341,7 @@
           (if (= status 0)
             (begin
               (io.print-string
-                (string.string-append
-                  "Wrote "
-                  (string.string-append output-path "\n")))
+                (string.append "Wrote " (string.append output-path "\n")))
               0)
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
@@ -2302,7 +2351,7 @@
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
-  (string.string-append output-path ".fixups"))
+  (string.append output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
   [result : ResultCompilerDriverPic]
@@ -2318,13 +2367,9 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
           (cfg compile-profile (compiler-driver-profile-finish-total))
           (io.print-string
-            (string.string-append
-              "Wrote "
-              (string.string-append output-path "\n")))
+            (string.append "Wrote " (string.append output-path "\n")))
           (io.print-string
-            (string.string-append
-              "Wrote "
-              (string.string-append fixups-path "\n")))
+            (string.append "Wrote " (string.append fixups-path "\n")))
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin
@@ -2337,10 +2382,10 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-write-buffer-result
     (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
       input-path
@@ -2357,10 +2402,10 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-write-pic-result
     (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
       input-path
@@ -2378,52 +2423,52 @@
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
-    (vector.string-vec-new)
+    (svec.new)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-and-level
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-level-and-mode
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level
@@ -2439,16 +2484,16 @@
     output-path
     target
     true
-    (vector.string-vec-new)
+    (svec.new)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]) : i64
+  [stdlib-roots : svec.StringVector]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -2456,14 +2501,14 @@
     true
     stdlib-roots
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-and-level
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -2472,14 +2517,14 @@
     true
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-level-and-mode
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -2496,10 +2541,10 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : vector.StringVec]
+  [stdlib-roots : svec.StringVector]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path

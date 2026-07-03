@@ -33,7 +33,9 @@
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
-(import "compiler_intern.tl")
+(module token)
+
+(import compiler_intern as ci)
 
 (defenum Token
   (LParen)
@@ -103,7 +105,7 @@
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
 ;; i64-payload `Token.Sym` and the source-preserving `Token.Int`.
-(define (token-tag [t : Token]) : i64
+(define (tag [t : Token]) : i64
   (match t
     [(Token.LParen) 1]
     [(Token.RParen) 2]
@@ -122,7 +124,7 @@
 
 ;; Integer payload of `Token.Int` (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
-(define (token-int [t : Token]) : i64
+(define (int [t : Token]) : i64
   (match t
     [(Token.LParen) 0]
     [(Token.RParen) 0]
@@ -140,7 +142,7 @@
     [(Token.CommaAt) 0]))
 
 ;; Original source spelling of `Token.Int` (empty string for any other kind).
-(define (token-int-text [t : Token]) : String
+(define (int-text [t : Token]) : String
   (match t
     [(Token.LParen) ""]
     [(Token.RParen) ""]
@@ -159,7 +161,7 @@
 
 ;; Symbol intern id of `Token.Sym` (-1 for any other kind): exposes the compact
 ;; lexer representation to callers that can stay id-native.
-(define (token-sym-id [t : Token]) : i64
+(define (sym-id [t : Token]) : i64
   (match t
     [(Token.LParen) -1]
     [(Token.RParen) -1]
@@ -178,12 +180,12 @@
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
-(define (token-sym [t : Token]) : String
+(define (sym [t : Token]) : String
   (match t
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id) (intern-str id)]
+    [(Token.Sym id) (ci.intern-str id)]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]
@@ -197,9 +199,9 @@
 
 ;; String text of `Token.Str` (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
-;; parser reads a string-literal datum. Distinct from `token-sym` so a
+;; parser reads a string-literal datum. Distinct from `sym` so a
 ;; `Token.Str` and a `Token.Sym` with the same characters stay distinguishable.
-(define (token-str [t : Token]) : String
+(define (str [t : Token]) : String
   (match t
     [(Token.LParen) ""]
     [(Token.RParen) ""]
@@ -219,7 +221,7 @@
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
 ;; does not need a string->f64 primitive.
-(define (token-float [t : Token]) : String
+(define (float [t : Token]) : String
   (match t
     [(Token.LParen) ""]
     [(Token.RParen) ""]
@@ -239,7 +241,7 @@
 ;; Character payload of `Token.Char` (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
 ;; symbols, ints, and strings.
-(define (token-char [t : Token]) : char
+(define (char [t : Token]) : char
   (match t
     [(Token.LParen) '\0']
     [(Token.RParen) '\0']
@@ -286,7 +288,7 @@
     (spanned-token-line s)
     (spanned-token-col s)))
 
-;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
+;; ---- Token-kind tag constants (kept in sync with `tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.
 (define (tag-lparen) : i64
   1)

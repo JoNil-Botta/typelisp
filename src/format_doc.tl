@@ -10,13 +10,13 @@
   (string.string-length text))
 
 (define (fmt-eq? [left : String] [right : String]) : bool
-  (string.string-eq left right))
+  (string.eq left right))
 
 (define (fmt-cat [left : String] [right : String]) : String
-  (string.string-append left right))
+  (string.append left right))
 
 (define (fmt-cat3 [left : String] [middle : String] [right : String]) : String
-  (string.string-concat3 left middle right))
+  (string.concat3 left middle right))
 
 (defenum Doc
   (Empty)

@@ -1,6 +1,6 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
-(import stdlib.str_cat)
-(import "token.tl")
+(import stdlib.str_cat_runtime as str_cat)
+(import token)
 (import "compiler_ast_types.tl")
 (import stdlib.string)
 
@@ -45,7 +45,7 @@
   (notes CompilerDiagnosticNoteList))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
-  (string.string-copy (& (struct-get span path))))
+  (string.copy (& (struct-get span path))))
 
 (define (compiler-diagnostic-span-start-line
   [span : (& span CompilerDiagnosticSpan)]) : i64
@@ -151,7 +151,7 @@
 
 (define (compiler-diagnostic-from-span
   [path : String]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-new
     message
@@ -160,10 +160,10 @@
     CompilerDiagnosticNoString
     (CompilerDiagnosticSpan
       path
-      (span-start-line span)
-      (span-start-col span)
-      (span-end-line span)
-      (span-end-col span))
+      (token.span-start-line span)
+      (token.span-start-col span)
+      (token.span-end-line span)
+      (token.span-end-col span))
     CompilerDiagnosticNoString
     CompilerDiagnosticLabelNil
     CompilerDiagnosticNoteNil))
@@ -189,11 +189,11 @@
 
 (define (compiler-diagnostic-from-source-error
   [path : String]
-  [err : SourceError]) : CompilerDiagnostic
+  [err : token.SourceError]) : CompilerDiagnostic
   (compiler-diagnostic-from-span
     path
-    (source-error-span err)
-    (source-error-message err)))
+    (token.source-error-span err)
+    (token.source-error-message err)))
 
 (define (compiler-diagnostic-at-start [path : String] [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-simple path 1 1 message))
@@ -330,25 +330,23 @@
   (match notes
     [(CompilerDiagnosticNoteNil) ""]
     [(CompilerDiagnosticNoteCons note rest)
-      (string.string-append
+      (string.append
         "\nnote: "
-        (string.string-append
-          note
-          (compiler-diagnostic-render-notes (box-get rest))))]))
+        (string.append note (compiler-diagnostic-render-notes (box-get rest))))]))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (string.string-append
-    (string.string-append
+  (string.append
+    (string.append
       (compiler-diagnostic-path diag)
-      (string.string-append
+      (string.append
         ":"
-        (string.string-append
+        (string.append
           (string.int->string (compiler-diagnostic-line diag))
-          (string.string-append
+          (string.append
             ":"
-            (string.string-append
+            (string.append
               (string.int->string (compiler-diagnostic-col diag))
-              (string.string-append ": " (compiler-diagnostic-message diag)))))))
+              (string.append ": " (compiler-diagnostic-message diag)))))))
     (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String
@@ -364,7 +362,7 @@
     (begin
       (while (< idx count)
         (begin
-          (set! out (string.string-concat3 out chunk ""))
+          (set! out (string.concat3 out chunk ""))
           (set! idx (+ idx 1))))
       out)))
 
@@ -372,7 +370,7 @@
   (let
     [line-text : String (string.int->string line)]
     (if (< line 10)
-      (string.string-append " " line-text)
+      (string.append " " line-text)
       line-text)))
 
 (define (compiler-diagnostic-blank-gutter [line : i64]) : String
@@ -473,7 +471,7 @@
         (str_cat.str-cat
           level-text
           ": "
-          (string.string-append (compiler-diagnostic-message diag) "\n"))])))
+          (string.append (compiler-diagnostic-message diag) "\n"))])))
 
 (define (compiler-diagnostic-render-span-location-with-fallback
   [fallback-path : String]
@@ -481,7 +479,7 @@
   (let
     [path : String (compiler-diagnostic-span-path span)]
     [display-path : String
-      (if (string.string-eq path "")
+      (if (string.eq path "")
         fallback-path
         path)]
     (str_cat.str-cat
@@ -505,7 +503,7 @@
 (define (compiler-diagnostic-render-label-suffix
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
-    [(CompilerDiagnosticSomeString text) (string.string-append " " text)]
+    [(CompilerDiagnosticSomeString text) (string.append " " text)]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
@@ -527,14 +525,14 @@
               (compiler-diagnostic-span-start-col span)))]
         [underline : String
           (compiler-diagnostic-repeat "^" (compiler-diagnostic-span-width span))]
-        (string.string-append
-          (str_cat.str-cat gutter " | " (string.string-append line-text "\n"))
+        (string.append
+          (str_cat.str-cat gutter " | " (string.append line-text "\n"))
           (str_cat.str-cat
             blank
             " | "
             padding
             underline
-            (string.string-copy label-suffix)
+            (string.copy label-suffix)
             "\n")))]
     [CompilerDiagnosticNoString ""]))
 
@@ -542,7 +540,7 @@
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
     [(CompilerDiagnosticSomeString text)
-      (string.string-append "   = label: " (string.string-append text "\n"))]
+      (string.append "   = label: " (string.append text "\n"))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-span
@@ -554,9 +552,9 @@
     [label : CompilerDiagnosticMaybeString (struct-get entry label)]
     [path : String (compiler-diagnostic-span-path span)]
     [same-path : bool
-      (if (string.string-eq path "")
+      (if (string.eq path "")
         true
-        (string.string-eq path primary-path))]
+        (string.eq path primary-path))]
     [label-suffix : String (compiler-diagnostic-render-label-suffix label)]
     [label-only : String
       (compiler-diagnostic-render-secondary-label-only label)]
@@ -565,17 +563,17 @@
         span
         (& source)
         (& label-suffix))]
-    (string.string-concat3
+    (string.concat3
       (compiler-diagnostic-render-span-location-with-fallback
-        (string.string-copy primary-path)
+        (string.copy primary-path)
         span)
-      (string.string-concat3
+      (string.concat3
         "   |\n"
         (if same-path
-          (if (string.string-eq snippet "")
-            (string.string-copy label-only)
-            (string.string-copy snippet))
-          (string.string-copy label-only))
+          (if (string.eq snippet "")
+            (string.copy label-only)
+            (string.copy snippet))
+          (string.copy label-only))
         "")
       "")))
 
@@ -586,7 +584,7 @@
   (match labels
     [(CompilerDiagnosticLabelNil) ""]
     [(CompilerDiagnosticLabelCons entry rest)
-      (string.string-append
+      (string.append
         (compiler-diagnostic-render-secondary-span primary-path source entry)
         (compiler-diagnostic-render-secondary-spans
           primary-path
@@ -607,7 +605,7 @@
       (str_cat.str-cat
         "   = note: "
         note
-        (string.string-append
+        (string.append
           "\n"
           (compiler-diagnostic-render-source-notes (box-get rest))))]))
 
@@ -621,23 +619,23 @@
     [primary-span : CompilerDiagnosticSpan
       (compiler-diagnostic-primary-span diag)]
     [empty-label : String ""]
-    (string.string-append
+    (string.append
       (compiler-diagnostic-render-header diag level code)
-      (string.string-append
+      (string.append
         (compiler-diagnostic-render-location diag)
-        (string.string-append
+        (string.append
           "   |\n"
-          (string.string-append
+          (string.append
             (compiler-diagnostic-render-source-snippet
               primary-span
               (& source)
               (& empty-label))
-            (string.string-append
+            (string.append
               (compiler-diagnostic-render-secondary-spans
                 (compiler-diagnostic-path diag)
                 source
                 (compiler-diagnostic-secondary-spans diag))
-              (string.string-append
+              (string.append
                 (compiler-diagnostic-render-help help)
                 (compiler-diagnostic-render-source-notes
                   (compiler-diagnostic-notes diag))))))))))
@@ -653,22 +651,24 @@
     (compiler-diagnostic-help diag)))
 
 (define (compiler-diagnostic-render-ok?) : bool
-  (string.string-eq
+  (string.eq
     (compiler-diagnostic-render
       (compiler-diagnostic-simple "demo.tl" 3 7 "parse: malformed define"))
     "demo.tl:3:7: parse: malformed define"))
 
 (define (compiler-diagnostic-source-error-ok?) : bool
   (let
-    [err : SourceError
-      (SourceError "lexer: unexpected character" (SourceSpan 4 5 4 6))]
+    [err : token.SourceError
+      (token.SourceError
+        "lexer: unexpected character"
+        (token.SourceSpan 4 5 4 6))]
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-source-error "input.tl" err)]
     (and
-      (string.string-eq (compiler-diagnostic-path diag) "input.tl")
+      (string.eq (compiler-diagnostic-path diag) "input.tl")
       (= (compiler-diagnostic-line diag) 4)
       (= (compiler-diagnostic-col diag) 5)
-      (string.string-eq
+      (string.eq
         (compiler-diagnostic-message diag)
         "lexer: unexpected character"))))
 
@@ -679,10 +679,10 @@
     [rewritten : CompilerDiagnostic
       (compiler-diagnostic-with-message moved "new message")]
     (and
-      (string.string-eq (compiler-diagnostic-path rewritten) "new.tl")
+      (string.eq (compiler-diagnostic-path rewritten) "new.tl")
       (= (compiler-diagnostic-line rewritten) 1)
       (= (compiler-diagnostic-col rewritten) 2)
-      (string.string-eq (compiler-diagnostic-message rewritten) "new message"))))
+      (string.eq (compiler-diagnostic-message rewritten) "new message"))))
 
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
@@ -717,7 +717,7 @@
         "generated identity: generated:demo")]
     [source-out : String (compiler-diagnostic-render-source diag "a\nb\n")]
     (and
-      (string.string-eq
+      (string.eq
         (compiler-diagnostic-render diag)
         "note.tl:2:3: has note\nnote: generated identity: generated:demo")
       (compiler-diagnostic-string-eq?
@@ -736,7 +736,7 @@
                 (compiler-diagnostic-with-secondary
                   (compiler-diagnostic-from-span
                     "meta.tl"
-                    (SourceSpan 1 2 1 8)
+                    (token.SourceSpan 1 2 1 8)
                     "metadata")
                   (CompilerDiagnosticSpan "" 3 4 3 5)
                   (CompilerDiagnosticSomeString "second related"))
@@ -756,13 +756,13 @@
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-span
         "input.tl"
-        (SourceSpan 2 3 2 9)
+        (token.SourceSpan 2 3 2 9)
         "wide token")]
     [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "moved.tl")]
     (and
       (= (compiler-diagnostic-end-line moved) 2)
       (= (compiler-diagnostic-end-col moved) 9)
-      (string.string-eq (compiler-diagnostic-path moved) "moved.tl"))))
+      (string.eq (compiler-diagnostic-path moved) "moved.tl"))))
 
 (define (compiler-diagnostic-metadata-ok?) : bool
   (let
@@ -791,21 +791,20 @@
                 (box-get rest-labels-box)]
               [rest-notes : CompilerDiagnosticNoteList (box-get rest-notes-box)]
               (and
-                (string.string-eq note "second note")
+                (string.eq note "second note")
                 (match rest-notes
                   [(CompilerDiagnosticNoteCons tail-note _)
-                    (string.string-eq tail-note "first note")]
+                    (string.eq tail-note "first note")]
                   [CompilerDiagnosticNoteNil false])
                 (match rest-labels
                   [(CompilerDiagnosticLabelCons _ _)
-                    (string.string-eq
+                    (string.eq
                       (compiler-diagnostic-span-path
                         (& (struct-get label span)))
                       "other.tl")]
                   [CompilerDiagnosticLabelNil false])
                 (match (compiler-diagnostic-code diag)
-                  [(CompilerDiagnosticSomeString code)
-                    (string.string-eq code "E1234")]
+                  [(CompilerDiagnosticSomeString code) (string.eq code "E1234")]
                   [CompilerDiagnosticNoString false])))]
           [CompilerDiagnosticNoteNil false])]
       [CompilerDiagnosticLabelNil false])))
@@ -816,8 +815,8 @@
       (compiler-diagnostic-simple "none.tl" 1 1 "none")]
     [coded : CompilerDiagnostic (compiler-diagnostic-with-code uncoded "E1234")]
     (and
-      (string.string-eq (compiler-diagnostic-code-or-empty uncoded) "")
-      (string.string-eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
+      (string.eq (compiler-diagnostic-code-or-empty uncoded) "")
+      (string.eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
 
 (define (compiler-diagnostic-self-test) : i64
   (begin

@@ -4,7 +4,7 @@
 (define (main [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
       (match (if (= (% i 2) 0)

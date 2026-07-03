@@ -6,7 +6,7 @@
 (import stdlib.io)
 (import "doc_render.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
   (let
@@ -26,7 +26,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string.string-concat3 out (doc-html-escape-one text i) ""))
+          (set! out (string.concat3 out (doc-html-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -47,9 +47,7 @@
     (begin
       (while (< i n)
         (begin
-          (set!
-            out
-            (string.string-concat3 out (doc-html-escape-text-one text i) ""))
+          (set! out (string.concat3 out (doc-html-escape-text-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -270,14 +268,12 @@
               (begin
                 (set!
                   out
-                  (string.string-concat3 out (doc-html-escape-one source i) ""))
+                  (string.concat3 out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))))
           (begin
-            (set!
-              out
-              (string.string-concat3 out (doc-html-escape-one source i) ""))
+            (set! out (string.concat3 out (doc-html-escape-one source i) ""))
             (set! i (+ i 1)))))
-      (string.string-concat3 out "</span>" ""))))
+      (string.concat3 out "</span>" ""))))
 
 (define (doc-html-syntax-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -323,7 +319,7 @@
 (define (doc-html-syntax-list-member? [items : String] [token : String]) : bool
   (let
     [needle : String (str_cat.str-cat "|" token "|")]
-    (string.string-contains (& items) (& needle))))
+    (string.contains (& items) (& needle))))
 
 (define (doc-html-syntax-keyword? [token : String]) : bool
   (doc-html-syntax-list-member?
@@ -341,7 +337,7 @@
     token))
 
 (define (doc-html-syntax-boolean? [token : String]) : bool
-  (or (string.string-eq token "true") (string.string-eq token "false")))
+  (or (string.eq token "true") (string.eq token "false")))
 
 (define (doc-html-syntax-type? [token : String]) : bool
   (doc-html-syntax-list-member?
@@ -394,11 +390,11 @@
   (let
     [form : String (doc-html-syntax-preceding-form source start)]
     (or
-      (string.string-eq form "define")
-      (string.string-eq form "defmacro")
-      (string.string-eq form "defdispatch")
-      (string.string-eq form "defstruct")
-      (string.string-eq form "defenum"))))
+      (string.eq form "define")
+      (string.eq form "defmacro")
+      (string.eq form "defdispatch")
+      (string.eq form "defstruct")
+      (string.eq form "defenum"))))
 
 (define (doc-html-syntax-token-class
   [source : String]
@@ -422,7 +418,7 @@
       [else ""])))
 
 (define (doc-html-syntax-language? [language : String]) : bool
-  (or (string.string-eq language "typelisp") (string.string-eq language "tl")))
+  (or (string.eq language "typelisp") (string.eq language "tl")))
 
 (define (doc-html-highlight-typelisp [source : String]) : String
   (let
@@ -449,7 +445,7 @@
                 (begin
                   (set!
                     out
-                    (string.string-concat3
+                    (string.concat3
                       out
                       (doc-html-syntax-span class-name line)
                       ""))
@@ -460,7 +456,7 @@
                 (begin
                   (set!
                     out
-                    (string.string-concat3
+                    (string.concat3
                       out
                       (doc-html-syntax-render-string source i end)
                       ""))
@@ -472,7 +468,7 @@
                   (begin
                     (set!
                       out
-                      (string.string-concat3
+                      (string.concat3
                         out
                         (doc-html-syntax-span
                           "tl-syn-string"
@@ -482,10 +478,7 @@
                   (begin
                     (set!
                       out
-                      (string.string-concat3
-                        out
-                        (doc-html-escape-one source i)
-                        ""))
+                      (string.concat3 out (doc-html-escape-one source i) ""))
                     (set! i (+ i 1)))))]
             [(doc-html-syntax-number-start? source i)
               (let
@@ -493,7 +486,7 @@
                 (begin
                   (set!
                     out
-                    (string.string-concat3
+                    (string.concat3
                       out
                       (doc-html-syntax-span
                         "tl-syn-number"
@@ -509,7 +502,7 @@
                 (begin
                   (set!
                     out
-                    (string.string-concat3
+                    (string.concat3
                       out
                       (if (= (string.string-length class-name) 0)
                         (doc-html-escape token)
@@ -520,7 +513,7 @@
               (begin
                 (set!
                   out
-                  (string.string-concat3 out (doc-html-escape-one source i) ""))
+                  (string.concat3 out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))])))
       out)))
 
@@ -557,7 +550,7 @@
   (match items
     [(DocItemList.Nil) ""]
     [(DocItemList.Cons item rest)
-      (string.string-append
+      (string.append
         (doc-html-item-nav-entry item)
         (doc-html-item-nav-entries (box-get rest)))]))
 
@@ -596,9 +589,7 @@
   (match items
     [(DocItemList.Nil) ""]
     [(DocItemList.Cons item rest)
-      (string.string-append
-        (doc-html-item item)
-        (doc-html-item-list (box-get rest)))]))
+      (string.append (doc-html-item item) (doc-html-item-list (box-get rest)))]))
 
 (define (doc-html-items [items : DocItemList]) : String
   (match items
@@ -621,7 +612,7 @@
   (match modules
     [(DocModuleList.Nil) ""]
     [(DocModuleList.Cons module rest)
-      (string.string-append
+      (string.append
         (doc-html-module-nav-entry module)
         (doc-html-module-nav-entries (box-get rest)))]))
 
@@ -661,7 +652,7 @@
   (match modules
     [(DocModuleList.Nil) ""]
     [(DocModuleList.Cons module rest)
-      (string.string-append
+      (string.append
         (doc-html-module-section module)
         (doc-html-module-sections (box-get rest)))]))
 

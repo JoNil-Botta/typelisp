@@ -184,14 +184,3 @@
 
 (define (scaffold-init-run-from [start : i64] [count : i64]) : i64
   (scaffold-dispatch-from true start count false))
-
-(define (scaffold-run-from [command-idx : i64] [count : i64]) : i64
-  (if (>= command-idx count)
-    (scaffold-usage)
-    (let
-      [command : String (io.arg command-idx)]
-      (if (string.eq command "new")
-        (scaffold-new-run-from (+ command-idx 1) count)
-        (if (string.eq command "init")
-          (scaffold-init-run-from (+ command-idx 1) count)
-          (scaffold-usage))))))

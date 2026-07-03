@@ -54,5 +54,4 @@ The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
 `cli-command-surface.txt` is the explicit command-surface manifest for the
 freshly built `src/main.tl` binary in the CI gate. Each row is
 `status|command|issue`, where `active` commands must have a smoke assertion in
-`scripts/verify-selfhost-cli-build-run.sh`, and `pending` commands must return a
-`cli-pending` diagnostic with the listed tracking issue.
+`scripts/verify-selfhost-cli-build-run.sh`.

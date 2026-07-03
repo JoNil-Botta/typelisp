@@ -44,16 +44,6 @@
     (array_ops.ref (struct-get decls slots) index)
     fallback))
 
-(define (lsp-decl-list-set!
-  [decls : (&mut decls LspDeclList)]
-  [index : i64]
-  [value : LspDeclEntry]) : unit
-  (if (if (>= index 0)
-    (< index (struct-get decls len))
-    false)
-    (array-set! (struct-get decls slots) index value)
-    unit))
-
 (define (lsp-decl-list-push
   [decls : (&mut decls LspDeclList)]
   [value : LspDeclEntry]) : unit
@@ -99,11 +89,6 @@
 (define (lsp-documents-new) : LspDocuments
   (let
     [items : lsp_document_vec.Vec (lsp_document_vec.new)]
-    (LspDocuments (struct-get items slots) (struct-get items len))))
-
-(define (lsp-documents-with-capacity [capacity : i64]) : LspDocuments
-  (let
-    [items : lsp_document_vec.Vec (lsp_document_vec.with-capacity capacity)]
     (LspDocuments (struct-get items slots) (struct-get items len))))
 
 (define (lsp-documents-len [docs : (& docs LspDocuments)]) : i64

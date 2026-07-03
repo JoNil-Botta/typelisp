@@ -686,9 +686,6 @@
               stdlib-lines
               stdlib-roots))]))))
 
-(define (build-config [count : i64]) : ResultBuildConfig
-  (build-config-from 1 count))
-
 (define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
   (build-parse-options
     idx
@@ -1106,18 +1103,6 @@
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tlci")))
 
-(define (build-package-artifact-path
-  [manifest-dir : String]
-  [name : String]
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]) : String
-  (build-package-artifact-path-profile
-    manifest-dir
-    name
-    kind
-    (build-default-profile)
-    target))
-
 (define (build-package-artifact-path-profile
   [manifest-dir : String]
   [name : String]
@@ -1490,9 +1475,6 @@
     (if (string.eq kind "branch")
       (str_cat.str-cat "origin/" (string.copy (& (struct-get dep pin-value))))
       (string.copy (& (struct-get dep pin-value))))))
-
-(define (build-git-executable) : String
-  (source-tool-git-executable))
 
 (define (build-process-output-detail [output : process.ProcessOutput]) : String
   (let
@@ -2170,19 +2152,6 @@
                         (match (struct-get resolved-dep lock-entry)
                           [(BuildMaybeLockEntry.No) false]
                           [(BuildMaybeLockEntry.Some _) true]))))])])])]))
-
-(define (build-package-resolve-deps
-  [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultBuildPkgDepList
-  (match (build-package-resolve-deps-with-lock
-    manifest-dir
-    PackageLockEntryList.Nil
-    (BuildPackageLockPolicy.Default)
-    deps)
-    [(ResultBuildResolvedPkgDeps.Err message)
-      (ResultBuildPkgDepList.Err message)]
-    [(ResultBuildResolvedPkgDeps.Ok resolved)
-      (ResultBuildPkgDepList.Ok (struct-get resolved deps))]))
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
@@ -3671,37 +3640,6 @@
       resolved-deps
       stdlib-roots)))
 
-(define (build-package-run-doctest-worker
-  [manifest-path : String]
-  [target : CompilerBackendTarget]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : CompilerBackendMode]
-  [lock-policy : BuildPackageLockPolicy]
-  [resolved-deps : CompilerPkgDepList]
-  [stdlib-roots : svec.StringVector]) : i64
-  (match (process.output
-    (build-package-doctest-worker-command
-      manifest-path
-      target
-      opt-level
-      profile
-      mode
-      lock-policy
-      resolved-deps
-      stdlib-roots))
-    [(process.OkProcessOutput output)
-      (begin
-        (source-tool-forward-output output)
-        (process.output-status output))]
-    [(process.ErrProcessOutput error)
-      (begin
-        (io.print-error
-          (str_cat.str-cat
-            "build: failed to run package doctest worker: "
-            (process.error-message error)))
-        1)]))
-
 (define (build-package-worker-spawn-supported?) : bool
   (match (process.output
     (process.command
@@ -4857,9 +4795,6 @@
                 opt-level
                 link-inputs)))]))))
 
-(define (build-cli-config [count : i64]) : ResultBuildCliConfig
-  (build-cli-config-from 1 count))
-
 (define (build-cli-config-from [idx : i64] [count : i64]) : ResultBuildCliConfig
   (build-cli-parse-options
     idx
@@ -4873,34 +4808,6 @@
     (svec.new)
     (compiler-optimize-default-level)
     (source-tool-link-inputs-empty)))
-
-(define (build-cli-main) : i64
-  (match (build-cli-config (arg-count))
-    [(ResultBuildCliConfig.Ok config)
-      (match config
-        [(BuildCliConfig.Config
-            source
-            _
-            output
-            has-output
-            target
-            mode
-            stdlib-roots
-            opt-level
-            link-inputs)
-          (build-doctest-build-source
-            source
-            output
-            has-output
-            target
-            stdlib-roots
-            opt-level
-            mode
-            link-inputs)])]
-    [(ResultBuildCliConfig.Err message)
-      (begin
-        (io.print-error message)
-        1)]))
 
 ;; Build a source file directly. Manifest builds use the older package parser so
 ;; `typelisp build` can still discover `typelisp.pkg` from the working tree.

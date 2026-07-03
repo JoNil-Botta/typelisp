@@ -15,14 +15,6 @@
   (Ok String)
   (Err FormatSourceError))
 
-(define (format-rules-node-symbol? [node : FormatCst] [wanted : String]) : bool
-  (match node
-    [(FormatCst.Atom tok)
-      (match tok
-        [(FormatToken.Symbol name) (string.eq name wanted)]
-        [_ false])]
-    [_ false]))
-
 (define (format-rules-node-colon? [node : FormatCst]) : bool
   (match node
     [(FormatCst.Atom tok) (= (format-token-tag tok) (fmt-tag-colon))]

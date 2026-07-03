@@ -473,6 +473,3 @@
   (let
     [root : String (struct-get source-set manifest-dir)]
     (package-source-scan-optional-dir command root "tests" (svec.new))))
-
-(define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
-  (package-source-discover-for "check" manifest-path has-manifest))

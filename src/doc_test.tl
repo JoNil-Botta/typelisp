@@ -194,14 +194,6 @@
   (match err
     [(DocTestError.Error _ message) message]))
 
-(define (doc-test-extraction-examples [extraction : DocTestExtraction]) : DocTestExampleList
-  (match extraction
-    [(DocTestExtraction.Extraction examples _) examples]))
-
-(define (doc-test-extraction-errors [extraction : DocTestExtraction]) : DocTestErrorList
-  (match extraction
-    [(DocTestExtraction.Extraction _ errors) errors]))
-
 (define (doc-test-expectation-error? [expectation : DocTestExpectation]) : bool
   (match expectation
     [(DocTestExpectation.Pass) false]
@@ -1024,9 +1016,6 @@
         [(DocTestScanState.State examples errors _)
           (DocTestExtraction.Extraction examples errors)]))))
 
-(define (doc-test-extract-file [path : String]) : DocTestExtraction
-  (doc-test-extract-source (io.read-file path)))
-
 ;; --- runner (#724) ----------------------------------------------------------
 ;; A single doctest failure: the doc'd source path, the fence's 1-based source
 ;; line, the example index (`-1` for a fence-level extraction error that has no
@@ -1349,32 +1338,6 @@
                       (string.append
                         "\nstderr:\n"
                         (process.output-stderr output)))))))))))))
-
-(define (doc-test-run-command-captured
-  [role : String]
-  [target : CompilerBackendTarget]
-  [command : process.ProcessCommand]) : SourceToolCommandStatus
-  (match (process.output command)
-    [(process.OkProcessOutput output)
-      (if (process.success? output)
-        SourceToolCommandStatus.Ok
-        (SourceToolCommandStatus.Err
-          (doc-test-command-output-message role target command output)))]
-    [(process.ErrProcessOutput error)
-      (SourceToolCommandStatus.Err
-        (string.append
-          "Error: failed to run "
-          (string.append
-            role
-            (string.append
-              " '"
-              (string.append
-                (process.command-executable command)
-                (string.append
-                  "' for target "
-                  (string.append
-                    (source-tool-target-name target)
-                    (string.append ": " (process.error-message error)))))))))]))
 
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
@@ -1946,18 +1909,6 @@
   [path : String]
   [stdlib-roots : svec.StringVector]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots path (io.read-file path) stdlib-roots))
-
-(define (doc-test-typecheck-package-file-with-roots
-  [path : String]
-  [stdlib-roots : svec.StringVector]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
-  (doc-test-typecheck-package-source-with-roots
-    path
-    (io.read-file path)
-    stdlib-roots
-    manifest-dir
-    deps))
 
 (define (doc-test-path-under-root? [path : String] [root : String]) : bool
   (let

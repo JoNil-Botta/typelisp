@@ -91,11 +91,6 @@
       (ResultSourceToolTarget.Ok (CompilerBackendTarget.Windows))
       (ResultSourceToolTarget.Err (string.append "unknown target " value)))))
 
-(define (source-tool-target-supported? [target : CompilerBackendTarget]) : bool
-  (match target
-    [(CompilerBackendTarget.Linux) true]
-    [(CompilerBackendTarget.Windows) true]))
-
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
     [(string.eq value "scalar")
@@ -736,41 +731,6 @@
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]))
 
-(define (source-tool-emit-package-assembly
-  [source : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [manifest-dir : String]
-  [package-owner : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultSourceToolString
-  (match (source-tool-try-read-file source)
-    [(io.ErrIoString error)
-      (ResultSourceToolString.Err
-        (source-tool-cannot-read-module-message source error))]
-    [(io.OkIoString _)
-      (match (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
-        source
-        target
-        true
-        stdlib-roots
-        opt-level
-        mode
-        manifest-dir
-        package-owner
-        deps
-        emit-entry
-        crt-entry)
-        [(ResultCompilerDriver.Ok asm)
-          (ResultSourceToolString.Ok
-            (source-tool-augment-assembly-for-target asm target))]
-        [(ResultCompilerDriver.Err diag)
-          (ResultSourceToolString.Err
-            (compiler-diagnostic-render (box-get diag)))])]))
-
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
 
@@ -1122,56 +1082,6 @@
   [_target : CompilerBackendTarget]
   [command : process.ProcessCommand]) : process.ProcessCommand
   command)
-
-(define (source-tool-windows-args-contain-space?
-  [args : process.ProcessStringList]) : bool
-  (match args
-    [(process.ProcessStringNil) false]
-    [(process.ProcessStringCons head rest)
-      (let
-        [text : String head]
-        (or
-          (process.string-contains-char? (& text) ' ')
-          (source-tool-windows-args-contain-space? (box-get rest))))]))
-
-(define (source-tool-windows-command-needs-cmd?
-  [command : process.ProcessCommand]) : bool
-  (let
-    [text : String (process.command-executable command)]
-    (or
-      (process.string-contains-char? (& text) ' ')
-      (source-tool-windows-args-contain-space? (process.command-argv command)))))
-
-(define (source-tool-windows-cmd-quote [value : String]) : String
-  (str_cat.str-cat "\"" value "\""))
-
-(define (source-tool-windows-cmd-args [args : process.ProcessStringList]) : String
-  (match args
-    [(process.ProcessStringNil) ""]
-    [(process.ProcessStringCons head rest)
-      (str_cat.str-cat
-        " "
-        (source-tool-windows-cmd-quote head)
-        (source-tool-windows-cmd-args (box-get rest)))]))
-
-(define (source-tool-windows-cmd-line [command : process.ProcessCommand]) : String
-  (str_cat.str-cat
-    "call "
-    (source-tool-windows-cmd-quote (process.command-executable command))
-    (source-tool-windows-cmd-args (process.command-argv command))))
-
-(define (source-tool-windows-command-shell) : String
-  (source-tool-env-command-or-default "COMSPEC" "cmd.exe"))
-
-(define (source-tool-windows-cmd-command [command : process.ProcessCommand]) : process.ProcessCommand
-  (process.command-full
-    (source-tool-windows-command-shell)
-    (process.args-cons
-      "/C"
-      (process.args-single (source-tool-windows-cmd-line command)))
-    (process.command-cwd command)
-    (process.command-env command)
-    (process.command-stdin command)))
 
 (define (source-tool-assembler-command [asm-path : String] [obj-path : String]) : process.ProcessCommand
   (process.command

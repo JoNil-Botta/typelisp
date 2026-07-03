@@ -49,12 +49,16 @@ src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-t
 src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer CAS consumes the target ABI's third integer argument register.
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	abi	BackendTarget(Linux|Windows)	2	Closure adapter outgoing space follows target calling convention rules.
 src/compiler_backend.tl	compiler-backend-emit-direct-tail-call-args-from	abi	compiler-backend-target-windows[?]	2	Direct tail-call argument moves account for Win64 stack and shadow-space rules.
+src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	abi	BackendTarget(Linux|Windows)	2	Per-instruction outgoing stack-arg space follows target calling convention (Win64 shadow/positional vs Linux prologue-reserved).
+src/compiler_backend.tl	compiler-backend-call-args-gp-parallel?	abi	compiler-backend-target-windows[?]	1	GP argument-register threshold is Win64 4 / System V 6.
+src/compiler_backend.tl	compiler-backend-emit-c-abi-store-result-call	abi	BackendTarget(Linux|Windows)	2	C-ABI aggregate-return call stack dip is folded into the Linux frame (#65a-ii) but taken per-call on Win64.
+src/compiler_backend.tl	compiler-backend-emit-indirect-c-abi-store-result-call	abi	BackendTarget(Linux|Windows)	2	Indirect C-ABI aggregate-return call stack dip is folded into the Linux frame (#65a-ii) but taken per-call on Win64.
 src/compiler_backend.tl	compiler-backend-c-memory-aggregate-type?	abi	compiler-backend-target-linux[?]	1	System V memory aggregate classification is Linux-target specific.
 src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-target-windows[?]|linux-x86_64	2	Raw syscall emission is only valid for Linux x86_64.
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	1	Windows register choices differ in the inline allocator fast path.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
-src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	2	Function emission adds target entry argument capture and object-format suffixes.
+src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	5	Function emission adds target entry argument capture and object-format suffixes.
 src/compiler_backend.tl	compiler-backend-target-arg-reg	abi	BackendTarget(Linux|Windows)	2	Integer argument register selection is target ABI specific.
 src/compiler_backend.tl	compiler-backend-target-float-arg-reg	abi	BackendTarget(Linux|Windows)	2	Float argument register selection is target ABI specific.
 src/compiler_backend.tl	compiler-backend-object-call-reg-count	abi	BackendTarget(Linux|Windows)	2	Direct-object call lowering follows target ABI argument register counts.

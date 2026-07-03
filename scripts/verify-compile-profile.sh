@@ -315,13 +315,13 @@ assert_contains_in \
 assert_profile_counter_eq_in \
     "$RESULT_IMPORT_STDERR" \
     "typecheck.macro.fixed_point_passes" \
-    2 \
+    1 \
     "$RESULT_IMPORT_STDOUT" \
     "$RESULT_IMPORT_STDERR"
 assert_profile_counter_eq_in \
     "$RESULT_IMPORT_STDERR" \
     "typecheck.macro.fixed_point_followup_needs_followup" \
-    1 \
+    0 \
     "$RESULT_IMPORT_STDOUT" \
     "$RESULT_IMPORT_STDERR"
 assert_profile_counter_eq_in \

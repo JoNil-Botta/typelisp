@@ -1393,41 +1393,56 @@
   [example : DocTestExample]
   [stdlib-roots : svec.StringVector]
   [target : CompilerBackendTarget]) : ResultSourceToolString
-  (let
-    [index : i64 (doc-test-example-index example)]
-    [virtual-path : String (doc-test-example-virtual-path path index)]
-    [code : String (doc-test-example-code example)]
-    [cfgs : sym_i64_env.SymI64Env
-      (compiler-driver-target-cfgs target (compiler-cfg-empty))]
-    (match (compiler-driver-load-source-with-runtime
-      virtual-path
-      code
-      stdlib-roots
-      cfgs)
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-        (match (lower-compiler-program-with-decl-paths
+  (begin
+    (compiler-driver-reset-file-state!)
+    (compiler-driver-state-clear-pool-backed-caches!)
+    (let
+      [index : i64 (doc-test-example-index example)]
+      [virtual-path : String (doc-test-example-virtual-path path index)]
+      [code : String (doc-test-example-code example)]
+      [cfgs : sym_i64_env.SymI64Env
+        (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      [result : ResultSourceToolString
+        (match (compiler-driver-load-source-with-runtime-with-pools
           virtual-path
-          (ast-program decls)
-          paths)
-          [(ResultCompilerLower.Ok program spans)
-            (match (compiler-driver-emit-lowered-with-level
+          code
+          stdlib-roots
+          cfgs
+          pools)
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
               virtual-path
-              program
-              spans
-              target
-              true
-              (compiler-optimize-default-level))
-              [(ResultCompilerDriver.Ok asm)
-                (ResultSourceToolString.Ok
-                  (source-tool-augment-assembly-for-target asm target))]
-              [(ResultCompilerDriver.Err diag)
+              (ast-program decls)
+              paths
+              (CompilerLowerMode.Scalar)
+              stdlib-roots
+              (tc-prefix-default-cache-scope)
+              pools)
+              [(ResultCompilerLower.Ok program spans)
+                (match (compiler-driver-emit-lowered-with-level
+                  virtual-path
+                  program
+                  spans
+                  target
+                  true
+                  (compiler-optimize-default-level))
+                  [(ResultCompilerDriver.Ok asm)
+                    (ResultSourceToolString.Ok
+                      (source-tool-augment-assembly-for-target asm target))]
+                  [(ResultCompilerDriver.Err diag)
+                    (ResultSourceToolString.Err
+                      (compiler-diagnostic-render (box-get diag)))])]
+              [(ResultCompilerLower.Err diag)
                 (ResultSourceToolString.Err
                   (compiler-diagnostic-render (box-get diag)))])]
-          [(ResultCompilerLower.Err diag)
+          [(ResultCompilerLoadWithPaths.Err diag)
             (ResultSourceToolString.Err
               (compiler-diagnostic-render (box-get diag)))])]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])))
+      (begin
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (compiler-driver-reset-file-state!)
+        result))))
 
 (define (doc-test-runnable-failure
   [path : String]

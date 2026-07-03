@@ -725,6 +725,9 @@
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
+    ;; Global resets do not own the previously installed context cells. Detach
+    ;; before truncating so stale scratch-owned cells are not updated.
+    (ast-node-pool-active-context-clear!)
     (compiler-load-surface-summaries-reset!)
     (set! compiler-load-surface-summary-load-depth 0)
     (if (compiler-load-session-cache-enabled?)

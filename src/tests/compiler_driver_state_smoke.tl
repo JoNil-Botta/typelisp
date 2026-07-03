@@ -1803,6 +1803,52 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-scratch-batch-owned-pool?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/calc.tl"
+            roots))
+        (set! ok false))
+      (unless
+        (with-scratch
+          (compiler-driver-state-smoke-compile-entry
+            state
+            "tests/integration/lexer.tl"
+            roots))
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
+(define (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?) : bool
+  (begin
+    (compiler-driver-reset-file-state!)
+    (with-scratch
+      (let
+        [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [temp : AstNodePoolContext
+          (ast-node-pool-context-new-with-capacities 1 1)]
+        (begin
+          (ast-node-pool-context-install! temp)
+          (ast-node-pool-context-install! prev)
+          unit)))
+    (compiler-driver-reset-file-state!)
+    true))
+
 (define (compiler-driver-state-smoke-emit-ir-core-macro-source) : String
   "(define (main) : i64
   (if (and true true)
@@ -1848,6 +1894,93 @@
             (> (string.string-length summary) 0)
             (string.contains (& summary) (& needle)))]
         [(ResultCompilerDriver.Err _) false]))))
+
+(define (compiler-driver-state-smoke-double-lower-source) : String
+  "(define (main) : i64 29)")
+
+(define (compiler-driver-state-smoke-double-lower-fixture-path) : String
+  (let
+    [path : String "target/compiler_driver_double_lower_loaded.tl"]
+    [fallback : String "compiler_driver_double_lower_loaded.tl"]
+    [source : String (compiler-driver-state-smoke-double-lower-source)]
+    (match (io.try-write-file (& path) (& source))
+      [(io.OkIoUnit) path]
+      [(io.ErrIoUnit _)
+        (begin
+          (io.write-file fallback source)
+          fallback)])))
+
+(define (compiler-driver-state-smoke-lower-loaded-with-pools
+  [input-path : String]
+  [roots : svec.StringVector]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+    input-path
+    (ast-program decls)
+    paths
+    (CompilerLowerMode.Scalar)
+    roots
+    (tc-prefix-default-cache-scope)
+    pools))
+
+(define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
+  (let
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [input-path : String
+      (compiler-driver-state-smoke-double-lower-fixture-path)]
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-load-package-file-with-runtime
+        input-path
+        (CompilerBackendTarget.Linux)
+        roots
+        ""
+        (compiler-pkg-deps-empty)
+        true)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (let
+            [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+            (match (compiler-driver-state-smoke-lower-loaded-with-pools
+              input-path
+              roots
+              decls
+              paths
+              pools)
+              [(ResultCompilerLower.Ok _ _)
+                (match (compiler-driver-state-smoke-lower-loaded-with-pools
+                  input-path
+                  roots
+                  decls
+                  paths
+                  pools)
+                  [(ResultCompilerLower.Ok _ _)
+                    (begin
+                      (compiler-driver-reset-file-state!)
+                      0)]
+                  [(ResultCompilerLower.Err _)
+                    (begin
+                      (io.print-error "double lower smoke: second lower failed")
+                      (compiler-driver-reset-file-state!)
+                      3)])]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (io.print-error "double lower smoke: first lower failed")
+                  (io.print-error (compiler-diagnostic-render (box-get diag)))
+                  (compiler-driver-reset-file-state!)
+                  2)]))]
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (begin
+            (io.print-error "double lower smoke: load failed")
+            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (compiler-driver-reset-file-state!)
+            1)]))))
 
 (define (main) : i64
   (begin
@@ -1903,7 +2036,15 @@
     (unless
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
+    (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 25))
+    (unless
+      (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
+      (return 26))
     (unless
       (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
       (return 17))
+    (let
+      [double-lower-status : i64
+        (compiler-driver-state-smoke-lower-loaded-twice-status)]
+      (unless (= double-lower-status 0) (return (+ 260 double-lower-status))))
     42))

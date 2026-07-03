@@ -258,8 +258,10 @@
   [state : CompilerDriverState]) : i64
   (cbi.state-ids-data-addr (array-ref (struct-get state builtin-ids) 0)))
 
-(define (compiler-driver-builtin-reset!) : unit
-  (cbi.compiler-builtin-reset!))
+(define (compiler-driver-state-reset-builtins! [state : CompilerDriverState]) : unit
+  (begin
+    (cbi.state-reset! (array-ref (struct-get state builtin-ids) 0))
+    (compiler-driver-state-install-builtins! state)))
 
 (define (compiler-driver-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-typecheck-string-length-id? name-id))
@@ -374,7 +376,7 @@
         (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
-        (cbi.compiler-builtin-reset!)
+        (compiler-driver-state-reset-builtins! state)
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)

@@ -1007,8 +1007,13 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [state-a-ids-addr : i64
+      (compiler-driver-state-builtin-ids-data-addr state-a)]
+    [state-b-ids-addr : i64
+      (compiler-driver-state-builtin-ids-data-addr state-b)]
     [ok : bool true]
     (begin
+      (unless (not (= state-a-ids-addr state-b-ids-addr)) (set! ok false))
       (compiler-driver-state-install-builtins! state-a)
       (let
         [string-length-id : i64 (intern "__tl_string_length")]
@@ -1033,9 +1038,22 @@
                   (compiler-driver-state-capture-active-builtins! state-b)
                   (compiler-driver-state-reset-file-state! state-b)
                   (unless
+                    (= (compiler-driver-state-builtin-generation state-b) -1)
+                    (set! ok false))
+                  (unless
+                    (=
+                      (compiler-driver-state-builtin-ids-data-addr state-b)
+                      state-b-ids-addr)
+                    (set! ok false))
+                  (unless
                     (=
                       (compiler-driver-state-builtin-generation state-a)
                       state-a-generation)
+                    (set! ok false))
+                  (unless
+                    (=
+                      (compiler-driver-state-builtin-ids-data-addr state-a)
+                      state-a-ids-addr)
                     (set! ok false))
                   (compiler-driver-state-install-builtins! state-a)
                   (let
@@ -1067,11 +1085,20 @@
             [after : i64 (compiler-driver-state-builtin-ids-data-addr state)]
             (begin
               (unless (= before after) (set! ok false))
-              (compiler-driver-builtin-reset!)
-              (compiler-driver-state-install-builtins! state)
+              (compiler-driver-state-reset-builtins! state)
+              (unless
+                (= (compiler-driver-state-builtin-generation state) -1)
+                (set! ok false))
+              (unless
+                (= (compiler-driver-state-builtin-ids-data-addr state) before)
+                (set! ok false))
               (unless
                 (compiler-driver-builtin-typecheck-string-length-id?
                   string-length-id)
+                (set! ok false))
+              (compiler-driver-state-capture-active-builtins! state)
+              (unless
+                (> (compiler-driver-state-builtin-generation state) -1)
                 (set! ok false))
               ok)))))))
 

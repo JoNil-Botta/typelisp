@@ -715,7 +715,19 @@
     [(TcContext _ _ _ _ pools) pools]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
-  (ast-node-pool-context-capture-active! (tc-context-pools ctx)))
+  (if (ast-node-pool-compat-context-active?)
+    unit
+    (ast-node-pool-context-capture-active! (tc-context-pools ctx))))
+
+(define (tc-context-install-pools! [ctx : TcContext]) : unit
+  (if (ast-node-pool-compat-context-active?)
+    unit
+    (ast-node-pool-context-install! (tc-context-pools ctx))))
+
+(define (tc-install-pools! [pools : AstNodePoolContext]) : unit
+  (if (ast-node-pool-compat-context-active?)
+    unit
+    (ast-node-pool-context-install! pools)))
 
 (define (tc-context-type-get [ctx : TcContext] [id : i64]) : AstType
   (ast-node-pool-context-type-get (tc-context-pools ctx) id))
@@ -5612,7 +5624,7 @@
 (define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
   (let
     [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [_install : unit (ast-node-pool-context-install! (tc-context-pools ctx))]
+    [_install : unit (tc-context-install-pools! ctx)]
     ;; #3677: the well-known spec builder pushes fresh type nodes (e.g. the
     ;; `(Box Expr)` payload of ExprSplice) into this context's type-node pool.
     ;; In a long-lived `test --check --batch` process the captured pool snapshot
@@ -5625,7 +5637,7 @@
       (ast-node-pool-context-type-dedup-clear! (tc-context-pools ctx))]
     [result : ResultTcUnit (tc-stdlib-comptime-surface-ok-impl ctx)]
     (begin
-      (ast-node-pool-context-install! prev)
+      (tc-install-pools! prev)
       result)))
 
 (define tc-stdlib-comptime-macro-surface-ok-ready : bool
@@ -34015,8 +34027,7 @@
                       (ctfe-fuel-limit))
                       [(ResultCtfe.Ok value _)
                         (begin
-                          (ast-node-pool-context-install!
-                            (tc-context-pools ctx))
+                          (tc-context-install-pools! ctx)
                           (tc-check-defmacro-produced-type ctx ret value))]
                       [(ResultCtfe.Err diag)
                         (ResultTcUnit.Err
@@ -48013,7 +48024,7 @@
             (ctfe-fuel-limit))
             [(ResultCtfe.Ok value _)
               (begin
-                (ast-node-pool-context-install! (tc-context-pools ctx))
+                (tc-context-install-pools! ctx)
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
@@ -55363,7 +55374,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultMacroExpandPass
   (begin
-    (ast-node-pool-context-install! pools)
+    (tc-install-pools! pools)
     (match program
       [(AstProgram.Program decls-box)
         (let
@@ -56022,7 +56033,7 @@
     (if (not (macro-local-followup-work-supported? work))
       (ResultMacroLocalFollowup.Ok program paths work)
       (begin
-        (ast-node-pool-context-install! pools)
+        (tc-install-pools! pools)
         (match program
           [(AstProgram.Program decls-box)
             (let
@@ -57931,7 +57942,7 @@
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
     (tc-nominal-owner-cache-reset!)
-    (ast-node-pool-context-install! pools)
+    (tc-install-pools! pools)
     (match (build-compiler-symbols-with-paths program paths)
       [(ResultCompilerSymbols.Ok symbols)
         (match (build-compiler-registries-with-symbols program symbols)

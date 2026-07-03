@@ -39,8 +39,7 @@
 ;: Spawn one worker over `owner`, join it, and surface the joined value.
 (define (atomic-thread-run [owner : i64]) : i64
   (let
-    [spawn : thread.ThreadSpawnResult
-      (thread.spawn atomic-thread-worker owner)]
+    [spawn : thread.ThreadSpawnResult (thread.spawn atomic-thread-worker owner)]
     (if (not (thread.spawn-result-ok? spawn))
       2
       (let
@@ -53,6 +52,5 @@
     [owner : arena.Arena (arena.make-atomic)]
     [result : i64 (atomic-thread-run (arena.raw-handle owner))]
     (begin
-      (unsafe
-        (arena.destroy-safe! owner))
+      (arena.destroy-safe! owner)
       result)))

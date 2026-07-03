@@ -13,21 +13,16 @@
 ; compiled compiler must walk the cleanup stack correctly. It is runtime-
 ; observable: the cleanups must run in reverse binding order with the right
 ; values, so `trace` ends at 357753 and main returns 42.
-
 (define resource-arg-cycle-trace : i64
   0)
 
 (define (resource-arg-cycle-init [digit : i64]) : i64
   (begin
-    (set!
-      resource-arg-cycle-trace
-      (+ (* resource-arg-cycle-trace 10) digit))
+    (set! resource-arg-cycle-trace (+ (* resource-arg-cycle-trace 10) digit))
     digit))
 
 (define (resource-arg-cycle-cleanup [digit : i64]) : unit
-  (set!
-    resource-arg-cycle-trace
-    (+ (* resource-arg-cycle-trace 10) digit)))
+  (set! resource-arg-cycle-trace (+ (* resource-arg-cycle-trace 10) digit)))
 
 (define (main) : i64
   (begin

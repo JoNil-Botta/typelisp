@@ -4022,11 +4022,10 @@
         [else (+ vars 4)])
       ;; M-G3 stage 2: %rbp (idx 5, FPO functions only) sits below %rbx like %rbx
       ;; sits below r12-r15 -- reserved only when the plan homes a value there.
-      (if (compiler-backend-callee-needs-save? assignments "%rbp")
-        (+ vars 6)
-        (if (compiler-backend-callee-needs-save? assignments "%rbx")
-          (+ vars 5)
-          (+ vars 4))))
+      (cond
+        [(compiler-backend-callee-needs-save? assignments "%rbp") (+ vars 6)]
+        [(compiler-backend-callee-needs-save? assignments "%rbx") (+ vars 5)]
+        [else (+ vars 4)]))
     vars))
 
 ;; #2386: reserve a second var-region for the word1 stack slots of any group var
@@ -4793,7 +4792,11 @@
           (string.append
             (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
             (string.append
-              (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+              (compiler-backend-emit-restore-callee-reg
+                assignments
+                vars
+                "%r14"
+                2)
               (string.append
                 (compiler-backend-emit-restore-callee-reg
                   assignments
@@ -18788,7 +18791,10 @@
                       (cfg
                         arg-cycle-stack
                         ""
-                        (compiler-backend-arg-temp-pick-reg assignments moves all))]
+                        (compiler-backend-arg-temp-pick-reg
+                          assignments
+                          moves
+                          all))]
                     (if (string.eq picked "")
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the STACK -- `pushq srcreg` saves its value before

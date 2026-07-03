@@ -33680,19 +33680,9 @@
           (if (compiler-backend-mode-scalar? mode)
             compiler-backend-scalar-registers-enabled
             false)]
-        ;; SplitKit M3: under `--cfg splitkit-stress` (budget > 0) the greedy
-        ;; records real split pieces and the realization pass below consumes them.
-        ;; To keep that realization operating on PRISTINE blocks -- byte-identical
-        ;; to the ones the greedy analysed, so the recorded point coords map
-        ;; directly and the piece register is exactly the one the worklist proved
-        ;; free -- the two other IR-mutating backend rewrites (caller-save and
-        ;; loop-split) are disabled in the stress build. The committed self-host
-        ;; (no splitkit-stress) keeps them ON and the realization inert (budget 0),
-        ;; so this changes NOTHING on the shipped path (non-split-passes-enabled ==
-        ;; call-save-enabled there).
-        [splitkit-stress-active : bool (cfg splitkit-stress true false)]
-        [non-split-passes-enabled : bool
-          (and call-save-enabled (not splitkit-stress-active))]
+        ;; The caller-save / loop-split / remat IR-mutating rewrites run whenever
+        ;; scalar register allocation is enabled.
+        [non-split-passes-enabled : bool call-save-enabled]
         [call-save-rewrite : CompilerRegCallSaveRewrite
           (if non-split-passes-enabled
             (compiler-reg-caller-save-rewrite-blocks
@@ -33751,16 +33741,10 @@
         [rewritten-vars : i64
           (match loop-split-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
-        ;; SplitKit M5 PIPELINE REORDER (remat-threading fix, design Task-1 Fix A).
-        ;; Order is now loop-split -> REMAT -> SplitKit realization, so the minted
-        ;; region vregs are the LAST IR mutation: no downstream re-analysis pass
-        ;; runs after the mint, so remat can never re-derive a minted vreg's home
-        ;; away (the M4 empty-operand miscompile). The remat output is the
-        ;; intermediate (`remat0-*`); the SplitKit realization output takes the
-        ;; downstream-facing `remat-*` names below (final pipeline blocks/vars/plan),
-        ;; so nothing downstream changes. When the realization declines every piece
-        ;; (budget-0 / no CSR-across-call candidate) this is byte-identical to the
-        ;; pre-reorder chain (splitkit-noop = identity plan merge + same blocks).
+        ;; Pipeline order: caller-save -> loop-split -> REMAT. The remat output is
+        ;; the intermediate (`remat0-*`); the identity `splitkit-rewrite` stage
+        ;; below re-exports it under the downstream-facing `remat-*` names (final
+        ;; pipeline blocks/vars/plan), so nothing downstream changes.
         [remat0-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty rewritten-vars rewritten-blocks)]
         [remat0-rewrite : CompilerRegCallSaveRewrite
@@ -33789,34 +33773,18 @@
         [remat0-vars : i64
           (match remat0-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
-        ;; SplitKit realization pass (design section 4), now wired AFTER remat.
-        ;; Consumes the CompilerRegSplitPlan pieces carried in remat0-reg-plan and
-        ;; emits the CSR-across-call sub-range reload/remap/write-back + occupant
-        ;; liberation. The granular-pristine guard (block-verbatim?) declines any
-        ;; block remat mutated, so realization only fires on blocks left byte-
-        ;; identical by caller-save/loop-split/remat -- never a miscompile.
-        [splitkit-func : CompilerIrFunction
-          (CompilerIrFunction.Function name params ret-ty remat0-vars remat0-blocks)]
+        ;; SplitKit removed: it was inert on the shipped path (the realization
+        ;; declined every recorded piece), replaced by M-G2b's per-call-region
+        ;; split + FPO. The final pipeline stage is the identity of the remat
+        ;; output.
         [splitkit-rewrite : CompilerRegCallSaveRewrite
-          (if call-save-enabled
-            (compiler-reg-splitkit-rewrite-blocks
-              splitkit-func
-              remat0-blocks
-              remat0-vars
-              (compiler-reg-function-var-types splitkit-func)
-              remat0-reg-plan
-              ;; Granular-pristine: the greedy analysed `blocks` (pre caller-save /
-              ;; loop-split / remat), so its recorded piece point coords are numbered
-              ;; over THESE bases. Passing them lets the realization home a piece only
-              ;; in a block ALL three rewrites left byte-identical.
-              (compiler-reg-splitkit-bases-of-blocks blocks))
-            (CompilerRegCallSaveRewrite.Rewrite
-              remat0-blocks
-              remat0-vars
-              remat0-vars
-              CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
-        ;; Downstream-facing FINAL pipeline names (= SplitKit realization output).
+          (CompilerRegCallSaveRewrite.Rewrite
+            remat0-blocks
+            remat0-vars
+            remat0-vars
+            CompilerRegAssignmentList.Nil
+            CompilerRegVarTypeList.Nil)]
+        ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
         [remat-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite

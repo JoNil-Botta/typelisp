@@ -17,8 +17,8 @@
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
-  (File svec.StringVector svec.StringVector bool bool bool)
-  (Package String bool svec.StringVector bool bool bool))
+  (File svec.StringVector svec.StringVector bool bool bool bool)
+  (Package String bool svec.StringVector bool bool bool bool))
 
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
@@ -34,7 +34,8 @@
   [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : ResultSelfhostLintConfig
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : ResultSelfhostLintConfig
   (if (svec.is-empty? (& input-paths))
     (ResultSelfhostLintConfig.Ok
       (SelfhostLintConfig.Package
@@ -43,7 +44,8 @@
         stdlib-roots
         enforcing
         deprecated-string-concat
-        redundant-function-name))
+        redundant-function-name
+        prefer-dotted-field))
     (if has-manifest
       (ResultSelfhostLintConfig.Err
         "selfhost-lint: cannot combine input paths with --manifest-path")
@@ -53,7 +55,8 @@
           stdlib-roots
           enforcing
           deprecated-string-concat
-          redundant-function-name)))))
+          redundant-function-name
+          prefer-dotted-field)))))
 
 (define (selfhost-lint-parse-options
   [idx : i64]
@@ -64,7 +67,8 @@
   [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : ResultSelfhostLintConfig
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
     (selfhost-lint-config-finish
       input-paths
@@ -73,7 +77,8 @@
       stdlib-roots
       enforcing
       deprecated-string-concat
-      redundant-function-name)
+      redundant-function-name
+      prefer-dotted-field)
     (let
       [current : String (io.arg idx)]
       (cond
@@ -87,7 +92,8 @@
             stdlib-roots
             true
             deprecated-string-concat
-            redundant-function-name)]
+            redundant-function-name
+            prefer-dotted-field)]
         [(string.eq current "--deprecated-string-concat")
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -98,7 +104,8 @@
             stdlib-roots
             enforcing
             true
-            redundant-function-name)]
+            redundant-function-name
+            prefer-dotted-field)]
         [(string.eq current "--redundant-function-name")
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -109,6 +116,19 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
+            true
+            prefer-dotted-field)]
+        [(string.eq current "--prefer-dotted-field")
+          (selfhost-lint-parse-options
+            (+ idx 1)
+            count
+            input-paths
+            manifest-path
+            has-manifest
+            stdlib-roots
+            enforcing
+            deprecated-string-concat
+            redundant-function-name
             true)]
         [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
@@ -127,7 +147,8 @@
                   next-roots))
               enforcing
               deprecated-string-concat
-              redundant-function-name))]
+              redundant-function-name
+              prefer-dotted-field))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -144,7 +165,8 @@
                 stdlib-roots
                 enforcing
                 deprecated-string-concat
-                redundant-function-name)))]
+                redundant-function-name
+                prefer-dotted-field)))]
         [(selfhost-lint-flag? current)
           (ResultSelfhostLintConfig.Err
             (string.append "selfhost-lint: unknown flag " current))]
@@ -162,7 +184,8 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
-            redundant-function-name)]))))
+            redundant-function-name
+            prefer-dotted-field)]))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
@@ -173,6 +196,7 @@
     ""
     false
     (svec.new)
+    false
     false
     false
     false))
@@ -547,7 +571,8 @@
   [source : String]
   [program : AstProgram]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : LintFindings
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : LintFindings
   (match program
     [(AstProgram.Program decls-box)
       (let
@@ -562,19 +587,25 @@
               source
               (ast-program decls)
               (lint-default-ladder-threshold)))]
-        (selfhost-lint-filter-derived-origins
-          source
+        [with-redundant : LintFindings
           (if redundant-function-name
             (lint-redundant-function-names-in-program
               source
               (ast-program decls)
               base)
-            base)))]))
+            base)]
+        [with-prefer : LintFindings
+          (if prefer-dotted-field
+            (lint-prefer-dotted-fields-in-program
+              (ast-program decls)
+              with-redundant)
+            with-redundant)]
+        (selfhost-lint-filter-derived-origins source with-prefer))]))
 
 (define (selfhost-lint-program-findings
   [source : String]
   [program : AstProgram]) : LintFindings
-  (selfhost-lint-program-findings-with-options source program false false))
+  (selfhost-lint-program-findings-with-options source program false false false))
 
 (define (selfhost-lint-findings-append-from
   [src : LintFindings]
@@ -642,13 +673,15 @@
   [program : AstProgram]
   [stdlib-roots : svec.StringVector]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : LintFindings
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : LintFindings
   (selfhost-lint-findings-append
     (selfhost-lint-program-findings-with-options
       source
       program
       deprecated-string-concat
-      redundant-function-name)
+      redundant-function-name
+      prefer-dotted-field)
     (selfhost-lint-unused-unsafe-findings path source program stdlib-roots)))
 
 (define (selfhost-lint-source-with-roots-and-staged-options
@@ -656,7 +689,8 @@
   [source : String]
   [stdlib-roots : svec.StringVector]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : LintFindings
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(ResultAstProgramDiagnostic.Ok program)
       (selfhost-lint-program-and-typed-findings
@@ -665,7 +699,8 @@
         program
         stdlib-roots
         deprecated-string-concat
-        redundant-function-name)]
+        redundant-function-name
+        prefer-dotted-field)]
     [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)]))
 
 (define (selfhost-lint-source-with-roots-and-options
@@ -678,6 +713,7 @@
     source
     stdlib-roots
     deprecated-string-concat
+    false
     false))
 
 ;; Parse `source` (attributed to `path`) and run the lint rules over this source
@@ -1983,7 +2019,8 @@
   [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : i64
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : i64
   (let
     [source : String (io.read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
@@ -1996,7 +2033,8 @@
               program
               stdlib-roots
               deprecated-string-concat
-              redundant-function-name)]
+              redundant-function-name
+              prefer-dotted-field)]
           (begin
             (selfhost-lint-print-findings input-path findings)
             (io.print-string
@@ -2019,6 +2057,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
   (let
     [source : String (io.read-file input-path)]
@@ -2032,7 +2071,8 @@
               program
               stdlib-roots
               deprecated-string-concat
-              redundant-function-name)]
+              redundant-function-name
+              prefer-dotted-field)]
           [ordinary-count : i64
             (selfhost-lint-print-findings input-path findings)]
           [dead-count : i64
@@ -2059,6 +2099,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (if (>= index (svec.len (& input-paths)))
@@ -2076,7 +2117,8 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
-            redundant-function-name))]
+            redundant-function-name
+            prefer-dotted-field))]
       (selfhost-lint-files-from
         input-paths
         (+ index 1)
@@ -2084,6 +2126,7 @@
         enforcing
         deprecated-string-concat
         redundant-function-name
+        prefer-dotted-field
         print-headers
         (if (= status 0)
           file-status
@@ -2095,6 +2138,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (selfhost-lint-files-from
@@ -2104,6 +2148,7 @@
     enforcing
     deprecated-string-concat
     redundant-function-name
+    prefer-dotted-field
     print-headers
     status))
 
@@ -2114,6 +2159,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
@@ -2133,6 +2179,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            prefer-dotted-field
             dead-decls))]
       (selfhost-lint-package-files-from
         input-paths
@@ -2141,6 +2188,7 @@
         enforcing
         deprecated-string-concat
         redundant-function-name
+        prefer-dotted-field
         dead-decls
         print-headers
         (if (= status 0)
@@ -2153,6 +2201,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
@@ -2163,6 +2212,7 @@
     enforcing
     deprecated-string-concat
     redundant-function-name
+    prefer-dotted-field
     dead-decls
     print-headers
     status))
@@ -2173,7 +2223,8 @@
   [stdlib-roots : svec.StringVector]
   [enforcing : bool]
   [deprecated-string-concat : bool]
-  [redundant-function-name : bool]) : i64
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
@@ -2191,6 +2242,7 @@
           enforcing
           deprecated-string-concat
           redundant-function-name
+          prefer-dotted-field
           dead-decls
           (> (package-source-list-len sources) 1)
           0))]))
@@ -2205,13 +2257,15 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
-            redundant-function-name)
+            redundant-function-name
+            prefer-dotted-field)
           (selfhost-lint-files
             input-paths
             stdlib-roots
             enforcing
             deprecated-string-concat
             redundant-function-name
+            prefer-dotted-field
             (> (svec.len (& input-paths)) 1)
             0)]
         [(SelfhostLintConfig.Package
@@ -2220,14 +2274,16 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
-            redundant-function-name)
+            redundant-function-name
+            prefer-dotted-field)
           (selfhost-lint-package
             manifest-path
             has-manifest
             stdlib-roots
             enforcing
             deprecated-string-concat
-            redundant-function-name)])]
+            redundant-function-name
+            prefer-dotted-field)])]
     [(ResultSelfhostLintConfig.Err message)
       (begin
         (io.print-error (string.append message "\n"))

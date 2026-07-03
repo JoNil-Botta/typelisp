@@ -830,14 +830,20 @@ EOF
         src/tests/compiler_backend_stack_args_fixture.tl "$_stack_driver"
     "$_stack_driver" "$_stack_asm" linux-x86_64
     for _snippet in \
-        "subq \$16, %rsp" \
-        "addq \$16, %rsp" \
         "call _tl_add8" \
         "call _tl_f10check" \
         "call _tl_mixcheck"
     do
         assert_contains "$_stack_asm" "$_snippet" backend-stack-args
     done
+    # The former per-call `subq $16 / addq $16` outgoing-arg dip was replaced by
+    # the frame-pointer-omission prologue, which folds the outgoing stack-arg
+    # reservation into the function frame (`subq $N,%rsp` released by a matching
+    # `addq $N,%rsp`; N is codegen-dependent, e.g. 104/200/232/344). Assert a
+    # frame is reserved and released rather than hardcoding the pre-campaign 16
+    # (the load-bearing stack-arg stores below are unchanged by the campaign).
+    assert_matches "$_stack_asm" '^[[:space:]]+subq \$[0-9]+, %rsp$' backend-stack-args
+    assert_matches "$_stack_asm" '^[[:space:]]+addq \$[0-9]+, %rsp$' backend-stack-args
     assert_matches "$_stack_asm" '^[[:space:]]+movq .* 0\(%rsp\)$' backend-stack-args
     assert_matches "$_stack_asm" '^[[:space:]]+movq .* 8\(%rsp\)$' backend-stack-args
     assert_not_contains "$_stack_asm" "backend: too many call args" backend-stack-args

@@ -4712,6 +4712,104 @@
           expr
           (string.append name " expects exactly one arg"))))))
 
+;; `(expr-list-length seq)` and its clause/binding-clause variants return the
+;; element count as a comptime i64, exactly matching `(struct-get seq len)`.
+;; Exposed as a direct builtin so macros get O(1) length without rebuilding and
+;; re-interpreting a `struct-get` AST on every call (the slow source-helper path).
+;; The produced value is identical to the source-helper result for every valid
+;; sequence, so this is byte-identical to interpreting the mirror body.
+(define (ctfe-eval-comptime-sequence-length-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 1)
+    (let
+      [arg : AstExpr (ctfe-expr-arg args 0 env)]
+      (match (compiler-ctfe-eval arg env fuel)
+        [(ResultCtfe.Ok value arg-fuel)
+          (match value
+            [(CompilerCtfeValue.ExprList nodes)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+                arg-fuel)]
+            [(CompilerCtfeValue.ExprClauseList clauses)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+                arg-fuel)]
+            [(CompilerCtfeValue.ExprBindingClauseList clauses)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.I64
+                  (ctfe-expr-binding-clause-list-length clauses))
+                arg-fuel)]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    (string.append name " expects a comptime sequence"))))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (string.append name " expects exactly one arg"))))))
+
+;; `(expr-list-nth seq index)` and its clause/binding-clause variants return the
+;; indexed element, exactly matching `(array-ref (struct-get seq items) index)`.
+;; Delegates to `ctfe-eval-array-ref-value`, which already produces the correct
+;; Expr / ExprClause / ExprBindingClause value with bounds checking, so this is a
+;; direct O(1) builtin equivalent to interpreting the mirror body. Arguments are
+;; evaluated sequence-then-index, matching the source-helper fuel threading.
+(define (ctfe-eval-comptime-sequence-nth-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [seq-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [index-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval seq-arg env fuel)
+        [(ResultCtfe.Ok seq-value seq-fuel)
+          (match (compiler-ctfe-eval index-arg env seq-fuel)
+            [(ResultCtfe.Ok index-value index-fuel)
+              (match index-value
+                [(CompilerCtfeValue.I64 index)
+                  (ctfe-eval-array-ref-value
+                    seq-value
+                    index
+                    expr
+                    env
+                    index-fuel)]
+                [_
+                  (ResultCtfe.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        (string.append name " index must be i64"))))])]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (string.append name " expects a sequence and an index"))))))
+
+(define (ctfe-comptime-sequence-length-name? [name : String]) : bool
+  (or
+    (string.eq name "expr-list-length")
+    (string.eq name "expr-clause-list-length")
+    (string.eq name "expr-binding-clause-list-length")))
+
+(define (ctfe-comptime-sequence-nth-name? [name : String]) : bool
+  (or
+    (string.eq name "expr-list-nth")
+    (string.eq name "expr-clause-list-nth")
+    (string.eq name "expr-binding-clause-list-nth")))
+
 (define (ctfe-eval-expr-if-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -5518,6 +5616,15 @@
             (ctfe-eval-module-export-macro-call args expr env fuel)]
           [(string.eq call-name "module-hook")
             (ctfe-eval-module-hook-call args expr env fuel)]
+          [(ctfe-comptime-sequence-length-name? call-name)
+            (ctfe-eval-comptime-sequence-length-call
+              call-name
+              args
+              expr
+              env
+              fuel)]
+          [(ctfe-comptime-sequence-nth-name? call-name)
+            (ctfe-eval-comptime-sequence-nth-call call-name args expr env fuel)]
           [(ctfe-comptime-source-helper-name? source-call-name)
             (ctfe-eval-comptime-source-helper-call
               source-call-name

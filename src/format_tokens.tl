@@ -5,6 +5,8 @@
 ;; as trivia tokens so later layout rules can place them deliberately.
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.result)
+(import (result i64 String) as result_fmt_i64)
 
 (defenum FormatToken
   (LParen)
@@ -46,10 +48,6 @@
 
 (defenum ResultFormatTokenStream
   (Ok FormatTokenStream)
-  (Err FormatSourceError))
-
-(defenum ResultFmtI64
-  (Ok i64)
   (Err FormatSourceError))
 
 (defenum ResultFmtMaybeCharEnd
@@ -392,39 +390,26 @@
       j)))
 
 (define (fmt-scan-prefixed-number-end-result
-  [src : String]
   [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : ResultFmtI64
+  [n : i64]) : result_fmt_i64.Result
   (let
     [digits-start : i64 (fmt-number-digits-start data start)]
     [base : i64 (fmt-number-prefix-base data start)]
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (fmt-scan-based-int-end data value-start n base)]
     (if (= end value-start)
-      (ResultFmtI64.Err
-        (fmt-source-error-at
-          src
-          start
-          "format lexer: malformed integer literal"))
+      (result_fmt_i64.Err "format lexer: malformed integer literal")
       (if (if (< end n)
         (fmt-char-class? (fmt-source-byte-bounds-proven data end) 4)
         false)
-        (ResultFmtI64.Err
-          (fmt-source-error-at
-            src
-            start
-            "format lexer: malformed integer literal"))
-        (ResultFmtI64.Ok end)))))
+        (result_fmt_i64.Err "format lexer: malformed integer literal")
+        (result_fmt_i64.Ok end)))))
 
-(define (fmt-scan-prefixed-number-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-prefixed-number-end-result src data start n)
-    [(ResultFmtI64.Ok end) end]
-    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
+(define (fmt-scan-prefixed-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-prefixed-number-end-result data start n)
+    [(result_fmt_i64.Ok end) end]
+    [(result_fmt_i64.Err err) (io.panic err)]))
 
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -449,23 +434,15 @@
           (set! keep false)))
       j)))
 
-(define (fmt-scan-number-end-result
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : ResultFmtI64
+(define (fmt-scan-number-end-result [data : (Ptr u8)] [start : i64] [n : i64]) : result_fmt_i64.Result
   (if (fmt-number-prefixed? data start n)
-    (fmt-scan-prefixed-number-end-result src data start n)
-    (ResultFmtI64.Ok (fmt-scan-decimal-number-end data start n))))
+    (fmt-scan-prefixed-number-end-result data start n)
+    (result_fmt_i64.Ok (fmt-scan-decimal-number-end data start n))))
 
-(define (fmt-scan-number-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-number-end-result src data start n)
-    [(ResultFmtI64.Ok end) end]
-    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
+(define (fmt-scan-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-number-end-result data start n)
+    [(result_fmt_i64.Ok end) end]
+    [(result_fmt_i64.Err err) (io.panic err)]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -493,11 +470,7 @@
           (set! keep false)))
       j)))
 
-(define (fmt-scan-string-end-result
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : ResultFmtI64
+(define (fmt-scan-string-end-result [data : (Ptr u8)] [start : i64] [n : i64]) : result_fmt_i64.Result
   (let
     [j : i64 start]
     [escaped : bool false]
@@ -522,21 +495,13 @@
                   (set! keep false))]
               [else (set! j (+ j 1))]))
           (return
-            (ResultFmtI64.Err
-              (fmt-source-error-at
-                src
-                (- start 1)
-                "format lexer: unterminated string literal")))))
-      (ResultFmtI64.Ok j))))
+            (result_fmt_i64.Err "format lexer: unterminated string literal"))))
+      (result_fmt_i64.Ok j))))
 
-(define (fmt-scan-string-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-string-end-result src data start n)
-    [(ResultFmtI64.Ok end) end]
-    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
+(define (fmt-scan-string-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-string-end-result data start n)
+    [(result_fmt_i64.Ok end) end]
+    [(result_fmt_i64.Err err) (io.panic err)]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -782,8 +747,8 @@
                     (set! count (+ count 1))
                     (set! i (+ i 1))))]
               [(= c '"')
-                (match (fmt-scan-string-end-result src data (+ i 1) n)
-                  [(ResultFmtI64.Ok end)
+                (match (fmt-scan-string-end-result data (+ i 1) n)
+                  [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
                         tokens
@@ -793,11 +758,13 @@
                         (FormatToken.String (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
-                  [(ResultFmtI64.Err err)
-                    (return (ResultFormatTokenStream.Err err))])]
+                  [(result_fmt_i64.Err err)
+                    (return
+                      (ResultFormatTokenStream.Err
+                        (fmt-source-error-at src i err)))])]
               [(fmt-starts-number data i n)
-                (match (fmt-scan-number-end-result src data i n)
-                  [(ResultFmtI64.Ok end)
+                (match (fmt-scan-number-end-result data i n)
+                  [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
                         tokens
@@ -807,8 +774,10 @@
                         (FormatToken.Int (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
-                  [(ResultFmtI64.Err err)
-                    (return (ResultFormatTokenStream.Err err))])]
+                  [(result_fmt_i64.Err err)
+                    (return
+                      (ResultFormatTokenStream.Err
+                        (fmt-source-error-at src i err)))])]
               [(fmt-char-class? c 4)
                 (let
                   [end : i64 (fmt-scan-symbol-end data i n)]

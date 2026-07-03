@@ -4,20 +4,18 @@
 ;# with `(import (result i64 String) as result_i64_string)`.
 (module stdlib.result)
 
-(import stdlib.comptime)
-
 ;: Emit a generated recoverable-error result module for success type `T` and
 ;: error type `E`.
 (defmacro (result [T : type] [E : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append
-          (comptime.string-append "stdlib.result.generated." (type-key T))
-          (comptime.string-append "." (type-key E))))]
-    [result-name : comptime.Expr (comptime.expr-var "Result")]
-    [ok-name : comptime.Expr (comptime.expr-var "Result.Ok")]
-    [err-name : comptime.Expr (comptime.expr-var "Result.Err")]
+    [module-name : Expr
+      (expr-var
+        (string-append
+          (string-append "stdlib.result.generated." (type-key T))
+          (string-append "." (type-key E))))]
+    [result-name : Expr (expr-var "Result")]
+    [ok-name : Expr (expr-var "Result.Ok")]
+    [err-name : Expr (expr-var "Result.Err")]
     `(begin
       (module ,module-name)
       (defenum ,result-name
@@ -64,18 +62,18 @@
   test
   (defmacro (result-test-user [T : type] [E : type]) : Module
     (let
-      [module-name : comptime.Expr
-        (comptime.expr-var
-          (comptime.string-append
-            (comptime.string-append
-              "stdlib.result.test_user.generated."
-              (type-key T))
-            (comptime.string-append "." (type-key E))))]
+      [module-name : Expr
+        (expr-var
+          (string-append
+            (string-append "stdlib.result.test_user.generated." (type-key T))
+            (string-append "." (type-key E))))]
       `(begin
         (module ,module-name)
         (import (result ,T ,E) as local_result)
         (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
-          (local_result.value-or value fallback))))))
+          (match value
+            [(local_result.Ok inner) inner]
+            [(local_result.Err _) fallback]))))))
 
 (cfg test (import (result-test-user i64 String) as result_i64_string_user))
 

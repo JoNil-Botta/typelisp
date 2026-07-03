@@ -905,12 +905,86 @@
     logical-name
     (box rest)))
 
+;; O(1) alias-construction dedup. Building a module's import-alias overlay adds
+;; up to N aliases, and the "already bound?" check (lower-name-env-add-alias-if-
+;; free-id) scanned the growing LowerNameEnv overlay -> O(N^2). While the overlay
+;; is being built (lower-name-env-from-import-aliases-in-module-cache activates
+;; this) every bind records its interned source id here and the existence check
+;; consults this set instead of scanning. To avoid per-build allocations in the
+;; no-free arena, one persistent scratch map is cleared and reused for each
+;; overlay. Membership mirrors the overlay by id; an un-interned (-1) id can
+;; collide, so those fall back to the exact scan, keeping the built env -- and
+;; the emitted output -- byte-identical.
+(define lower-alias-dedup-active : bool
+  false)
+(define lower-alias-dedup-full : bool
+  false)
+
+;; Fixed-size scratch storage. If an overlay outgrows this, lower-alias-dedup-full
+;; disables the O(1) fast path and the exact scan remains the correctness
+;; fallback. Do not use the growing `put` path here: it allocates and reassigns a
+;; global map in an opt2-inlined hot path, which was observed to crash.
+(define lower-alias-dedup-seen : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 65536))
+
+(define (lower-alias-dedup-clear!) : unit
+  (let
+    [slots : (Array hashmap.I64I64MapSlot)
+      (struct-get lower-alias-dedup-seen slots)]
+    [capacity : i64 (array-length slots)]
+    (begin
+      (hashmap.i64-i64-map-fill-empty slots 0 capacity)
+      (set! (struct-get lower-alias-dedup-seen len) 0)
+      (set! (struct-get lower-alias-dedup-seen deleted) 0)
+      (set! lower-alias-dedup-full false))))
+
+(define (lower-alias-dedup-present? [source-id : i64]) : bool
+  (if lower-alias-dedup-full
+    false
+    (match (hashmap.i64-i64-map-get lower-alias-dedup-seen source-id)
+      [(hashmap.I64I64MapFound _) true]
+      [(hashmap.I64I64MapMissing) false])))
+
+(define (lower-alias-dedup-record [source-id : i64]) : unit
+  (if (or lower-alias-dedup-full (< source-id 0))
+    unit
+    (match (hashmap.i64-i64-map-insert lower-alias-dedup-seen source-id 1)
+      [(hashmap.I64I64MapInsertOk next) (set! lower-alias-dedup-seen next)]
+      [(hashmap.I64I64MapInsertFull next)
+        (begin
+          (set! lower-alias-dedup-seen next)
+          (set! lower-alias-dedup-full true))])))
+
+;; Seed the scratch set with an existing overlay base (usually empty), recording
+;; only valid (>=0) interned source ids.
+(define (lower-alias-dedup-seed-into [names : LowerNameEnv]) : unit
+  (let
+    [cur : LowerNameEnv names]
+    [done : bool false]
+    (begin
+      (while (and
+        (not done)
+        (match cur
+          [(LowerNameEnv.Nil) false]
+          [_ true]))
+        (match cur
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Bind _ bind-id _ rest)
+            (begin
+              (lower-alias-dedup-record bind-id)
+              (set! cur (box-get rest)))]))
+      unit)))
+
 (define (lower-name-env-bind-id
   [source-name : String]
   [source-id : i64]
   [logical-name : String]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (LowerNameEnv.Bind source-name source-id logical-name (box rest)))
+  (begin
+    (if (and lower-alias-dedup-active (>= source-id 0))
+      (lower-alias-dedup-record source-id)
+      unit)
+    (LowerNameEnv.Bind source-name source-id logical-name (box rest))))
 
 (define (lower-name-cache-add-id
   [cache : LowerNameCache]
@@ -1371,10 +1445,19 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
-  (match (lower-name-env-lookup-with-id names source-name source-id)
-    [(TcMaybeString.Some _) names]
-    [(TcMaybeString.No)
-      (lower-name-env-bind-id source-name source-id logical-name names)]))
+  (if (and
+    lower-alias-dedup-active
+    (not lower-alias-dedup-full)
+    (>= source-id 0))
+    ;; O(1) dedup path: the seen set mirrors this overlay's membership by id, and
+    ;; lower-name-env-bind-id records the id, so binding here keeps them in sync.
+    (if (lower-alias-dedup-present? source-id)
+      names
+      (lower-name-env-bind-id source-name source-id logical-name names))
+    (match (lower-name-env-lookup-with-id names source-name source-id)
+      [(TcMaybeString.Some _) names]
+      [(TcMaybeString.No)
+        (lower-name-env-bind-id source-name source-id logical-name names)])))
 
 (define (lower-name-env-add-import-alias-binding
   [names : LowerNameEnv]
@@ -2555,11 +2638,23 @@
   [target-current-module-id : i64]
   [current-module-id : i64]) : LowerNameEnv
   (let
+    [saved-dedup-active : bool lower-alias-dedup-active]
+    [saved-dedup-full : bool lower-alias-dedup-full]
+    [_dedup-seed : unit
+      (if saved-dedup-active
+        unit
+        (begin
+          (lower-alias-dedup-clear!)
+          (lower-alias-dedup-seed-into names)))]
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 current-module-id]
     (begin
+      (set! lower-alias-dedup-active true)
+      (if saved-dedup-active
+        (set! lower-alias-dedup-full true)
+        unit)
       (while (< index count)
         (let
           [decl : AstDecl
@@ -2592,6 +2687,8 @@
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_ unit])
             (set! index (+ index 1)))))
+      (set! lower-alias-dedup-active saved-dedup-active)
+      (set! lower-alias-dedup-full saved-dedup-full)
       cur-names)))
 
 (define (lower-name-env-with-import-aliases-in-module-cache

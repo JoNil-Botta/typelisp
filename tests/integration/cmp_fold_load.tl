@@ -4,7 +4,7 @@
 ;; FORCING TEST for GAP6a: fold a register-homed comparand into the fused
 ;; gep+load+compare+branch instead of staging it through a scratch register.
 ;;
-;; `(array.array-length xs)` reads the descriptor length field at a CONSTANT
+;; `(array.length xs)` reads the descriptor length field at a CONSTANT
 ;; offset (fat-pointer offset 8). When it is single-use and feeds a branch
 ;; condition, the backend fuses gep+load+compare+branch: the length word is read
 ;; from memory and compared against `threshold` (a NON-immediate, register-homed
@@ -22,7 +22,7 @@
 (define (check [xs : (Array i64)] [threshold : i64] [poke : i64]) : i64
   (if (< poke 0)
     (check xs threshold (+ poke 1))
-    (if (< (array.array-length xs) threshold)
+    (if (< (array.length xs) threshold)
       1
       0)))
 

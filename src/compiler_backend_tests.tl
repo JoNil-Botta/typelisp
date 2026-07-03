@@ -4230,7 +4230,7 @@
             (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
-                (IrInstrPack
+                (CompilerIrInstr.Pack
                   2
                   (compiler-ir-value-cons
                     (CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
@@ -5333,7 +5333,7 @@
   (and
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (IrInstrWord 1 (CompilerIrValue.Var 2) 0 (AstType.I64))
+        (CompilerIrInstr.Word 1 (CompilerIrValue.Var 2) 0 (AstType.I64))
         CompilerIrInstrList.Nil)
       CompilerRegAssignmentList.Nil
       4)
@@ -5345,7 +5345,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (IrInstrWord 1 (CompilerIrValue.Var 2) 0 (AstType.F64))
+        (CompilerIrInstr.Word 1 (CompilerIrValue.Var 2) 0 (AstType.F64))
         CompilerIrInstrList.Nil)
       CompilerRegAssignmentList.Nil
       4)
@@ -5357,7 +5357,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (IrInstrWord 1 (CompilerIrValue.Var 2) 0 (AstType.F64))
+        (CompilerIrInstr.Word 1 (CompilerIrValue.Var 2) 0 (AstType.F64))
         CompilerIrInstrList.Nil)
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
@@ -17188,7 +17188,7 @@
     [starts : (Array i64) (make-array i64 1)]
     [ends : (Array i64) (make-array i64 1)]
     (and
-      (string-eq
+      (string.eq
         (compiler-backend-scavenge-pick
           starts
           ends
@@ -17199,7 +17199,7 @@
           5
           "%rax")
         "%r10")
-      (string-eq
+      (string.eq
         (compiler-backend-scavenge-pick
           starts
           ends
@@ -17267,7 +17267,7 @@
       (array-set! ends 3 10)
       (array-set! ends 4 10)
       (and
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17278,7 +17278,7 @@
             5
             "%r8")
           "%r10")
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17346,7 +17346,7 @@
       (array-set! ends 3 10)
       (array-set! ends 4 10)
       (and
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17357,7 +17357,7 @@
             6
             "%r8")
           "%r10")
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17415,7 +17415,7 @@
       (array-set! ends 5 10)
       (array-set! ends 6 10)
       (and
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17426,7 +17426,7 @@
             7
             "%r8")
           "%r10")
-        (string-eq
+        (string.eq
           (compiler-backend-scavenge-pick
             starts
             ends
@@ -17446,7 +17446,7 @@
     [starts : (Array i64) (make-array i64 1)]
     [ends : (Array i64) (make-array i64 1)]
     (and
-      (string-eq
+      (string.eq
         (compiler-backend-scavenge-pick
           starts
           ends
@@ -17457,7 +17457,7 @@
           5
           "%r10")
         "%r10")
-      (string-eq
+      (string.eq
         (compiler-backend-scavenge-pick
           starts
           ends
@@ -17501,9 +17501,9 @@
             "%r8")]
         [ok : bool
           (and
-            (string-eq reg "%r12")
+            (string.eq reg "%r12")
             compiler-backend-emergency-pending
-            (string-eq compiler-backend-emergency-reg "%r12")
+            (string.eq compiler-backend-emergency-reg "%r12")
             (= compiler-backend-emergency-pending-count 1)
             (= compiler-backend-emergency-used-count 1))]
         (begin
@@ -17719,7 +17719,7 @@
           (and
             (not (= (bit-and mask (compiler-backend-scavenge-reg-bit "%r8")) 0))
             (not
-              (string-eq
+              (string.eq
                 (compiler-backend-scavenge-pick-with-mask
                   mask
                   (compiler-backend-one-exclude "%rax")

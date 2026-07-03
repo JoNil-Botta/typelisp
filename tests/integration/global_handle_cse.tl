@@ -24,11 +24,11 @@
 (define (probe [i : i64]) : i64
   (if (< i -999999)
     (probe (- i 1))
-    (array.array-ref gtab i)))
+    (array.ref gtab i)))
 
 (define (main) : i64
   (begin
-    (array.array-set! gtab 3 42)
+    (array-set! gtab 3 42)
     (let
       [r : i64 (probe 3)]
       (if (= r 42)

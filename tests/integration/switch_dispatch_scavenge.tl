@@ -56,7 +56,7 @@
           (set! a9 (bit-and (+ (* a9 3) a10) 281474976710655))
           (set! a10 (bit-and (+ (* a10 3) a11) 281474976710655))
           (set! a11 (bit-and (+ (* a11 3) a0) 281474976710655))
-          (match (array.array-ref program (% i plen))
+          (match (array.ref program (% i plen))
             [(Op0) (set! a0 (bit-and (+ a0 1000003) 281474976710655))]
             [(Op1) (set! a1 (bit-and (+ a1 1007922) 281474976710655))]
             [(Op2) (set! a2 (bit-and (+ a2 1015841) 281474976710655))]
@@ -199,12 +199,12 @@
   (let
     [p : (Array Op) (array.make-array Op 6)]
     (begin
-      (array.array-set! p 0 (Op0))
-      (array.array-set! p 1 (Op1))
-      (array.array-set! p 2 (Op2))
-      (array.array-set! p 3 (Op3))
-      (array.array-set! p 4 (Op4))
-      (array.array-set! p 5 (Op5))
+      (array-set! p 0 (Op0))
+      (array-set! p 1 (Op1))
+      (array-set! p 2 (Op2))
+      (array-set! p 3 (Op3))
+      (array-set! p 4 (Op4))
+      (array-set! p 5 (Op5))
       (let
         [n : i64 (+ (arg-count) 300)]
         [seed : i64 (+ (arg-count) 5)]

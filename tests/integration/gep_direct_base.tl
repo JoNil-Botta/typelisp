@@ -34,7 +34,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (bump (+ acc (array.array-ref xs i))))
+          (set! acc (bump (+ acc (array.ref xs i))))
           (set! i (+ i 1))))
       acc)))
 
@@ -46,7 +46,7 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set! xs i (* i 2))
+          (array-set! xs i (* i 2))
           (set! i (+ i 1))))
       (let
         [r : i64 (probe xs n)]

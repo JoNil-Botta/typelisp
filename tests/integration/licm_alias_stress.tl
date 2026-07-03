@@ -28,8 +28,8 @@
       (while (< i n)
         (begin
           ;; read the value written on an EARLIER iteration when i > n-1-i.
-          (set! acc (+ acc (array.array-ref xs i)))
-          (array.array-set! xs (- (- n 1) i) (+ i 1))
+          (set! acc (+ acc (array.ref xs i)))
+          (array-set! xs (- (- n 1) i) (+ i 1))
           (set! i (+ i 1))))
       acc)))
 
@@ -45,9 +45,9 @@
       (while (< i n)
         (begin
           (if (= (% i 2) 0)
-            (array.array-set! xss 0 a)
-            (array.array-set! xss 0 b))
-          (set! acc (+ acc (array.array-length (array.array-ref xss 0))))
+            (array-set! xss 0 a)
+            (array-set! xss 0 b))
+          (set! acc (+ acc (array.length (array.ref xss 0))))
           (set! i (+ i 1))))
       acc)))
 
@@ -59,7 +59,7 @@
     [b : (Array i64) (array.make-array i64 3)]
     [xss : (Array (Array i64)) (array.make-array (Array i64) 1)]
     (begin
-      (array.array-set! xss 0 a)
+      (array-set! xss 0 a)
       ;; n = 6 (no args). rotate-sum walk:
       ;;   i=0: acc += xs[0] (0), write xs[5]=1
       ;;   i=1: acc += xs[1] (0), write xs[4]=2

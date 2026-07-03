@@ -1,6 +1,6 @@
 (import "stdlib/io.tl")
 (import stdlib.array)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 ;; FORCING / CORRECTNESS test for the register-scavenger fused-destructure clobber
 ;; (latent backend miscompile, surfaced by loop-carry phi coalescing lowering
@@ -45,14 +45,14 @@
       (while (if done
         false
         (< i n))
-        (match (array.array-ref slots i)
+        (match (array.ref slots i)
           [(SlotEmpty)
             (begin
               (set! out -1)
               (set! done true))]
           [(SlotUsed slot-key slot-id slot-hash)
             (if (if (= slot-hash hash)
-              (string-eq slot-key name)
+              (string.eq slot-key name)
               false)
               (begin
                 (set! out slot-id)
@@ -67,12 +67,12 @@
     [slots : (Array Slot) (array.make-array Slot n)]
     (begin
       ;; Distinct heap key strings; ids offset by the seed so they are not folded.
-      (array.array-set! slots 0 (SlotUsed "alpha" (+ s 10) 100))
-      (array.array-set! slots 1 (SlotUsed "beta" (+ s 20) 200))
-      (array.array-set! slots 2 (SlotUsed "gamma" (+ s 30) 300))
-      (array.array-set! slots 3 (SlotUsed "delta" (+ s 40) 400))
-      (array.array-set! slots 4 (SlotUsed "epsilon" (+ s 50) 500))
-      (array.array-set! slots 5 (SlotEmpty))
+      (array-set! slots 0 (SlotUsed "alpha" (+ s 10) 100))
+      (array-set! slots 1 (SlotUsed "beta" (+ s 20) 200))
+      (array-set! slots 2 (SlotUsed "gamma" (+ s 30) 300))
+      (array-set! slots 3 (SlotUsed "delta" (+ s 40) 400))
+      (array-set! slots 4 (SlotUsed "epsilon" (+ s 50) 500))
+      (array-set! slots 5 (SlotEmpty))
       ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.
       (let
         [g : i64 (slot-lookup slots n "gamma" 300)]

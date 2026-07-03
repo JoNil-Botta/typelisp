@@ -19,10 +19,10 @@
   (if (< n 0)
     (alias-poke xs ys (+ n 1))
     (let
-      [a : i64 (array.array-ref xs 0)]
+      [a : i64 (array.ref xs 0)]
       (begin
-        (array.array-set! ys 0 (+ a n))
-        (+ (array.array-ref xs 0) (array.array-ref ys 1))))))
+        (array-set! ys 0 (+ a n))
+        (+ (array.ref xs 0) (array.ref ys 1))))))
 
 (define (mirror-sum [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64
   (if (< n 0)
@@ -33,8 +33,8 @@
       (begin
         (while (< i n)
           (begin
-            (set! acc (+ acc (array.array-ref xs i)))
-            (array.array-set! ys (- (- n 1) i) (+ i 1))
+            (set! acc (+ acc (array.ref xs i)))
+            (array-set! ys (- (- n 1) i) (+ i 1))
             (set! i (+ i 1))))
         acc))))
 
@@ -44,8 +44,8 @@
     [xs : (Array i64) (array.make-array i64 2)]
     [zs : (Array i64) (array.make-array i64 (+ n 1))]
     (begin
-      (array.array-set! xs 0 10)
-      (array.array-set! xs 1 20)
+      (array-set! xs 0 10)
+      (array-set! xs 1 20)
       (let
         ;; n = 6 (arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
         ;; r1 = xs[0] + xs[1] = 16 + 20 = 36. A stale cached xs[0] gives 30.

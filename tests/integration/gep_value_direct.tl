@@ -5,7 +5,7 @@
 ;; materialization, not a fused load/store) composes its element address in ONE
 ;; leaq off the register-homed base and index -- not through two staging copies.
 ;;
-;; `string.string-append` (inlined into `cat` at opt2) computes the destination
+;; `string.append` (inlined into `cat` at opt2) computes the destination
 ;; address `dest_data + a_len` for its second memcpy: a byte-scale (scale-1) GEP
 ;; whose result is a VALUE (the memcpy pointer argument), not a load/store, so it
 ;; is emitted as a standalone GEP. Before GAP6b the backend staged both operands:
@@ -21,7 +21,7 @@
 (define (cat [a : String] [b : String] [poke : i64]) : String
   (if (< poke 0)
     (cat a b (+ poke 1))
-    (string.string-append a b)))
+    (string.append a b)))
 
 (define (main) : i64
   (let

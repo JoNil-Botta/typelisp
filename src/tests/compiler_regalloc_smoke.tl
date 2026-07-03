@@ -74,7 +74,7 @@
       (compiler-reg-call-live-blocks blocks liveness (compiler-live-set-empty))]
     [direct-calls : CompilerLiveI64Set (compiler-reg-direct-call-points func)]
     (match (compiler-reg-plan-function func)
-      [(CompilerRegPlan.Plan _ ineligible _ _ _)
+      [(CompilerRegPlan.Plan _ ineligible _ _ _ _)
         (and
           (compiler-live-set-eq? call-args (compiler-live-set3 0 1 2))
           (compiler-live-set-contains? call-live 3)

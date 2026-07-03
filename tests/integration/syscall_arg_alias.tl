@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import stdlib.string)
 
 ;; Forcing test for the Linux syscall argument-register parallel move (audit #95).
 ;;
@@ -31,7 +32,7 @@
 (define (main) : i64
   (let
     [msg : String "ABCDEFGHI"]
-    [count : i64 (string-length msg)]
+    [count : i64 (string.string-length msg)]
     [buf : i64
       (unsafe
         (cast (ptr->int (string-data msg)) : i64))]

@@ -24,7 +24,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref xs i)))
+          (set! acc (+ acc (array.ref xs i)))
           (set! i (+ i 1))))
       acc)))
 
@@ -36,7 +36,7 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set! xs i (* i 5))
+          (array-set! xs i (* i 5))
           (set! i (+ i 1))))
       (let
         [r : i64 (sum-loop xs n)]

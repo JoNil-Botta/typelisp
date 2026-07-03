@@ -40,19 +40,19 @@
 (define (atomic-thread-run [owner : i64]) : i64
   (let
     [spawn : thread.ThreadSpawnResult
-      (thread.thread-spawn atomic-thread-worker owner)]
-    (if (not (thread.thread-spawn-result-ok? spawn))
+      (thread.spawn atomic-thread-worker owner)]
+    (if (not (thread.spawn-result-ok? spawn))
       2
       (let
         [worker : thread.Thread
-          (thread.thread-spawn-result-thread-or spawn (thread.Thread 0 0 0))]
-        (thread.thread-join-result-value-or (thread.thread-join worker) 3)))))
+          (thread.spawn-result-thread-or spawn (thread.Thread 0 0 0))]
+        (thread.join-result-value-or (thread.join worker) 3)))))
 
 (define (main) : i64
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
-    [result : i64 (atomic-thread-run (arena.arena-raw-handle owner))]
+    [owner : arena.Arena (arena.make-atomic)]
+    [result : i64 (atomic-thread-run (arena.raw-handle owner))]
     (begin
       (unsafe
-        (arena.arena-destroy owner))
+        (arena.destroy-safe! owner))
       result)))

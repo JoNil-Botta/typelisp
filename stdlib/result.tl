@@ -14,8 +14,8 @@
           (string-append "stdlib.result.generated." (type-key T))
           (string-append "." (type-key E))))]
     [result-name : Expr (expr-var "Result")]
-    [ok-name : Expr (expr-var "Result.Ok")]
-    [err-name : Expr (expr-var "Result.Err")]
+    [ok-name : Expr (expr-var "Ok")]
+    [err-name : Expr (expr-var "Err")]
     `(begin
       (module ,module-name)
       (defenum ,result-name

@@ -49053,14 +49053,14 @@
     "ok"
     (macro-result-param-list1 (macro-result-param "value" ok-ty))
     (macro-result-result-ty)
-    (macro-result-call1 "Result.Ok" (macro-result-var "value"))))
+    (macro-result-call1 "Ok" (macro-result-var "value"))))
 
 (define (macro-result-err-decl [err-ty : AstType]) : AstDecl
   (ast-decl-def-fn
     "err"
     (macro-result-param-list1 (macro-result-param "error" err-ty))
     (macro-result-result-ty)
-    (macro-result-call1 "Result.Err" (macro-result-var "error"))))
+    (macro-result-call1 "Err" (macro-result-var "error"))))
 
 (define (macro-result-pattern1 [variant : String] [payload : AstPattern]) : AstPattern
   (ast-pat-variant variant (ast-pattern-cons payload (ast-pattern-list-new))))

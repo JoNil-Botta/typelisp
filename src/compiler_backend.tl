@@ -19904,7 +19904,8 @@
 ;; the emit position is a valid scavenge point.
 (define (compiler-backend-phi-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : String
+  [copies : CompilerBackendPhiCopyList]
+  [all : CompilerBackendPhiCopyList]) : String
   (let
     [point : i64
       (*
@@ -19914,8 +19915,23 @@
           compiler-backend-emit-current-count))]
     [occupied-mask : i64
       (compiler-backend-scavenge-occupied-mask-at-point point)]
+    ;; The cycle-break Temp must avoid every register the phi marshalling still
+    ;; needs: the dst homes of the REMAINING copies, AND every dst home of the
+    ;; ORIGINAL copy list. An already-emitted (drained) copy has placed a final
+    ;; phi value into its dst register (live to the merge block entry), but that
+    ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
+    ;; the Temp and clobber a placed phi value -- the same unsound-cycle-break
+    ;; class as the arg-move sret/rcx<->r9 bug (#41). The occupancy mask reflects
+    ;; the allocation, not these transient marshalling values. --cfg
+    ;; phi-temp-legacy forces the OLD (unsound) `copies`-only mask so a forcing
+    ;; gate can build a compiler that reproduces the miscompile.
     [exclude-mask : i64
-      (compiler-backend-phi-copy-list-dst-home-mask assignments copies)]
+      (cfg
+        phi-temp-legacy
+        (compiler-backend-phi-copy-list-dst-home-mask assignments copies)
+        (bit-or
+          (compiler-backend-phi-copy-list-dst-home-mask assignments copies)
+          (compiler-backend-phi-copy-list-dst-home-mask assignments all)))]
     [cands : (Array String) compiler-backend-scavenge-candidate-pool]
     [reg : String
       (compiler-backend-phi-temp-pick-reg-iter
@@ -20313,6 +20329,25 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-phi-copy-list-with-all
+    assignments
+    copies
+    copies
+    program-index
+    vars
+    outer-active))
+
+;; `all` is the ORIGINAL (top-level) phi-copy list, carried unchanged through the
+;; recursion so the cycle-break Temp pick can exclude every dst register of the
+;; whole marshalling -- including those of already-emitted (drained) copies, which
+;; still hold placed phi values that must survive to the merge block entry.
+(define (compiler-backend-emit-phi-copy-list-with-all
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]
+  [all : CompilerBackendPhiCopyList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [outer-active : bool]) : ResultCompilerBackend
   (match copies
     [(CompilerBackendPhiCopyList.Nil) (ResultCompilerBackend.Ok "")]
     [(CompilerBackendPhiCopyList.Cons first _)
@@ -20329,9 +20364,10 @@
                 program-index
                 vars)
                 [(ResultCompilerBackend.Ok head)
-                  (match (compiler-backend-emit-phi-copy-list
+                  (match (compiler-backend-emit-phi-copy-list-with-all
                     assignments
                     (compiler-backend-phi-copy-list-remove-dst copies dst)
+                    all
                     program-index
                     vars
                     outer-active)
@@ -20357,7 +20393,7 @@
                       assignments
                       copies
                       program-index))
-                    (compiler-backend-phi-temp-pick-reg assignments copies)
+                    (compiler-backend-phi-temp-pick-reg assignments copies all)
                     "")]
                 (match (if (string.eq reg "")
                   (compiler-backend-emit-phi-temp-save
@@ -20376,7 +20412,7 @@
                       program-index
                       vars)
                       [(ResultCompilerBackend.Ok head)
-                        (match (compiler-backend-emit-phi-copy-list
+                        (match (compiler-backend-emit-phi-copy-list-with-all
                           assignments
                           (compiler-backend-phi-copy-list-replace-source-home
                             assignments
@@ -20385,6 +20421,7 @@
                               dst)
                             dst
                             reg)
+                          all
                           program-index
                           vars
                           true)

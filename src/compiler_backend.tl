@@ -4012,13 +4012,21 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments)
-    ;; M-G3 stage 2: %rbp (idx 5, FPO functions only) sits below %rbx like %rbx
-    ;; sits below r12-r15 -- reserved only when the plan homes a value there.
-    (if (compiler-backend-callee-needs-save? assignments "%rbp")
-      (+ vars 6)
-      (if (compiler-backend-callee-needs-save? assignments "%rbx")
-        (+ vars 5)
-        (+ vars 4)))
+    ;; Win64: %rsi/%rdi are callee-saved and home at slot idx 5/6, above %rbx's
+    ;; idx 4, so reserve up through the highest homed one (rdi -> +7, rsi -> +6).
+    (if (compiler-backend-current-fn-win64?)
+      (cond
+        [(compiler-backend-callee-needs-save? assignments "%rdi") (+ vars 7)]
+        [(compiler-backend-callee-needs-save? assignments "%rsi") (+ vars 6)]
+        [(compiler-backend-callee-needs-save? assignments "%rbx") (+ vars 5)]
+        [else (+ vars 4)])
+      ;; M-G3 stage 2: %rbp (idx 5, FPO functions only) sits below %rbx like %rbx
+      ;; sits below r12-r15 -- reserved only when the plan homes a value there.
+      (if (compiler-backend-callee-needs-save? assignments "%rbp")
+        (+ vars 6)
+        (if (compiler-backend-callee-needs-save? assignments "%rbx")
+          (+ vars 5)
+          (+ vars 4))))
     vars))
 
 ;; #2386: reserve a second var-region for the word1 stack slots of any group var
@@ -4723,6 +4731,30 @@
               (compiler-backend-emit-pop-callee-reg assignments "%r13")
               (compiler-backend-emit-pop-callee-reg assignments "%r12"))))))))
 
+;; Win64-only callee-save extension: on Win64 %rsi/%rdi are callee-saved (unlike
+;; SysV, where they are caller-saved argument registers), so a function that
+;; homes a value in them must spill/reload across the call boundary. They occupy
+;; slot idx 5/6 -- idx 5 collides with %rbp's slot, but that is sound because
+;; %rbp-as-CSR only happens on the Linux FPO path and these only fire on Win64,
+;; and a function targets exactly one ABI, so the two are mutually exclusive.
+(define (compiler-backend-emit-save-win64-callee-regs
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (string.append
+      (compiler-backend-emit-save-callee-reg assignments vars "%rsi" 5)
+      (compiler-backend-emit-save-callee-reg assignments vars "%rdi" 6))
+    ""))
+
+(define (compiler-backend-emit-restore-win64-callee-regs
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (if (compiler-backend-current-fn-win64?)
+    (string.append
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rdi" 6)
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rsi" 5))
+    ""))
+
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
@@ -4740,7 +4772,11 @@
             ;; slot operand is a frame reference; in the (FPO-only) functions
             ;; that home values in %rbp it is rebased to an rsp-relative form,
             ;; so the save works without the rbp frame base.
-            (compiler-backend-emit-save-callee-reg assignments vars "%rbp" 5)))))))
+            (string.append
+              (compiler-backend-emit-save-callee-reg assignments vars "%rbp" 5)
+              ;; Win64: %rsi/%rdi saves (no-op on Linux; the %rbp save above is a
+              ;; no-op on Win64, so save order stays r12..rbx, then rsi, rdi).
+              (compiler-backend-emit-save-win64-callee-regs assignments vars))))))))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -4748,24 +4784,27 @@
   (if (compiler-backend-callee-save-pop-eligible? assignments)
     (compiler-backend-emit-restore-callee-regs-pop assignments vars)
     (string.append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%rbp" 5)
+      ;; Win64: %rdi/%rsi restores first (no-op on Linux), mirroring the save.
+      (compiler-backend-emit-restore-win64-callee-regs assignments vars)
       (string.append
-        (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
+        (compiler-backend-emit-restore-callee-reg assignments vars "%rbp" 5)
         (string.append
-          (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
+          (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
           (string.append
-            (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+            (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
             (string.append
-              (compiler-backend-emit-restore-callee-reg
-                assignments
-                vars
-                "%r13"
-                1)
-              (compiler-backend-emit-restore-callee-reg
-                assignments
-                vars
-                "%r12"
-                0))))))))
+              (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+              (string.append
+                (compiler-backend-emit-restore-callee-reg
+                  assignments
+                  vars
+                  "%r13"
+                  1)
+                (compiler-backend-emit-restore-callee-reg
+                  assignments
+                  vars
+                  "%r12"
+                  0)))))))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label

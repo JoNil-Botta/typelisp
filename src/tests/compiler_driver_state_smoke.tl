@@ -2013,6 +2013,21 @@
     (tc-prefix-default-cache-scope)
     pools))
 
+(define (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
+  [input-path : String]
+  [roots : svec.StringVector]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+    input-path
+    (ast-program decls)
+    paths
+    (CompilerLowerMode.Scalar)
+    roots
+    (tc-prefix-default-cache-scope)
+    pools))
+
 (define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
   (let
     [roots : svec.StringVector
@@ -2035,6 +2050,10 @@
         [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (let
             [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+            [decoy-pools : AstNodePoolContext
+              (ast-node-pool-context-new-with-capacities 2 2)]
+            [_install-decoy-first : unit
+              (ast-node-pool-context-install! decoy-pools)]
             (match (compiler-driver-state-smoke-lower-loaded-with-pools
               input-path
               roots
@@ -2042,21 +2061,24 @@
               paths
               pools)
               [(ResultCompilerLower.Ok _ _)
-                (match (compiler-driver-state-smoke-lower-loaded-with-pools
-                  input-path
-                  roots
-                  decls
-                  paths
-                  pools)
-                  [(ResultCompilerLower.Ok _ _)
-                    (begin
-                      (compiler-driver-reset-file-state!)
-                      0)]
-                  [(ResultCompilerLower.Err _)
-                    (begin
-                      (io.print-error "double lower smoke: second lower failed")
-                      (compiler-driver-reset-file-state!)
-                      3)])]
+                (begin
+                  (ast-node-pool-context-install! decoy-pools)
+                  (match (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
+                    input-path
+                    roots
+                    decls
+                    paths
+                    pools)
+                    [(ResultCompilerLower.Ok _ _)
+                      (begin
+                        (compiler-driver-reset-file-state!)
+                        0)]
+                    [(ResultCompilerLower.Err _)
+                      (begin
+                        (io.print-error
+                          "double lower smoke: second lower failed")
+                        (compiler-driver-reset-file-state!)
+                        3)]))]
               [(ResultCompilerLower.Err diag)
                 (begin
                   (io.print-error "double lower smoke: first lower failed")

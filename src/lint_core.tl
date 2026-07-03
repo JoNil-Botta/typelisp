@@ -3981,7 +3981,7 @@
 
 (define (lint-prefer-dotted-field-quasiquote-expr
   [expr : AstExpr]
-  [span : AstSourceSpan]
+  [_span : AstSourceSpan]
   [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExpr.Spanned inner inner-span)

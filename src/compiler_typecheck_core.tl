@@ -18133,19 +18133,17 @@
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : AstExpr]) : ResultTcUnit
-  (match env
-    [(TcTypeEnv.Nil) ResultTcUnit.Ok]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-check-thread-safe-spawn-captures-scan-root
-          spawn-name
-          ctx
-          root
-          (box-get rest)
-          bound
-          body)
-        ResultTcUnit.Ok)]
-    [(TcTypeEnv.Bind key ty rest)
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) ResultTcUnit.Ok]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
+      (tc-check-thread-safe-spawn-captures-scan-root
+        spawn-name
+        ctx
+        root
+        rest-env
+        bound
+        body)]
+    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (intern-str key)]
         (cond
@@ -18159,7 +18157,7 @@
               spawn-name
               ctx
               root
-              (box-get rest)
+              rest-env
               bound
               body)]
           [(not (tc-expr-uses-free-name? body name bound))
@@ -18167,7 +18165,7 @@
               spawn-name
               ctx
               root
-              (box-get rest)
+              rest-env
               bound
               body)]
           [(tc-expr-sets-free-name? body name bound)
@@ -18205,7 +18203,7 @@
                   spawn-name
                   ctx
                   root
-                  (box-get rest)
+                  rest-env
                   bound
                   body)])]))]))
 
@@ -18215,23 +18213,13 @@
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-check-thread-safe-spawn-captures-scan-root
-        spawn-name
-        ctx
-        env
-        (box-get rest)
-        (tc-param-bound-names params)
-        body)]
-    [_
-      (tc-check-thread-safe-spawn-captures-scan-root
-        spawn-name
-        ctx
-        env
-        env
-        (tc-param-bound-names params)
-        body)]))
+  (tc-check-thread-safe-spawn-captures-scan-root
+    spawn-name
+    ctx
+    env
+    (tc-type-env-marker-start env)
+    (tc-param-bound-names params)
+    body))
 
 (define (tc-thread-safe-spawn-captured-owner-regions-scan-root
   [root : TcTypeEnv]
@@ -18239,21 +18227,18 @@
   [bound : TcStringList]
   [body : AstExpr]
   [owners : TcStringList]) : TcStringList
-  (match env
-    [(TcTypeEnv.Nil) owners]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-thread-safe-spawn-captured-owner-regions-scan-root
-          root
-          (box-get rest)
-          bound
-          body
-          owners)
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) owners]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
+      (tc-thread-safe-spawn-captured-owner-regions-scan-root
+        root
+        rest-env
+        bound
+        body
         owners)]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (intern-str key)]
-        [rest-env : TcTypeEnv (box-get rest)]
         (cond
           [(or
               (= key (tc-region-marker-id))
@@ -18290,21 +18275,12 @@
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : TcStringList
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-thread-safe-spawn-captured-owner-regions-scan-root
-        env
-        (box-get rest)
-        (tc-param-bound-names params)
-        body
-        TcStringList.Nil)]
-    [_
-      (tc-thread-safe-spawn-captured-owner-regions-scan-root
-        env
-        env
-        (tc-param-bound-names params)
-        body
-        TcStringList.Nil)]))
+  (tc-thread-safe-spawn-captured-owner-regions-scan-root
+    env
+    (tc-type-env-marker-start env)
+    (tc-param-bound-names params)
+    body
+    TcStringList.Nil))
 
 (define (tc-thread-safe-spawn-direct-lambda-owner-regions
   [env : TcTypeEnv]
@@ -19943,23 +19919,21 @@
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : AstExpr]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
-        false)]
-    [(TcTypeEnv.Bind key ty rest)
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) false]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
+      (tc-lambda-captures-reference-scan-root rest-env bound body)]
+    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (if (or
         (= key (tc-region-marker-id))
         (= key (tc-default-boundary-id))
         (tc-cleanup-owner-marker-entry? key ty))
-        (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
+        (tc-lambda-captures-reference-scan-root rest-env bound body)
         (if (and
           (tc-expr-uses-free-name? body (intern-str key) bound)
           (tc-type-contains-reference? ty))
           true
-          (tc-lambda-captures-reference-scan-root (box-get rest) bound body)))]))
+          (tc-lambda-captures-reference-scan-root rest-env bound body)))]))
 
 (define (tc-lambda-captures-reference?
   [env : TcTypeEnv]
@@ -19967,17 +19941,10 @@
   [body : AstExpr]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-lambda-captures-reference-scan-root
-          (box-get rest)
-          (tc-param-bound-names params)
-          body)]
-      [_
-        (tc-lambda-captures-reference-scan-root
-          env
-          (tc-param-bound-names params)
-          body)])))
+    (tc-lambda-captures-reference-scan-root
+      (tc-type-env-marker-start env)
+      (tc-param-bound-names params)
+      body)))
 
 (define (tc-ref-capturing-lambda-init? [env : TcTypeEnv] [init : AstExpr]) : bool
   (match (ast-expr-unspan init)
@@ -25242,18 +25209,16 @@
   [bound : TcStringList]
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
-  (match env
-    [(TcTypeEnv.Nil) ResultTcUnit.Ok]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-check-lambda-region-captures-scan-root
-          root
-          (box-get rest)
-          bound
-          body
-          allow-immutable-reference-captures)
-        ResultTcUnit.Ok)]
-    [(TcTypeEnv.Bind key ty rest)
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) ResultTcUnit.Ok]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
+      (tc-check-lambda-region-captures-scan-root
+        root
+        rest-env
+        bound
+        body
+        allow-immutable-reference-captures)]
+    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (intern-str key)]
         (cond
@@ -25265,14 +25230,14 @@
               (tc-atomic-arena-owner-marker-entry? key ty))
             (tc-check-lambda-region-captures-scan-root
               root
-              (box-get rest)
+              rest-env
               bound
               body
               allow-immutable-reference-captures)]
           [(not (tc-expr-uses-free-name? body name bound))
             (tc-check-lambda-region-captures-scan-root
               root
-              (box-get rest)
+              rest-env
               bound
               body
               allow-immutable-reference-captures)]
@@ -25289,7 +25254,7 @@
             (if allow-immutable-reference-captures
               (tc-check-lambda-region-captures-scan-root
                 root
-                (box-get rest)
+                rest-env
                 bound
                 body
                 allow-immutable-reference-captures)
@@ -25299,7 +25264,7 @@
             (if (tc-type-regions-all-atomic-arena-owners? root ty)
               (tc-check-lambda-region-captures-scan-root
                 root
-                (box-get rest)
+                rest-env
                 bound
                 body
                 allow-immutable-reference-captures)
@@ -25308,7 +25273,7 @@
           [else
             (tc-check-lambda-region-captures-scan-root
               root
-              (box-get rest)
+              rest-env
               bound
               body
               allow-immutable-reference-captures)]))]))
@@ -25320,21 +25285,12 @@
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-check-lambda-region-captures-scan-root
-          env
-          (box-get rest)
-          bound
-          body
-          allow-immutable-reference-captures)]
-      [_
-        (tc-check-lambda-region-captures-scan-root
-          env
-          env
-          bound
-          body
-          allow-immutable-reference-captures)])))
+    (tc-check-lambda-region-captures-scan-root
+      env
+      (tc-type-env-marker-start env)
+      bound
+      body
+      allow-immutable-reference-captures)))
 
 (define (tc-check-lambda-region-captures
   [env : TcTypeEnv]
@@ -35282,23 +35238,20 @@
   [origin : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
     (TcMoveResult.Ok moved)
-    (match env
-      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-move-mark-region-locals-scan
-            (box-get rest)
-            locals
-            loop-carried
-            moved
-            region
-            seen
-            remaining
-            origin)
-          (TcMoveResult.Ok moved))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-move-mark-region-locals-scan
+          rest-env
+          locals
+          loop-carried
+          moved
+          region
+          seen
+          remaining
+          origin)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
@@ -35379,23 +35332,20 @@
   [origin : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
     (TcMoveResult.Ok moved)
-    (match env
-      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-move-mark-owner-region-locals-scan
-            (box-get rest)
-            locals
-            loop-carried
-            moved
-            owner
-            seen
-            remaining
-            origin)
-          (TcMoveResult.Ok moved))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-move-mark-owner-region-locals-scan
+          rest-env
+          locals
+          loop-carried
+          moved
+          owner
+          seen
+          remaining
+          origin)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
@@ -35511,22 +35461,19 @@
   [remaining : i64]) : TcMoveResult
   (if (<= remaining 0)
     (TcMoveResult.Ok moved)
-    (match env
-      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-move-check-atomic-arena-users-released-scan
-            ctx
-            (box-get rest)
-            locals
-            moved
-            owner
-            seen
-            remaining)
-          (TcMoveResult.Ok moved))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-move-check-atomic-arena-users-released-scan
+          ctx
+          rest-env
+          locals
+          moved
+          owner
+          seen
+          remaining)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
@@ -35739,25 +35686,22 @@
   [body : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
     (TcMoveResult.Ok moved)
-    (match env
-      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-move-check-lambda-owner-captures-scan
-            ctx
-            root
-            (box-get rest)
-            locals
-            loop-carried
-            moved
-            bound
-            seen
-            remaining
-            body)
-          (TcMoveResult.Ok moved))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-move-check-lambda-owner-captures-scan
+          ctx
+          root
+          rest-env
+          locals
+          loop-carried
+          moved
+          bound
+          seen
+          remaining
+          body)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
@@ -38165,23 +38109,20 @@
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (<= remaining 0)
     (TcBorrowCheckResult.Ok borrowed)
-    (match env
-      [(TcTypeEnv.Nil) (TcBorrowCheckResult.Ok borrowed)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-borrow-check-region-invalidation-scan
-            ctx
-            (box-get rest)
-            locals
-            borrowed
-            region
-            seen
-            remaining
-            primary)
-          (TcBorrowCheckResult.Ok borrowed))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcBorrowCheckResult.Ok borrowed)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-borrow-check-region-invalidation-scan
+          ctx
+          rest-env
+          locals
+          borrowed
+          region
+          seen
+          remaining
+          primary)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcBorrowCheckResult.Ok borrowed)]
@@ -38240,23 +38181,20 @@
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (<= remaining 0)
     (TcBorrowCheckResult.Ok borrowed)
-    (match env
-      [(TcTypeEnv.Nil) (TcBorrowCheckResult.Ok borrowed)]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-        (if scan-through
-          (tc-borrow-check-owner-invalidation-scan
-            ctx
-            (box-get rest)
-            locals
-            borrowed
-            owner
-            seen
-            remaining
-            primary)
-          (TcBorrowCheckResult.Ok borrowed))]
-      [(TcTypeEnv.Bind key ty rest)
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) (TcBorrowCheckResult.Ok borrowed)]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-borrow-check-owner-invalidation-scan
+          ctx
+          rest-env
+          locals
+          borrowed
+          owner
+          seen
+          remaining
+          primary)]
+      [(TcTypeEnvMarkerStep.Bind key ty rest-env)
         (let
-          [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
             [(= key (tc-default-boundary-id)) (TcBorrowCheckResult.Ok borrowed)]

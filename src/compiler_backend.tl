@@ -14738,7 +14738,8 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [load-ty : AstType]
-  [base-reg : String]) : ResultCompilerBackend
+  [base-reg : String]
+  [sibling-home : String]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
@@ -14752,13 +14753,25 @@
               dst
               addr
               load-ty)
+            ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
+            ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
+            ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
+            ;; load's register home -- already DEFINED at this point but saved by the
+            ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
+            ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
+            ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
+            ;; register-homed sibling absent, or itself spilled) keeps the old set.
             (compiler-backend-emit-load-scalar-address-to-var
               assignments
               dst
               addr
               load-ty
-              (compiler-backend-one-exclude base-reg)
-              1))))]
+              (if (string.eq sibling-home "")
+                (compiler-backend-one-exclude base-reg)
+                (compiler-backend-two-exclude base-reg sibling-home))
+              (if (string.eq sibling-home "")
+                1
+                2)))))]
     [(option_i64.None)
       (ResultCompilerBackend.Err
         (box
@@ -14835,7 +14848,8 @@
           offset1
           elem-ty1
           load-ty1
-          base-reg)
+          base-reg
+          dst0-home)
           [(ResultCompilerBackend.Ok second-asm)
             (ResultCompilerBackend.Ok (string.append first-asm second-asm))]
           [(ResultCompilerBackend.Err message)

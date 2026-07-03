@@ -458,6 +458,165 @@
             [_ false])]
         [_ false])]))
 
+(define (compiler-driver-state-smoke-clone-dest-program
+  [pools : AstNodePoolContext]
+  [name : String]) : AstProgram
+  (let
+    [_source-decoy-type : i64
+      (ast-node-pool-context-type-push pools (AstType.Bool))]
+    [elem : i64 (ast-node-pool-context-type-push pools (AstType.I64))]
+    [_source-decoy-expr : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int -1)))]
+    [value : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int 91)))]
+    [field : AstFieldDef
+      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
+    [struct-decl : AstDecl
+      (ast-decl-def-struct
+        name
+        (AstStructRepr.Default)
+        (AstStructCleanup.No)
+        (ast-field-def-cons field (ast-field-def-list-new)))]
+    [value-decl : AstDecl (ast-decl-def "kept" AstMaybeType.No value)]
+    (ast-program
+      (ast-decl-cons struct-decl (ast-decl-cons value-decl (ast-decl-list-new))))))
+
+(define (compiler-driver-state-smoke-clone-helper-decl?
+  [pools : AstNodePoolContext]
+  [decl : AstDecl]
+  [name : String]) : bool
+  (match decl
+    [(AstDecl.DefFn fn-name _ _ body _)
+      (and
+        (string.eq (intern-str fn-name) (clone-helper-name name))
+        (match (ast-node-pool-context-expr-get pools body)
+          [(AstExpr.Call callee _)
+            (match (ast-node-pool-context-expr-get pools callee)
+              [(AstExpr.Var ctor) (string.eq (intern-str ctor) name)]
+              [_ false])]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-clone-helper-in-decls?
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [name : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (if (compiler-driver-state-smoke-clone-helper-decl? pools decl name)
+        true
+        (compiler-driver-state-smoke-clone-helper-in-decls? pools rest name))]))
+
+(define (compiler-driver-state-smoke-clone-dest-field-remapped?
+  [pools : AstNodePoolContext]
+  [decl : AstDecl]
+  [name : String]) : bool
+  (match decl
+    [(AstDecl.DefStruct decl-name _ _ fields)
+      (and
+        (string.eq (intern-str decl-name) name)
+        (= (ast-field-def-list-len (& fields)) 1)
+        (match (ast-field-def-list-get (& fields) 0 (ast-field-def-fallback))
+          [(AstFieldDef.Def field-name ty _)
+            (and
+              (string.eq (intern-str field-name) "items")
+              (match ty
+                [(AstType.Array elem count)
+                  (and
+                    (= elem 0)
+                    (= count 2)
+                    (match (ast-node-pool-context-type-get pools elem)
+                      [(AstType.I64) true]
+                      [_ false]))]
+                [_ false]))]))]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-clone-dest-decls-remapped?
+  [pools : AstNodePoolContext]
+  [program : AstProgram]) : bool
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (and
+          (= (ast-decl-list-len (& decls)) 3)
+          (match (ast-decl-list-step decls)
+            [(AstDeclListStep.Cons first rest)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Cons second helper-rest)
+                  (and
+                    (compiler-driver-state-smoke-clone-dest-field-remapped?
+                      pools
+                      first
+                      "CloneDest")
+                    (match second
+                      [(AstDecl.Def name _ body)
+                        (and
+                          (string.eq (intern-str name) "kept")
+                          (= body 0)
+                          (compiler-driver-state-smoke-context-int-lit?
+                            pools
+                            body
+                            91))]
+                      [_ false])
+                    (compiler-driver-state-smoke-clone-helper-in-decls?
+                      pools
+                      helper-rest
+                      "CloneDest"))]
+                [_ false])]
+            [_ false])))]))
+
+(define (compiler-driver-state-smoke-clone-augment-dest-pools?) : bool
+  (let
+    [state-source : CompilerDriverState (compiler-driver-state-new)]
+    [state-dest : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-source)
+      (compiler-driver-state-reset-file-state! state-dest)
+      (let
+        [source-pools : AstNodePoolContext
+          (compiler-driver-state-pool-context state-source)]
+        [dest-pools : AstNodePoolContext
+          (compiler-driver-state-pool-context state-dest)]
+        [program : AstProgram
+          (compiler-driver-state-smoke-clone-dest-program
+            source-pools
+            "CloneDest")]
+        [source-expr-len-before : i64
+          (ast-node-pool-context-expr-len source-pools)]
+        [source-type-len-before : i64
+          (ast-node-pool-context-type-len source-pools)]
+        [dest-decoy-expr : i64
+          (ast-node-pool-context-expr-push
+            dest-pools
+            (AstExpr.Literal (ast-lit-int 1234)))]
+        [dest-decoy-type : i64
+          (ast-node-pool-context-type-push dest-pools (AstType.Bool))]
+        [roots : CloneNameList
+          (CloneNameList.Cons "CloneDest" (box (CloneNameList.Nil)))]
+        [compacted : AstProgramCompaction
+          (clone-augment-program-with-roots-from-pools
+            source-pools
+            dest-pools
+            program
+            roots)]
+        (match compacted
+          [(AstProgramCompaction checked-program checked-pools)
+            (and
+              (= dest-decoy-expr 0)
+              (= dest-decoy-type 0)
+              (=
+                source-expr-len-before
+                (ast-node-pool-context-expr-len source-pools))
+              (=
+                source-type-len-before
+                (ast-node-pool-context-type-len source-pools))
+              (compiler-driver-state-smoke-context-int-lit? checked-pools 0 91)
+              (compiler-driver-state-smoke-clone-dest-decls-remapped?
+                checked-pools
+                checked-program))])))))
+
 (define (compiler-driver-state-smoke-clone-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -2104,6 +2263,7 @@
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     (unless (compiler-driver-state-smoke-parse-pools-isolated?) (return 12))
     (unless (compiler-driver-state-smoke-clone-pools-isolated?) (return 14))
+    (unless (compiler-driver-state-smoke-clone-augment-dest-pools?) (return 27))
     (unless
       (compiler-driver-state-smoke-specialize-pools-isolated?)
       (return 15))

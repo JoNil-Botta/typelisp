@@ -23223,6 +23223,230 @@
 ")
     ""))
 
+;; ============================================================================
+;; Register scavenger -- STEP 1: a per-instruction FREE-REGISTER query computed
+;; on the FINAL post-rewrite IR (emit-blocks-list + assignments + slot-vars),
+;; built and self-checked behind --cfg scavenge-self-check but NOT yet used in
+;; emission (a normal build is byte-identical). The query is the foundation for
+;; handing the backend a guaranteed-free register instead of hardcoded scratch.
+;;
+;; Point space matches compiler-reg-live-intervals EXACTLY: the global I-th
+;; emitted instruction (block-list order, then instr-seq order) lives at point
+;; = 2*I. The self-check walks the same traversal, so the mapping is consistent
+;; by construction; the checks below catch any divergence loudly via panic.
+;; Does var v occupy `reg` (the register itself, or either half of a pair)?
+(define (compiler-backend-scavenge-var-holds?
+  [assignments : CompilerRegAssignmentList]
+  [v : i64]
+  [reg : String]) : bool
+  (match (compiler-reg-assignment-lookup assignments v)
+    [(CompilerRegMaybeLocation.Some loc)
+      (match loc
+        [(CompilerRegLocation.Register home) (string.eq home reg)]
+        [(CompilerRegLocation.RegisterPair a b)
+          (or (string.eq a reg) (string.eq b reg))]
+        [(CompilerRegLocation.Spill _) false]
+        [(CompilerRegLocation.Remat _) false])]
+    [(CompilerRegMaybeLocation.No) false]))
+
+;; free-at-point? : is `reg` free at `point` (= 2*instruction-index)? Conservative
+;; via the coarse interval -- free iff NO var whose live interval contains `point`
+;; is assigned `reg`. Never reports free when a live var holds it -> sound.
+(define (compiler-backend-scavenge-free-at-point?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [reg : String]) : bool
+  (let
+    [v : i64 0]
+    [free : bool true]
+    (begin
+      (while (and (< v vars) free)
+        (begin
+          (if (and
+            (>= (array-ref starts v) 0)
+            (<= (array-ref starts v) point)
+            (<= point (array-ref ends v))
+            (compiler-backend-scavenge-var-holds? assignments v reg))
+            (set! free false)
+            unit)
+          (set! v (+ v 1))))
+      free)))
+
+;; Self-check one instruction at `point` (= 2*global-index): every var it USES
+;; must (a) have a live interval covering `point` -- which validates the walk
+;; counter matches the interval point space -- and (b) be reported OCCUPIED by
+;; free-at-point? on its assigned register, validating the query itself.
+(define (compiler-backend-scavenge-check-instr
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [name : String]
+  [point : i64]
+  [instr : CompilerIrInstr]) : unit
+  (let
+    [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+    [v : i64 0]
+    (begin
+      (while (< v vars)
+        (begin
+          (if (compiler-live-set-contains? uses v)
+            (begin
+              (if (and
+                (>= (array-ref starts v) 0)
+                (<= (array-ref starts v) point)
+                (<= point (array-ref ends v)))
+                unit
+                (panic
+                  (str-cat
+                    "SCAVENGE-VIOLATION interval fn="
+                    name
+                    " point="
+                    (int->string point)
+                    " use-var="
+                    (int->string v)
+                    " iv=["
+                    (int->string (array-ref starts v))
+                    ","
+                    (int->string (array-ref ends v))
+                    "]")))
+              (match (compiler-reg-assignment-lookup assignments v)
+                [(CompilerRegMaybeLocation.Some loc)
+                  (match loc
+                    [(CompilerRegLocation.Register home)
+                      (if (compiler-backend-scavenge-free-at-point?
+                        starts
+                        ends
+                        assignments
+                        vars
+                        point
+                        home)
+                        (panic
+                          (str-cat
+                            "SCAVENGE-VIOLATION free fn="
+                            name
+                            " point="
+                            (int->string point)
+                            " use-var="
+                            (int->string v)
+                            " reg="
+                            home
+                            " wrongly-reported-free"))
+                        unit)]
+                    [(CompilerRegLocation.RegisterPair _ _) unit]
+                    [(CompilerRegLocation.Spill _) unit]
+                    [(CompilerRegLocation.Remat _) unit])]
+                [(CompilerRegMaybeLocation.No) unit]))
+            unit)
+          (set! v (+ v 1))))
+      unit)))
+
+(define (compiler-backend-scavenge-check-seq
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [name : String]
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : i64 point]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-backend-scavenge-check-instr
+            starts
+            ends
+            assignments
+            vars
+            name
+            out
+            (array-ref slots index))
+          (set! out (+ out 2))
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-backend-scavenge-check-blocks
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [name : String]
+  [blocks : CompilerIrBlockList]
+  [point : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) point]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-backend-scavenge-check-blocks
+            starts
+            ends
+            assignments
+            vars
+            name
+            (box-get rest)
+            (compiler-backend-scavenge-check-seq
+              starts
+              ends
+              assignments
+              vars
+              name
+              instrs
+              point))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-scavenge-check-blocks
+        starts
+        ends
+        assignments
+        vars
+        name
+        (compiler-ir-block-seq-to-list seq)
+        point)]))
+
+;; Build the per-var live intervals on the FINAL IR and self-check the query.
+;; cfg-gated -> inert/DCE'd in a normal build (byte-identical codegen).
+(define (compiler-backend-scavenge-self-check
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [slot-vars : i64]
+  [emit-blocks : CompilerIrBlockList]
+  [assignments : CompilerRegAssignmentList]) : unit
+  (if (< slot-vars 1)
+    unit
+    (let
+      [func : CompilerIrFunction
+        (CompilerIrFunction.Function name params ret-ty slot-vars emit-blocks)]
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      [starts : (Array i64) (make-array i64 slot-vars)]
+      [ends : (Array i64) (make-array i64 slot-vars)]
+      (begin
+        (compiler-reg-fill-i64-array starts -1)
+        (compiler-reg-fill-i64-array ends -1)
+        (compiler-reg-live-intervals-blocks-with-live
+          emit-blocks
+          liveness
+          0
+          starts
+          ends)
+        (compiler-backend-scavenge-check-blocks
+          starts
+          ends
+          assignments
+          slot-vars
+          name
+          emit-blocks
+          0)
+        unit))))
+
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -23435,6 +23659,17 @@
             params
             emit-blocks-list
             program-index)]
+        [_scavenge-self-check : unit
+          (cfg
+            scavenge-self-check
+            (compiler-backend-scavenge-self-check
+              name
+              params
+              ret-ty
+              slot-vars
+              emit-blocks-list
+              assignments)
+            unit)]
         (if (compiler-backend-atomic-call-name? symbol)
           (ResultCompilerBackend.Ok
             (compiler-backend-emit-atomic-helper-function target symbol))

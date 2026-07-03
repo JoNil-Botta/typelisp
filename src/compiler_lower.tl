@@ -18310,7 +18310,7 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [name-id : i64 name]
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (lower-context-expr-get ctx init-box)]
           (match (lower-let-binding-result-type-fast
             ctx
             env
@@ -28063,7 +28063,7 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [name-id : i64 name]
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (lower-context-expr-get ctx init-box)]
           (match (lower-let-init ctx state env type-env maybe-ty init)
             [(ResultLowerExpr.Ok lowered)
               (match lowered
@@ -35927,7 +35927,8 @@
     (ResultLowerExpr.Ok
       (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit)))
     (let
-      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs expr-index 0))]
+      [expr : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get exprs expr-index 0))]
       (match (lower-avx512-masked-expr
         ctx
         state
@@ -36874,7 +36875,7 @@
           scrut-value
           scrut-ty
           pattern
-          (ast-node-get body-box)
+          (lower-context-expr-get ctx body-box)
           (ast-match-arm-list-tail arms))])))
 
 (define (lower-avx512-masked-match
@@ -36936,7 +36937,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-avx512-masked-expr
           ctx
           state
@@ -36950,7 +36951,7 @@
           inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-avx512-masked-expr
           ctx
           state
@@ -36964,7 +36965,7 @@
           inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-avx512-masked-expr
           ctx
           state
@@ -37007,7 +37008,7 @@
         (intern-str name))]
     [(AstExpr.Unary op inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match op
           [(AstUnOp.Not)
             (match (lower-avx512-masked-expr
@@ -37030,8 +37031,8 @@
           [_ (lower-avx512-masked-unsupported expr "this unary operator")]))]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (lower-context-expr-get ctx left-box)]
+        [right : AstExpr (lower-context-expr-get ctx right-box)]
         (lower-avx512-masked-binary
           ctx
           state
@@ -37050,7 +37051,7 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (match (lower-avx512-masked-let-bindings
               ctx
               state
@@ -37077,9 +37078,9 @@
               [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (lower-context-expr-get ctx cond-box)]
+        [then-branch : AstExpr (lower-context-expr-get ctx then-box)]
+        [else-branch : AstExpr (lower-context-expr-get ctx else-box)]
         (match (lower-expr-result-type-or-check
           ctx
           env
@@ -37126,7 +37127,7 @@
                 lanes
                 result-ty
                 expr
-                (ast-node-get scrutinee-box)
+                (lower-context-expr-get ctx scrutinee-box)
                 arms)]
             [(ResultTcType.Err message)
               (ResultLowerExpr.Err
@@ -37142,8 +37143,8 @@
         index-var
         active-mask
         lanes
-        (ast-node-get cond-box)
-        (ast-node-get body-box))]
+        (lower-context-expr-get ctx cond-box)
+        (lower-context-expr-get ctx body-box))]
     [(AstExpr.Begin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -37158,8 +37159,8 @@
         exprs)]
     [(AstExpr.ArrayRef arr-box idx-box)
       (let
-        [arr : AstExpr (ast-node-get arr-box)]
-        [idx : AstExpr (ast-node-get idx-box)]
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [idx : AstExpr (lower-context-expr-get ctx idx-box)]
         (lower-avx512-masked-array-ref
           ctx
           state
@@ -37174,9 +37175,9 @@
           idx))]
     [(AstExpr.ArraySet arr-box idx-box value-box)
       (let
-        [arr : AstExpr (ast-node-get arr-box)]
-        [idx : AstExpr (ast-node-get idx-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [idx : AstExpr (lower-context-expr-get ctx idx-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
         (lower-avx512-masked-array-set
           ctx
           state
@@ -37208,7 +37209,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-avx512-masked-expr-expected
           ctx
           state
@@ -37232,9 +37233,9 @@
           (tc-type-without-regions expected-ty)))]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (lower-context-expr-get ctx cond-box)]
+        [then-branch : AstExpr (lower-context-expr-get ctx then-box)]
+        [else-branch : AstExpr (lower-context-expr-get ctx else-box)]
         (lower-avx512-masked-if
           ctx
           state
@@ -37265,7 +37266,7 @@
             lanes
             expected-ty
             expr
-            (ast-node-get scrutinee-box)
+            (lower-context-expr-get ctx scrutinee-box)
             arms)])]
     [_
       (lower-avx512-masked-expr

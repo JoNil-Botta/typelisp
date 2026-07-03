@@ -3821,7 +3821,11 @@
     [(AstExpr.Comptime inner)
       (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
     [(AstExpr.Quote _) acc]
-    [(AstExpr.Quasiquote _) acc]
+    [(AstExpr.Quasiquote inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
     [(AstExpr.Unquote inner)
       (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
     [(AstExpr.UnquoteSplicing inner)
@@ -3886,6 +3890,490 @@
     [(AstExpr.Xgetbv index)
       (lint-prefer-dotted-field-expr (ast-node-get index) (lint-no-span) acc)]
     [(AstExpr.Syscall args) (lint-prefer-dotted-field-expr-list args acc)]
+    [_ acc]))
+
+(define (lint-prefer-dotted-field-quasiquote-expr-list
+  [exprs : AstExprList]
+  [acc : LintFindings]) : LintFindings
+  (lint-prefer-dotted-field-quasiquote-expr-list-at (& exprs) acc 0))
+
+(define (lint-prefer-dotted-field-quasiquote-expr-list-at
+  [exprs : (& exprs AstExprList)]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (struct-get exprs len))
+    acc
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      (lint-prefer-dotted-field-quasiquote-expr-list-at
+        exprs
+        (lint-prefer-dotted-field-quasiquote-expr head (lint-no-span) acc)
+        (+ index 1)))))
+
+(define (lint-prefer-dotted-field-quasiquote-let-bindings
+  [bindings : AstLetBindingList]
+  [acc : LintFindings]) : LintFindings
+  (lint-prefer-dotted-field-quasiquote-let-bindings-at (& bindings) acc 0))
+
+(define (lint-prefer-dotted-field-quasiquote-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-let-binding-list-len bindings))
+    acc
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ _ init)
+        (lint-prefer-dotted-field-quasiquote-let-bindings-at
+          bindings
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get init)
+            (lint-no-span)
+            acc)
+          (+ index 1))])))
+
+(define (lint-prefer-dotted-field-quasiquote-resource-bindings
+  [bindings : AstResourceBindingList]
+  [acc : LintFindings]) : LintFindings
+  (lint-prefer-dotted-field-quasiquote-resource-bindings-at (& bindings) acc 0))
+
+(define (lint-prefer-dotted-field-quasiquote-resource-bindings-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (ast-resource-binding-list-len bindings))
+    acc
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init cleanup)
+        (lint-prefer-dotted-field-quasiquote-resource-bindings-at
+          bindings
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get cleanup)
+            (lint-no-span)
+            (lint-prefer-dotted-field-quasiquote-expr
+              (ast-node-get init)
+              (lint-no-span)
+              acc))
+          (+ index 1))])))
+
+(define (lint-prefer-dotted-field-quasiquote-match-arms
+  [arms : AstMatchArmList]
+  [acc : LintFindings]) : LintFindings
+  (lint-prefer-dotted-field-quasiquote-match-arms-at (& arms) acc 0))
+
+(define (lint-prefer-dotted-field-quasiquote-match-arms-at
+  [arms : (& arms AstMatchArmList)]
+  [acc : LintFindings]
+  [index : i64]) : LintFindings
+  (if (>= index (struct-get arms len))
+    acc
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body)
+        (lint-prefer-dotted-field-quasiquote-match-arms-at
+          arms
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get body)
+            (lint-no-span)
+            acc)
+          (+ index 1))])))
+
+(define (lint-prefer-dotted-field-quasiquote-expr
+  [expr : AstExpr]
+  [span : AstSourceSpan]
+  [acc : LintFindings]) : LintFindings
+  (match expr
+    [(AstExpr.Spanned inner inner-span)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        inner-span
+        acc)]
+    [(AstExpr.Binary _ left right)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get right)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get left)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.Unary _ inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Call func args)
+      (lint-prefer-dotted-field-quasiquote-expr-list
+        args
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get func)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.If cond then-branch else-branch)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get else-branch)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get then-branch)
+          (lint-no-span)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get cond)
+            (lint-no-span)
+            acc)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get body)
+            (lint-no-span)
+            (lint-prefer-dotted-field-quasiquote-let-bindings bindings acc))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda _ _ body)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get body)
+            (lint-no-span)
+            acc)])]
+    [(AstExpr.Tuple exprs)
+      (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
+    [(AstExpr.TupleRef tuple _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get tuple)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Array exprs)
+      (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
+    [(AstExpr.MakeArray _ len)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get len)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.ArrayRef array index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get array)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.ArraySet array index value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get index)
+          (lint-no-span)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get array)
+            (lint-no-span)
+            acc)))]
+    [(AstExpr.ArrayPush array value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get array)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.StringRef text index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get text)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.While cond body)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get body)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get cond)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.Begin exprs)
+      (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
+    [(AstExpr.Unsafe exprs)
+      (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
+    [(AstExpr.Set _ value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Cast inner _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Borrow _ _ place)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get place)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (lint-prefer-dotted-field-quasiquote-match-arms
+            arms
+            (lint-prefer-dotted-field-quasiquote-expr
+              (ast-node-get scrutinee)
+              (lint-no-span)
+              acc))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach _ _ start end body)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get body)
+            (lint-no-span)
+            (lint-prefer-dotted-field-quasiquote-expr
+              (ast-node-get end)
+              (lint-no-span)
+              (lint-prefer-dotted-field-quasiquote-expr
+                (ast-node-get start)
+                (lint-no-span)
+                acc)))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ _ _ start end init value)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get value)
+            (lint-no-span)
+            (lint-prefer-dotted-field-quasiquote-expr
+              (ast-node-get init)
+              (lint-no-span)
+              (lint-prefer-dotted-field-quasiquote-expr
+                (ast-node-get end)
+                (lint-no-span)
+                (lint-prefer-dotted-field-quasiquote-expr
+                  (ast-node-get start)
+                  (lint-no-span)
+                  acc))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get body)
+            (lint-no-span)
+            (lint-prefer-dotted-field-quasiquote-expr
+              (ast-node-get value)
+              (lint-no-span)
+              (lint-prefer-dotted-field-quasiquote-expr
+                (ast-node-get init)
+                (lint-no-span)
+                (lint-prefer-dotted-field-quasiquote-expr
+                  (ast-node-get end)
+                  (lint-no-span)
+                  (lint-prefer-dotted-field-quasiquote-expr
+                    (ast-node-get start)
+                    (lint-no-span)
+                    acc)))))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get lane)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get value)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.SpmdShuffle value lane)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get lane)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get value)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.StructGet receiver _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get receiver)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.StructSet receiver _ value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get receiver)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.WithRegion _ body)
+      (lint-prefer-dotted-field-quasiquote-expr-list body acc)]
+    [(AstExpr.WithEscape scratch body)
+      (lint-prefer-dotted-field-quasiquote-expr-list
+        body
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get scratch)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.WithScratch body)
+      (lint-prefer-dotted-field-quasiquote-expr-list body acc)]
+    [(AstExpr.InArena arena body)
+      (lint-prefer-dotted-field-quasiquote-expr-list
+        body
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get arena)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (lint-prefer-dotted-field-quasiquote-expr-list
+            body
+            (lint-prefer-dotted-field-quasiquote-resource-bindings bindings acc))])]
+    [(AstExpr.Box inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.BoxGet inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.BoxTake inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.BoxSet inner value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get inner)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.Comptime inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Quote _) acc]
+    [(AstExpr.Quasiquote _) acc]
+    [(AstExpr.Unquote inner)
+      (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
+    [(AstExpr.UnquoteSplicing inner)
+      (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
+    [(AstExpr.BracketClause items)
+      (lint-prefer-dotted-field-quasiquote-expr-list items acc)]
+    [(AstExpr.Try inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Return inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.PtrNullCheck inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.PtrAddrOf place)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get place)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.PtrRead ptr)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get ptr)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.PtrWrite ptr value)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get ptr)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.PtrOffset ptr offset)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get offset)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get ptr)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.PtrCast ptr _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get ptr)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.PtrToInt ptr)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get ptr)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.IntToPtr value _)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get value)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.StringData inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.StringFromBytes ptr len)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get len)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get ptr)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.ArrayData inner)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get inner)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get leaf)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get leaf)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get leaf)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get leaf)
+          (lint-no-span)
+          acc))]
+    [(AstExpr.Xgetbv index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get index)
+        (lint-no-span)
+        acc)]
+    [(AstExpr.Syscall args)
+      (lint-prefer-dotted-field-quasiquote-expr-list args acc)]
     [_ acc]))
 
 (define (lint-prefer-dotted-field-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings

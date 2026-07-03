@@ -354,6 +354,13 @@
   "(defmacro (build [p : Expr]) : Expr
   `(struct-get ,p x))")
 
+(define (lint-driver-smoke-unquoted-prefer-dotted-field-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(defmacro (build [p : Point]) : Expr
+  `(field ,(struct-get p x)))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -874,6 +881,13 @@
               rule)
             0))
         98]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+              (lint-driver-smoke-unquoted-prefer-dotted-field-source)
+              rule)
+            1))
+        101]
       [(not
           (string.eq
             (lint-rule-message rule)

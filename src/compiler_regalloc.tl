@@ -10109,6 +10109,7 @@
   [instrs : CompilerIrInstrSeq]
   [region-start : i64]
   [region-end : i64]
+  ;; lint-allow: unused-variable
   [depth : i64]
   [vars : i64]
   [var : i64]
@@ -12264,6 +12265,7 @@
     [(CompilerRegIntervalCons interval rest)
       (match interval
         [(CompilerRegInterval var start end)
+          ;; lint-allow: single-begin
           (begin
             (if (and
               (>= var 0)
@@ -16228,6 +16230,7 @@
   [group-vars : CompilerLiveI64Set]
   [excluded : CompilerLiveI64Set]
   [starts : (Array i64)]
+  ;; lint-allow: unused-variable
   [ends : (Array i64)]
   [poisoned : (Array bool)]
   [parents : (Array i64)]

@@ -32,10 +32,9 @@
   (let
     [n : i64 (+ (arg-count) 1)]
     [xs : (Array i64) (array.make-array i64 3)]
-    (let
-      [r : i64 (poke-sum xs n)]
-      ;; n = 2 (arg-count is 1 with no args): xs[0]=42, xs[1]=6,
-      ;; xs[2]=42-6=36; r = 36+6 = 42.
-      (if (= r 42)
-        42
-        1))))
+    [r : i64 (poke-sum xs n)]
+    ;; n = 2 (arg-count is 1 with no args): xs[0]=42, xs[1]=6,
+    ;; xs[2]=42-6=36; r = 36+6 = 42.
+    (if (= r 42)
+      42
+      1)))

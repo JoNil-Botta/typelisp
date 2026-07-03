@@ -78,6 +78,6 @@
         [g : i64 (slot-lookup slots n "gamma" 300)]
         [d : i64 (slot-lookup slots n "delta" 400)]
         [miss : i64 (slot-lookup slots n "zzz" 999)]
-        (if (and (and (= g (+ s 30)) (= d (+ s 40))) (= miss -1))
+        (if (and (= g (+ s 30)) (= d (+ s 40)) (= miss -1))
           42
           1)))))

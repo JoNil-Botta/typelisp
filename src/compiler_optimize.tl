@@ -39012,9 +39012,11 @@
   [header? : bool]) : OptLoadLocKind
   (if (and
     (>= base 0)
-    (and
-      (< base 1073741824)
-      (and (>= off 0) (and (< off 1048576) (and (> width 0) (< width 512))))))
+    (< base 1073741824)
+    (>= off 0)
+    (< off 1048576)
+    (> width 0)
+    (< width 512))
     (OptLoadLocField base off width header?)
     (OptLoadLocUnknown)))
 
@@ -39249,9 +39251,7 @@
           [(IrValueVar p)
             (match (opt-load-kinds-lookup invalidated p)
               [(OptLoadLocField _ off _ header?)
-                (if (and
-                  header?
-                  (and (= off 0) (= (opt-load-loc-type-size ty) 8)))
+                (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
                   (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
                   invalidated)]
               [_ invalidated])]
@@ -39304,32 +39304,29 @@
         [(OptLoadKeyRaw bv bty belem)
           (and
             (opt-value-eq av bv)
-            (and
-              (opt-type-eq aty bty)
-              (=
-                (if aelem
-                  1
-                  0)
-                (if belem
-                  1
-                  0))))]
+            (opt-type-eq aty bty)
+            (=
+              (if aelem
+                1
+                0)
+              (if belem
+                1
+                0)))]
         [_ false])]
     [(OptLoadKeyField abase aoff aty ah)
       (match b
         [(OptLoadKeyField bbase boff bty bh)
           (and
             (= abase bbase)
-            (and
-              (= aoff boff)
-              (and
-                (opt-type-eq aty bty)
-                (=
-                  (if ah
-                    1
-                    0)
-                  (if bh
-                    1
-                    0)))))]
+            (= aoff boff)
+            (opt-type-eq aty bty)
+            (=
+              (if ah
+                1
+                0)
+              (if bh
+                1
+                0)))]
         [_ false])]))
 
 (define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
@@ -39451,7 +39448,8 @@
   [bwidth : i64]) : bool
   (and
     (> awidth 0)
-    (and (> bwidth 0) (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo)))))
+    (> bwidth 0)
+    (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo))))
 
 (define (opt-load-entry-survives-store?
   [class : OptLoadStoreClass]
@@ -39560,6 +39558,7 @@
 ;; exactly 8 bytes wide: sub-word IR vars are not guaranteed canonical in
 ;; their high bits, while a real load re-canonicalizes.
 (define (opt-load-cse-state-store
+  ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : hashmap.I64I64Map]
@@ -39584,13 +39583,12 @@
               [forward? : bool
                 (and
                   (= width 8)
-                  (and
-                    (opt-copy-safe-source? value)
-                    (if gated?
-                      (and
-                        (opt-load-key-gvn-stable? sources key)
-                        (opt-load-value-gvn-stable? sources value))
-                      true)))]
+                  (opt-copy-safe-source? value)
+                  (if gated?
+                    (and
+                      (opt-load-key-gvn-stable? sources key)
+                      (opt-load-value-gvn-stable? sources value))
+                    true))]
               (OptLoadCseState
                 facts2
                 (if forward?

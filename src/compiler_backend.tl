@@ -11342,6 +11342,7 @@
                       assignments
                       rhs
                       operand-ty)]
+                  ;; lint-allow: nested-if-ladder
                   (if (and
                     (or
                       (string-eq mnem "and")
@@ -13445,12 +13446,11 @@
             [scale : i64 (compiler-backend-type-size elem-ty)]
             (if (and
               (not (string.string-eq offset-home ""))
-              (and
-                (compiler-backend-gep-sib-scale? scale)
-                ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
-                ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
-                ;; ref); route it to the staged path instead.
-                (not (string.string-eq base-reg "%rbp"))))
+              (compiler-backend-gep-sib-scale? scale)
+              ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
+              ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
+              ;; ref); route it to the staged path instead.
+              (not (string.string-eq base-reg "%rbp")))
               (OkCompilerBackend
                 (str_cat.str-cat
                   "    leaq "
@@ -18758,9 +18758,8 @@
         [ty : AstType (ty-node-get ty-node)]
         (if (or
           (compiler-backend-float-type? ty)
-          (or
-            (compiler-backend-group-type? program-index ty)
-            (compiler-backend-c-memory-aggregate-type? target c-abi? ty)))
+          (compiler-backend-group-type? program-index ty)
+          (compiler-backend-c-memory-aggregate-type? target c-abi? ty))
           false
           (compiler-backend-types-all-gp-int?
             target
@@ -18783,7 +18782,8 @@
         4
         6)]
     (and
-      (and (> count 0) (<= count limit))
+      (> count 0)
+      (<= count limit)
       (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
 
 (define (compiler-backend-emit-call-args-with-assignments
@@ -19051,14 +19051,13 @@
   ;; conflict-free common case) delegates to the byte-identical naive path.
   (if (and
     (= arg-index 0)
-    (and
-      (not c-abi?)
-      (compiler-backend-call-args-gp-parallel?
-        target
-        args
-        types
-        c-abi?
-        program-index))
+    (not c-abi?)
+    (compiler-backend-call-args-gp-parallel?
+      target
+      args
+      types
+      c-abi?
+      program-index)
     (compiler-backend-arg-moves-conflict?
       assignments
       (compiler-backend-arg-moves-build target args)
@@ -31665,17 +31664,15 @@
           (begin
             (if (and
               (not (string.string-eq cur-label entry-label))
-              (and
-                (not (compiler-backend-peephole-prev-splits-edge? prev))
-                (and
-                  (=
-                    1
-                    (match (hashmap.string-i64-map-get predcount cur-label)
-                      [(hashmap.StringI64MapFound v) v]
-                      [(hashmap.StringI64MapMissing) 0]))
-                  (opt-label-contains
-                    (opt-cfg-block-successors-with-next prev cur-label)
-                    cur-label))))
+              (not (compiler-backend-peephole-prev-splits-edge? prev))
+              (=
+                1
+                (match (hashmap.string-i64-map-get predcount cur-label)
+                  [(hashmap.StringI64MapFound v) v]
+                  [(hashmap.StringI64MapMissing) 0]))
+              (opt-label-contains
+                (opt-cfg-block-successors-with-next prev cur-label)
+                cur-label))
               (compiler-backend-peephole-carry-safe-insert!
                 (compiler-backend-asm-label label-scope cur-label))
               unit)
@@ -31794,13 +31791,10 @@
       (while (and (< found 0) (<= (+ i 5) end))
         (if (and
           (= (compiler-backend-peephole-byte-at data i) 40)
-          (and
-            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
-            (and
-              (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
-              (and
-                (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
-                (= (compiler-backend-peephole-byte-at data (+ i 4)) 112)))))
+          (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
+          (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
+          (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
+          (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -31987,9 +31981,8 @@
     [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
     (if (or
       (< p 0)
-      (or
-        (>= (+ p 5) end)
-        (not (= (compiler-backend-peephole-byte-at data (+ p 5)) 41))))
+      (>= (+ p 5) end)
+      (not (= (compiler-backend-peephole-byte-at data (+ p 5)) 41)))
       0
       (let
         [ks : i64 (compiler-backend-rsp-rebase-int-start data line-start p)]
@@ -32023,48 +32016,42 @@
                               ;; restore: movq -K(%rbp), %rXX
                               (if (and
                                 (= ks (+ te 1))
-                                (and
-                                  (= (+ p 12) end)
-                                  (and
-                                    (=
-                                      (compiler-backend-peephole-byte-at
-                                        data
-                                        (+ p 6))
-                                      44)
-                                    (and
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ p 7))
-                                        32)
-                                      (compiler-backend-peephole-range-eq?
-                                        data
-                                        (+ p 8)
-                                        (+ p 12)
-                                        reg)))))
+                                (= (+ p 12) end)
+                                (=
+                                  (compiler-backend-peephole-byte-at
+                                    data
+                                    (+ p 6))
+                                  44)
+                                (=
+                                  (compiler-backend-peephole-byte-at
+                                    data
+                                    (+ p 7))
+                                  32)
+                                (compiler-backend-peephole-range-eq?
+                                  data
+                                  (+ p 8)
+                                  (+ p 12)
+                                  reg))
                                 1
                                 ;; save: movq %rXX, -K(%rbp)
                                 (if (and
                                   (= (+ p 6) end)
-                                  (and
-                                    (compiler-backend-peephole-range-eq?
+                                  (compiler-backend-peephole-range-eq?
+                                    data
+                                    (+ te 1)
+                                    (+ te 5)
+                                    reg)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
                                       data
-                                      (+ te 1)
-                                      (+ te 5)
-                                      reg)
-                                    (and
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ te 5))
-                                        44)
-                                      (and
-                                        (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ te 6))
-                                          32)
-                                        (= ks (+ te 7))))))
+                                      (+ te 5))
+                                    44)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ te 6))
+                                    32)
+                                  (= ks (+ te 7)))
                                   1
                                   3))
                               (if (compiler-backend-peephole-range-eq?
@@ -32075,25 +32062,22 @@
                                 ;; pop-run entry: leaq -K(%rbp), %rsp
                                 (if (and
                                   (= ks (+ te 1))
-                                  (and
-                                    (= (+ p 12) end)
-                                    (and
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ p 6))
-                                        44)
-                                      (and
-                                        (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ p 7))
-                                          32)
-                                        (compiler-backend-peephole-range-eq?
-                                          data
-                                          (+ p 8)
-                                          (+ p 12)
-                                          "%rsp")))))
+                                  (= (+ p 12) end)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ p 6))
+                                    44)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ p 7))
+                                    32)
+                                  (compiler-backend-peephole-range-eq?
+                                    data
+                                    (+ p 8)
+                                    (+ p 12)
+                                    "%rsp"))
                                   2
                                   3)
                                 3))))))))))))))))
@@ -32273,6 +32257,7 @@
                     (if syscall?
                       (set! ok false)
                       unit)
+                    ;; lint-allow: nested-if-ladder
                     (if (= csr-kind 1)
                       ;; CSR save/restore movq: drop the line.
                       unit
@@ -32316,6 +32301,7 @@
                               ;; 8n+sub-s; a negative delta folds the pop-restore
                               ;; epilogue tail when present).
                               (begin
+                                ;; lint-allow: nested-if-ladder
                                 (if (not valid)
                                   (set! ok false)
                                   (if (and pm tail)
@@ -32496,21 +32482,20 @@
                                   unit)
                                 ;; explicit %rsp writes
                                 (if (and rsp-dst? (not pop?))
+                                  ;; lint-allow: nested-if-ladder
                                   (if (and
                                     valid
-                                    (and
-                                      (compiler-backend-peephole-range-eq?
+                                    (compiler-backend-peephole-range-eq?
+                                      data
+                                      m
+                                      te
+                                      "subq")
+                                    (< (+ te 1) end)
+                                    (=
+                                      (compiler-backend-peephole-byte-at
                                         data
-                                        m
-                                        te
-                                        "subq")
-                                      (and
-                                        (< (+ te 1) end)
-                                        (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ te 1))
-                                          36))))
+                                        (+ te 1))
+                                      36))
                                     (set!
                                       delta
                                       (+
@@ -32521,19 +32506,17 @@
                                           (- end 6))))
                                     (if (and
                                       valid
-                                      (and
-                                        (compiler-backend-peephole-range-eq?
+                                      (compiler-backend-peephole-range-eq?
+                                        data
+                                        m
+                                        te
+                                        "addq")
+                                      (< (+ te 1) end)
+                                      (=
+                                        (compiler-backend-peephole-byte-at
                                           data
-                                          m
-                                          te
-                                          "addq")
-                                        (and
-                                          (< (+ te 1) end)
-                                          (=
-                                            (compiler-backend-peephole-byte-at
-                                              data
-                                              (+ te 1))
-                                            36))))
+                                          (+ te 1))
+                                        36))
                                       (begin
                                         (set!
                                           delta
@@ -32818,11 +32801,11 @@
               (< m end)
               (= (compiler-backend-peephole-byte-at data m) 32))
               (set! m (+ m 1)))
-            (if (and
-              (<= (+ m 6) end)
-              (compiler-backend-peephole-range-eq? data m (+ m 6) ".globl"))
-              (return i)
-              unit)
+            (when
+              (and
+                (<= (+ m 6) end)
+                (compiler-backend-peephole-range-eq? data m (+ m 6) ".globl"))
+              (return i))
             (set!
               i
               (if (< end n)
@@ -32847,6 +32830,7 @@
           (if (= (compiler-backend-peephole-byte-at data j) 37)
             (let
               [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
+              ;; lint-allow: nested-if-ladder
               (if (= nb 122)
                 (set! w 64)
                 (if (= nb 121)
@@ -32860,6 +32844,7 @@
                     unit))))
             unit)
           (set! j (+ j 1))))
+      ;; lint-allow: nested-if-ladder
       (if (> w 0)
         w
         (if (or (= b0 118) (= b0 107))
@@ -32878,6 +32863,7 @@
   [delta : i64]) : i64
   (let
     [none : i64 compiler-backend-sweep-no-candidate]
+    ;; lint-allow: nested-if-ladder
     (if (not (compiler-backend-peephole-range-eq? data m te "movq"))
       none
       (if (or (>= (+ te 1) end) (< (- end te) 10))
@@ -33031,7 +33017,7 @@
                             (compiler-backend-peephole-byte-at data (+ te 1))
                             36))]
                       [tracked-rsp-write? : bool
-                        (and rsp-dst? (and (or subq? addq?) imm?))]
+                        (and rsp-dst? (or subq? addq?) imm?)]
                       [cand : i64
                         (compiler-backend-sweep-candidate-c data m te end delta)]
                       (begin
@@ -33069,23 +33055,21 @@
                                   (=
                                     (compiler-backend-peephole-byte-at data q)
                                     37)
-                                  (and
-                                    (=
-                                      (compiler-backend-peephole-byte-at
-                                        data
-                                        (+ q 1))
-                                      114)
-                                    (and
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ q 2))
-                                        115)
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ q 3))
-                                        112))))
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ q 1))
+                                    114)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ q 2))
+                                    115)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ q 3))
+                                    112))
                                   (begin
                                     (if (and
                                       (> q m)
@@ -33201,9 +33185,9 @@
                 (begin
                   (if (and
                     (>= c lo)
-                    (and
-                      (<= c hi)
-                      (and (= (bit-and (- c lo) 7) 0) (< c watermark))))
+                    (<= c hi)
+                    (= (bit-and (- c lo) 7) 0)
+                    (< c watermark))
                     (let
                       [r : i64 0]
                       [live : bool false]
@@ -33275,6 +33259,7 @@
         (while (and (< i n) (< cursor compiler-backend-sweep-count))
           (let
             [end : i64 (compiler-backend-peephole-line-end data i n)]
+            ;; lint-allow: single-begin
             (begin
               (if (compiler-backend-sweep-label-matches? data i end cursor)
                 (let
@@ -43737,6 +43722,7 @@ tl_memchr:
 ;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
 ;; immediately after it carries the owner map (line-clobber-owners label arm).
 (define (compiler-backend-peephole-pending-noreturn-abort?
+  ;; lint-allow: unused-variable
   [asm : String]
   [asm-data : (Ptr u8)]
   [start : i64]

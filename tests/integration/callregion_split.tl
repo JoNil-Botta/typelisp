@@ -19,23 +19,30 @@
 ;; v is the only multiplied value, so every `imul` in churn involves v --
 ;; target/callregion-gate.sh asserts no imul reads a frame slot and that the
 ;; region register shape is present (FAILS pre-M-G2b: proven forcing).
-
 ;; Recursive on purpose so the leaf inliner cannot delete the call: probe(x) = x.
 (define (probe [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (probe (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (probe (- x 1)))))
 
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps churn out of the
 ;; inliner AND out of opt-tailrec, so the gate can assert on the named
 ;; function's loop body.
 (define (churn [v : i64] [rounds : i64]) : i64
   (let
-    [a : i64 1] [b : i64 2] [c : i64 3] [d : i64 4]
-    [acc : i64 0] [i : i64 0]
+    [a : i64 1]
+    [b : i64 2]
+    [c : i64 3]
+    [d : i64 4]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 100)
         (begin
-          (set! acc (+ acc (probe i)))     ; the call every value spans
-          (set! acc (+ acc (+ a i)))       ; a,b,c,d stay hot (4-5 refs each)
+          (set! acc (+ acc (probe i)))
+          ; the call every value spans
+          (set! acc (+ acc (+ a i)))
+          ; a,b,c,d stay hot (4-5 refs each)
           (set! acc (+ acc (* 2 a)))
           (set! a (+ a 1))
           (set! acc (+ acc (+ b i)))
@@ -47,13 +54,16 @@
           (set! acc (+ acc (+ d i)))
           (set! acc (+ acc (* 2 d)))
           (set! d (+ d 1))
-          (set! acc (+ acc (* v i)))       ; v's call-free 3-use region
+          (set! acc (+ acc (* v i)))
+          ; v's call-free 3-use region
           (set! acc (+ acc (* v a)))
           (set! acc (+ acc (* v b)))
           (set! i (+ i 1))))
       (let
         [r : i64 (+ acc (+ a (+ b (+ c (+ d v)))))]
-        (if (> rounds 1) (+ r (churn v (- rounds 1))) r)))))
+        (if (> rounds 1)
+          (+ r (churn v (- rounds 1)))
+          r)))))
 
 (define (main) : i64
   (let
@@ -66,4 +76,6 @@
     ;;   t + (1+2t) + (2+2t) + (2+2t) + (4+2t) + (3+2t) + (6+2t)
     ;;     + (4+2t) + (8+2t) + 10t + 10(2+t) + 10(3+t)
     ;; acc = 240650; finals a=101 b=102 c=103 d=104 v=10 -> r = 241070.
-    (if (= r 241070) 42 1)))
+    (if (= r 241070)
+      42
+      1)))

@@ -21,10 +21,11 @@
 ;; Inputs flow from (arg-count) so the optimizer cannot constant-fold the calls
 ;; (which would delete the cross-block live ranges this test depends on).
 ;; Self-recursive `touch` is not leaf-inlined, so the clobbering call survives.
-
 ;; touch(x) = x for x >= 0; clobbers caller-saved registers around each call.
 (define (touch [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (touch (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (touch (- x 1)))))
 
 ;; Read-only params reused across fall-through arms after a clobbering call.
 (define (dispatch
@@ -69,4 +70,6 @@
     ;;   accumulate(4): sum_{i=0..3} (touch i + i) = sum 2i = 0+2+4+6 = 12.
     ;; total = 22 + 25 + 12 = 59.
     [r : i64 (+ d0 (+ d3 ac))]
-    (if (= r 59) 42 1)))
+    (if (= r 59)
+      42
+      1)))

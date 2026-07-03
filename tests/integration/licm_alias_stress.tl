@@ -47,9 +47,7 @@
           (if (= (% i 2) 0)
             (array.array-set! xss 0 a)
             (array.array-set! xss 0 b))
-          (set!
-            acc
-            (+ acc (array.array-length (array.array-ref xss 0))))
+          (set! acc (+ acc (array.array-length (array.array-ref xss 0))))
           (set! i (+ i 1))))
       acc)))
 
@@ -75,4 +73,6 @@
         ;; nested-flip over n=6: lengths 2,3,2,3,2,3 -> 15. A wrongly hoisted
         ;; inner-descriptor len gives 12 or 18.
         [r2 : i64 (nested-flip xss a b n)]
-        (if (and (= r1 6) (= r2 15)) 42 1)))))
+        (if (and (= r1 6) (= r2 15))
+          42
+          1)))))

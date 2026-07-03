@@ -19,9 +19,10 @@
 ;; never inlined (the call must survive as dead-early's clobber point); the
 ;; never-taken poke branches take dead-early/div-arm addresses so no inline
 ;; path may absorb them into main.
-
 (define (bump [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (bump (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (bump (- x 1)))))
 
 (define (dead-early [a : i64] [b : i64]) : i64
   (let
@@ -29,14 +30,12 @@
     (+ t (bump t))))
 
 (define (div-arm [a : i64] [b : i64] [op : i64]) : i64
-  (cond
-    [(= op 0) (+ a b)]
-    [(= op 1) (- a b)]
-    [else (% a b)]))
+  (cond [(= op 0) (+ a b)] [(= op 1) (- a b)] [else (% a b)]))
 
 ;; Never executed; take addresses so neither function can be inlined.
 (define (poke2 [f : (-> i64 i64 i64)] [a : i64] [b : i64]) : i64
   (f a b))
+
 (define (poke3 [f : (-> i64 i64 i64 i64)] [a : i64] [b : i64] [c : i64]) : i64
   (f a b c))
 

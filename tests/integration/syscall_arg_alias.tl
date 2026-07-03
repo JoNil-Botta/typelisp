@@ -28,7 +28,6 @@
 ;; not fold) and `count/count`, so the operands are genuinely register-homed and
 ;; the conflict is real -- not constant-folded into immediates. Observed via
 ;; write's return value AND its stdout effect. Mirrors arg_register_swap_cycle.tl.
-
 (define (main) : i64
   (let
     [msg : String "ABCDEFGHI"]

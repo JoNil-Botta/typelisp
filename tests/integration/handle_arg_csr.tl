@@ -10,11 +10,12 @@
 ;; (movq %rdi, %r12..%r15/%rbx) with a frame-free loop body. The runtime check
 ;; guards reconstruction (wrong home / clobbered CSR -> wrong sum -> exit 1);
 ;; target/handle-arg-gate.sh additionally asserts the asm shape.
-
 ;; Recursive on purpose: a trivial leaf would be inlined at opt2, deleting the
 ;; call (and the handle arg) with it. probe(xs, i) = i + xs[0].
 (define (probe [xs : (Array i64)] [i : i64]) : i64
-  (if (<= i 0) (array-ref xs 0) (+ 1 (probe xs (- i 1)))))
+  (if (<= i 0)
+    (array-ref xs 0)
+    (+ 1 (probe xs (- i 1)))))
 
 (define (sum-args [xs : (Array i64)] [n : i64]) : i64
   (let
@@ -44,4 +45,6 @@
         [r : i64 (sum-args xs n)]
         ;; n=4 (no args): xs[0]=0 so probe(xs,i)=i; xs[i]=3i; acc adds 4i per
         ;; iteration -> 4*(0+1+2+3) = 24.
-        (if (= r 24) 42 1)))))
+        (if (= r 24)
+          42
+          1)))))

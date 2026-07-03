@@ -17,7 +17,6 @@
 ;; any function containing a `syscall` (frame refs via %rbp survive `clone` in
 ;; both parent and child under CLONE_VM). Pre-fix HEAD SEGVs (exit 139); with
 ;; the fix this returns 42.
-
 ;: Worker body: switch to the shared atomic arena, allocate, restore, return 42.
 (define (atomic-thread-worker [owner : i64]) : i64
   (let

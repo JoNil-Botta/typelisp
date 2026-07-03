@@ -4572,8 +4572,7 @@
       (compiler-backend-peephole-forward-frame-load-line
         "    movq %r8, -24(%rbp)"
         "    movq -24(%rbp), %r10")]
-    [_carry-safe-reset : unit
-      (compiler-backend-peephole-carry-safe-reset!)]
+    [_carry-safe-reset : unit (compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler-backend-peephole-asm input)]
     (and
       (string.string-eq direct "    movq %r8, %r10")
@@ -13594,9 +13593,7 @@
           "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
         ;; #107: M-F folds the power-of-2 modulo mask into an immediate `andq`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
-        (compiler-backend-string-contains?
-          asm
-          "    andq $7, %rax\n")
+        (compiler-backend-string-contains? asm "    andq $7, %rax\n")
         (not (compiler-backend-string-contains? asm "    idivq %r8\n"))
         (not (compiler-backend-string-contains? asm "    divq %r8\n"))
         (not (compiler-backend-string-contains? asm "    call tl_div_abort\n"))
@@ -14275,7 +14272,8 @@
       ;; positive-rsp, `main` also uses those same numeric slots for its own
       ;; locals (e.g. `movq 104(%rsp), %rax`), so a whole-program `not` check
       ;; would spuriously trip.
-      (let [callee : String (compiler-backend-asm-function-body asm "_tl_add8")]
+      (let
+        [callee : String (compiler-backend-asm-function-body asm "_tl_add8")]
         (and
           (not (compiler-backend-string-contains? asm "too many call args"))
           (compiler-backend-string-contains? asm "    movq %r10, 0(%rsp)\n")
@@ -14284,9 +14282,13 @@
           (compiler-backend-string-contains? callee "    movq 96(%rsp), %r8\n")
           (compiler-backend-string-contains? callee "    movq 104(%rsp), %r8\n")
           (not
-            (compiler-backend-string-contains? callee "    movq 96(%rsp), %rax\n"))
+            (compiler-backend-string-contains?
+              callee
+              "    movq 96(%rsp), %rax\n"))
           (not
-            (compiler-backend-string-contains? callee "    movq 104(%rsp), %rax\n"))))]
+            (compiler-backend-string-contains?
+              callee
+              "    movq 104(%rsp), %rax\n"))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the

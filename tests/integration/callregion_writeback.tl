@@ -17,27 +17,34 @@
 ;; total. Correct both before (w fully spilled) and after (w region-homed)
 ;; M-G2b -- a reconstruction regression guard, exit code 42 only on the
 ;; exact total.
-
 ;; Recursive on purpose so the leaf inliner cannot delete the calls: probe(x) = x.
 (define (probe [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (probe (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (probe (- x 1)))))
 
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps wb out of the
 ;; inliner AND out of opt-tailrec, so the intended CSR-saturated shape occurs
 ;; in the named function rather than dissolving into main.
 (define (wb [w0 : i64] [rounds : i64]) : i64
   (let
-    [a : i64 1] [b : i64 2] [c : i64 3]
+    [a : i64 1]
+    [b : i64 2]
+    [c : i64 3]
     [w : i64 w0]
-    [acc : i64 0] [i : i64 0]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 60)
         (begin
-          (set! acc (+ acc (probe i)))     ; call A
-          (set! acc (+ acc w))             ; w's region: use, use, use+def
+          (set! acc (+ acc (probe i)))
+          ; call A
+          (set! acc (+ acc w))
+          ; w's region: use, use, use+def
           (set! acc (+ acc (* w i)))
           (set! w (+ w i))
-          (set! acc (+ acc (+ a i)))       ; a,b,c hot: 7 refs each
+          (set! acc (+ acc (+ a i)))
+          ; a,b,c hot: 7 refs each
           (set! acc (+ acc (+ a 1)))
           (set! acc (+ acc (+ a 2)))
           (set! acc (+ acc (+ a 3)))
@@ -55,12 +62,16 @@
           (set! acc (+ acc (+ c 3)))
           (set! acc (+ acc (* 2 c)))
           (set! c (+ c 1))
-          (set! acc (+ acc (probe 7)))     ; call B -- exit store must precede
-          (set! acc (+ acc w))             ; post-call read of the new value
+          (set! acc (+ acc (probe 7)))
+          ; call B -- exit store must precede
+          (set! acc (+ acc w))
+          ; post-call read of the new value
           (set! i (+ i 1))))
       (let
         [r : i64 (+ acc (+ a (+ b (+ c w))))]
-        (if (> rounds 1) (+ r (wb w0 (- rounds 1))) r)))))
+        (if (> rounds 1)
+          (+ r (wb w0 (- rounds 1)))
+          r)))))
 
 (define (main) : i64
   (let
@@ -76,4 +87,6 @@
     ;;       + 420 + sum(w_t + t)
     ;;     = 1770+34520+1540195+13110+13470+13830+420+36290 = 1653605;
     ;; finals a=61 b=62 c=63 w=1775 -> r = 1655566.
-    (if (= r 1655566) 42 1)))
+    (if (= r 1655566)
+      42
+      1)))

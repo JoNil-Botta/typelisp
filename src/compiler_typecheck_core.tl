@@ -44060,41 +44060,35 @@
                   same-identity-body
                   generated-key-body))]
             (if same-body?
-                  (let
-                    [expanded : AstDeclList
-                      (macro-module-import-marker-decls
-                        target-module
-                        alias
-                        span)]
-                    (OkMacroDeclExpansion
-                      expanded
-                      (macro-paths-for-decls expanded decl-path)))
-              (ErrMacroDeclExpansion
-                (box (macro-module-incompatible-output-diag call-expr identity)))))
               (let
                 [expanded : AstDeclList
-                  (macro-decl-list-append
-                    materialized
-                    (ast-decl-cons
-                      (ast-decl-module module)
-                      (macro-module-import-marker-decls
-                        target-module
-                        alias
-                        span)))]
+                  (macro-module-import-marker-decls target-module alias span)]
                 (OkMacroDeclExpansion
                   expanded
-                  (macro-paths-for-decls expanded decl-path))))]
+                  (macro-paths-for-decls expanded decl-path)))
+              (ErrMacroDeclExpansion
+                (box (macro-module-incompatible-output-diag call-expr identity)))))
+          (let
+            [expanded : AstDeclList
+              (macro-decl-list-append
+                materialized
+                (ast-decl-cons
+                  (ast-decl-module module)
+                  (macro-module-import-marker-decls target-module alias span)))]
+            (OkMacroDeclExpansion
+              expanded
+              (macro-paths-for-decls expanded decl-path))))]
       [(MacroNoDeclList)
-            (let
-              [expanded : AstDeclList
-                (macro-decl-list-append
-                  materialized
-                  (ast-decl-cons
-                    (ast-decl-module module)
-                    (macro-module-import-marker-decls target-module alias span)))]
-              (OkMacroDeclExpansion
-                expanded
-                (macro-paths-for-decls expanded decl-path)))])))
+        (let
+          [expanded : AstDeclList
+            (macro-decl-list-append
+              materialized
+              (ast-decl-cons
+                (ast-decl-module module)
+                (macro-module-import-marker-decls target-module alias span)))]
+          (OkMacroDeclExpansion
+            expanded
+            (macro-paths-for-decls expanded decl-path)))])))
 
 (define (macro-expand-module-generated-decls
   [ctx : TcContext]

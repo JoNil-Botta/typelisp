@@ -8,7 +8,6 @@
 ;; to a frame slot. The runtime check guards against over-elision (a live
 ;; store wrongly skipped would corrupt acc/i and change the sum -> exit 1);
 ;; target/dead-store-gate.sh additionally asserts the asm shape.
-
 ;; Recursive on purpose: a trivial leaf would be inlined at opt2, deleting the
 ;; call (and the dead result store with it).
 (define (poke [x : i64]) : unit
@@ -34,4 +33,6 @@
     [n : i64 (+ (arg-count) 3)]
     [r : i64 (spin n)]
     ;; n=4 (no args): acc = 3*(0+1+2+3) = 18.
-    (if (= r 18) 42 1)))
+    (if (= r 18)
+      42
+      1)))

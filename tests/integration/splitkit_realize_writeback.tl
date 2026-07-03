@@ -15,29 +15,53 @@
 ;; and the sum is wrong -> exit 1. This is the redefined-value OUT-copy the design
 ;; guards with `copies-bidirectional?`; the test fails loudly if it is missing.
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (wb_hot [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
-    [e : i64 (+ n 5)] [f : i64 (+ n 6)] [g : i64 (+ n 7)] [h : i64 (+ n 8)]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
+    [e : i64 (+ n 5)]
+    [f : i64 (+ n 6)]
+    [g : i64 (+ n 7)]
+    [h : i64 (+ n 8)]
     [w : i64 (+ n 100)]
-    [acc : i64 0] [i : i64 0]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 4)
         (begin
           ;; use a..h AND w BEFORE the call (pressure + keep w live across it)
-          (set! acc
-            (+ acc
-              (+ w
-                (+ (* a 3) (+ (* b 3) (+ (* c 3) (+ (* d 3)
-                  (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3)))))))))))
+          (set!
+            acc
+            (+
+              acc
+              (+
+                w
+                (+
+                  (* a 3)
+                  (+
+                    (* b 3)
+                    (+
+                      (* c 3)
+                      (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3)))))))))))
           (set! acc (+ acc (clobber i)))
           ;; post-call clobber-free sub-range: REDEFINE w (write-back piece)
-          (set! w
-            (+ w
-              (+ (* a 5) (+ (* b 5) (+ (* c 5) (+ (* d 5)
-                (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
+          (set!
+            w
+            (+
+              w
+              (+
+                (* a 5)
+                (+
+                  (* b 5)
+                  (+
+                    (* c 5)
+                    (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
           (set! acc (+ acc w))
           (set! i (+ i 1))))
       (+ acc w))))
@@ -58,4 +82,6 @@
     ;;   i=2: acc+=541+132=673; acc+=3; w=541+220=761; acc+=761  -> acc=1551+673+3+761=2988
     ;;   i=3: acc+=761+132=893; acc+=4; w=761+220=981; acc+=981  -> acc=2988+893+4+981=4866
     ;;   return acc + w = 4866 + 981 = 5847
-    (if (= r 5847) 42 1)))
+    (if (= r 5847)
+      42
+      1)))

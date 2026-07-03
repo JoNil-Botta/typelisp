@@ -17,10 +17,11 @@
 ;; mov-style CSR saves + pop-style epilogues (FAILS pre-GAP1 where saves are
 ;; `movq %rXX, N(%rsp)` and the entry is the bare `subq $(frame+8)`: proven
 ;; forcing).
-
 ;; Recursive on purpose so the leaf inliner cannot delete the call: probe3(x) = x.
 (define (probe3 [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (probe3 (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (probe3 (- x 1)))))
 
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps churn3 out of
 ;; the inliner AND out of opt-tailrec, so the gate can assert on the named
@@ -33,14 +34,17 @@
     (begin
       (while (< i 50)
         (begin
-          (set! acc (+ acc (probe3 i)))    ; the call every value spans
+          (set! acc (+ acc (probe3 i)))
+          ; the call every value spans
           (set! acc (+ acc (* a i)))
           (set! a (+ a 1))
           (set! acc (+ acc (* v i)))
           (set! i (+ i 1))))
       (let
         [r : i64 (+ acc (+ a v))]
-        (if (> rounds 1) (+ r (churn3 v (- rounds 1))) r)))))
+        (if (> rounds 1)
+          (+ r (churn3 v (- rounds 1)))
+          r)))))
 
 ;; Deep NON-tail recursion: a, b, c, n all live across the recursive call.
 (define (deeprec [n : i64]) : i64
@@ -64,4 +68,6 @@
     ;; acc = 40425 + 14700 = 55125; finals a = 51, v = 10 -> r = 55186.
     [d : i64 (deeprec (* v 1000))]
     ;; sum n=1..10000 of (a+b+c+n) = 5n - 2 -> 5*N(N+1)/2 - 2N = 250005000.
-    (if (and (= r 55186) (= d 250005000)) 42 1)))
+    (if (and (= r 55186) (= d 250005000))
+      42
+      1)))

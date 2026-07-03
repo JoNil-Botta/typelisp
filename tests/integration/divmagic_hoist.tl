@@ -16,7 +16,6 @@
 ;; target/divmagic-gate.sh asserts run=42 + zero movabsq inside each loop
 ;; body + exactly one movabsq per function (the preheader load). FAILS on the
 ;; pre-M-F compiler (2 movabsq per modsum iteration): proven forcing.
-
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps both functions
 ;; out of the inliner AND out of opt-tailrec, so the gate can assert on the
 ;; named functions' loop bodies (rbp_sixth_csr pattern).
@@ -55,5 +54,7 @@
     [d : i64 (digitsum m 1)]
     ;; acc after 100 iterations = 926242213; its digit sum = 31.
     (if (= m 926242213)
-      (if (= d 31) 42 2)
+      (if (= d 31)
+        42
+        2)
       1)))

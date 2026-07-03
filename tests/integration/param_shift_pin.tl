@@ -18,7 +18,6 @@
 ;; excluded from every inline path (opt-inline-census-address-taken?). The
 ;; data-dependent loop-carried `shr acc 1` cannot be strength-reduced away, so
 ;; a constant shift provably survives into the emitted body.
-
 (define (shift-mix [a : i64] [n : i64]) : i64
   (let
     [i : i64 0]
@@ -52,4 +51,6 @@
       (if (> n 100)
         (poke shift-mix a n)
         (shift-mix a n))]
-    (if (= r 100) 42 1)))
+    (if (= r 100)
+      42
+      1)))

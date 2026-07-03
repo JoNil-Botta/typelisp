@@ -173,17 +173,21 @@
   (let
     [na : i64 (compiler-live-set-word-count a)]
     [nb : i64 (compiler-live-set-word-count b)]
-    [n : i64 (if (< na nb) na nb)]
+    [n : i64
+      (if (< na nb)
+        na
+        nb)]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (begin
           (if (not
-                (= (bit-and
-                     (compiler-live-set-word-at a i)
-                     (compiler-live-set-word-at b i))
-                   0))
+            (=
+              (bit-and
+                (compiler-live-set-word-at a i)
+                (compiler-live-set-word-at b i))
+              0))
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -1259,7 +1263,6 @@
 ;; conservative index, so an error here cannot under-approximate allocation
 ;; interference -- only mis-coalesce, which the self-host fixpoint catches.
 ;; ---------------------------------------------------------------------------
-
 (define (compiler-live-instr-uses-nophi [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(IrInstrPhi _ _ _) (compiler-live-set-empty)]
@@ -1537,7 +1540,10 @@
               (begin
                 (array-set! phi-out i (compiler-live-set-empty))
                 (set! i (+ i 1)))))
-          (compiler-live-phi-out-build! walk-blocks (struct-get graph0 ids) phi-out)
+          (compiler-live-phi-out-build!
+            walk-blocks
+            (struct-get graph0 ids)
+            phi-out)
           (let
             [graph : CompilerLiveBlockGraph
               (compiler-live-fixpoint-ep graph0 phi-out)]

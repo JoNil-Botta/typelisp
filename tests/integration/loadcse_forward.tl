@@ -25,10 +25,7 @@
     (begin
       (array.array-set! xs 0 (+ n 40))
       (array.array-set! xs 1 (* n 3))
-      (array.array-set!
-        xs
-        2
-        (- (array.array-ref xs 0) (array.array-ref xs 1)))
+      (array.array-set! xs 2 (- (array.array-ref xs 0) (array.array-ref xs 1)))
       (+ (array.array-ref xs 2) (array.array-ref xs 1)))))
 
 (define (main) : i64
@@ -39,4 +36,6 @@
       [r : i64 (poke-sum xs n)]
       ;; n = 2 (arg-count is 1 with no args): xs[0]=42, xs[1]=6,
       ;; xs[2]=42-6=36; r = 36+6 = 42.
-      (if (= r 42) 42 1))))
+      (if (= r 42)
+        42
+        1))))

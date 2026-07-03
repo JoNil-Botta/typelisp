@@ -28,13 +28,17 @@
 ;; optimizer cannot constant-fold the calls away. If the allocator mis-models the
 ;; occupant liberation (reloads a stale slot, clobbers hot across call2, or fails to
 ;; reload occ after the region), the sum is wrong -> exit 1.
-
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (csr [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
     [occ : i64 (+ n 5)]
     [hot : i64 0]
     [acc : i64 0]
@@ -65,4 +69,6 @@
     ;; a+b+c+d = 4n+10 ; 4*hot = 4n+400 ; occ = n+5
     ;; total = (5n+15)+(3n+3)+(4n+10)+(4n+400)+(n+5) = 17n+433
     [expected : i64 (+ (* 17 n) 433)]
-    (if (= r expected) 42 1)))
+    (if (= r expected)
+      42
+      1)))

@@ -44,12 +44,11 @@
         (begin
           (match (wrap (Triple (+ i 1) (* i 2) 7) i)
             [(WrapSome t)
-              (set! acc
+              (set!
+                acc
                 (+
                   acc
-                  (+
-                    (struct-get t a)
-                    (+ (struct-get t b) (struct-get t c)))))]
+                  (+ (struct-get t a) (+ (struct-get t b) (struct-get t c)))))]
             [(WrapNone) (set! acc (- 0 1000000))])
           (set! i (+ i 1))))
       acc)))
@@ -60,4 +59,6 @@
     [r : i64 (probe n)]
     ;; n = 6 (no args): sum over i<6 of (i+1) + 2i + 7 = (1+..+6) + 2*15 + 42
     ;;                = 21 + 30 + 42 = 93.
-    (if (= r 93) 42 1)))
+    (if (= r 93)
+      42
+      1)))

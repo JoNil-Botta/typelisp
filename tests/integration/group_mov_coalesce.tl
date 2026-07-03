@@ -12,7 +12,6 @@
 ;; stack-homed. The runtime check guards reconstruction (a wrong shared slot
 ;; or clobbered word changes the sum -> exit 1); target/group-mov-gate.sh
 ;; additionally asserts the asm shape.
-
 (defenum Op
   (Add i64)
   (Sub i64)
@@ -21,7 +20,9 @@
 ;; Recursive on purpose: a trivial leaf would be inlined at opt2, deleting the
 ;; in-loop clobber point. bump(x) = x+1 for x >= 0.
 (define (bump [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (bump (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (bump (- x 1)))))
 
 (define (run [ops : (Array Op)] [n : i64]) : i64
   (let
@@ -63,4 +64,6 @@
         ;; n=4 (no args): ops = [Add 2, Sub 1, Mul 3, Add 5].
         ;; acc: 0+2=2; 2-1=1; 1*3=3; 3+5=8. lo = bump(0..3) = 1+2+3+4 = 10.
         ;; hi = 0+1+2+3 = 6. r = 8+10+6 = 24.
-        (if (= r 24) 42 1)))))
+        (if (= r 24)
+          42
+          1)))))

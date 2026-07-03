@@ -25,7 +25,6 @@
 ;; accumulator, the sum is wrong -> exit 1. `expected` is a straight-line closed
 ;; form (no loop), a reconstruction guard the pointer-heavy self-host fixpoint
 ;; cannot provide, and the regression anchor for when the homing fires.
-
 ;; Single loop-carried phi accumulator, variable seed, used after the loop.
 (define (acc-sum [n : i64] [seed : i64]) : i64
   (let
@@ -40,7 +39,8 @@
 
 ;; A real call inside the loop body -> the loop region is NOT clobber-free, so a
 ;; homed carry must use a CALLEE-SAVED register (preserved across the call).
-(define (bump [x : i64]) : i64 (+ x 1))
+(define (bump [x : i64]) : i64
+  (+ x 1))
 
 ;; Two loop-carried phi accumulators across an inner call (callee-saved carry).
 ;;   a_{k+1} = a_k + bump(k) = a_k + (k+1)
@@ -71,9 +71,6 @@
     [r2b : i64 (acc-two 400 (+ s 3))]
     [e2a : i64 (+ (+ s (/ (* 1000 1001) 2)) (+ s (* 2 1000)))]
     [e2b : i64 (+ (+ (+ s 3) (/ (* 400 401) 2)) (+ (+ s 3) (* 2 400)))]
-    (if (and
-          (= r1a e1a)
-          (and (= r1b e1b)
-            (and (= r2a e2a) (= r2b e2b))))
+    (if (and (= r1a e1a) (and (= r1b e1b) (and (= r2a e2a) (= r2b e2b))))
       42
       1)))

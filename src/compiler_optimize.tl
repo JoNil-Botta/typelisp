@@ -19901,9 +19901,7 @@
         frame
         (opt-loop-bce-blocks summaries params blocks))]))
 
-(define (optimize-block-hs
-  [hs : OptLoadHeaderSet]
-  [block : CompilerIrBlock]) : CompilerIrBlock
+(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
       ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
@@ -38826,7 +38824,6 @@
 ;; (OptLoadHeaderSet) marking vars that are array/string descriptor handles at
 ;; EVERY def site (multi-def vars with disagreeing types are poisoned -- the
 ;; block-local pass runs pre-SSA).
-
 ;; Function-constant header-typed var set: var -> 1 (array/string handle at
 ;; every typed def) or 2 (poisoned: any non-handle or untyped def).
 (defenum OptLoadHeaderSet
@@ -38864,10 +38861,7 @@
         [(IrParam _ ty var)
           (opt-load-header-set-add-params
             (box-get rest)
-            (opt-load-header-set-mark
-              set
-              var
-              (opt-licm-array-header-type? ty)))])]))
+            (opt-load-header-set-mark set var (opt-licm-array-header-type? ty)))])]))
 
 ;; Defs with a declared result type mark it; every OTHER defining instruction
 ;; poisons its dst (its handle-ness is unknown).
@@ -38921,9 +38915,7 @@
             (box-get rest)
             (opt-load-header-set-add-instr-seq-from instrs 0 set))])]
     [(IrBlockArray seq)
-      (opt-load-header-set-add-blocks
-        (compiler-ir-block-seq-to-list seq)
-        set)]))
+      (opt-load-header-set-add-blocks (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-load-header-set-from-function
   [params : CompilerIrParamList]
@@ -38998,9 +38990,7 @@
           (if header?
             4
             0)
-          (+
-            (* width 8)
-            (+ (* off 4096) (* base 4294967296)))))]))
+          (+ (* width 8) (+ (* off 4096) (* base 4294967296)))))]))
 
 (define (opt-load-loc-kind-decode [value : i64]) : OptLoadLocKind
   (cond
@@ -39024,9 +39014,7 @@
     (>= base 0)
     (and
       (< base 1073741824)
-      (and
-        (>= off 0)
-        (and (< off 1048576) (and (> width 0) (< width 512))))))
+      (and (>= off 0) (and (< off 1048576) (and (> width 0) (< width 512))))))
     (OptLoadLocField base off width header?)
     (OptLoadLocUnknown)))
 
@@ -39122,8 +39110,7 @@
           removed
           (let
             [capacity : i64 (hashmap.i64-i64-map-capacity map)]
-            [out : hashmap.I64I64Map
-              (hashmap.i64-i64-map-with-capacity 17)]
+            [out : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
             [out-refs : hashmap.I64I64Map
               (hashmap.i64-i64-map-with-capacity 17)]
             [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
@@ -39160,8 +39147,7 @@
         [out : hashmap.I64I64Map
           (hashmap.i64-i64-map-with-capacity
             (+ (* (hashmap.i64-i64-map-len map) 2) 17))]
-        [out-refs : hashmap.I64I64Map
-          (hashmap.i64-i64-map-with-capacity 17)]
+        [out-refs : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
         [capacity : i64 (hashmap.i64-i64-map-capacity map)]
         [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
         (begin
@@ -39173,18 +39159,14 @@
                     (set! out (hashmap.i64-i64-map-put out var value))
                     (match (opt-load-loc-kind-decode value)
                       [(OptLoadLocField base _ _ _)
-                        (set!
-                          out-refs
-                          (opt-load-kinds-ref-add out-refs base 1))]
+                        (set! out-refs (opt-load-kinds-ref-add out-refs base 1))]
                       [_ unit]))]
                 [(hashmap.I64I64MapEntryNone) unit])
               (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
           (OptLoadPtrKinds out out-refs)))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
-(define (opt-load-kinds-intersect
-  [a : OptLoadPtrKinds]
-  [b : OptLoadPtrKinds]) : OptLoadPtrKinds
+(define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
     [(OptLoadPtrKinds amap _)
       (match b
@@ -39240,11 +39222,7 @@
                         (opt-load-kinds-bind
                           invalidated
                           dst
-                          (opt-load-loc-field-checked
-                            b0
-                            (+ o0 (* k sz))
-                            sz
-                            h0))
+                          (opt-load-loc-field-checked b0 (+ o0 (* k sz)) sz h0))
                         invalidated))]
                   [_ invalidated])]
               [(OptLoadLocUnknown)
@@ -39326,7 +39304,15 @@
         [(OptLoadKeyRaw bv bty belem)
           (and
             (opt-value-eq av bv)
-            (and (opt-type-eq aty bty) (= (if aelem 1 0) (if belem 1 0))))]
+            (and
+              (opt-type-eq aty bty)
+              (=
+                (if aelem
+                  1
+                  0)
+                (if belem
+                  1
+                  0))))]
         [_ false])]
     [(OptLoadKeyField abase aoff aty ah)
       (match b
@@ -39335,7 +39321,15 @@
             (= abase bbase)
             (and
               (= aoff boff)
-              (and (opt-type-eq aty bty) (= (if ah 1 0) (if bh 1 0)))))]
+              (and
+                (opt-type-eq aty bty)
+                (=
+                  (if ah
+                    1
+                    0)
+                  (if bh
+                    1
+                    0)))))]
         [_ false])]))
 
 (define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
@@ -39365,9 +39359,7 @@
   (match entry
     [(OptLoadEntry _ value) value]))
 
-(define (opt-load-table-lookup
-  [table : OptLoadTable]
-  [key : OptLoadKey]) : CompilerIrMaybeValue
+(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
   (match table
     [(OptLoadNil) (IrNoValue)]
     [(OptLoadCons entry rest)
@@ -39459,9 +39451,7 @@
   [bwidth : i64]) : bool
   (and
     (> awidth 0)
-    (and
-      (> bwidth 0)
-      (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo)))))
+    (and (> bwidth 0) (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo)))))
 
 (define (opt-load-entry-survives-store?
   [class : OptLoadStoreClass]
@@ -39498,8 +39488,7 @@
     [(OptLoadNil) (OptLoadNil)]
     [(OptLoadCons entry rest)
       (let
-        [tail : OptLoadTable
-          (opt-load-table-filter-store (box-get rest) class)]
+        [tail : OptLoadTable (opt-load-table-filter-store (box-get rest) class)]
         (if (opt-load-entry-survives-store? class entry)
           (OptLoadCons entry (box tail))
           tail))]))
@@ -40108,22 +40097,20 @@
 
 ;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
-(define (opt-load-cse-run-with-array-param
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (opt-load-cse-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
     (opt-load-header-set-from-function
       (compiler-ir-param-cons
         (IrParam "xs" (AstTyDynArray 0) 0)
-        (compiler-ir-param-cons
-          (IrParam "ys" (AstTyDynArray 0) 1)
-          (IrParamNil)))
-      (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
-        (IrBlockNil)))
+        (compiler-ir-param-cons (IrParam "ys" (AstTyDynArray 0) 1) (IrParamNil)))
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) (IrBlockNil)))
     (opt-load-cse-empty-state)
     instrs))
 
-(define (opt-count-mov-dst-i64-src [instrs : CompilerIrInstrList] [dst : i64] [src : i64]) : i64
+(define (opt-count-mov-dst-i64-src
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]) : i64
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
@@ -40355,8 +40342,7 @@
       (opt-load-cse-run-with-array-param
         (opt-load-cse-element-invalidate-instrs))]
     [other-base-store : CompilerIrInstrList
-      (opt-load-cse-run-with-array-param
-        (opt-load-cse-other-base-store-instrs))]
+      (opt-load-cse-run-with-array-param (opt-load-cse-other-base-store-instrs))]
     [same-base-disjoint : CompilerIrInstrList
       (opt-load-cse-run-with-array-param
         (opt-load-cse-same-base-disjoint-instrs))]

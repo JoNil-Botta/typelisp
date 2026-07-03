@@ -31,16 +31,20 @@
 ;; contribution summed by hand), a reconstruction guard the pointer-heavy
 ;; self-host fixpoint cannot provide. Seeded from (arg-count) so the optimizer
 ;; cannot constant-fold the calls/holes away.
-
 ;; Recursive on purpose: the opt-2 leaf-inliner would inline a trivial leaf and
 ;; delete the call, defeating the call-spanning shape. A self-recursive function
 ;; is not inlined, so the `call` survives. clobber(k) = k+1 for k >= 0.
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (occ [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
     [e : i64 (+ n 5)]
     [v : i64 0]
     [acc : i64 0]
@@ -63,4 +67,6 @@
     [n : i64 (arg-count)]
     [r : i64 (occ n)]
     [expected : i64 (+ (* 18 n) 338)]
-    (if (= r expected) 42 1)))
+    (if (= r expected)
+      42
+      1)))

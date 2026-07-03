@@ -22,27 +22,50 @@
 ;; exit 1. Inputs derive from (arg-count) so nothing constant-folds; `expected`
 ;; is a straight-line closed form.
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (split_hot [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
-    [e : i64 (+ n 5)] [f : i64 (+ n 6)] [g : i64 (+ n 7)] [h : i64 (+ n 8)]
-    [acc : i64 0] [i : i64 0]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
+    [e : i64 (+ n 5)]
+    [f : i64 (+ n 6)]
+    [g : i64 (+ n 7)]
+    [h : i64 (+ n 8)]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 4)
         (begin
           ;; use a..h BEFORE the call (pre-call sub-range)
-          (set! acc
-            (+ acc
-              (+ (* a 3) (+ (* b 3) (+ (* c 3) (+ (* d 3)
-                (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3))))))))))
+          (set!
+            acc
+            (+
+              acc
+              (+
+                (* a 3)
+                (+
+                  (* b 3)
+                  (+
+                    (* c 3)
+                    (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3))))))))))
           (set! acc (+ acc (clobber i)))
           ;; use a..h AFTER the call (post-call sub-range: the register piece)
-          (set! acc
-            (+ acc
-              (+ (* a 5) (+ (* b 5) (+ (* c 5) (+ (* d 5)
-                (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
+          (set!
+            acc
+            (+
+              acc
+              (+
+                (* a 5)
+                (+
+                  (* b 5)
+                  (+
+                    (* c 5)
+                    (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
           (set! i (+ i 1))))
       acc)))
 
@@ -52,4 +75,6 @@
     [r : i64 (split_hot n)]
     ;; n=1: a..h = 2..9, sum = 44. Per iteration: 3*44 + clobber(i) + 5*44
     ;; = 132 + (i+1) + 220 = 353 + i. Sum over i=0..3 = 353+354+355+356 = 1418.
-    (if (= r 1418) 42 1)))
+    (if (= r 1418)
+      42
+      1)))

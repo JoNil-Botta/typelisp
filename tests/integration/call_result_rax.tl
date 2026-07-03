@@ -9,7 +9,9 @@
 ;; The runtime check guards reconstruction; target/call-result-rax-gate.sh
 ;; asserts the asm shape (no `movq %rax, %rN` directly after the loop call).
 (define (bump [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (bump (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (bump (- x 1)))))
 
 (define (spin [n : i64]) : i64
   (let
@@ -29,4 +31,6 @@
     [n : i64 (+ (arg-count) 3)]
     [r : i64 (spin n)]
     ;; n = 4 (no args): bump(i) = i+1 for i >= 0, so r = 3*(1+2+3+4) = 30.
-    (if (= r 30) 42 1)))
+    (if (= r 30)
+      42
+      1)))

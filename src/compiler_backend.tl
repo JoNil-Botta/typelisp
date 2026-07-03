@@ -597,7 +597,9 @@
           (begin
             (if (=
               (cast
-                (array.array-ref compiler-backend-peephole-carry-safe-bytes (+ off j))
+                (array.array-ref
+                  compiler-backend-peephole-carry-safe-bytes
+                  (+ off j))
                 : i64)
               (compiler-backend-peephole-byte-at data (+ kstart j)))
               unit
@@ -621,11 +623,14 @@
     (begin
       (while (< walked cap)
         (let
-          [off : i64 (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          [off : i64
+            (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
           (if (< off 0)
             (let
               [start : i64 compiler-backend-peephole-carry-safe-bytes-count]
-              (if (<= (+ start klen) compiler-backend-peephole-carry-safe-bytes-capacity)
+              (if (<=
+                (+ start klen)
+                compiler-backend-peephole-carry-safe-bytes-capacity)
                 (let
                   [j : i64 0]
                   (begin
@@ -634,29 +639,48 @@
                         (array.array-set!
                           compiler-backend-peephole-carry-safe-bytes
                           (+ start j)
-                          (cast (compiler-backend-peephole-byte-at data (+ kstart j)) : u8))
+                          (cast
+                            (compiler-backend-peephole-byte-at
+                              data
+                              (+ kstart j))
+                            : u8))
                         (set! j (+ j 1))))
-                    (array.array-set! compiler-backend-peephole-carry-safe-offsets slot start)
-                    (array.array-set! compiler-backend-peephole-carry-safe-lengths slot klen)
-                    (set! compiler-backend-peephole-carry-safe-bytes-count (+ start klen))
+                    (array.array-set!
+                      compiler-backend-peephole-carry-safe-offsets
+                      slot
+                      start)
+                    (array.array-set!
+                      compiler-backend-peephole-carry-safe-lengths
+                      slot
+                      klen)
+                    (set!
+                      compiler-backend-peephole-carry-safe-bytes-count
+                      (+ start klen))
                     (return unit)))
                 (return unit)))
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
               off
-              (array.array-ref compiler-backend-peephole-carry-safe-lengths slot)
+              (array.array-ref
+                compiler-backend-peephole-carry-safe-lengths
+                slot)
               data
               kstart
               klen)
               (return unit)
               (begin
-                (set! slot (if (>= (+ slot 1) cap) 0 (+ slot 1)))
+                (set!
+                  slot
+                  (if (>= (+ slot 1) cap)
+                    0
+                    (+ slot 1)))
                 (set! walked (+ walked 1)))))))
       unit)))
 
 ;; Insert a key String (used by the collector, which holds owned label Strings).
 (define (compiler-backend-peephole-carry-safe-insert! [key : String]) : unit
   (compiler-backend-peephole-carry-safe-insert-bytes!
-    (unsafe (string-data key))
+    (unsafe
+      (string-data key))
     0
     (string.string-length key)
     (intern-hash key)))
@@ -675,18 +699,25 @@
     (begin
       (while (< walked cap)
         (let
-          [off : i64 (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          [off : i64
+            (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
           (if (< off 0)
             (return false)
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
               off
-              (array.array-ref compiler-backend-peephole-carry-safe-lengths slot)
+              (array.array-ref
+                compiler-backend-peephole-carry-safe-lengths
+                slot)
               data
               kstart
               klen)
               (return true)
               (begin
-                (set! slot (if (>= (+ slot 1) cap) 0 (+ slot 1)))
+                (set!
+                  slot
+                  (if (>= (+ slot 1) cap)
+                    0
+                    (+ slot 1)))
                 (set! walked (+ walked 1)))))))
       false)))
 
@@ -4496,7 +4527,6 @@
     reg
     0))
 
-
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
 ;; occupied -- genuine register pressure, not param pressure), it must not silently
 ;; degrade to the occupied fallback (that clobbers a live value). Instead the
@@ -4756,9 +4786,7 @@
             (compiler-backend-emit-pop-callee-reg assignments "%r14")
             (string.string-append
               (compiler-backend-emit-pop-callee-reg assignments "%r13")
-              (compiler-backend-emit-pop-callee-reg
-                assignments
-                "%r12"))))))))
+              (compiler-backend-emit-pop-callee-reg assignments "%r12"))))))))
 
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -4777,11 +4805,7 @@
             ;; slot operand is a frame reference; in the (FPO-only) functions
             ;; that home values in %rbp it is rebased to an rsp-relative form,
             ;; so the save works without the rbp frame base.
-            (compiler-backend-emit-save-callee-reg
-              assignments
-              vars
-              "%rbp"
-              5)))))))
+            (compiler-backend-emit-save-callee-reg assignments vars "%rbp" 5)))))))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
@@ -4797,7 +4821,11 @@
           (string.string-append
             (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
             (string.string-append
-              (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
+              (compiler-backend-emit-restore-callee-reg
+                assignments
+                vars
+                "%r13"
+                1)
               (compiler-backend-emit-restore-callee-reg
                 assignments
                 vars
@@ -5853,7 +5881,10 @@
           [(CompilerRegSomeLocation location)
             (match location
               [(CompilerRegRegister home)
-                (if (compiler-backend-address-base-register-ok? home avoid allow-rbp)
+                (if (compiler-backend-address-base-register-ok?
+                  home
+                  avoid
+                  allow-rbp)
                   home
                   "")]
               [_ ""])]
@@ -6916,15 +6947,8 @@
           (compiler-backend-three-exclude src1-home dst0-reg dst1-reg)]
         [scratch0 : String
           (if sse0?
-            (compiler-backend-scavenge-xmm-reg
-              -1
-              scratch0-exclude
-              3
-              "%xmm2")
-            (compiler-backend-scavenge-reg-here
-              scratch0-exclude
-              3
-              "%r8"))]
+            (compiler-backend-scavenge-xmm-reg -1 scratch0-exclude 3 "%xmm2")
+            (compiler-backend-scavenge-reg-here scratch0-exclude 3 "%r8"))]
         [scratch1-exclude : (Array String)
           (compiler-backend-three-exclude scratch0 dst0-reg dst1-reg)]
         [scratch1 : String
@@ -8398,7 +8422,6 @@
 ;;
 ;; Linux scalar-opt2 text path only (rsi/rdi are CSRs on Win64).
 ;; ===========================================================================
-
 (defenum CompilerBackendMagicHome
   (CompilerBackendNoMagicHome)
   (CompilerBackendMagicHomeReg String i64))
@@ -8422,6 +8445,7 @@
   (make-array String 1))
 (define compiler-backend-const-hoist-inject-texts : (Array String)
   (make-array String 1))
+
 ;; true = inject BEFORE the label (the header-is-entry-block case: the load
 ;; goes at prologue end, so back edges re-enter after it); false = after the
 ;; label (a dedicated preheader block).
@@ -8446,9 +8470,12 @@
 
 ;; Registers eligible to carry a hoisted magic across a leaf loop region.
 (define (compiler-backend-const-hoist-candidate-regs) : CompilerRegStringList
-  (compiler-reg-string-cons "%r8"
-    (compiler-reg-string-cons "%r9"
-      (compiler-reg-string-cons "%rsi"
+  (compiler-reg-string-cons
+    "%r8"
+    (compiler-reg-string-cons
+      "%r9"
+      (compiler-reg-string-cons
+        "%rsi"
         (compiler-reg-string-cons "%rdi" CompilerRegStringNil)))))
 
 ;; The register carrying this site's hoisted magic, or "" when the site has no
@@ -8592,17 +8619,9 @@
         [(hashmap.StringI64MapFound q)
           (if (and (> q h) (<= q le))
             true
-            (compiler-backend-const-hoist-succs-inside?
-              ids
-              (box-get rest)
-              h
-              le))]
+            (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le))]
         [(hashmap.StringI64MapMissing)
-          (compiler-backend-const-hoist-succs-inside?
-            ids
-            (box-get rest)
-            h
-            le)])]))
+          (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le)])]))
 
 (define (compiler-backend-const-hoist-side-entry?
   [orig : (Array CompilerIrBlock)]
@@ -8784,8 +8803,7 @@
                 0)]
             [loop-ends : (Array i64)
               (compiler-reg-preheader-loop-ends cons-blocks count)]
-            [points : (Array i64)
-              (compiler-reg-loop-phi-mb-block-points orig)]
+            [points : (Array i64) (compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : CompilerRegIntervalIndex
               (compiler-reg-interval-index-build intervals vars)]
             [site-cap : i64 (compiler-backend-const-hoist-site-cap)]
@@ -8884,9 +8902,7 @@
                                               (compiler-backend-const-hoist-instr-magic
                                                 (array-ref slots k))]
                                             [point : i64
-                                              (+
-                                                (array-ref points b)
-                                                (* 2 k))]
+                                              (+ (array-ref points b) (* 2 k))]
                                             (begin
                                               (if (and
                                                 (not (= magic 0))
@@ -8961,9 +8977,17 @@
                                                 synth-regs
                                                 synth-count
                                                 reg)
-                                              (array-set! synth-lo synth-count lo)
-                                              (array-set! synth-hi synth-count hi)
-                                              (set! synth-count (+ synth-count 1))
+                                              (array-set!
+                                                synth-lo
+                                                synth-count
+                                                lo)
+                                              (array-set!
+                                                synth-hi
+                                                synth-count
+                                                hi)
+                                              (set!
+                                                synth-count
+                                                (+ synth-count 1))
                                               ;; preheader injection
                                               (array-set!
                                                 inject-labels
@@ -8989,7 +9013,9 @@
                                                   (begin
                                                     (if (and
                                                       (=
-                                                        (array-ref loop-magics j)
+                                                        (array-ref
+                                                          loop-magics
+                                                          j)
                                                         magic)
                                                       (< site-count site-cap))
                                                       (begin
@@ -9679,7 +9705,9 @@
         (if (string-eq hoist-reg "")
           op-excl
           (compiler-backend-scavenge-exclude-append op-excl 5 hoist-reg))
-        (if (string-eq hoist-reg "") 5 6)
+        (if (string-eq hoist-reg "")
+          5
+          6)
         "%r8")]
     [dividend-excl : (Array String)
       (compiler-backend-divmod-dividend-exclude magic)]
@@ -9689,7 +9717,9 @@
         (if (string-eq hoist-reg "")
           dividend-excl
           (compiler-backend-scavenge-exclude-append dividend-excl 5 hoist-reg))
-        (if (string-eq hoist-reg "") 5 6)
+        (if (string-eq hoist-reg "")
+          5
+          6)
         "%r10")]
     [mask-excl : (Array String)
       (compiler-backend-divmod-mask-exclude magic dividend)]
@@ -9699,9 +9729,18 @@
         (if (string-eq hoist-reg "")
           mask-excl
           (compiler-backend-scavenge-exclude-append mask-excl 6 hoist-reg))
-        (if (string-eq hoist-reg "") 6 7)
+        (if (string-eq hoist-reg "")
+          6
+          7)
         "%r9")]
-    (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask hoist)))
+    (compiler-backend-binop-literal-divmod-asm
+      op
+      rhs
+      ty
+      magic
+      dividend
+      mask
+      hoist)))
 
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
@@ -9799,8 +9838,10 @@
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true rhs-reg)]
       [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false rhs-reg)]
       [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true rhs-reg)]
-      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" staging-reg)]
-      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" staging-reg)]
+      [(IrBinEq)
+        (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" staging-reg)]
+      [(IrBinNe)
+        (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" staging-reg)]
       [(IrBinLt)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -9903,7 +9944,10 @@
             (compiler-backend-int-instruction-suffix ty)
             " "
             imm)
-          (str_cat.str-cat ", " (compiler-backend-sized-reg staging-reg ty) "\n")))
+          (str_cat.str-cat
+            ", "
+            (compiler-backend-sized-reg staging-reg ty)
+            "\n")))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-binop-immediate-shift-reg-asm
@@ -10203,13 +10247,27 @@
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
-          (compiler-backend-binop-test-zero-asm ty "sete" staging-reg result-reg)
-          (compiler-backend-binop-immediate-cmp-asm ty imm "sete" staging-reg result-reg)))]
+          (compiler-backend-binop-test-zero-asm
+            ty
+            "sete"
+            staging-reg
+            result-reg)
+          (compiler-backend-binop-immediate-cmp-asm
+            ty
+            imm
+            "sete"
+            staging-reg
+            result-reg)))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
           (compiler-backend-binop-test-zero-asm ty "setne" "%rax" "%rax")
-          (compiler-backend-binop-immediate-cmp-asm ty imm "setne" "%rax" "%rax")))]
+          (compiler-backend-binop-immediate-cmp-asm
+            ty
+            imm
+            "setne"
+            "%rax"
+            "%rax")))]
     [(IrBinLt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -10262,20 +10320,45 @@
         (CompilerBackendSomeAsm
           (if (string.string-eq imm "$255")
             (if (= size 8)
-              (str_cat.str-cat "    movzbq " (compiler-backend-reg-part staging-reg 1) ", " result-reg "\n")
-              (str_cat.str-cat "    movzbl " (compiler-backend-reg-part staging-reg 1) ", " (compiler-backend-reg-part result-reg 4) "\n"))
+              (str_cat.str-cat
+                "    movzbq "
+                (compiler-backend-reg-part staging-reg 1)
+                ", "
+                result-reg
+                "\n")
+              (str_cat.str-cat
+                "    movzbl "
+                (compiler-backend-reg-part staging-reg 1)
+                ", "
+                (compiler-backend-reg-part result-reg 4)
+                "\n"))
             (if (and (>= size 2) (string.string-eq imm "$65535"))
               (if (= size 8)
-                (str_cat.str-cat "    movzwq " (compiler-backend-reg-part staging-reg 2) ", " result-reg "\n")
-                (str_cat.str-cat "    movzwl " (compiler-backend-reg-part staging-reg 2) ", " (compiler-backend-reg-part result-reg 4) "\n"))
-              (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg)))))]
+                (str_cat.str-cat
+                  "    movzwq "
+                  (compiler-backend-reg-part staging-reg 2)
+                  ", "
+                  result-reg
+                  "\n")
+                (str_cat.str-cat
+                  "    movzwl "
+                  (compiler-backend-reg-part staging-reg 2)
+                  ", "
+                  (compiler-backend-reg-part result-reg 4)
+                  "\n"))
+              (compiler-backend-binop-immediate-reg-asm
+                "and"
+                ty
+                imm
+                staging-reg)))))]
     [(IrBinBitOr)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "or" ty imm staging-reg))]
     [(IrBinBitXor)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "xor" ty imm staging-reg))]
-    [(IrBinShl) (compiler-backend-binop-immediate-shift-asm "shl" ty imm staging-reg)]
+    [(IrBinShl)
+      (compiler-backend-binop-immediate-shift-asm "shl" ty imm staging-reg)]
     [(IrBinShr)
       (compiler-backend-binop-immediate-shift-asm
         (if (compiler-backend-type-signed? ty)
@@ -11277,85 +11360,92 @@
                         operand-ty
                         (compiler-backend-sized-reg lhs-reg operand-ty)
                         (compiler-backend-sized-reg dst-home operand-ty)))
-                  (if (and
-                    (string-eq mnem "add")
-                    (not (string-eq lhs-reg ""))
-                    (not (string-eq rhs-reg ""))
-                    ;; #rbp-base: %rbp must not land in the SIB BASE slot
-                    ;; ("(%rbp," fails the FPO audit). Addition commutes, so
-                    ;; an rbp-homed lhs swaps into the INDEX slot; only the
-                    ;; both-rbp case (lhs == rhs == %rbp) falls through.
-                    (not (and
-                      (string-eq lhs-reg "%rbp")
-                      (string-eq rhs-reg "%rbp"))))
-                    ;; bucket a (two-address tie): when both operands already live in
-                    ;; registers and the op is add, emit a 3-address LEA so the
-                    ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
-                    ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
-                    ;; never consumes a binop's flags (comparisons emit their own cmp).
-                    (OkCompilerBackend
-                      (str-cat
-                        "    leaq ("
-                        (if (string-eq lhs-reg "%rbp") rhs-reg lhs-reg)
-                        ","
-                        (if (string-eq lhs-reg "%rbp") lhs-reg rhs-reg)
-                        "), "
-                        dst-home
-                        "\n"))
                     (if (and
-                      (not (string-eq rhs-reg dst-home))
-                      (not (string-eq rhs-operand "")))
-                      ;; #62 scalar load-fold: rhs-operand is the rhs's sized register
-                      ;; (rhs already in a distinct reg) OR, when rhs is a spilled var,
-                      ;; its DISP(%rbp) slot. Either way: load lhs into dst-home, then
-                      ;; "<op> rhs-operand, dst-home" directly -- for a spilled rhs this
-                      ;; folds the memory operand and skips the "movq rhs-slot,%scav"
-                      ;; reload (rhs lives in memory, so loading lhs into dst-home cannot
-                      ;; clobber it). rhs-reg==dst-home still falls through to the reload
-                      ;; (rhs must be saved before lhs overwrites dst-home).
-                      (match (compiler-backend-emit-load-value-with-plan
-                        assignments
-                        lhs
-                        dst-home)
-                        [(OkCompilerBackend lhs-asm)
-                          (OkCompilerBackend
-                            (string-append
-                              lhs-asm
-                              (compiler-backend-binop-reg-asm
-                                mnem
-                                operand-ty
-                                rhs-operand
-                                (compiler-backend-sized-reg dst-home operand-ty))))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])
-                      (match (compiler-backend-emit-load-value-with-plan
-                        assignments
-                        rhs
-                        scav-rhs)
-                        [(OkCompilerBackend rhs-asm)
-                          (match (compiler-backend-emit-load-value-with-plan
-                            assignments
-                            lhs
-                            dst-home)
-                            [(OkCompilerBackend lhs-asm)
-                              (OkCompilerBackend
-                                (string-append
-                                  rhs-asm
+                      (string-eq mnem "add")
+                      (not (string-eq lhs-reg ""))
+                      (not (string-eq rhs-reg ""))
+                      ;; #rbp-base: %rbp must not land in the SIB BASE slot
+                      ;; ("(%rbp," fails the FPO audit). Addition commutes, so
+                      ;; an rbp-homed lhs swaps into the INDEX slot; only the
+                      ;; both-rbp case (lhs == rhs == %rbp) falls through.
+                      (not
+                        (and
+                          (string-eq lhs-reg "%rbp")
+                          (string-eq rhs-reg "%rbp"))))
+                      ;; bucket a (two-address tie): when both operands already live in
+                      ;; registers and the op is add, emit a 3-address LEA so the
+                      ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
+                      ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
+                      ;; never consumes a binop's flags (comparisons emit their own cmp).
+                      (OkCompilerBackend
+                        (str-cat
+                          "    leaq ("
+                          (if (string-eq lhs-reg "%rbp")
+                            rhs-reg
+                            lhs-reg)
+                          ","
+                          (if (string-eq lhs-reg "%rbp")
+                            lhs-reg
+                            rhs-reg)
+                          "), "
+                          dst-home
+                          "\n"))
+                      (if (and
+                        (not (string-eq rhs-reg dst-home))
+                        (not (string-eq rhs-operand "")))
+                        ;; #62 scalar load-fold: rhs-operand is the rhs's sized register
+                        ;; (rhs already in a distinct reg) OR, when rhs is a spilled var,
+                        ;; its DISP(%rbp) slot. Either way: load lhs into dst-home, then
+                        ;; "<op> rhs-operand, dst-home" directly -- for a spilled rhs this
+                        ;; folds the memory operand and skips the "movq rhs-slot,%scav"
+                        ;; reload (rhs lives in memory, so loading lhs into dst-home cannot
+                        ;; clobber it). rhs-reg==dst-home still falls through to the reload
+                        ;; (rhs must be saved before lhs overwrites dst-home).
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          lhs
+                          dst-home)
+                          [(OkCompilerBackend lhs-asm)
+                            (OkCompilerBackend
+                              (string-append
+                                lhs-asm
+                                (compiler-backend-binop-reg-asm
+                                  mnem
+                                  operand-ty
+                                  rhs-operand
+                                  (compiler-backend-sized-reg
+                                    dst-home
+                                    operand-ty))))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          scav-rhs)
+                          [(OkCompilerBackend rhs-asm)
+                            (match (compiler-backend-emit-load-value-with-plan
+                              assignments
+                              lhs
+                              dst-home)
+                              [(OkCompilerBackend lhs-asm)
+                                (OkCompilerBackend
                                   (string-append
-                                    lhs-asm
-                                    (compiler-backend-binop-reg-asm
-                                      mnem
-                                      operand-ty
-                                      (compiler-backend-sized-reg
-                                        scav-rhs
-                                        operand-ty)
-                                      (compiler-backend-sized-reg
-                                        dst-home
-                                        operand-ty)))))]
-                            [(ErrCompilerBackend message)
-                              (ErrCompilerBackend message)])]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])))))])])
+                                    rhs-asm
+                                    (string-append
+                                      lhs-asm
+                                      (compiler-backend-binop-reg-asm
+                                        mnem
+                                        operand-ty
+                                        (compiler-backend-sized-reg
+                                          scav-rhs
+                                          operand-ty)
+                                        (compiler-backend-sized-reg
+                                          dst-home
+                                          operand-ty)))))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend message)])]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])))))])])
         (let
           [staging : String
             (match op
@@ -11371,166 +11461,90 @@
                     "")
                   7
                   "%rax")])]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          lhs
-          staging)
-          [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-binop-literal-divmod-asm-dst
-              op
-              rhs
-              operand-ty
-              dst)
-              [(CompilerBackendSomeAsm op-asm)
-                (OkCompilerBackend
-                  (string.string-append
-                    lhs-asm
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            lhs
+            staging)
+            [(OkCompilerBackend lhs-asm)
+              (match (compiler-backend-binop-literal-divmod-asm-dst
+                op
+                rhs
+                operand-ty
+                dst)
+                [(CompilerBackendSomeAsm op-asm)
+                  (OkCompilerBackend
                     (string.string-append
-                      op-asm
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
+                      lhs-asm
+                      (string.string-append
+                        op-asm
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          staging
+                          ty))))]
+                [(CompilerBackendNoAsm)
+                  (match (compiler-backend-immediate-operand rhs)
+                    [(CompilerBackendSomeImmediate imm)
+                      (match (compiler-backend-binop-immediate-asm
+                        op
+                        imm
+                        operand-ty
                         staging
-                        ty))))]
-              [(CompilerBackendNoAsm)
-                (match (compiler-backend-immediate-operand rhs)
-                  [(CompilerBackendSomeImmediate imm)
-                    (match (compiler-backend-binop-immediate-asm
-                      op
-                      imm
-                      operand-ty
-                      staging
-                      staging)
-                      [(CompilerBackendSomeAsm op-asm)
-                        (OkCompilerBackend
-                          (string.string-append
-                            lhs-asm
+                        staging)
+                        [(CompilerBackendSomeAsm op-asm)
+                          (OkCompilerBackend
                             (string.string-append
-                              op-asm
-                              (compiler-backend-emit-store-typed-var-with-plan
-                                assignments
-                                dst
-                                staging
-                                ty))))]
-                      [(CompilerBackendNoAsm)
-                        (let
-                          [scav-rhs : String
-                            (compiler-backend-scavenge-reg
-                              dst
-                              (compiler-backend-scavenge-exclude-regs2
-                                staging
-                                "")
-                              7
-                              "%r8")]
-                          (match (compiler-backend-emit-load-value-with-plan
-                            assignments
-                            rhs
-                            scav-rhs)
-                            [(OkCompilerBackend rhs-asm)
-                              (OkCompilerBackend
-                                (string-append
-                                  lhs-asm
-                                  (string-append
-                                    rhs-asm
-                                    (string-append
-                                      (compiler-backend-binop-asm
-                                        op
-                                        operand-ty
-                                        scav-rhs
-                                        staging)
-                                      (compiler-backend-emit-store-typed-var-with-plan
-                                        assignments
-                                        dst
-                                        staging
-                                        ty)))))]
-                            [(ErrCompilerBackend message)
-                              (ErrCompilerBackend message)]))])]
-                  [(CompilerBackendNoImmediate)
-                    (let
-                      [rhs-address : String
-                        (compiler-backend-value-stack-address assignments rhs)]
-                      (if (not (string.string-eq rhs-address ""))
-                        (match (compiler-backend-binop-source-asm
-                          op
-                          operand-ty
-                          rhs-address
-                          staging)
-                          [(CompilerBackendSomeAsm op-asm)
-                            (OkCompilerBackend
+                              lhs-asm
                               (string.string-append
-                                lhs-asm
-                                (string.string-append
-                                  op-asm
-                                  (compiler-backend-emit-store-typed-var-with-plan
-                                    assignments
-                                    dst
-                                    staging
-                                    ty))))]
-                          [(CompilerBackendNoAsm)
-                            (let
-                              [scav-rhs : String
-                                (compiler-backend-scavenge-reg
+                                op-asm
+                                (compiler-backend-emit-store-typed-var-with-plan
+                                  assignments
                                   dst
-                                  (compiler-backend-scavenge-exclude-regs2
-                                    staging
-                                    "")
-                                  7
-                                  "%r8")]
-                              (match (compiler-backend-emit-load-value-with-plan
-                                assignments
-                                rhs
-                                scav-rhs)
-                                [(OkCompilerBackend rhs-asm)
-                                  (OkCompilerBackend
-                                    (string-append
-                                      lhs-asm
-                                      (string-append
-                                        rhs-asm
-                                        (string-append
-                                          (compiler-backend-binop-asm
-                                            op
-                                            operand-ty
-                                            scav-rhs
-                                            staging)
-                                          (compiler-backend-emit-store-typed-var-with-plan
-                                            assignments
-                                            dst
-                                            staging
-                                            ty)))))]
-                                [(ErrCompilerBackend message)
-                                  (ErrCompilerBackend message)]))])
-                        ;; #perf: rhs has no stack address, so it is register-
-                        ;; homed (or a non-addressable value). When it lives in a
-                        ;; register distinct from %rax (the temp holding lhs),
-                        ;; source the op straight from that register instead of
-                        ;; staging it through %r8 -- `movq %r15,%r8 ; addq
-                        ;; %r8,%rax` collapses to `addq %r15,%rax`. This mirrors
-                        ;; the stack-address fast path above and the register-dst
-                        ;; direct path (#2386); it is purely an emission change,
-                        ;; so register allocation is unaffected. Ops that have no
-                        ;; binop-source-asm form fall back to %r8 staging.
-                        (let
-                          [rhs-reg : String
-                            (compiler-backend-value-scalar-register
+                                  staging
+                                  ty))))]
+                        [(CompilerBackendNoAsm)
+                          (let
+                            [scav-rhs : String
+                              (compiler-backend-scavenge-reg
+                                dst
+                                (compiler-backend-scavenge-exclude-regs2
+                                  staging
+                                  "")
+                                7
+                                "%r8")]
+                            (match (compiler-backend-emit-load-value-with-plan
                               assignments
-                              rhs)]
-                          [scav-rhs : String
-                            (compiler-backend-scavenge-reg
-                              dst
-                              (compiler-backend-scavenge-exclude-regs2
-                                staging
-                                "")
-                              7
-                              "%r8")]
-                          (match (if (if (string-eq rhs-reg "")
-                            false
-                            (not (string.string-eq rhs-reg staging)))
-                            (compiler-backend-binop-source-asm
-                              op
-                              operand-ty
-                              (compiler-backend-sized-reg rhs-reg operand-ty)
-                              staging)
-                            (CompilerBackendNoAsm))
+                              rhs
+                              scav-rhs)
+                              [(OkCompilerBackend rhs-asm)
+                                (OkCompilerBackend
+                                  (string-append
+                                    lhs-asm
+                                    (string-append
+                                      rhs-asm
+                                      (string-append
+                                        (compiler-backend-binop-asm
+                                          op
+                                          operand-ty
+                                          scav-rhs
+                                          staging)
+                                        (compiler-backend-emit-store-typed-var-with-plan
+                                          assignments
+                                          dst
+                                          staging
+                                          ty)))))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend message)]))])]
+                    [(CompilerBackendNoImmediate)
+                      (let
+                        [rhs-address : String
+                          (compiler-backend-value-stack-address assignments rhs)]
+                        (if (not (string.string-eq rhs-address ""))
+                          (match (compiler-backend-binop-source-asm
+                            op
+                            operand-ty
+                            rhs-address
+                            staging)
                             [(CompilerBackendSomeAsm op-asm)
                               (OkCompilerBackend
                                 (string.string-append
@@ -11543,30 +11557,106 @@
                                       staging
                                       ty))))]
                             [(CompilerBackendNoAsm)
-                              (match (compiler-backend-emit-load-value-with-plan
+                              (let
+                                [scav-rhs : String
+                                  (compiler-backend-scavenge-reg
+                                    dst
+                                    (compiler-backend-scavenge-exclude-regs2
+                                      staging
+                                      "")
+                                    7
+                                    "%r8")]
+                                (match (compiler-backend-emit-load-value-with-plan
+                                  assignments
+                                  rhs
+                                  scav-rhs)
+                                  [(OkCompilerBackend rhs-asm)
+                                    (OkCompilerBackend
+                                      (string-append
+                                        lhs-asm
+                                        (string-append
+                                          rhs-asm
+                                          (string-append
+                                            (compiler-backend-binop-asm
+                                              op
+                                              operand-ty
+                                              scav-rhs
+                                              staging)
+                                            (compiler-backend-emit-store-typed-var-with-plan
+                                              assignments
+                                              dst
+                                              staging
+                                              ty)))))]
+                                  [(ErrCompilerBackend message)
+                                    (ErrCompilerBackend message)]))])
+                          ;; #perf: rhs has no stack address, so it is register-
+                          ;; homed (or a non-addressable value). When it lives in a
+                          ;; register distinct from %rax (the temp holding lhs),
+                          ;; source the op straight from that register instead of
+                          ;; staging it through %r8 -- `movq %r15,%r8 ; addq
+                          ;; %r8,%rax` collapses to `addq %r15,%rax`. This mirrors
+                          ;; the stack-address fast path above and the register-dst
+                          ;; direct path (#2386); it is purely an emission change,
+                          ;; so register allocation is unaffected. Ops that have no
+                          ;; binop-source-asm form fall back to %r8 staging.
+                          (let
+                            [rhs-reg : String
+                              (compiler-backend-value-scalar-register
                                 assignments
-                                rhs
-                                scav-rhs)
-                                [(OkCompilerBackend rhs-asm)
-                                  (OkCompilerBackend
+                                rhs)]
+                            [scav-rhs : String
+                              (compiler-backend-scavenge-reg
+                                dst
+                                (compiler-backend-scavenge-exclude-regs2
+                                  staging
+                                  "")
+                                7
+                                "%r8")]
+                            (match (if (if (string-eq rhs-reg "")
+                              false
+                              (not (string.string-eq rhs-reg staging)))
+                              (compiler-backend-binop-source-asm
+                                op
+                                operand-ty
+                                (compiler-backend-sized-reg rhs-reg operand-ty)
+                                staging)
+                              (CompilerBackendNoAsm))
+                              [(CompilerBackendSomeAsm op-asm)
+                                (OkCompilerBackend
+                                  (string.string-append
+                                    lhs-asm
                                     (string.string-append
-                                      lhs-asm
+                                      op-asm
+                                      (compiler-backend-emit-store-typed-var-with-plan
+                                        assignments
+                                        dst
+                                        staging
+                                        ty))))]
+                              [(CompilerBackendNoAsm)
+                                (match (compiler-backend-emit-load-value-with-plan
+                                  assignments
+                                  rhs
+                                  scav-rhs)
+                                  [(OkCompilerBackend rhs-asm)
+                                    (OkCompilerBackend
                                       (string.string-append
-                                        rhs-asm
+                                        lhs-asm
                                         (string.string-append
-                                          (compiler-backend-binop-asm
-                                            op
-                                            operand-ty
-                                            scav-rhs
-                                            staging)
-                                          (compiler-backend-emit-store-typed-var-with-plan
-                                            assignments
-                                            dst
-                                            staging
-                                            ty)))))]
-                                [(ErrCompilerBackend message)
-                                  (ErrCompilerBackend message)])]))))])])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
+                                          rhs-asm
+                                          (string.string-append
+                                            (compiler-backend-binop-asm
+                                              op
+                                              operand-ty
+                                              scav-rhs
+                                              staging)
+                                            (compiler-backend-emit-store-typed-var-with-plan
+                                              assignments
+                                              dst
+                                              staging
+                                              ty)))))]
+                                  [(ErrCompilerBackend message)
+                                    (ErrCompilerBackend message)])]))))])])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
 
 (define (compiler-backend-empty-assignments?
   [assignments : CompilerRegAssignmentList]) : bool
@@ -11655,7 +11745,12 @@
       [(CompilerBackendNoAsm)
         (match (compiler-backend-immediate-operand rhs)
           [(CompilerBackendSomeImmediate imm)
-            (match (compiler-backend-binop-immediate-asm op imm operand-ty "%rax" "%rax")
+            (match (compiler-backend-binop-immediate-asm
+              op
+              imm
+              operand-ty
+              "%rax"
+              "%rax")
               [(CompilerBackendSomeAsm op-asm)
                 (OkCompilerBackend (string.string-append op-asm store))]
               [(CompilerBackendNoAsm)
@@ -11668,7 +11763,11 @@
                       (string.string-append
                         rhs-asm
                         (string-append
-                          (compiler-backend-binop-asm op operand-ty scav-rhs "%rax")
+                          (compiler-backend-binop-asm
+                            op
+                            operand-ty
+                            scav-rhs
+                            "%rax")
                           store)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
           [(CompilerBackendNoImmediate)
@@ -12196,7 +12295,10 @@
         (compiler-backend-binop-scavenge-exclude-build)
         5
         "%rax")]
-    (match (compiler-backend-emit-load-value-with-plan assignments cond test-reg)
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      cond
+      test-reg)
       [(OkCompilerBackend load)
         (OkCompilerBackend
           (string.string-append
@@ -12259,40 +12361,40 @@
             (compiler-backend-binop-scavenge-exclude-build)
             5
             "%rax")]
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        cond
-        test-reg)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (str_cat.str-cat
-              load
-              (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
-              (if (compiler-backend-jump-target-is-fallthrough?
-                false-label
-                fallthrough)
-                (str_cat.str-cat
-                  "    jne "
-                  (compiler-backend-asm-label function true-label)
-                  "\n"
-                  "")
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          cond
+          test-reg)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (str_cat.str-cat
+                load
+                (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
                 (if (compiler-backend-jump-target-is-fallthrough?
-                  true-label
+                  false-label
                   fallthrough)
                   (str_cat.str-cat
-                    "    je "
-                    (compiler-backend-asm-label function false-label)
+                    "    jne "
+                    (compiler-backend-asm-label function true-label)
                     "\n"
                     "")
-                  (str_cat.str-cat
-                    "    jne "
-                    (compiler-backend-asm-label
-                      (string.string-copy function)
-                      true-label)
-                    "\n    jmp "
-                    (compiler-backend-asm-label function false-label)
-                    "\n")))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+                  (if (compiler-backend-jump-target-is-fallthrough?
+                    true-label
+                    fallthrough)
+                    (str_cat.str-cat
+                      "    je "
+                      (compiler-backend-asm-label function false-label)
+                      "\n"
+                      "")
+                    (str_cat.str-cat
+                      "    jne "
+                      (compiler-backend-asm-label
+                        (string.string-copy function)
+                        true-label)
+                      "\n    jmp "
+                      (compiler-backend-asm-label function false-label)
+                      "\n")))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-compare-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -12603,27 +12705,27 @@
                   (compiler-backend-binop-scavenge-exclude-build)
                   5
                   "%rax")]
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              lhs
-              lhs-stage)
-              [(OkCompilerBackend lhs-asm)
-                (compiler-backend-emit-compare-branch-with-lhs-operand
-                  assignments
-                  function
-                  op
-                  rhs
-                  ty
-                  true-label
-                  false-label
-                  fallthrough
-                  true-jcc
-                  false-jcc
-                  lhs-asm
-                  (compiler-backend-sized-reg lhs-stage ty)
-                  true
-                  lhs-stage)]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))))
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                lhs
+                lhs-stage)
+                [(OkCompilerBackend lhs-asm)
+                  (compiler-backend-emit-compare-branch-with-lhs-operand
+                    assignments
+                    function
+                    op
+                    rhs
+                    ty
+                    true-label
+                    false-label
+                    fallthrough
+                    true-jcc
+                    false-jcc
+                    lhs-asm
+                    (compiler-backend-sized-reg lhs-stage ty)
+                    true
+                    lhs-stage)]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and
@@ -12710,34 +12812,35 @@
                             fallthrough
                             true-jcc
                             false-jcc))))
-                  (let
-                    [scav-rhs : String
-                      (compiler-backend-scavenge-reg-here
-                        (compiler-backend-scavenge-exclude-with scav-base)
-                        6
-                        "%r8")]
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      rhs
-                      scav-rhs)
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            ptr-asm
+                    (let
+                      [scav-rhs : String
+                        (compiler-backend-scavenge-reg-here
+                          (compiler-backend-scavenge-exclude-with scav-base)
+                          6
+                          "%r8")]
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        rhs
+                        scav-rhs)
+                        [(OkCompilerBackend rhs-asm)
+                          (OkCompilerBackend
                             (string-append
-                              rhs-asm
+                              ptr-asm
                               (string-append
-                                (compiler-backend-emit-compare-memory-flags
-                                  scav-rhs
-                                  scav-base)
-                                (compiler-backend-emit-compare-branch-jumps
-                                  function
-                                  true-label
-                                  false-label
-                                  fallthrough
-                                  true-jcc
-                                  false-jcc)))))]
-                      [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])]
+                                rhs-asm
+                                (string-append
+                                  (compiler-backend-emit-compare-memory-flags
+                                    scav-rhs
+                                    scav-base)
+                                  (compiler-backend-emit-compare-branch-jumps
+                                    function
+                                    true-label
+                                    false-label
+                                    fallthrough
+                                    true-jcc
+                                    false-jcc)))))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)]))))])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
@@ -12832,35 +12935,35 @@
                                 fallthrough
                                 true-jcc
                                 false-jcc))))
-                      (let
-                        [scav-rhs : String
-                          (compiler-backend-scavenge-reg-here
-                            (compiler-backend-scavenge-exclude-with scav-base)
-                            6
-                            "%r8")]
-                        (match (compiler-backend-emit-load-value-with-plan
-                          assignments
-                          rhs
-                          scav-rhs)
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
-                              (string-append
-                                base-asm
+                        (let
+                          [scav-rhs : String
+                            (compiler-backend-scavenge-reg-here
+                              (compiler-backend-scavenge-exclude-with scav-base)
+                              6
+                              "%r8")]
+                          (match (compiler-backend-emit-load-value-with-plan
+                            assignments
+                            rhs
+                            scav-rhs)
+                            [(OkCompilerBackend rhs-asm)
+                              (OkCompilerBackend
                                 (string-append
-                                  rhs-asm
+                                  base-asm
                                   (string-append
-                                    (compiler-backend-emit-compare-memory-address-flags
-                                      scav-rhs
-                                      addr)
-                                    (compiler-backend-emit-compare-branch-jumps
-                                      function
-                                      true-label
-                                      false-label
-                                      fallthrough
-                                      true-jcc
-                                      false-jcc)))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)]))))])]
+                                    rhs-asm
+                                    (string-append
+                                      (compiler-backend-emit-compare-memory-address-flags
+                                        scav-rhs
+                                        addr)
+                                      (compiler-backend-emit-compare-branch-jumps
+                                        function
+                                        true-label
+                                        false-label
+                                        fallthrough
+                                        true-jcc
+                                        false-jcc)))))]
+                            [(ErrCompilerBackend message)
+                              (ErrCompilerBackend message)]))))])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
         [(CompilerBackendNoI64)
           (ErrCompilerBackend
@@ -12961,8 +13064,7 @@
 
 ;; "$K" when the index is an imm32-fitting constant, else "". imm32 is required
 ;; so `cmpq $K, len` is encodable.
-(define (compiler-backend-bounds-const-index-imm
-  [index : CompilerIrValue]) : String
+(define (compiler-backend-bounds-const-index-imm [index : CompilerIrValue]) : String
   (match (compiler-backend-value-as-i64 index)
     [(CompilerBackendSomeI64 k)
       (if (compiler-backend-imm32? k)
@@ -13047,42 +13149,42 @@
                     plan
                     program-index))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        index
-        index-operand)
-        [(OkCompilerBackend index-asm)
-          (let
-            [length-operand : String
-              (compiler-backend-bounds-length-operand assignments length)]
-            (if (not (string.string-eq length-operand ""))
-              (OkCompilerBackend
-                (compiler-backend-bounds-check-asm
-                  index-asm
-                  ""
-                  length-operand
-                  index-operand
-                  call-space
-                  ok-symbol
-                  plan
-                  program-index))
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                length
-                scav-len)
-                [(OkCompilerBackend length-asm)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            index
+            index-operand)
+            [(OkCompilerBackend index-asm)
+              (let
+                [length-operand : String
+                  (compiler-backend-bounds-length-operand assignments length)]
+                (if (not (string.string-eq length-operand ""))
                   (OkCompilerBackend
                     (compiler-backend-bounds-check-asm
                       index-asm
-                      length-asm
-                      scav-len
+                      ""
+                      length-operand
                       index-operand
                       call-space
                       ok-symbol
                       plan
-                      program-index))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                      program-index))
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    length
+                    scav-len)
+                    [(OkCompilerBackend length-asm)
+                      (OkCompilerBackend
+                        (compiler-backend-bounds-check-asm
+                          index-asm
+                          length-asm
+                          scav-len
+                          index-operand
+                          call-space
+                          ok-symbol
+                          plan
+                          program-index))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
       (let
         [length-operand : String
           (compiler-backend-bounds-length-operand assignments length)]
@@ -13352,11 +13454,19 @@
               (OkCompilerBackend
                 (str_cat.str-cat
                   "    leaq "
-                  (compiler-backend-gep-index-address base-reg scale offset-home)
+                  (compiler-backend-gep-index-address
+                    base-reg
+                    scale
+                    offset-home)
                   ", "
                   dst-home
                   "\n"))
-              (compiler-backend-emit-gep-staged assignments dst base offset elem-ty)))])
+              (compiler-backend-emit-gep-staged
+                assignments
+                dst
+                base
+                offset
+                elem-ty)))])
       (compiler-backend-emit-gep-staged assignments dst base offset elem-ty))))
 
 (define (compiler-backend-emit-gep-staged-avoid
@@ -13542,12 +13652,19 @@
                   (if (string-eq dst-home "")
                     (let
                       [no-exclude : (Array String) (make-array String 0)]
-                      (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+                      (compiler-backend-scavenge-xmm-reg
+                        dst
+                        no-exclude
+                        0
+                        "%xmm2"))
                     dst-home)]
                 (string-append
                   ptr-asm
                   (string-append
-                    (compiler-backend-emit-load-float-memory base-mem load-reg ty)
+                    (compiler-backend-emit-load-float-memory
+                      base-mem
+                      load-reg
+                      ty)
                     (if (string-eq dst-home "")
                       (compiler-backend-emit-store-float-var-with-plan
                         assignments
@@ -14306,10 +14423,7 @@
                 "%r8")
               "")]
           (match (if (string-eq src-home "")
-            (compiler-backend-emit-load-value-with-plan
-              assignments
-              src
-              src-reg)
+            (compiler-backend-emit-load-value-with-plan assignments src src-reg)
             (OkCompilerBackend ""))
             [(OkCompilerBackend src-asm)
               (OkCompilerBackend
@@ -14324,7 +14438,9 @@
                       copy-xmm
                       0
                       size
-                      (if near? disp 0)))))]
+                      (if near?
+                        disp
+                        0)))))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
@@ -14400,10 +14516,7 @@
                 "%r8")
               "")]
           (match (if (string-eq src-home "")
-            (compiler-backend-emit-load-value-with-plan
-              assignments
-              src
-              src-reg)
+            (compiler-backend-emit-load-value-with-plan assignments src src-reg)
             (OkCompilerBackend ""))
             [(OkCompilerBackend src-asm)
               (OkCompilerBackend
@@ -14459,10 +14572,7 @@
           (OkCompilerBackend
             (string-append
               base-asm
-              (compiler-backend-gep-index-base-asm
-                scav-base
-                scale
-                offset-home)))
+              (compiler-backend-gep-index-base-asm scav-base scale offset-home)))
           ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
           ;; the active set. Scavenged only on this path so a dead pick never
           ;; triggers an emergency spill.
@@ -15049,89 +15159,89 @@
   [value-home : String]
   [base-home : String]
   [offset-home : String]) : ResultCompilerBackend
-      (let
-        [scav-idx : String
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-ops2 assignments base value)
-            7
-            "%r8")]
-        ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
-        ;; register, which must not clobber the base/value homes; it also serves as
-        ;; the load fallback when the base is spilled. If that fallback aliases the
-        ;; offset home, the offset copy is emitted before the base reload below.
-        [scav-fold : String
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-append
-              (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
-              7
-              value-home)
-            8
-            "%r10")]
-        (match (compiler-backend-emit-address-base-with-avoid
+  (let
+    [scav-idx : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-scavenge-exclude-ops2 assignments base value)
+        7
+        "%r8")]
+    ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
+    ;; register, which must not clobber the base/value homes; it also serves as
+    ;; the load fallback when the base is spilled. If that fallback aliases the
+    ;; offset home, the offset copy is emitted before the base reload below.
+    [scav-fold : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-scavenge-exclude-append
+          (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
+          7
+          value-home)
+        8
+        "%r10")]
+    (match (compiler-backend-emit-address-base-with-avoid
+      assignments
+      base
+      scav-fold
+      scav-idx
+      ;; GAP7: variable-index store -- the base reg feeds gep-index-address
+      ;; (SIB base slot alongside the index), so a %rbp base must NOT be
+      ;; admitted here (it would spell `(%rbp,idx,s)` = a frame-ref collision).
+      false)
+      [(OkCompilerBackendAddressBase base-plan)
+        (match (compiler-backend-emit-load-value-with-plan
           assignments
-          base
-          scav-fold
-          scav-idx
-          ;; GAP7: variable-index store -- the base reg feeds gep-index-address
-          ;; (SIB base slot alongside the index), so a %rbp base must NOT be
-          ;; admitted here (it would spell `(%rbp,idx,s)` = a frame-ref collision).
-          false)
-          [(OkCompilerBackendAddressBase base-plan)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              offset
-              scav-idx)
-              [(OkCompilerBackend offset-asm)
-                (let
-                  [base-reg : String (struct-get base-plan reg)]
-                  [addr : String
-                    (compiler-backend-gep-index-address base-reg scale scav-idx)]
-                  [addr-asm : String
-                    (if (string-eq addr "")
-                      (str-cat
-                        (if (string-eq base-reg scav-fold)
-                          ""
-                          (str-cat "    movq " base-reg ", " scav-fold "\n"))
-                        (compiler-backend-gep-index-base-asm
-                          scav-fold
-                          scale
-                          scav-idx))
-                      "")]
-                  [store-addr : String
-                    (if (string-eq addr "")
-                      (compiler-backend-base-deref scav-fold)
-                      addr)]
-                  [store-exclude : (Array String)
-                    (if (string-eq addr "")
-                      (compiler-backend-one-exclude scav-fold)
-                      (compiler-backend-two-exclude base-reg scav-idx))]
-                  [store-exclude-n : i64
-                    (if (string-eq addr "")
-                      1
-                      2)]
-                  [base-asm : String (struct-get base-plan asm)]
-                  [addr-prefix-asm : String
-                    (if (and
-                      (not (string-eq offset-home ""))
-                      (string-eq base-reg offset-home))
-                      (string.string-append offset-asm base-asm)
-                      (string.string-append base-asm offset-asm))]
-                  (match (compiler-backend-emit-store-value-to-address
-                    assignments
-                    value
-                    store-ty
-                    store-addr
-                    program-index
-                    store-exclude
-                    store-exclude-n)
-                    [(OkCompilerBackend store-asm)
-                      (OkCompilerBackend
-                        (string.string-append
-                          addr-prefix-asm
-                          (string.string-append addr-asm store-asm)))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
+          offset
+          scav-idx)
+          [(OkCompilerBackend offset-asm)
+            (let
+              [base-reg : String (struct-get base-plan reg)]
+              [addr : String
+                (compiler-backend-gep-index-address base-reg scale scav-idx)]
+              [addr-asm : String
+                (if (string-eq addr "")
+                  (str-cat
+                    (if (string-eq base-reg scav-fold)
+                      ""
+                      (str-cat "    movq " base-reg ", " scav-fold "\n"))
+                    (compiler-backend-gep-index-base-asm
+                      scav-fold
+                      scale
+                      scav-idx))
+                  "")]
+              [store-addr : String
+                (if (string-eq addr "")
+                  (compiler-backend-base-deref scav-fold)
+                  addr)]
+              [store-exclude : (Array String)
+                (if (string-eq addr "")
+                  (compiler-backend-one-exclude scav-fold)
+                  (compiler-backend-two-exclude base-reg scav-idx))]
+              [store-exclude-n : i64
+                (if (string-eq addr "")
+                  1
+                  2)]
+              [base-asm : String (struct-get base-plan asm)]
+              [addr-prefix-asm : String
+                (if (and
+                  (not (string-eq offset-home ""))
+                  (string-eq base-reg offset-home))
+                  (string.string-append offset-asm base-asm)
+                  (string.string-append base-asm offset-asm))]
+              (match (compiler-backend-emit-store-value-to-address
+                assignments
+                value
+                store-ty
+                store-addr
+                program-index
+                store-exclude
+                store-exclude-n)
+                [(OkCompilerBackend store-asm)
+                  (OkCompilerBackend
+                    (string.string-append
+                      addr-prefix-asm
+                      (string.string-append addr-asm store-asm)))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-store-ptr-pair
   [assignments : CompilerRegAssignmentList]
@@ -17974,7 +18084,16 @@
   (let
     [stack-count : i64
       (compiler-backend-call-stack-arg-count
-        target args types false 0 0 0 0 0 program-index)]
+        target
+        args
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        program-index)]
     (if (= stack-count 0)
       0
       (compiler-backend-round-up-16 (* stack-count 8)))))
@@ -18099,14 +18218,16 @@
         [(IrInstrCallCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)
-              (+ (compiler-backend-round-up-16
-                   (* (compiler-backend-call-args-count args) 16))
+              (+
+                (compiler-backend-round-up-16
+                  (* (compiler-backend-call-args-count args) 16))
                 16)])]
         [(IrInstrCallIndirectCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
-              (+ (compiler-backend-round-up-16
-                   (* (compiler-backend-call-args-count args) 16))
+              (+
+                (compiler-backend-round-up-16
+                  (* (compiler-backend-call-args-count args) 16))
                 16)])]
         [(IrInstrTailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -18305,10 +18426,10 @@
       (match move
         [(BackendArgMove dest source)
           (if (and
-                (not (string.string-eq dest exclude-dest))
-                (string.string-eq
-                  (compiler-backend-arg-move-source-reg assignments source)
-                  reg))
+            (not (string.string-eq dest exclude-dest))
+            (string.string-eq
+              (compiler-backend-arg-move-source-reg assignments source)
+              reg))
             true
             (compiler-backend-arg-move-list-reg-is-source?
               assignments
@@ -18326,8 +18447,8 @@
       (match move
         [(BackendArgMove dest _)
           (if (and
-                (not (string.string-eq dest exclude))
-                (string.string-eq dest reg))
+            (not (string.string-eq dest exclude))
+            (string.string-eq dest reg))
             true
             (compiler-backend-arg-move-list-is-dest? (box-get rest) reg exclude))])]))
 
@@ -18344,8 +18465,8 @@
             [srcreg : String
               (compiler-backend-arg-move-source-reg assignments source)]
             (if (and
-                  (not (string.string-eq srcreg ""))
-                  (compiler-backend-arg-move-list-is-dest? all srcreg dest))
+              (not (string.string-eq srcreg ""))
+              (compiler-backend-arg-move-list-is-dest? all srcreg dest))
               true
               (compiler-backend-arg-moves-conflict?
                 assignments
@@ -18362,10 +18483,10 @@
       (match move
         [(BackendArgMove dest _)
           (if (compiler-backend-arg-move-list-reg-is-source?
-                assignments
-                all
-                dest
-                dest)
+            assignments
+            all
+            dest
+            dest)
             (compiler-backend-arg-move-find-unblocked
               assignments
               (box-get rest)
@@ -18398,8 +18519,8 @@
         [(BackendArgMove dest source)
           (BackendArgMoveCons
             (if (string.string-eq
-                  (compiler-backend-arg-move-source-reg assignments source)
-                  oldreg)
+              (compiler-backend-arg-move-source-reg assignments source)
+              oldreg)
               (BackendArgMove dest (BackendArgMoveReg newreg))
               move)
             (box
@@ -18424,8 +18545,8 @@
         [(BackendArgMove dest source)
           (BackendArgMoveCons
             (if (string.string-eq
-                  (compiler-backend-arg-move-source-reg assignments source)
-                  oldreg)
+              (compiler-backend-arg-move-source-reg assignments source)
+              oldreg)
               (BackendArgMove dest (BackendArgMoveStackPop))
               move)
             (box
@@ -18517,8 +18638,8 @@
               (match (compiler-backend-emit-arg-move assignments move)
                 [(OkCompilerBackend head)
                   (match (compiler-backend-emit-arg-move-list
-                            assignments
-                            (compiler-backend-arg-move-list-remove moves dest))
+                    assignments
+                    (compiler-backend-arg-move-list-remove moves dest))
                     [(OkCompilerBackend tail)
                       (OkCompilerBackend (string.string-append head tail))]
                     [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
@@ -18535,18 +18656,20 @@
                   (match (compiler-backend-emit-arg-move assignments first)
                     [(OkCompilerBackend head)
                       (match (compiler-backend-emit-arg-move-list
-                                assignments
-                                (compiler-backend-arg-move-list-remove moves dest))
+                        assignments
+                        (compiler-backend-arg-move-list-remove moves dest))
                         [(OkCompilerBackend tail)
                           (OkCompilerBackend (string.string-append head tail))]
                         [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
                     [(ErrCompilerBackend m) (ErrCompilerBackend m)])
                   (let
-                    [picked : String
+                    [picked
+                      : String
                       ;; --cfg arg-cycle-stack forces the register-free break so a
                       ;; forcing fixture can exercise the (otherwise cold) saturation
                       ;; path -- see the SCAV1 note. Off, self-host is byte-identical.
-                      (cfg arg-cycle-stack
+                      (cfg
+                        arg-cycle-stack
                         ""
                         (compiler-backend-arg-temp-pick-reg assignments moves))]
                     (if (string.string-eq picked "")
@@ -18562,11 +18685,11 @@
                       ;; neither occupancy-checked nor save/restore-wrapped and could
                       ;; clobber a value homed in %r11 (SCAV1).
                       (match (compiler-backend-emit-arg-move-list
-                                assignments
-                                (compiler-backend-arg-move-list-redirect-to-stack
-                                  assignments
-                                  moves
-                                  srcreg))
+                        assignments
+                        (compiler-backend-arg-move-list-redirect-to-stack
+                          assignments
+                          moves
+                          srcreg))
                         [(OkCompilerBackend tail)
                           (OkCompilerBackend
                             (string.string-append
@@ -18574,16 +18697,21 @@
                               tail))]
                         [(ErrCompilerBackend m) (ErrCompilerBackend m)])
                       (match (compiler-backend-emit-arg-move-list
-                                assignments
-                                (compiler-backend-arg-move-list-redirect
-                                  assignments
-                                  moves
-                                  srcreg
-                                  picked))
+                        assignments
+                        (compiler-backend-arg-move-list-redirect
+                          assignments
+                          moves
+                          srcreg
+                          picked))
                         [(OkCompilerBackend tail)
                           (OkCompilerBackend
                             (string.string-append
-                              (str_cat.str-cat "    movq " srcreg ", " picked "\n")
+                              (str_cat.str-cat
+                                "    movq "
+                                srcreg
+                                ", "
+                                picked
+                                "\n")
                               tail))]
                         [(ErrCompilerBackend m) (ErrCompilerBackend m)])))))])])]))
 
@@ -18600,7 +18728,12 @@
           (BackendArgMove
             reg
             (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
-          (box (compiler-backend-arg-moves-build-from target args (+ index 1) count)))]
+          (box
+            (compiler-backend-arg-moves-build-from
+              target
+              args
+              (+ index 1)
+              count)))]
       [(ErrBackendReg _)
         (compiler-backend-arg-moves-build-from target args (+ index 1) count)])))
 
@@ -18624,10 +18757,10 @@
       (let
         [ty : AstType (ty-node-get ty-node)]
         (if (or
-              (compiler-backend-float-type? ty)
-              (or
-                (compiler-backend-group-type? program-index ty)
-                (compiler-backend-c-memory-aggregate-type? target c-abi? ty)))
+          (compiler-backend-float-type? ty)
+          (or
+            (compiler-backend-group-type? program-index ty)
+            (compiler-backend-c-memory-aggregate-type? target c-abi? ty)))
           false
           (compiler-backend-types-all-gp-int?
             target
@@ -18645,7 +18778,10 @@
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
     [count : i64 (compiler-backend-call-args-count args)]
-    [limit : i64 (if (compiler-backend-target-windows? target) 4 6)]
+    [limit : i64
+      (if (compiler-backend-target-windows? target)
+        4
+        6)]
     (and
       (and (> count 0) (<= count limit))
       (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
@@ -18914,19 +19050,19 @@
   ;; emit those via the sound parallel move. Every other call (including the
   ;; conflict-free common case) delegates to the byte-identical naive path.
   (if (and
-        (= arg-index 0)
-        (and
-          (not c-abi?)
-          (compiler-backend-call-args-gp-parallel?
-            target
-            args
-            types
-            c-abi?
-            program-index))
-        (compiler-backend-arg-moves-conflict?
-          assignments
-          (compiler-backend-arg-moves-build target args)
-          (compiler-backend-arg-moves-build target args)))
+    (= arg-index 0)
+    (and
+      (not c-abi?)
+      (compiler-backend-call-args-gp-parallel?
+        target
+        args
+        types
+        c-abi?
+        program-index))
+    (compiler-backend-arg-moves-conflict?
+      assignments
+      (compiler-backend-arg-moves-build target args)
+      (compiler-backend-arg-moves-build target args)))
     (compiler-backend-emit-arg-move-list
       assignments
       (compiler-backend-arg-moves-build target args))
@@ -19359,10 +19495,7 @@
     [(BackendPhiCopyCons copy rest)
       (match copy
         [(BackendPhiCopy dst _ _)
-          (if (compiler-backend-phi-copy-source-uses-home?
-            assignments
-            copy
-            dst)
+          (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
             (compiler-backend-phi-copy-list-drop-same-home
               assignments
               (box-get rest))
@@ -19721,16 +19854,16 @@
       (and
         (not (compiler-backend-float-type? ty))
         (not (compiler-backend-group-type? program-index ty))
-        (not (string-eq
-          (compiler-backend-var-register-home assignments dst)
-          ""))
+        (not
+          (string-eq (compiler-backend-var-register-home assignments dst) ""))
         (match source
           [(BackendPhiSourceValue value)
             (match value
               [(IrValueVar v)
-                (not (string-eq
-                  (compiler-backend-var-register-home assignments v)
-                  ""))]
+                (not
+                  (string-eq
+                    (compiler-backend-var-register-home assignments v)
+                    ""))]
               [_ false])]
           [(BackendPhiSourceTemp _) true]))]))
 
@@ -20120,7 +20253,9 @@
                           assignments
                           (compiler-backend-phi-copy-list-replace-source-home
                             assignments
-                            (compiler-backend-phi-copy-list-remove-dst copies dst)
+                            (compiler-backend-phi-copy-list-remove-dst
+                              copies
+                              dst)
                             dst
                             reg)
                           program-index
@@ -20133,7 +20268,8 @@
                                 (string.string-append head tail)))]
                           [(ErrCompilerBackend message)
                             (ErrCompilerBackend message)])]
-                      [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])])]))
 
 (define (compiler-backend-leading-phi-copies
@@ -21332,8 +21468,8 @@
     ;; value onto itself -- emit nothing instead of round-tripping both words
     ;; through the group-return register pair.
     [(and
-      (compiler-backend-group-type? program-index ty)
-      (compiler-backend-value-same-home? assignments dst src))
+        (compiler-backend-group-type? program-index ty)
+        (compiler-backend-value-same-home? assignments dst src))
       (OkCompilerBackend "")]
     [(compiler-backend-group-type? program-index ty)
       (match (compiler-backend-emit-group-load
@@ -22328,7 +22464,8 @@
       (BackendArgMove
         (compiler-backend-syscall-reg index)
         (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
-      (box (compiler-backend-syscall-arg-moves-build-from args (+ index 1) count)))))
+      (box
+        (compiler-backend-syscall-arg-moves-build-from args (+ index 1) count)))))
 
 (define (compiler-backend-syscall-arg-moves-build
   [args : CompilerIrCallArgs]
@@ -22835,7 +22972,8 @@
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
     [_reserved-mask : i64
       (begin
-        (set! compiler-backend-current-instr-reserved-mask
+        (set!
+          compiler-backend-current-instr-reserved-mask
           (compiler-backend-live-set-home-mask
             assignments
             (compiler-live-instr-defs instr)
@@ -24019,7 +24157,8 @@
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
     [_reserved-mask : i64
       (begin
-        (set! compiler-backend-current-instr-reserved-mask
+        (set!
+          compiler-backend-current-instr-reserved-mask
           (compiler-backend-live-set-home-mask
             assignments
             (compiler-live-instr-defs instr)
@@ -25140,100 +25279,67 @@
   ;; restore overwrote the pair's second loaded result (lex-parse-based-int:
   ;; string len in %r9 restored-over before its bounds compare -> false OOB
   ;; abort on every mid-band self-host build).
-    (match (compiler-backend-value-as-i64 offset)
-      [(CompilerBackendSomeI64 _)
-        (match rest
-          [(IrInstrCons maybe-gep after-gep)
-            (match maybe-gep
-              [(IrInstrGep gep-dst2 base2 offset2 elem-ty2)
-                (if (and
-                  (compiler-backend-var-single-use? use-counts gep-dst2)
-                  (opt-value-eq base2 base))
-                  (match (compiler-backend-value-as-i64 offset2)
-                    [(CompilerBackendSomeI64 _)
-                      (match (box-get after-gep)
-                        [(IrInstrCons maybe-load after-load2)
-                          (match maybe-load
-                            [(IrInstrLoad load-dst2 src2 load-ty2)
-                              (if (and
-                                (compiler-backend-branch-uses-var?
-                                  src2
-                                  gep-dst2)
-                                (not
-                                  (and
-                                    (compiler-backend-load-compare-type?
-                                      load-ty2)
-                                    (compiler-backend-var-single-use?
-                                      use-counts
-                                      load-dst2)
-                                    (compiler-backend-rest-starts-load-compare-branch?
-                                      (box-get after-load2)
-                                      load-dst2
-                                      types
-                                      global-types
-                                      use-counts))))
-                                (compiler-backend-emit-fused-result-rest
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
-                                  fallthrough
-                                  (compiler-backend-emit-load-from-gep-pair
-                                    assignments
-                                    base
-                                    offset
-                                    elem-ty
-                                    load-dst
-                                    load-ty
-                                    offset2
-                                    elem-ty2
+  (match (compiler-backend-value-as-i64 offset)
+    [(CompilerBackendSomeI64 _)
+      (match rest
+        [(IrInstrCons maybe-gep after-gep)
+          (match maybe-gep
+            [(IrInstrGep gep-dst2 base2 offset2 elem-ty2)
+              (if (and
+                (compiler-backend-var-single-use? use-counts gep-dst2)
+                (opt-value-eq base2 base))
+                (match (compiler-backend-value-as-i64 offset2)
+                  [(CompilerBackendSomeI64 _)
+                    (match (box-get after-gep)
+                      [(IrInstrCons maybe-load after-load2)
+                        (match maybe-load
+                          [(IrInstrLoad load-dst2 src2 load-ty2)
+                            (if (and
+                              (compiler-backend-branch-uses-var? src2 gep-dst2)
+                              (not
+                                (and
+                                  (compiler-backend-load-compare-type? load-ty2)
+                                  (compiler-backend-var-single-use?
+                                    use-counts
+                                    load-dst2)
+                                  (compiler-backend-rest-starts-load-compare-branch?
+                                    (box-get after-load2)
                                     load-dst2
-                                    load-ty2)
-                                  (box-get after-load2)
+                                    types
+                                    global-types
+                                    use-counts))))
+                              (compiler-backend-emit-fused-result-rest
+                                target
+                                function
+                                source-function
+                                blocks
+                                current-label
+                                fallthrough
+                                (compiler-backend-emit-load-from-gep-pair
                                   assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
-                                  buf)
-                                (compiler-backend-emit-fused-result-rest
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
-                                  fallthrough
-                                  (compiler-backend-emit-load-from-gep
-                                    assignments
-                                    load-dst
-                                    base
-                                    offset
-                                    elem-ty
-                                    load-ty
-                                    "")
-                                  rest
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
-                                  buf))]
-                            [_
+                                  base
+                                  offset
+                                  elem-ty
+                                  load-dst
+                                  load-ty
+                                  offset2
+                                  elem-ty2
+                                  load-dst2
+                                  load-ty2)
+                                (box-get after-load2)
+                                assignments
+                                vars
+                                types
+                                global-types
+                                ret-ty
+                                plan
+                                functions
+                                externs
+                                program-index
+                                spans
+                                func-diag
+                                use-counts
+                                buf)
                               (compiler-backend-emit-fused-result-rest
                                 target
                                 function
@@ -25262,97 +25368,97 @@
                                 spans
                                 func-diag
                                 use-counts
-                                buf)])]
-                        [_
-                          (compiler-backend-emit-fused-result-rest
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
-                            fallthrough
-                            (compiler-backend-emit-load-from-gep
+                                buf))]
+                          [_
+                            (compiler-backend-emit-fused-result-rest
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              (compiler-backend-emit-load-from-gep
+                                assignments
+                                load-dst
+                                base
+                                offset
+                                elem-ty
+                                load-ty
+                                "")
+                              rest
                               assignments
-                              load-dst
-                              base
-                              offset
-                              elem-ty
-                              load-ty
-                              "")
-                            rest
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf)])]
+                      [_
+                        (compiler-backend-emit-fused-result-rest
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          (compiler-backend-emit-load-from-gep
                             assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
-                            buf)])]
-                    [(CompilerBackendNoI64)
-                      (compiler-backend-emit-fused-result-rest
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
-                        fallthrough
-                        (compiler-backend-emit-load-from-gep
+                            load-dst
+                            base
+                            offset
+                            elem-ty
+                            load-ty
+                            "")
+                          rest
                           assignments
-                          load-dst
-                          base
-                          offset
-                          elem-ty
-                          load-ty
-                          "")
-                        rest
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf)])]
+                  [(CompilerBackendNoI64)
+                    (compiler-backend-emit-fused-result-rest
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      (compiler-backend-emit-load-from-gep
                         assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
-                        buf)])
-                  (compiler-backend-emit-fused-result-rest
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
-                    fallthrough
-                    (compiler-backend-emit-load-from-gep
+                        load-dst
+                        base
+                        offset
+                        elem-ty
+                        load-ty
+                        "")
+                      rest
                       assignments
-                      load-dst
-                      base
-                      offset
-                      elem-ty
-                      load-ty
-                      "")
-                    rest
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
-                    buf))]
-              [_
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      buf)])
                 (compiler-backend-emit-fused-result-rest
                   target
                   function
@@ -25381,67 +25487,97 @@
                   spans
                   func-diag
                   use-counts
-                  buf)])]
-          [_
-            (compiler-backend-emit-fused-result-rest
-              target
-              function
-              source-function
-              blocks
-              current-label
-              fallthrough
-              (compiler-backend-emit-load-from-gep
+                  buf))]
+            [_
+              (compiler-backend-emit-fused-result-rest
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                (compiler-backend-emit-load-from-gep
+                  assignments
+                  load-dst
+                  base
+                  offset
+                  elem-ty
+                  load-ty
+                  "")
+                rest
                 assignments
-                load-dst
-                base
-                offset
-                elem-ty
-                load-ty
-                "")
-              rest
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)])]
+        [_
+          (compiler-backend-emit-fused-result-rest
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            (compiler-backend-emit-load-from-gep
               assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
-              buf)])]
-      [(CompilerBackendNoI64)
-        (compiler-backend-emit-fused-result-rest
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          (compiler-backend-emit-load-from-gep
+              load-dst
+              base
+              offset
+              elem-ty
+              load-ty
+              "")
+            rest
             assignments
-            load-dst
-            base
-            offset
-            elem-ty
-            load-ty
-            "")
-          rest
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag
+            use-counts
+            buf)])]
+    [(CompilerBackendNoI64)
+      (compiler-backend-emit-fused-result-rest
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        (compiler-backend-emit-load-from-gep
           assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
-          buf)]))
+          load-dst
+          base
+          offset
+          elem-ty
+          load-ty
+          "")
+        rest
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]))
 
 (define (compiler-backend-emit-fused-gep-store-rest
   [target : CompilerBackendTarget]
@@ -26339,7 +26475,10 @@
     ;; #65a-ii: on Linux the args + 16-byte base-save region are reserved in the
     ;; prologue frame (instr-outgoing-stack-space), so no per-call %rsp dip.
     ;; Windows keeps rbp + dips per-call -> unchanged.
-    [dip : i64 (match target [(BackendTargetLinux) 0] [(BackendTargetWindows) total-space])]
+    [dip : i64
+      (match target
+        [(BackendTargetLinux) 0]
+        [(BackendTargetWindows) total-space])]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
@@ -26444,7 +26583,10 @@
         program-index)]
     [total-space : i64 (+ call-space 16)]
     ;; #65a-ii: Linux folds the c-abi dip into the frame (see named variant).
-    [dip : i64 (match target [(BackendTargetLinux) 0] [(BackendTargetWindows) total-space])]
+    [dip : i64
+      (match target
+        [(BackendTargetLinux) 0]
+        [(BackendTargetWindows) total-space])]
     (match (compiler-backend-emit-call-args
       target
       assignments
@@ -26489,8 +26631,7 @@
                                 (compiler-backend-emit-c-abi-return-stores
                                   call-space
                                   slots)
-                                (compiler-backend-emit-call-space-add
-                                  dip))
+                                (compiler-backend-emit-call-space-add dip))
                               ""
                               ""
                               ""))))))]
@@ -30738,7 +30879,8 @@
 ;; operand the instruction reads, or the result it writes (the dst reads "free"
 ;; at the scavenge point but must still be reserved). Set once per instruction
 ;; at the emission dispatcher; consulted in candidate-ok? AND the emergency tier.
-(define compiler-backend-current-instr-reserved-mask : i64 0)
+(define compiler-backend-current-instr-reserved-mask : i64
+  0)
 
 ;; OR the pooled-register-home bit of every var in `set` into `acc`. reg-bit is
 ;; 0 for spilled/ABI-only regs, so only allocatable homes get reserved.
@@ -30764,11 +30906,14 @@
                 (begin
                   (if (= (bit-and word (shl 1 b)) 0)
                     unit
-                    (set! mask
+                    (set!
+                      mask
                       (bit-or
                         mask
                         (compiler-backend-scavenge-reg-bit
-                          (compiler-backend-var-register-home assignments (+ base b))))))
+                          (compiler-backend-var-register-home
+                            assignments
+                            (+ base b))))))
                   (set! b (+ b 1)))))
             (set! w (+ w 1)))))
       mask)))
@@ -30782,9 +30927,11 @@
     [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
     (and
       (not (= bit 0))
-      (= (bit-and
-        (bit-or exclude-mask compiler-backend-current-instr-reserved-mask)
-        bit) 0)
+      (=
+        (bit-and
+          (bit-or exclude-mask compiler-backend-current-instr-reserved-mask)
+          bit)
+        0)
       (or
         (not (compiler-backend-callee-saved-reg? reg))
         (not (= (bit-and plan-mask bit) 0)))
@@ -30816,9 +30963,11 @@
   (if (and
     (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
     (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
-    (= (bit-and
-      compiler-backend-current-instr-reserved-mask
-      (compiler-backend-scavenge-reg-bit fallback)) 0))
+    (=
+      (bit-and
+        compiler-backend-current-instr-reserved-mask
+        (compiler-backend-scavenge-reg-bit fallback))
+      0))
     -1
     (let
       [i : i64 0]
@@ -30828,7 +30977,9 @@
           (begin
             (if (=
               (bit-and
-                (bit-or exclude-mask compiler-backend-current-instr-reserved-mask)
+                (bit-or
+                  exclude-mask
+                  compiler-backend-current-instr-reserved-mask)
                 (compiler-backend-scavenge-reg-bit (array-ref cands i)))
               0)
               (set! found i)
@@ -31179,59 +31330,59 @@
         (while (< v vars)
           (begin
             (if (compiler-live-set-contains? uses v)
-                ;; Only REGISTER-HOMED used vars need interval coverage + a
-                ;; not-free home: a spilled/untracked used var has no register to
-                ;; clobber, and an all-spilled function installs an EMPTY scavenge
-                ;; ctx (Nil intervals -> starts[v]=-1) on purpose, so asserting
-                ;; coverage for non-register vars is a false positive (the old
-                ;; check aborted at the first all-spilled function before reaching
-                ;; the real register hazards). cfg-gated: oracle-only, no codegen.
-                (match (compiler-reg-assignment-index-lookup assignment-index v)
-                  [(CompilerRegSomeLocation loc)
-                    (match loc
-                      [(CompilerRegRegister home)
-                        (begin
-                          (if (and
-                            (>= (array-ref starts v) 0)
-                            (<= (array-ref starts v) point)
-                            (<= point (array-ref ends v)))
-                            unit
-                            (panic
-                              (str-cat
-                                "SCAVENGE-VIOLATION interval fn="
-                                name
-                                " point="
-                                (int->string point)
-                                " use-var="
-                                (int->string v)
-                                " iv=["
-                                (int->string (array-ref starts v))
-                                ","
-                                (int->string (array-ref ends v))
-                                "]")))
-                          (if (compiler-backend-scavenge-free-for-instr?
-                            starts
-                            ends
-                            assignment-index
-                            vars
-                            point
-                            home)
-                            (panic
-                              (str-cat
-                                "SCAVENGE-VIOLATION free fn="
-                                name
-                                " point="
-                                (int->string point)
-                                " use-var="
-                                (int->string v)
-                                " reg="
-                                home
-                                " wrongly-reported-free"))
-                            unit))]
-                      [(CompilerRegRegisterPair _ _) unit]
-                      [(CompilerRegSpill _) unit]
-                      [(CompilerRegRemat _) unit])]
-                  [(CompilerRegNoLocation) unit])
+              ;; Only REGISTER-HOMED used vars need interval coverage + a
+              ;; not-free home: a spilled/untracked used var has no register to
+              ;; clobber, and an all-spilled function installs an EMPTY scavenge
+              ;; ctx (Nil intervals -> starts[v]=-1) on purpose, so asserting
+              ;; coverage for non-register vars is a false positive (the old
+              ;; check aborted at the first all-spilled function before reaching
+              ;; the real register hazards). cfg-gated: oracle-only, no codegen.
+              (match (compiler-reg-assignment-index-lookup assignment-index v)
+                [(CompilerRegSomeLocation loc)
+                  (match loc
+                    [(CompilerRegRegister home)
+                      (begin
+                        (if (and
+                          (>= (array-ref starts v) 0)
+                          (<= (array-ref starts v) point)
+                          (<= point (array-ref ends v)))
+                          unit
+                          (panic
+                            (str-cat
+                              "SCAVENGE-VIOLATION interval fn="
+                              name
+                              " point="
+                              (int->string point)
+                              " use-var="
+                              (int->string v)
+                              " iv=["
+                              (int->string (array-ref starts v))
+                              ","
+                              (int->string (array-ref ends v))
+                              "]")))
+                        (if (compiler-backend-scavenge-free-for-instr?
+                          starts
+                          ends
+                          assignment-index
+                          vars
+                          point
+                          home)
+                          (panic
+                            (str-cat
+                              "SCAVENGE-VIOLATION free fn="
+                              name
+                              " point="
+                              (int->string point)
+                              " use-var="
+                              (int->string v)
+                              " reg="
+                              home
+                              " wrongly-reported-free"))
+                          unit))]
+                    [(CompilerRegRegisterPair _ _) unit]
+                    [(CompilerRegSpill _) unit]
+                    [(CompilerRegRemat _) unit])]
+                [(CompilerRegNoLocation) unit])
               unit)
             (set! v (+ v 1))))
         ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this
@@ -31464,8 +31615,7 @@
 ;; lowers to `jcc <other-arm>` + clean fall-through (emit-compare-branch-jumps),
 ;; which IS safe. Jump / Switch terminators never split this way (jump copies sit
 ;; on the single fall-through edge; switches reject phi targets).
-(define (compiler-backend-peephole-prev-splits-edge?
-  [block : CompilerIrBlock]) : bool
+(define (compiler-backend-peephole-prev-splits-edge? [block : CompilerIrBlock]) : bool
   (match block
     [(IrBlock _ instrs)
       (let
@@ -31600,10 +31750,8 @@
 ;; leaq-to-rsp/call/ret) conservatively clears the map, so equal operand
 ;; strings imply equal addresses in both worlds and the elision behavior
 ;; carries over 1:1.
-
 (define compiler-backend-rsp-rebase-ok-count : i64
   0)
-
 (define compiler-backend-rsp-rebase-keep-count : i64
   0)
 
@@ -31624,10 +31772,8 @@
 ;; -> re-planned without %rbp).
 (define compiler-backend-fpo-count : i64
   0)
-
 (define compiler-backend-fpo-rbp-plan-count : i64
   0)
-
 (define compiler-backend-fpo-demote-count : i64
   0)
 
@@ -31689,7 +31835,10 @@
   [end : i64]) : i64
   (let
     [neg : bool (= (compiler-backend-peephole-byte-at data start) 45)]
-    [j : i64 (if neg (+ start 1) start)]
+    [j : i64
+      (if neg
+        (+ start 1)
+        start)]
     [v : i64 0]
     (begin
       (while (< j end)
@@ -31698,7 +31847,9 @@
             v
             (+ (* v 10) (- (compiler-backend-peephole-byte-at data j) 48)))
           (set! j (+ j 1))))
-      (if neg (- 0 v) v))))
+      (if neg
+        (- 0 v)
+        v))))
 
 ;; ============================================================================
 ;; GAP1: push-style CSR prologue saves (FPO functions, Linux text path).
@@ -31737,7 +31888,6 @@
 ;; (keep-rbp fallback on the ORIGINAL text stays correct: mov saves intact).
 ;; Win64 keeps the rbp prologue + mov saves entirely (fpo never attempted:
 ;; SEH unwind needs `.seh_setframe %rbp`); --pic/opt0/vector never plan CSRs.
-
 ;; Saved-CSR names indexed by callee-save slot idx (0..5 = r12,r13,r14,r15,
 ;; rbx,rbp); "" = not saved. All six names are 4 bytes ("%rNN").
 (define (compiler-backend-rsp-rebase-make-push-regs) : (Array String)
@@ -31788,16 +31938,17 @@
 ;; The prologue subq constant S under n pushes: frame + pad where pad keeps
 ;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
 ;; the same call alignment as the no-push `subq $(frame+8)`.
-(define (compiler-backend-rsp-rebase-push-sub
-  [frame : i64]
-  [push-count : i64]) : i64
-  (+ frame (if (= (bit-and push-count 1) 1) 0 8)))
+(define (compiler-backend-rsp-rebase-push-sub [frame : i64] [push-count : i64]) : i64
+  (+
+    frame
+    (if (= (bit-and push-count 1) 1)
+      0
+      8)))
 
 ;; The popq run restoring the pushed CSRs: highest slot idx first (lowest
 ;; address = last pushed), matching the existing pop-run epilogue order.
 ;; Lines joined by newlines with NO trailing newline (append-line adds it).
-(define (compiler-backend-rsp-rebase-pop-run
-  [push-regs : (Array String)]) : String
+(define (compiler-backend-rsp-rebase-pop-run [push-regs : (Array String)]) : String
   (let
     [idx : i64 5]
     [acc : String ""]
@@ -31810,7 +31961,9 @@
               acc
               (str_cat.str-cat
                 acc
-                (if (string.string-eq acc "") "" "\n")
+                (if (string.string-eq acc "")
+                  ""
+                  "\n")
                 "    popq "
                 (array-ref push-regs idx)
                 "")))
@@ -31978,10 +32131,7 @@
 ;; `%rbp` register operands contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
 ;; byte-identical to the pre-GAP1 pass (no push mode).
-(define (compiler-backend-rsp-rebase
-  [text : String]
-  [frame : i64]
-  [fpo : bool]) : String
+(define (compiler-backend-rsp-rebase [text : String] [frame : i64] [fpo : bool]) : String
   (compiler-backend-rsp-rebase-full
     text
     frame
@@ -32015,9 +32165,14 @@
     [pm : bool (and fpo (> push-count 0))]
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
     [disp : i64 (+ (* push-count 8) sub-s)]
-    [bias-neg : i64 (if pm sub-s frame)]
+    [bias-neg : i64
+      (if pm
+        sub-s
+        frame)]
     [bias-pos : i64
-      (if pm (- (+ sub-s (* push-count 8)) 8) frame)]
+      (if pm
+        (- (+ sub-s (* push-count 8)) 8)
+        frame)]
     (begin
       (while (and ok (< i n))
         (let
@@ -32145,260 +32300,280 @@
                           ;; is unwritten under push saves -- keep rbp.
                           (set! ok false)
                           (begin
-                    ;; popq MEM computes its address AFTER the rsp increment.
-                    (if (and valid pop?)
-                      (begin
-                        (set! delta (- delta 8))
-                        ;; negative delta is legal only inside the FPO epilogue
-                        ;; tail (the pops after a rebased `leaq slot,%rsp`).
-                        (if (and (< delta 0) (not (and fpo tail)))
-                          (set! ok false)
-                          unit))
-                      unit)
-                    (if (and fpo leave?)
-                      ;; FPO: no rbp frame to `leave` from -- unwind rsp
-                      ;; directly (prologue reserved frame+8, push mode
-                      ;; 8n+sub-s; a negative delta folds the pop-restore
-                      ;; epilogue tail when present).
-                      (begin
-                        (if (not valid)
-                          (set! ok false)
-                          (if (and pm tail)
-                            ;; GAP1 push mode after a pop run: every pushed
-                            ;; CSR was popped, rsp already sits at the return
-                            ;; address -- the fold must be EXACTLY 0 and the
-                            ;; leave vanishes.
-                            (if (= (+ disp delta) 0)
-                              unit
-                              (set! ok false))
-                            (if pm
-                              ;; GAP1 push mode, mov-restore epilogue (the
-                              ;; restore movs were deleted): deallocate the
-                              ;; subq area and pop the pushed CSRs.
-                              (let
-                                [amount : i64 (+ sub-s delta)]
-                                (if (< amount 0)
+                            ;; popq MEM computes its address AFTER the rsp increment.
+                            (if (and valid pop?)
+                              (begin
+                                (set! delta (- delta 8))
+                                ;; negative delta is legal only inside the FPO epilogue
+                                ;; tail (the pops after a rebased `leaq slot,%rsp`).
+                                (if (and (< delta 0) (not (and fpo tail)))
                                   (set! ok false)
-                                  (set!
-                                    buf
-                                    (compiler-backend-peephole-append-line
-                                      buf
-                                      (str_cat.str-cat
-                                        (if (= amount 0)
-                                          ""
-                                          (str_cat.str-cat
-                                            "    addq $"
-                                            (string.int->string amount)
-                                            ", %rsp\n"))
-                                        (compiler-backend-rsp-rebase-pop-run
-                                          push-regs)
-                                        "")
-                                      nl))))
-                              (let
-                                [amount : i64 (+ (+ frame 8) delta)]
-                                (if (< amount 0)
+                                  unit))
+                              unit)
+                            (if (and fpo leave?)
+                              ;; FPO: no rbp frame to `leave` from -- unwind rsp
+                              ;; directly (prologue reserved frame+8, push mode
+                              ;; 8n+sub-s; a negative delta folds the pop-restore
+                              ;; epilogue tail when present).
+                              (begin
+                                (if (not valid)
                                   (set! ok false)
-                                  (if (= amount 0)
-                                    unit
+                                  (if (and pm tail)
+                                    ;; GAP1 push mode after a pop run: every pushed
+                                    ;; CSR was popped, rsp already sits at the return
+                                    ;; address -- the fold must be EXACTLY 0 and the
+                                    ;; leave vanishes.
+                                    (if (= (+ disp delta) 0)
+                                      unit
+                                      (set! ok false))
+                                    (if pm
+                                      ;; GAP1 push mode, mov-restore epilogue (the
+                                      ;; restore movs were deleted): deallocate the
+                                      ;; subq area and pop the pushed CSRs.
+                                      (let
+                                        [amount : i64 (+ sub-s delta)]
+                                        (if (< amount 0)
+                                          (set! ok false)
+                                          (set!
+                                            buf
+                                            (compiler-backend-peephole-append-line
+                                              buf
+                                              (str_cat.str-cat
+                                                (if (= amount 0)
+                                                  ""
+                                                  (str_cat.str-cat
+                                                    "    addq $"
+                                                    (string.int->string amount)
+                                                    ", %rsp\n"))
+                                                (compiler-backend-rsp-rebase-pop-run
+                                                  push-regs)
+                                                "")
+                                              nl))))
+                                      (let
+                                        [amount : i64 (+ (+ frame 8) delta)]
+                                        (if (< amount 0)
+                                          (set! ok false)
+                                          (if (= amount 0)
+                                            unit
+                                            (set!
+                                              buf
+                                              (compiler-backend-peephole-append-line
+                                                buf
+                                                (str_cat.str-cat
+                                                  "    addq $"
+                                                  (string.int->string amount)
+                                                  ", %rsp")
+                                                nl))))))))
+                                (set! valid false)
+                                (set! tail false))
+                              (begin
+                                ;; frame-reference rewrite
+                                (let
+                                  [p : i64
+                                    (compiler-backend-rsp-rebase-find-rbp
+                                      data
+                                      m
+                                      end)]
+                                  (if (< p 0)
                                     (set!
                                       buf
-                                      (compiler-backend-peephole-append-line
+                                      (compiler-backend-peephole-append-line-range
                                         buf
-                                        (str_cat.str-cat
-                                          "    addq $"
-                                          (string.int->string amount)
-                                          ", %rsp")
-                                        nl))))))))
-                        (set! valid false)
-                        (set! tail false))
-                      (begin
-                    ;; frame-reference rewrite
-                    (let
-                      [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
-                      (if (< p 0)
-                        (set!
-                          buf
-                          (compiler-backend-peephole-append-line-range
-                            buf
-                            text
-                            i
-                            end
-                            nl))
-                        (if (not valid)
-                          (set! ok false)
-                          (let
-                            [cursor : i64 i]
-                            (begin
-                              (while (and ok (>= p 0))
-                                (begin
-                                  (if (or
-                                    (>= (+ p 5) end)
-                                    (not (=
-                                      (compiler-backend-peephole-byte-at
+                                        text
+                                        i
+                                        end
+                                        nl))
+                                    (if (not valid)
+                                      (set! ok false)
+                                      (let
+                                        [cursor : i64 i]
+                                        (begin
+                                          (while (and ok (>= p 0))
+                                            (begin
+                                              (if (or
+                                                (>= (+ p 5) end)
+                                                (not
+                                                  (=
+                                                    (compiler-backend-peephole-byte-at
+                                                      data
+                                                      (+ p 5))
+                                                    41)))
+                                                ;; "(%rbp," indexed or truncated
+                                                (set! ok false)
+                                                (let
+                                                  [ks : i64
+                                                    (compiler-backend-rsp-rebase-int-start
+                                                      data
+                                                      i
+                                                      p)]
+                                                  (if (< ks 0)
+                                                    ;; bare "(%rbp)"
+                                                    (set! ok false)
+                                                    (let
+                                                      [k : i64
+                                                        (compiler-backend-rsp-rebase-parse-int
+                                                          data
+                                                          ks
+                                                          p)]
+                                                      (if (and
+                                                        (>= k 0)
+                                                        (not fpo))
+                                                        ;; incoming stack-arg slot: keep
+                                                        ;; rbp (stage 1 -- %rbp is live).
+                                                        ;; In FPO mode positive offsets
+                                                        ;; rebase with the SAME formula
+                                                        ;; (virtual rbp = rsp+frame).
+                                                        unit
+                                                        (let
+                                                          ;; GAP1 push mode: negative
+                                                          ;; (local) offsets shift down by
+                                                          ;; the pushed bytes (bias sub-s);
+                                                          ;; positive (incoming-arg)
+                                                          ;; offsets keep their absolute
+                                                          ;; caller-side addresses (bias
+                                                          ;; sub-s+8n-8). Both equal
+                                                          ;; `frame` when push-count = 0.
+                                                          [noff : i64
+                                                            (+
+                                                              (+
+                                                                (if (>= k 0)
+                                                                  bias-pos
+                                                                  bias-neg)
+                                                                delta)
+                                                              k)]
+                                                          (if (< noff 0)
+                                                            (set! ok false)
+                                                            (begin
+                                                              (set!
+                                                                buf
+                                                                (compiler-backend-peephole-append-line-range
+                                                                  buf
+                                                                  text
+                                                                  cursor
+                                                                  ks
+                                                                  false))
+                                                              (set!
+                                                                buf
+                                                                (text_buf.text-buf-append
+                                                                  buf
+                                                                  (string.int->string
+                                                                    noff)))
+                                                              (set!
+                                                                buf
+                                                                (text_buf.text-buf-append
+                                                                  buf
+                                                                  "(%rsp)"))
+                                                              (set!
+                                                                last-noff
+                                                                noff)
+                                                              (set!
+                                                                ref-count
+                                                                (+ ref-count 1))
+                                                              (set!
+                                                                cursor
+                                                                (+ p 6))))))))))
+                                              (set!
+                                                p
+                                                (if ok
+                                                  (compiler-backend-rsp-rebase-find-rbp
+                                                    data
+                                                    (+ p 6)
+                                                    end)
+                                                  -1))))
+                                          (if ok
+                                            (set!
+                                              buf
+                                              (compiler-backend-peephole-append-line-range
+                                                buf
+                                                text
+                                                cursor
+                                                end
+                                                nl))
+                                            unit))))))
+                                ;; pushq MEM computes its address BEFORE the rsp decrement.
+                                (if (and valid push?)
+                                  (set! delta (+ delta 8))
+                                  unit)
+                                ;; explicit %rsp writes
+                                (if (and rsp-dst? (not pop?))
+                                  (if (and
+                                    valid
+                                    (and
+                                      (compiler-backend-peephole-range-eq?
                                         data
-                                        (+ p 5))
-                                      41)))
-                                    ;; "(%rbp," indexed or truncated
-                                    (set! ok false)
-                                    (let
-                                      [ks : i64
-                                        (compiler-backend-rsp-rebase-int-start
+                                        m
+                                        te
+                                        "subq")
+                                      (and
+                                        (< (+ te 1) end)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ te 1))
+                                          36))))
+                                    (set!
+                                      delta
+                                      (+
+                                        delta
+                                        (compiler-backend-rsp-rebase-parse-int
                                           data
-                                          i
-                                          p)]
-                                      (if (< ks 0)
-                                        ;; bare "(%rbp)"
-                                        (set! ok false)
-                                        (let
-                                          [k : i64
+                                          (+ te 2)
+                                          (- end 6))))
+                                    (if (and
+                                      valid
+                                      (and
+                                        (compiler-backend-peephole-range-eq?
+                                          data
+                                          m
+                                          te
+                                          "addq")
+                                        (and
+                                          (< (+ te 1) end)
+                                          (=
+                                            (compiler-backend-peephole-byte-at
+                                              data
+                                              (+ te 1))
+                                            36))))
+                                      (begin
+                                        (set!
+                                          delta
+                                          (-
+                                            delta
                                             (compiler-backend-rsp-rebase-parse-int
                                               data
-                                              ks
-                                              p)]
-                                          (if (and (>= k 0) (not fpo))
-                                            ;; incoming stack-arg slot: keep
-                                            ;; rbp (stage 1 -- %rbp is live).
-                                            ;; In FPO mode positive offsets
-                                            ;; rebase with the SAME formula
-                                            ;; (virtual rbp = rsp+frame).
-                                            unit
-                                            (let
-                                              ;; GAP1 push mode: negative
-                                              ;; (local) offsets shift down by
-                                              ;; the pushed bytes (bias sub-s);
-                                              ;; positive (incoming-arg)
-                                              ;; offsets keep their absolute
-                                              ;; caller-side addresses (bias
-                                              ;; sub-s+8n-8). Both equal
-                                              ;; `frame` when push-count = 0.
-                                              [noff : i64
-                                                (+
-                                                  (+
-                                                    (if (>= k 0)
-                                                      bias-pos
-                                                      bias-neg)
-                                                    delta)
-                                                  k)]
-                                              (if (< noff 0)
-                                                (set! ok false)
-                                                (begin
-                                                  (set!
-                                                    buf
-                                                    (compiler-backend-peephole-append-line-range
-                                                      buf
-                                                      text
-                                                      cursor
-                                                      ks
-                                                      false))
-                                                  (set!
-                                                    buf
-                                                    (text_buf.text-buf-append
-                                                      buf
-                                                      (string.int->string noff)))
-                                                  (set!
-                                                    buf
-                                                    (text_buf.text-buf-append
-                                                      buf
-                                                      "(%rsp)"))
-                                                  (set! last-noff noff)
-                                                  (set! ref-count (+ ref-count 1))
-                                                  (set! cursor (+ p 6))))))))))
-                                  (set!
-                                    p
-                                    (if ok
-                                      (compiler-backend-rsp-rebase-find-rbp
-                                        data
-                                        (+ p 6)
-                                        end)
-                                      -1))))
-                              (if ok
-                                (set!
-                                  buf
-                                  (compiler-backend-peephole-append-line-range
-                                    buf
-                                    text
-                                    cursor
-                                    end
-                                    nl))
-                                unit))))))
-                    ;; pushq MEM computes its address BEFORE the rsp decrement.
-                    (if (and valid push?)
-                      (set! delta (+ delta 8))
-                      unit)
-                    ;; explicit %rsp writes
-                    (if (and rsp-dst? (not pop?))
-                      (if (and
-                        valid
-                        (and
-                          (compiler-backend-peephole-range-eq? data m te "subq")
-                          (and
-                            (< (+ te 1) end)
-                            (=
-                              (compiler-backend-peephole-byte-at data (+ te 1))
-                              36))))
-                        (set!
-                          delta
-                          (+
-                            delta
-                            (compiler-backend-rsp-rebase-parse-int
-                              data
-                              (+ te 2)
-                              (- end 6))))
-                        (if (and
-                          valid
-                          (and
-                            (compiler-backend-peephole-range-eq?
-                              data
-                              m
-                              te
-                              "addq")
-                            (and
-                              (< (+ te 1) end)
-                              (=
-                                (compiler-backend-peephole-byte-at
-                                  data
-                                  (+ te 1))
-                                36))))
-                          (begin
-                            (set!
-                              delta
-                              (-
-                                delta
-                                (compiler-backend-rsp-rebase-parse-int
-                                  data
-                                  (+ te 2)
-                                  (- end 6))))
-                            (if (< delta 0)
-                              (set! ok false)
-                              unit))
-                          (if fpo
-                            ;; FPO: only the pop-restore epilogue's
-                            ;; `leaq slot,%rsp` is provable -- the slot operand
-                            ;; was rebased on THIS line (exactly one frame
-                            ;; ref), so the new rsp is P + last-noff, i.e.
-                            ;; delta -= last-noff (the epilogue tail). Any
-                            ;; other rsp write is unrecoverable without a
-                            ;; frame pointer.
-                            (if (and
-                              valid
-                              (not tail)
-                              (= ref-count 1)
-                              (compiler-backend-peephole-range-eq?
-                                data
-                                m
-                                te
-                                "leaq"))
-                              (begin
-                                (set! tail true)
-                                (set! delta (- delta last-noff)))
-                              (set! ok false))
-                            ;; unknown rsp write (leaq slot,%rsp epilogue,
-                            ;; movq %rbp,%rsp, ...): rsp no longer tracked.
-                            (set! valid false))))
-                      unit)
-                    (if leave?
-                      (set! valid false)
-                      unit)))))))))))
+                                              (+ te 2)
+                                              (- end 6))))
+                                        (if (< delta 0)
+                                          (set! ok false)
+                                          unit))
+                                      (if fpo
+                                        ;; FPO: only the pop-restore epilogue's
+                                        ;; `leaq slot,%rsp` is provable -- the slot operand
+                                        ;; was rebased on THIS line (exactly one frame
+                                        ;; ref), so the new rsp is P + last-noff, i.e.
+                                        ;; delta -= last-noff (the epilogue tail). Any
+                                        ;; other rsp write is unrecoverable without a
+                                        ;; frame pointer.
+                                        (if (and
+                                          valid
+                                          (not tail)
+                                          (= ref-count 1)
+                                          (compiler-backend-peephole-range-eq?
+                                            data
+                                            m
+                                            te
+                                            "leaq"))
+                                          (begin
+                                            (set! tail true)
+                                            (set! delta (- delta last-noff)))
+                                          (set! ok false))
+                                        ;; unknown rsp write (leaq slot,%rsp epilogue,
+                                        ;; movq %rbp,%rsp, ...): rsp no longer tracked.
+                                        (set! valid false))))
+                                  unit)
+                                (if leave?
+                                  (set! valid false)
+                                  unit)))))))))))
             (set!
               i
               (if (< end n)
@@ -32468,7 +32643,6 @@
 ;; Driven from compiler-backend-peephole-asm (all text-emission paths); with
 ;; an empty metadata table (Windows, unit tests on hand-written text) the
 ;; pass returns its input unchanged.
-
 (define compiler-backend-sweep-capacity : i64
   65536)
 (define compiler-backend-sweep-bytes-capacity : i64
@@ -32557,8 +32731,14 @@
   (let
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
     [pm : bool (> push-count 0)]
-    [bias-neg : i64 (if pm sub-s frame)]
-    [disp : i64 (if pm (+ (* push-count 8) sub-s) (+ frame 8))]
+    [bias-neg : i64
+      (if pm
+        sub-s
+        frame)]
+    [disp : i64
+      (if pm
+        (+ (* push-count 8) sub-s)
+        (+ frame 8))]
     (compiler-backend-sweep-record!
       symbol
       (- bias-neg (* 8 slot-vars))
@@ -32577,7 +32757,10 @@
       arr)
     (let
       [old : i64 (array-length arr)]
-      [ncap : i64 (if (< old 64) 128 (* old 2))]
+      [ncap : i64
+        (if (< old 64)
+          128
+          (* old 2))]
       [na : (Array i64) (make-array i64 ncap)]
       [k : i64 0]
       (begin
@@ -32640,7 +32823,11 @@
               (compiler-backend-peephole-range-eq? data m (+ m 6) ".globl"))
               (return i)
               unit)
-            (set! i (if (< end n) (+ end 1) end)))))
+            (set!
+              i
+              (if (< end n)
+                (+ end 1)
+                end)))))
       n)))
 
 ;; Conservative byte width of the memory access on line [m,end): 16/32/64 when
@@ -32663,9 +32850,13 @@
               (if (= nb 122)
                 (set! w 64)
                 (if (= nb 121)
-                  (if (< w 32) (set! w 32) unit)
+                  (if (< w 32)
+                    (set! w 32)
+                    unit)
                   (if (= nb 120)
-                    (if (< w 16) (set! w 16) unit)
+                    (if (< w 16)
+                      (set! w 16)
+                      unit)
                     unit))))
             unit)
           (set! j (+ j 1))))
@@ -32689,13 +32880,16 @@
     [none : i64 compiler-backend-sweep-no-candidate]
     (if (not (compiler-backend-peephole-range-eq? data m te "movq"))
       none
-      (if (or
-        (>= (+ te 1) end)
-        (< (- end te) 10))
+      (if (or (>= (+ te 1) end) (< (- end te) 10))
         none
-        (if (not (and
-          (= (compiler-backend-peephole-byte-at data (- end 1)) 41)
-          (compiler-backend-peephole-range-eq? data (- end 6) (- end 1) "(%rsp")))
+        (if (not
+          (and
+            (= (compiler-backend-peephole-byte-at data (- end 1)) 41)
+            (compiler-backend-peephole-range-eq?
+              data
+              (- end 6)
+              (- end 1)
+              "(%rsp")))
           none
           (let
             [s0 : i64 (+ te 1)]
@@ -32720,11 +32914,17 @@
                       (begin
                         (while (< j c)
                           (begin
-                            (if (= (compiler-backend-peephole-byte-at data j) 40)
+                            (if (=
+                              (compiler-backend-peephole-byte-at data j)
+                              40)
                               (set! bad true)
                               unit)
                             (set! j (+ j 1))))
-                        (if (compiler-backend-peephole-range-eq? data s0 c "%rsp")
+                        (if (compiler-backend-peephole-range-eq?
+                          data
+                          s0
+                          c
+                          "%rsp")
                           (set! bad true)
                           unit)
                         (if bad
@@ -32795,11 +32995,16 @@
                   (if (or (= b0 46) (= b0 35))
                     unit
                     (let
-                      [tok : i64 (compiler-backend-peephole-token-len data m end)]
+                      [tok : i64
+                        (compiler-backend-peephole-token-len data m end)]
                       [te : i64 (+ m tok)]
                       [push? : bool
                         (or
-                          (compiler-backend-peephole-range-eq? data m te "pushq")
+                          (compiler-backend-peephole-range-eq?
+                            data
+                            m
+                            te
+                            "pushq")
                           (compiler-backend-peephole-range-eq? data m te "push"))]
                       [pop? : bool
                         (or
@@ -32822,13 +33027,19 @@
                       [imm? : bool
                         (and
                           (< (+ te 1) end)
-                          (= (compiler-backend-peephole-byte-at data (+ te 1)) 36))]
+                          (=
+                            (compiler-backend-peephole-byte-at data (+ te 1))
+                            36))]
                       [tracked-rsp-write? : bool
                         (and rsp-dst? (and (or subq? addq?) imm?))]
                       [cand : i64
                         (compiler-backend-sweep-candidate-c data m te end delta)]
                       (begin
-                        (if (compiler-backend-peephole-range-eq? data m te "leave")
+                        (if (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          te
+                          "leave")
                           (set! sweepable false)
                           unit)
                         (if (not (= cand none))
@@ -32849,12 +33060,15 @@
                             (set! cand-count (+ cand-count 1)))
                           ;; general line: classify every %rsp occurrence.
                           (let
-                            [w : i64 (compiler-backend-sweep-line-width data m end)]
+                            [w : i64
+                              (compiler-backend-sweep-line-width data m end)]
                             [q : i64 m]
                             (begin
                               (while (<= (+ q 4) end)
                                 (if (and
-                                  (= (compiler-backend-peephole-byte-at data q) 37)
+                                  (=
+                                    (compiler-backend-peephole-byte-at data q)
+                                    37)
                                   (and
                                     (=
                                       (compiler-backend-peephole-byte-at
@@ -32883,11 +33097,12 @@
                                       ;; memory base "(%rsp"
                                       (if (or
                                         (>= (+ q 4) end)
-                                        (not (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ q 4))
-                                          41)))
+                                        (not
+                                          (=
+                                            (compiler-backend-peephole-byte-at
+                                              data
+                                              (+ q 4))
+                                            41)))
                                         ;; "(%rsp," indexed / truncated
                                         (set! sweepable false)
                                         (if pop?
@@ -32960,9 +33175,17 @@
                                     (- end 6)))))
                             (set! sweepable false))
                           unit)
-                        (if push? (set! delta (+ delta 8)) unit)
-                        (if pop? (set! delta (- delta 8)) unit)))))))
-            (set! i (if (< end rend) (+ end 1) end)))))
+                        (if push?
+                          (set! delta (+ delta 8))
+                          unit)
+                        (if pop?
+                          (set! delta (- delta 8))
+                          unit)))))))
+            (set!
+              i
+              (if (< end rend)
+                (+ end 1)
+                end)))))
       ;; ---- pass 2 ----
       (if (or (not sweepable) (= cand-count 0))
         (compiler-backend-peephole-append-line-range buf asm rstart rend false)
@@ -32980,9 +33203,7 @@
                     (>= c lo)
                     (and
                       (<= c hi)
-                      (and
-                        (= (bit-and (- c lo) 7) 0)
-                        (< c watermark))))
+                      (and (= (bit-and (- c lo) 7) 0) (< c watermark))))
                     (let
                       [r : i64 0]
                       [live : bool false]
@@ -33009,7 +33230,11 @@
                                   flush
                                   ls
                                   false))
-                              (set! flush (if (< le rend) (+ le 1) le))
+                              (set!
+                                flush
+                                (if (< le rend)
+                                  (+ le 1)
+                                  le))
                               (set! swept (+ swept 1)))))))
                     unit)
                   (set! k (+ k 1)))))
@@ -33053,7 +33278,10 @@
             (begin
               (if (compiler-backend-sweep-label-matches? data i end cursor)
                 (let
-                  [rstart : i64 (if (< end n) (+ end 1) end)]
+                  [rstart : i64
+                    (if (< end n)
+                      (+ end 1)
+                      end)]
                   [rend : i64 (compiler-backend-sweep-region-end data rstart n)]
                   (begin
                     (set! matched true)
@@ -33079,7 +33307,11 @@
                     (set! flush rend)
                     (set! cursor (+ cursor 1))
                     (set! i rend)))
-                (set! i (if (< end n) (+ end 1) end))))))
+                (set!
+                  i
+                  (if (< end n)
+                    (+ end 1)
+                    end))))))
         (cfg
           regalloc-census
           (io.print-error
@@ -33095,7 +33327,12 @@
           (begin
             (set!
               out
-              (compiler-backend-peephole-append-line-range out asm flush n false))
+              (compiler-backend-peephole-append-line-range
+                out
+                asm
+                flush
+                n
+                false))
             (text_buf.text-buf-render out)))))))
 
 (define (compiler-backend-emit-function
@@ -33620,9 +33857,7 @@
                             push-count
                             slot-vars)]
                         [fpo-ok : bool
-                          (and
-                            fpo-attempt
-                            compiler-backend-rsp-rebase-last-ok)]
+                          (and fpo-attempt compiler-backend-rsp-rebase-last-ok)]
                         (if (and
                           fpo-attempt
                           (not fpo-ok)
@@ -33636,7 +33871,9 @@
                             (set!
                               compiler-backend-fpo-demote-count
                               (+ compiler-backend-fpo-demote-count 1))
-                            (set! compiler-backend-emit-function-allow-rbp false)
+                            (set!
+                              compiler-backend-emit-function-allow-rbp
+                              false)
                             (let
                               [demoted : ResultCompilerBackend
                                 (compiler-backend-emit-function
@@ -42415,7 +42652,8 @@ tl_memchr:
   (if (>= start end)
     false
     (compiler-backend-string-contains?
-      (string.substring asm start (- end start)) "%r10")))
+      (string.substring asm start (- end start))
+      "%r10")))
 
 (define (compiler-backend-peephole-line-clean-writes-r10?
   [asm : String]
@@ -42448,13 +42686,24 @@ tl_memchr:
           [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
           (begin
             (if (compiler-backend-peephole-range-mentions-r10? asm i end)
-              (if (compiler-backend-peephole-line-clean-writes-r10? asm asm-data i end)
+              (if (compiler-backend-peephole-line-clean-writes-r10?
+                asm
+                asm-data
+                i
+                end)
                 (set! result 1)
                 (set! result 0))
-              (if (compiler-backend-peephole-movq-prefix-at-range? asm-data i end)
+              (if (compiler-backend-peephole-movq-prefix-at-range?
+                asm-data
+                i
+                end)
                 unit
                 (set! result 0)))
-            (set! i (if (< end n) (+ end 1) end))
+            (set!
+              i
+              (if (< end n)
+                (+ end 1)
+                end))
             (set! k (+ k 1)))))
       (= result 1))))
 
@@ -42468,9 +42717,18 @@ tl_memchr:
   [next-start : i64]
   [next-end : i64]) : String
   (match (compiler-backend-peephole-line-movq
-    asm asm-data pending-start pending-end pending-line pending-owned?)
+    asm
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?)
     [(CompilerBackendPeepholeMove src dst)
-      (match (compiler-backend-peephole-movq-range asm asm-data next-start next-end)
+      (match (compiler-backend-peephole-movq-range
+        asm
+        asm-data
+        next-start
+        next-end)
         [(CompilerBackendPeepholeMove next-src next-dst)
           (str_cat.str-cat
             "    movq "
@@ -42692,20 +42950,62 @@ tl_memchr:
   (if (string.string-eq slot "")
     ""
     (cond
-      [(and (not (string.string-eq exclude "%rax")) (string.string-eq (struct-get owners rax) slot)) "%rax"]
-      [(and (not (string.string-eq exclude "%rcx")) (string.string-eq (struct-get owners rcx) slot)) "%rcx"]
-      [(and (not (string.string-eq exclude "%rdx")) (string.string-eq (struct-get owners rdx) slot)) "%rdx"]
-      [(and (not (string.string-eq exclude "%rbx")) (string.string-eq (struct-get owners rbx) slot)) "%rbx"]
-      [(and (not (string.string-eq exclude "%rsi")) (string.string-eq (struct-get owners rsi) slot)) "%rsi"]
-      [(and (not (string.string-eq exclude "%rdi")) (string.string-eq (struct-get owners rdi) slot)) "%rdi"]
-      [(and (not (string.string-eq exclude "%r8")) (string.string-eq (struct-get owners r8) slot)) "%r8"]
-      [(and (not (string.string-eq exclude "%r9")) (string.string-eq (struct-get owners r9) slot)) "%r9"]
-      [(and (not (string.string-eq exclude "%r10")) (string.string-eq (struct-get owners r10) slot)) "%r10"]
-      [(and (not (string.string-eq exclude "%r11")) (string.string-eq (struct-get owners r11) slot)) "%r11"]
-      [(and (not (string.string-eq exclude "%r12")) (string.string-eq (struct-get owners r12) slot)) "%r12"]
-      [(and (not (string.string-eq exclude "%r13")) (string.string-eq (struct-get owners r13) slot)) "%r13"]
-      [(and (not (string.string-eq exclude "%r14")) (string.string-eq (struct-get owners r14) slot)) "%r14"]
-      [(and (not (string.string-eq exclude "%r15")) (string.string-eq (struct-get owners r15) slot)) "%r15"]
+      [(and
+          (not (string.string-eq exclude "%rax"))
+          (string.string-eq (struct-get owners rax) slot))
+        "%rax"]
+      [(and
+          (not (string.string-eq exclude "%rcx"))
+          (string.string-eq (struct-get owners rcx) slot))
+        "%rcx"]
+      [(and
+          (not (string.string-eq exclude "%rdx"))
+          (string.string-eq (struct-get owners rdx) slot))
+        "%rdx"]
+      [(and
+          (not (string.string-eq exclude "%rbx"))
+          (string.string-eq (struct-get owners rbx) slot))
+        "%rbx"]
+      [(and
+          (not (string.string-eq exclude "%rsi"))
+          (string.string-eq (struct-get owners rsi) slot))
+        "%rsi"]
+      [(and
+          (not (string.string-eq exclude "%rdi"))
+          (string.string-eq (struct-get owners rdi) slot))
+        "%rdi"]
+      [(and
+          (not (string.string-eq exclude "%r8"))
+          (string.string-eq (struct-get owners r8) slot))
+        "%r8"]
+      [(and
+          (not (string.string-eq exclude "%r9"))
+          (string.string-eq (struct-get owners r9) slot))
+        "%r9"]
+      [(and
+          (not (string.string-eq exclude "%r10"))
+          (string.string-eq (struct-get owners r10) slot))
+        "%r10"]
+      [(and
+          (not (string.string-eq exclude "%r11"))
+          (string.string-eq (struct-get owners r11) slot))
+        "%r11"]
+      [(and
+          (not (string.string-eq exclude "%r12"))
+          (string.string-eq (struct-get owners r12) slot))
+        "%r12"]
+      [(and
+          (not (string.string-eq exclude "%r13"))
+          (string.string-eq (struct-get owners r13) slot))
+        "%r13"]
+      [(and
+          (not (string.string-eq exclude "%r14"))
+          (string.string-eq (struct-get owners r14) slot))
+        "%r14"]
+      [(and
+          (not (string.string-eq exclude "%r15"))
+          (string.string-eq (struct-get owners r15) slot))
+        "%r15"]
       [else ""])))
 
 ;; Owner map with `reg`'s slot set to `slot` ("" clears it). No-op when `reg`
@@ -42715,20 +43015,48 @@ tl_memchr:
   [reg : String]
   [slot : String]) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners
-    (if (string.string-eq reg "%rax") slot (struct-get owners rax))
-    (if (string.string-eq reg "%rcx") slot (struct-get owners rcx))
-    (if (string.string-eq reg "%rdx") slot (struct-get owners rdx))
-    (if (string.string-eq reg "%rbx") slot (struct-get owners rbx))
-    (if (string.string-eq reg "%rsi") slot (struct-get owners rsi))
-    (if (string.string-eq reg "%rdi") slot (struct-get owners rdi))
-    (if (string.string-eq reg "%r8") slot (struct-get owners r8))
-    (if (string.string-eq reg "%r9") slot (struct-get owners r9))
-    (if (string.string-eq reg "%r10") slot (struct-get owners r10))
-    (if (string.string-eq reg "%r11") slot (struct-get owners r11))
-    (if (string.string-eq reg "%r12") slot (struct-get owners r12))
-    (if (string.string-eq reg "%r13") slot (struct-get owners r13))
-    (if (string.string-eq reg "%r14") slot (struct-get owners r14))
-    (if (string.string-eq reg "%r15") slot (struct-get owners r15))))
+    (if (string.string-eq reg "%rax")
+      slot
+      (struct-get owners rax))
+    (if (string.string-eq reg "%rcx")
+      slot
+      (struct-get owners rcx))
+    (if (string.string-eq reg "%rdx")
+      slot
+      (struct-get owners rdx))
+    (if (string.string-eq reg "%rbx")
+      slot
+      (struct-get owners rbx))
+    (if (string.string-eq reg "%rsi")
+      slot
+      (struct-get owners rsi))
+    (if (string.string-eq reg "%rdi")
+      slot
+      (struct-get owners rdi))
+    (if (string.string-eq reg "%r8")
+      slot
+      (struct-get owners r8))
+    (if (string.string-eq reg "%r9")
+      slot
+      (struct-get owners r9))
+    (if (string.string-eq reg "%r10")
+      slot
+      (struct-get owners r10))
+    (if (string.string-eq reg "%r11")
+      slot
+      (struct-get owners r11))
+    (if (string.string-eq reg "%r12")
+      slot
+      (struct-get owners r12))
+    (if (string.string-eq reg "%r13")
+      slot
+      (struct-get owners r13))
+    (if (string.string-eq reg "%r14")
+      slot
+      (struct-get owners r14))
+    (if (string.string-eq reg "%r15")
+      slot
+      (struct-get owners r15))))
 
 ;; Owner map with every register that mirrored `slot` reset to unknown. Used
 ;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
@@ -42736,20 +43064,48 @@ tl_memchr:
   [owners : CompilerBackendPeepholeOwners]
   [slot : String]) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners
-    (if (string.string-eq (struct-get owners rax) slot) "" (struct-get owners rax))
-    (if (string.string-eq (struct-get owners rcx) slot) "" (struct-get owners rcx))
-    (if (string.string-eq (struct-get owners rdx) slot) "" (struct-get owners rdx))
-    (if (string.string-eq (struct-get owners rbx) slot) "" (struct-get owners rbx))
-    (if (string.string-eq (struct-get owners rsi) slot) "" (struct-get owners rsi))
-    (if (string.string-eq (struct-get owners rdi) slot) "" (struct-get owners rdi))
-    (if (string.string-eq (struct-get owners r8) slot) "" (struct-get owners r8))
-    (if (string.string-eq (struct-get owners r9) slot) "" (struct-get owners r9))
-    (if (string.string-eq (struct-get owners r10) slot) "" (struct-get owners r10))
-    (if (string.string-eq (struct-get owners r11) slot) "" (struct-get owners r11))
-    (if (string.string-eq (struct-get owners r12) slot) "" (struct-get owners r12))
-    (if (string.string-eq (struct-get owners r13) slot) "" (struct-get owners r13))
-    (if (string.string-eq (struct-get owners r14) slot) "" (struct-get owners r14))
-    (if (string.string-eq (struct-get owners r15) slot) "" (struct-get owners r15))))
+    (if (string.string-eq (struct-get owners rax) slot)
+      ""
+      (struct-get owners rax))
+    (if (string.string-eq (struct-get owners rcx) slot)
+      ""
+      (struct-get owners rcx))
+    (if (string.string-eq (struct-get owners rdx) slot)
+      ""
+      (struct-get owners rdx))
+    (if (string.string-eq (struct-get owners rbx) slot)
+      ""
+      (struct-get owners rbx))
+    (if (string.string-eq (struct-get owners rsi) slot)
+      ""
+      (struct-get owners rsi))
+    (if (string.string-eq (struct-get owners rdi) slot)
+      ""
+      (struct-get owners rdi))
+    (if (string.string-eq (struct-get owners r8) slot)
+      ""
+      (struct-get owners r8))
+    (if (string.string-eq (struct-get owners r9) slot)
+      ""
+      (struct-get owners r9))
+    (if (string.string-eq (struct-get owners r10) slot)
+      ""
+      (struct-get owners r10))
+    (if (string.string-eq (struct-get owners r11) slot)
+      ""
+      (struct-get owners r11))
+    (if (string.string-eq (struct-get owners r12) slot)
+      ""
+      (struct-get owners r12))
+    (if (string.string-eq (struct-get owners r13) slot)
+      ""
+      (struct-get owners r13))
+    (if (string.string-eq (struct-get owners r14) slot)
+      ""
+      (struct-get owners r14))
+    (if (string.string-eq (struct-get owners r15) slot)
+      ""
+      (struct-get owners r15))))
 
 ;; Owner-map transfer for a recognized `movq SRC, DST` line.
 ;;  * DST is a clean rbp-relative stack slot (a store): SRC's value is written to
@@ -42788,7 +43144,9 @@ tl_memchr:
       (compiler-backend-peephole-owners-set-reg
         owners
         dst
-        (if (compiler-backend-peephole-trackable-mem-operand? src) src ""))]
+        (if (compiler-backend-peephole-trackable-mem-operand? src)
+          src
+          ""))]
     [else (compiler-backend-peephole-owners-empty)]))
 
 ;; Length of the leading non-space token (the mnemonic) starting at `i`.
@@ -42799,7 +43157,9 @@ tl_memchr:
   (let
     [j : i64 i]
     (begin
-      (while (and (< j end) (not (= (compiler-backend-peephole-byte-at data j) 32)))
+      (while (and
+        (< j end)
+        (not (= (compiler-backend-peephole-byte-at data j) 32)))
         (set! j (+ j 1)))
       (- j i))))
 
@@ -42862,13 +43222,19 @@ tl_memchr:
       (let
         [e : i64 end]
         (begin
-          (while (and (> e i) (= (compiler-backend-peephole-byte-at data (- e 1)) 32))
+          (while (and
+            (> e i)
+            (= (compiler-backend-peephole-byte-at data (- e 1)) 32))
             (set! e (- e 1)))
           (or
             (compiler-backend-peephole-range-eq? data i e "call tl_oob_abort")
             (compiler-backend-peephole-range-eq? data i e "call tl_shift_abort")
             (compiler-backend-peephole-range-eq? data i e "call tl_div_abort")
-            (compiler-backend-peephole-range-eq? data i e "call tl_region_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              i
+              e
+              "call tl_region_abort")
             (compiler-backend-peephole-range-eq? data i e "call tl_oom_abort")))))))
 
 ;; True iff the byte range [start,end) of `data` contains `needle` as a substring.
@@ -42879,7 +43245,9 @@ tl_memchr:
   [needle : String]) : bool
   (let
     [nlen : i64 (string.string-length needle)]
-    [nd : (Ptr u8) (unsafe (string-data needle))]
+    [nd : (Ptr u8)
+      (unsafe
+        (string-data needle))]
     [i : i64 start]
     [found : bool false]
     (begin
@@ -42896,7 +43264,9 @@ tl_memchr:
                   unit
                   (set! ok false))
                 (set! k (+ k 1))))
-            (if ok (set! found true) (set! i (+ i 1))))))
+            (if ok
+              (set! found true)
+              (set! i (+ i 1))))))
       found)))
 
 ;; SCAV2: true iff label line [start,end) is a guard-check CONTINUATION label --
@@ -42961,7 +43331,9 @@ tl_memchr:
     (if (not (= (- e s) ln))
       false
       (let
-        [ld : (Ptr u8) (unsafe (string-data lit))]
+        [ld : (Ptr u8)
+          (unsafe
+            (string-data lit))]
         [k : i64 0]
         [ok : bool true]
         (begin
@@ -43080,10 +43452,7 @@ tl_memchr:
             (> ts start)
             (let
               [b : i64 (compiler-backend-peephole-byte-at data (- ts 1))]
-              (or
-                (= b 37)
-                (and (>= b 97) (<= b 122))
-                (and (>= b 48) (<= b 57)))))
+              (or (= b 37) (and (>= b 97) (<= b 122)) (and (>= b 48) (<= b 57)))))
             (set! ts (- ts 1)))
           (if (and
             (< ts te)
@@ -43186,9 +43555,7 @@ tl_memchr:
     (begin
       (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
         (set! i (+ i 1)))
-      (and
-        (< i end)
-        (= (compiler-backend-peephole-byte-at data (- end 1)) 58)))))
+      (and (< i end) (= (compiler-backend-peephole-byte-at data (- end 1)) 58)))))
 
 ;; True iff the label on line [start,end) (its name = first-non-space..':') is in
 ;; the backend-collected carry-safe set -- i.e. a block reached only by
@@ -43238,8 +43605,7 @@ tl_memchr:
   [end : i64]
   [prev-abort? : bool]) : CompilerBackendPeepholeOwners
   (cond
-    [(compiler-backend-peephole-line-noreturn-abort? data start end)
-      owners]
+    [(compiler-backend-peephole-line-noreturn-abort? data start end) owners]
     [(compiler-backend-peephole-line-is-label? data start end)
       (if (or
         (compiler-backend-peephole-label-carry-safe? src data start end)
@@ -43262,7 +43628,8 @@ tl_memchr:
             [mlen : i64 (compiler-backend-peephole-token-len data i end)]
             (if (compiler-backend-peephole-mnemonic-single-dest? data i mlen)
               (let
-                [dreg : String (compiler-backend-peephole-last-operand-reg data start end)]
+                [dreg : String
+                  (compiler-backend-peephole-last-operand-reg data start end)]
                 (if (string.string-eq dreg "")
                   (compiler-backend-peephole-owners-empty)
                   (compiler-backend-peephole-owners-set-reg owners dreg "")))
@@ -43302,7 +43669,10 @@ tl_memchr:
         ;; cross-register reuse: another GP reg already holds this slot -> rewrite
         ;; the memory reload `movq SLOT, dst` as the cheaper `movq <ry>, dst`.
         [ry : String
-          (if (and is-slot (not dst-owns) (compiler-backend-peephole-owner-reg? dst))
+          (if (and
+            is-slot
+            (not dst-owns)
+            (compiler-backend-peephole-owner-reg? dst))
             (compiler-backend-peephole-owners-find-reg-for-slot owners src dst)
             "")]
         [next-out : text_buf.TextBuf
@@ -43310,11 +43680,14 @@ tl_memchr:
             [dst-owns out]
             [(not (string.string-eq ry ""))
               (let
-                [b1 : text_buf.TextBuf (text_buf.text-buf-append out "    movq ")]
+                [b1 : text_buf.TextBuf
+                  (text_buf.text-buf-append out "    movq ")]
                 [b2 : text_buf.TextBuf (text_buf.text-buf-append b1 ry)]
                 [b3 : text_buf.TextBuf (text_buf.text-buf-append b2 ", ")]
                 [b4 : text_buf.TextBuf (text_buf.text-buf-append b3 dst)]
-                (if pending-newline (text_buf.text-buf-append b4 "\n") b4))]
+                (if pending-newline
+                  (text_buf.text-buf-append b4 "\n")
+                  b4))]
             [else
               (compiler-backend-peephole-append-pending-line
                 out
@@ -43337,7 +43710,8 @@ tl_memchr:
             (compiler-backend-peephole-line-clobber-owners
               owners
               pending-line
-              (unsafe (string-data pending-line))
+              (unsafe
+                (string-data pending-line))
               0
               (string.string-length pending-line)
               prev-abort?)
@@ -43371,7 +43745,8 @@ tl_memchr:
   [owned? : bool]) : bool
   (if owned?
     (compiler-backend-peephole-line-noreturn-abort?
-      (unsafe (string-data line))
+      (unsafe
+        (string-data line))
       0
       (string.string-length line))
     (compiler-backend-peephole-line-noreturn-abort? asm-data start end)))
@@ -43454,9 +43829,15 @@ tl_memchr:
                           (begin
                             (set! out (struct-get emit buf))
                             (set! owners (struct-get emit owners))))
-                        (set! prev-abort?
+                        (set!
+                          prev-abort?
                           (compiler-backend-peephole-pending-noreturn-abort?
-                            asm asm-data pending-start pending-end pending-line pending-owned?))
+                            asm
+                            asm-data
+                            pending-start
+                            pending-end
+                            pending-line
+                            pending-owned?))
                         (set! pending-start 0)
                         (set! pending-end 0)
                         (set! pending-line forwarded-line)
@@ -43498,9 +43879,15 @@ tl_memchr:
                         (begin
                           (set! out (struct-get emit buf))
                           (set! owners (struct-get emit owners))))
-                      (set! prev-abort?
+                      (set!
+                        prev-abort?
                         (compiler-backend-peephole-pending-noreturn-abort?
-                          asm asm-data pending-start pending-end pending-line pending-owned?))
+                          asm
+                          asm-data
+                          pending-start
+                          pending-end
+                          pending-line
+                          pending-owned?))
                       (set! pending-start i)
                       (set! pending-end end)
                       (set! pending-line "")

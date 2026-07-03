@@ -24,10 +24,11 @@
 ;; asserts the asm SHAPE (a %rbp SIB base present, and NO `movq %rbp, %rSCRATCH`
 ;; staging of the descriptor base in the loop). FAILS pre-GAP7 (staged) -- proven
 ;; forcing.
-
 ;; Recursive so the leaf inliner cannot delete the call: probe6(x) = x.
 (define (probe6 [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (probe6 (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (probe6 (- x 1)))))
 
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps churn6 out of the
 ;; inliner AND out of opt-tailrec, so the gate can assert on the named
@@ -37,13 +38,18 @@
 ;; homes. Five hot i64 values (a,b,c,acc,i) fill r12..rbx; v is the 6th = %rbp.
 (define (churn6 [v : (Array i64)] [rounds : i64]) : i64
   (let
-    [a : i64 1] [b : i64 2] [c : i64 3]
-    [acc : i64 0] [i : i64 0]
+    [a : i64 1]
+    [b : i64 2]
+    [c : i64 3]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 5)
         (begin
-          (set! acc (+ acc (probe6 i)))    ; the call every value spans
-          (set! acc (+ acc (+ a i)))       ; a,b,c stay hot (>=4 refs each)
+          (set! acc (+ acc (probe6 i)))
+          ; the call every value spans
+          (set! acc (+ acc (+ a i)))
+          ; a,b,c stay hot (>=4 refs each)
           (set! acc (+ acc (* 2 a)))
           (set! a (+ a 1))
           (set! acc (+ acc (+ b i)))
@@ -58,17 +64,21 @@
           (set! i (+ i 1))))
       (let
         [r : i64 (+ acc (+ a (+ b (+ c (array.array-ref v 0)))))]
-        (if (> rounds 1) (+ r (churn6 v (- rounds 1))) r)))))
+        (if (> rounds 1)
+          (+ r (churn6 v (- rounds 1)))
+          r)))))
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 7)]                ; n = 8 (no args)
+    [n : i64 (+ (arg-count) 7)]
+    ; n = 8 (no args)
     [v : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array.array-set! v i (* i 3))       ; v[i] = 3i
+          (array.array-set! v i (* i 3))
+          ; v[i] = 3i
           (set! i (+ i 1))))
       (let
         [r : i64 (churn6 v 1)]
@@ -78,4 +88,6 @@
         ;;         = 18 + 13t + 3t + 3(t+1) = 21 + 19t
         ;;   sum_{t=0..4}(21+19t) = 105 + 19*10 = 105 + 190 = 295
         ;; finals: a=6 b=7 c=8 v[0]=0 -> r = 295 + (6+7+8+0) = 316
-        (if (= r 316) 42 1)))))
+        (if (= r 316)
+          42
+          1)))))

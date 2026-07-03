@@ -18,7 +18,6 @@
 ;; `probe` reads gtab[i] under a never-taken self-recursion that blocks the leaf
 ;; inliner + TCO so the named body survives for the gate to inspect
 ;; (target/global-handle-gate.sh; FAILS pre-SCAV2 which emits two handle loads).
-
 (define gtab : (Array i64)
   (array.make-array i64 16))
 
@@ -32,4 +31,6 @@
     (array.array-set! gtab 3 42)
     (let
       [r : i64 (probe 3)]
-      (if (= r 42) 42 1))))
+      (if (= r 42)
+        42
+        1))))

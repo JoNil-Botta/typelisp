@@ -15,10 +15,7 @@
 ;; `mirror-sum`: the licm_alias_stress rotate shape split across two aliased
 ;; handles: reads through xs must observe earlier-iteration writes through ys.
 ;; Never-taken self-recursions block inlining, keeping xs/ys distinct params.
-(define (alias-poke
-  [xs : (Array i64)]
-  [ys : (Array i64)]
-  [n : i64]) : i64
+(define (alias-poke [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64
   (if (< n 0)
     (alias-poke xs ys (+ n 1))
     (let
@@ -27,10 +24,7 @@
         (array.array-set! ys 0 (+ a n))
         (+ (array.array-ref xs 0) (array.array-ref ys 1))))))
 
-(define (mirror-sum
-  [xs : (Array i64)]
-  [ys : (Array i64)]
-  [n : i64]) : i64
+(define (mirror-sum [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64
   (if (< n 0)
     (mirror-sum xs ys (+ n 1))
     (let
@@ -60,4 +54,6 @@
         ;; iterations only for i>3: acc = 0+0+0+0+3+2+1 = 6. Stale reads
         ;; (a wrongly surviving element entry) give 0.
         [r2 : i64 (mirror-sum zs zs (+ n 1))]
-        (if (and (= r1 36) (= r2 6)) 42 1)))))
+        (if (and (= r1 36) (= r2 6))
+          42
+          1)))))

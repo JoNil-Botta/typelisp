@@ -13,19 +13,27 @@
 ;; (arg-count) so the optimizer cannot constant-fold the calls away. Correct
 ;; both before (overlapping values spill) and after (each gets its own
 ;; caller-saved register) the generalization -- a reconstruction regression guard.
-
 ;; Recursive on purpose: the opt-2 leaf-inliner inlines a trivial (+ x 1) leaf,
 ;; which would delete the call entirely and leave nothing live across a call --
 ;; defeating the whole test. A self-recursive function is not inlined, so the
 ;; `call` survives. clobber(x) = x+1 for x>=0 (values unchanged, r still 186).
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (spanning [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
-    [e : i64 (+ n 5)] [f : i64 (+ n 6)] [g : i64 (+ n 7)] [h : i64 (+ n 8)]
-    [acc : i64 0] [i : i64 0]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
+    [e : i64 (+ n 5)]
+    [f : i64 (+ n 6)]
+    [g : i64 (+ n 7)]
+    [h : i64 (+ n 8)]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i 4)
         (begin
@@ -47,4 +55,6 @@
     ;; n=1: a..h = 2..9, sum = 44; loop i=0..3 adds 44 (pre-call) + (i+1)
     ;; (clobber) + 44 (post-call) = 89 + i per iteration.
     ;; total = sum_{i=0..3}(89 + i) = (89+90+91+92) = 362
-    (if (= r 362) 42 1)))
+    (if (= r 362)
+      42
+      1)))

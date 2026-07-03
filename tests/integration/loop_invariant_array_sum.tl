@@ -23,9 +23,13 @@
 ;; cannot provide.
 (define (sum-array [items : (Array i64)] [n : i64] [seed : i64]) : i64
   (let
-    [a : i64 (+ seed 1)] [b : i64 (+ seed 2)] [c : i64 (+ seed 3)]
-    [d : i64 (+ seed 4)] [e : i64 (+ seed 5)]
-    [acc : i64 0] [i : i64 0]
+    [a : i64 (+ seed 1)]
+    [b : i64 (+ seed 2)]
+    [c : i64 (+ seed 3)]
+    [d : i64 (+ seed 4)]
+    [e : i64 (+ seed 5)]
+    [acc : i64 0]
+    [i : i64 0]
     (begin
       (while (< i n)
         (begin
@@ -54,7 +58,7 @@
         [r : i64 (sum-array items n seed)]
         ;; closed form: sum_{k=0}^{n-1}(k*10) + n*(a+b+c+d+e)
         ;;            = 5*n*(n-1)            + n*(5*seed + 15)
-        [expected : i64
-          (+ (* 5 (* n (- n 1)))
-             (* n (+ (* 5 seed) 15)))]
-        (if (= r expected) 42 1)))))
+        [expected : i64 (+ (* 5 (* n (- n 1))) (* n (+ (* 5 seed) 15)))]
+        (if (= r expected)
+          42
+          1)))))

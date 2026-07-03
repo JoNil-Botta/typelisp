@@ -26,11 +26,18 @@
 ;; and `expected` is a straight-line closed form -- a reconstruction guard the
 ;; pointer-heavy self-host fixpoint cannot provide.
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (run
   [p : (Array i64)]
-  [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]) : i64
   (let
     ;; REAL call: keeps p and b..g live across it -> 7 call-spanning values > 5
     ;; callee-saved -> p whole-interval-spills.
@@ -59,12 +66,21 @@
       (array-set! p 1 (+ ac 12))
       (array-set! p 2 (+ ac 20))
       (let
-        [b : i64 (+ ac 1)] [c : i64 (+ ac 2)] [d : i64 (+ ac 3)]
-        [e : i64 (+ ac 4)] [f : i64 (+ ac 5)] [g : i64 (+ ac 6)]
+        [b : i64 (+ ac 1)]
+        [c : i64 (+ ac 2)]
+        [d : i64 (+ ac 3)]
+        [e : i64 (+ ac 4)]
+        [f : i64 (+ ac 5)]
+        [g : i64 (+ ac 6)]
         [r : i64 (run p b c d e f g)]
         ;; per iteration the loop adds p[0]+p[1]+p[2] = 3*ac + 42; 3 iterations.
         [psum : i64 (+ (+ ac 10) (+ (+ ac 12) (+ ac 20)))]
         ;; b..g sum = 6*ac + 21; clobber(x) = x+1 for x>=0.
-        [bg : i64 (+ (+ ac 1) (+ (+ ac 2) (+ (+ ac 3) (+ (+ ac 4) (+ (+ ac 5) (+ ac 6))))))]
+        [bg : i64
+          (+
+            (+ ac 1)
+            (+ (+ ac 2) (+ (+ ac 3) (+ (+ ac 4) (+ (+ ac 5) (+ ac 6))))))]
         [expected : i64 (+ (* 3 psum) (+ (+ bg 1) bg))]
-        (if (= r expected) 42 1)))))
+        (if (= r expected)
+          42
+          1)))))

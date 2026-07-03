@@ -26,27 +26,34 @@
 ;; (crash or false), so the wrong id (or none) is returned -> exit 1. Seeded from
 ;; (arg-count) so the optimizer cannot fold the loop, and the key strings are
 ;; distinct heap pointers so the compare must really dereference them.
-
 (defenum Slot
   (SlotEmpty)
   (SlotUsed String i64 i64))
 
 ;; Linear-probe lookup mirroring intern-lookup: walk slots, on a hash hit compare
 ;; the (pointer) key against `name`, and on a key match return the (int) id.
-(define (slot-lookup [slots : (Array Slot)] [n : i64] [name : String] [hash : i64]) : i64
+(define (slot-lookup
+  [slots : (Array Slot)]
+  [n : i64]
+  [name : String]
+  [hash : i64]) : i64
   (let
     [i : i64 0]
     [out : i64 -1]
     [done : bool false]
     (begin
-      (while (if done false (< i n))
+      (while (if done
+        false
+        (< i n))
         (match (array.array-ref slots i)
           [(SlotEmpty)
-            (begin (set! out -1) (set! done true))]
+            (begin
+              (set! out -1)
+              (set! done true))]
           [(SlotUsed slot-key slot-id slot-hash)
             (if (if (= slot-hash hash)
-                  (string-eq slot-key name)
-                  false)
+              (string-eq slot-key name)
+              false)
               (begin
                 (set! out slot-id)
                 (set! done true))
@@ -60,10 +67,10 @@
     [slots : (Array Slot) (array.make-array Slot n)]
     (begin
       ;; Distinct heap key strings; ids offset by the seed so they are not folded.
-      (array.array-set! slots 0 (SlotUsed "alpha"   (+ s 10) 100))
-      (array.array-set! slots 1 (SlotUsed "beta"    (+ s 20) 200))
-      (array.array-set! slots 2 (SlotUsed "gamma"   (+ s 30) 300))
-      (array.array-set! slots 3 (SlotUsed "delta"   (+ s 40) 400))
+      (array.array-set! slots 0 (SlotUsed "alpha" (+ s 10) 100))
+      (array.array-set! slots 1 (SlotUsed "beta" (+ s 20) 200))
+      (array.array-set! slots 2 (SlotUsed "gamma" (+ s 30) 300))
+      (array.array-set! slots 3 (SlotUsed "delta" (+ s 40) 400))
       (array.array-set! slots 4 (SlotUsed "epsilon" (+ s 50) 500))
       (array.array-set! slots 5 (SlotEmpty))
       ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.

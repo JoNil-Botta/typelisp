@@ -15,7 +15,6 @@
 ;;
 ;; The never-taken `poke` branch takes sum-arr's address so no inline path may
 ;; absorb it (a call inside sum-arr would be a real clobber point).
-
 (define (sum-arr [xs : (Array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
@@ -49,4 +48,6 @@
             (poke sum-arr xs n)
             (sum-arr xs n))]
         ;; array sum = 3*(0+1+2+3) = 18; n added per iteration = 16. total 34.
-        (if (= r 34) 42 1)))))
+        (if (= r 34)
+          42
+          1)))))

@@ -17,10 +17,11 @@
 ;; corrupts the result; 5 call-spanning CSR candidates + 1 spill exercise
 ;; mixed register/frame sources. Depth 2,000,010 overflows the stack unless
 ;; the tail jmp path is intact (TCO regression also fails the 42 check).
-
 ;; Recursive on purpose so the leaf inliner cannot delete it: probe(x) = x.
 (define (probe [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (probe (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (probe (- x 1)))))
 
 ;; Swap a/b each hop; c accumulates probe(7)=7 on a-hops and 3 on b-hops.
 (define (spin-a [a : i64] [b : i64] [c : i64] [n : i64]) : i64
@@ -59,5 +60,7 @@
     ;; r2: n2=2000010 hops; each element += 4*(n2/10) = 800004; weights sum 15
     ;;     -> 55 + 15*800004 = 12000115.
     (if (= r1 5000017)
-      (if (= r2 12000115) 42 2)
+      (if (= r2 12000115)
+        42
+        2)
       1)))

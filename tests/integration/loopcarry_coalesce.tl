@@ -22,12 +22,13 @@
 ;; is a closed form (count of scan < threshold), a reconstruction guard the
 ;; pointer-heavy self-host fixpoint cannot provide. Seeded from (arg-count) so the
 ;; optimizer cannot constant-fold the loop away.
-
 ;; Recursive on purpose: the opt-2 leaf-inliner would inline a trivial leaf and
 ;; delete the call, defeating the call-spanning shape. A self-recursive function
 ;; is not inlined, so the `call` survives the loop body. sink(k) = k (>= 0).
 (define (sink [x : i64]) : i64
-  (if (<= x 0) 0 (+ 1 (sink (- x 1)))))
+  (if (<= x 0)
+    0
+    (+ 1 (sink (- x 1)))))
 
 (define (count-below [xs : (Array i64)] [n : i64] [pivot : i64]) : i64
   (let

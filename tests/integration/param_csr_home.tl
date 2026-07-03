@@ -10,11 +10,12 @@
 ;; loop body must contain NO stack reload of either param. The runtime check
 ;; guards reconstruction (wrong home / clobbered CSR -> wrong sum -> exit 1);
 ;; target/param-csr-gate.sh additionally asserts the asm shape.
-
 ;; Recursive on purpose: a trivial leaf would be inlined at opt2, deleting the
 ;; call and the clobber point with it. bump(i) = i+1 for i >= 0.
 (define (bump [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (bump (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (bump (- x 1)))))
 
 (define (param-loop [xs : (Array i64)] [n : i64]) : i64
   (let
@@ -46,4 +47,6 @@
         [r : i64 (param-loop xs n)]
         ;; n=4 (no args): array sum = 3*(0+1+2+3) = 18; bump(i) sums 1+2+3+4 =
         ;; 10; n added per iteration = 16. total = 44.
-        (if (= r 44) 42 1)))))
+        (if (= r 44)
+          42
+          1)))))

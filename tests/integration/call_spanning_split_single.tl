@@ -28,20 +28,31 @@
 ;; call-spanning value in a register across its post-call sub-range here.
 ;; Contrast call_spanning_split.tl (multi-block/loop): there a..h are
 ;; boundary-vars, excluded for soundness (#81).
-
 (define (clobber [x : i64]) : i64
-  (if (<= x 0) 1 (+ 1 (clobber (- x 1)))))
+  (if (<= x 0)
+    1
+    (+ 1 (clobber (- x 1)))))
 
 (define (spanning [n : i64]) : i64
   (let
-    [a : i64 (+ n 1)] [b : i64 (+ n 2)] [c : i64 (+ n 3)] [d : i64 (+ n 4)]
-    [e : i64 (+ n 5)] [f : i64 (+ n 6)] [g : i64 (+ n 7)] [h : i64 (+ n 8)]
+    [a : i64 (+ n 1)]
+    [b : i64 (+ n 2)]
+    [c : i64 (+ n 3)]
+    [d : i64 (+ n 4)]
+    [e : i64 (+ n 5)]
+    [f : i64 (+ n 6)]
+    [g : i64 (+ n 7)]
+    [h : i64 (+ n 8)]
     [k : i64 (clobber n)]
     ;; one call (clobber); each of a..h read 4x after it, straight-line:
-    (+ k
-      (+ (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
-        (+ (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
-          (+ (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
+    (+
+      k
+      (+
+        (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
+        (+
+          (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
+          (+
+            (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
             (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))))))))
 
 (define (main) : i64
@@ -49,4 +60,6 @@
     [n : i64 (arg-count)]
     [r : i64 (spanning n)]
     ;; n=1: a..h = 2..9, each sum = 44; k = clobber(1) = 2; r = 2 + 4*44 = 178
-    (if (= r 178) 42 1)))
+    (if (= r 178)
+      42
+      1)))

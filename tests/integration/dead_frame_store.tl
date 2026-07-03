@@ -21,7 +21,6 @@
 ;; `relay` forwards the previous call's result straight into a tail call (arg
 ;; register), a second peephole-orphaned-store shape (the dst-home store's
 ;; only read is forwarded to %rdi). `keep` sums both so neither is DCE'd.
-
 (define (grab [seed : i64]) : i64
   (if (< seed -999999)
     (grab (- seed 1))
@@ -29,7 +28,9 @@
       (syscall 39))))
 
 (define (echo-id [x : i64]) : i64
-  (if (< x -999999) (echo-id (- x 1)) x))
+  (if (< x -999999)
+    (echo-id (- x 1))
+    x))
 
 (define (relay [seed : i64]) : i64
   (echo-id (grab seed)))
@@ -40,4 +41,6 @@
     [b : i64 (relay 0)]
     ;; getpid returns the same positive pid for both; require > 0 so the
     ;; result is exercised but the exact value is not pinned.
-    (if (and (> a 0) (> b 0)) 42 1)))
+    (if (and (> a 0) (> b 0))
+      42
+      1)))

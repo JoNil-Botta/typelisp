@@ -4,7 +4,7 @@
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
 (import stdlib.io)
 (import stdlib.process)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")

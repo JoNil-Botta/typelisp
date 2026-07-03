@@ -1,6 +1,6 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl (#426).
 (import stdlib.io)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../compiler_typecheck.tl")
 (import stdlib.string)
 (import sym_i64_env)

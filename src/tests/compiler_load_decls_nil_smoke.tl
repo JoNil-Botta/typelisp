@@ -1,5 +1,5 @@
 ;; compiler_load_decls_nil_smoke.tl - Regression for #3172.
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../compiler_load.tl")
 (import sym_i64_env)
 

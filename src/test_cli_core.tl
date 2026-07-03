@@ -10,7 +10,7 @@
 (import stdlib.arena)
 (import stdlib.process)
 (import stdlib.hashmap)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import "compiler_load.tl")

@@ -6,7 +6,7 @@
 ;; explicit future work.
 (import stdlib.io)
 (import stdlib.arena)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_typecheck.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")

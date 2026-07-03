@@ -14,7 +14,7 @@
 ;; diagnostic when one is available.
 (import stdlib.io)
 (import stdlib.process)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")

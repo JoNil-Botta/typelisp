@@ -1,7 +1,7 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.json)
 (import stdlib.string)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains?

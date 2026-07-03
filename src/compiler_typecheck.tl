@@ -1,6 +1,6 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")

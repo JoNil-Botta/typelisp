@@ -3,7 +3,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)

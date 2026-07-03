@@ -41443,6 +41443,11 @@
 (define macro-expand-ctfe-env-value : CtfeEnv
   (ctfe-env-empty))
 
+(define (compiler-typecheck-ctfe-env-cache-clear!) : unit
+  (begin
+    (set! macro-expand-ctfe-env-ready false)
+    (set! macro-expand-ctfe-env-value (ctfe-env-empty))))
+
 ;; Whether the current compile needs the CTFE reflection/layout metadata at all
 ;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
 ;; macro-expand-program; when false, tc-ctfe-env returns an empty env and skips

@@ -1506,6 +1506,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_reset-type-literal-tracking : unit
+      (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-with-runtime-with-pools
       input-path
       stdlib-roots
@@ -1519,10 +1521,12 @@
           (compiler-driver-state-install-pools! state)
           (let
             [release-source-pools? : bool
+              (compiler-driver-state-can-release-checked-lower-source-pools?
+                state)]
+            [defer-source-destroy? : bool
               (and
-                (compiler-driver-state-can-release-checked-lower-source-pools?
-                  state)
-                (not (ctfe-program-has-type-literal? decls)))]
+                release-source-pools?
+                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1537,7 +1541,9 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (compiler-driver-state-owned-pool-arena state))
+                  (if defer-source-destroy?
+                    0
+                    (compiler-driver-state-owned-pool-arena state)))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1564,6 +1570,13 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_destroy-deferred-source : unit
+              (if (and defer-source-destroy? dest-committed?)
+                (begin
+                  (compiler-typecheck-ctfe-env-cache-clear!)
+                  (unsafe
+                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?
@@ -1609,6 +1622,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_reset-type-literal-tracking : unit
+      (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
       input-path
       stdlib-roots
@@ -1622,10 +1637,12 @@
           (compiler-driver-state-install-pools! state)
           (let
             [release-source-pools? : bool
+              (compiler-driver-state-can-release-checked-lower-source-pools?
+                state)]
+            [defer-source-destroy? : bool
               (and
-                (compiler-driver-state-can-release-checked-lower-source-pools?
-                  state)
-                (not (ctfe-program-has-type-literal? decls)))]
+                release-source-pools?
+                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1640,7 +1657,9 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (compiler-driver-state-owned-pool-arena state))
+                  (if defer-source-destroy?
+                    0
+                    (compiler-driver-state-owned-pool-arena state)))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1667,6 +1686,13 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_destroy-deferred-source : unit
+              (if (and defer-source-destroy? dest-committed?)
+                (begin
+                  (compiler-typecheck-ctfe-env-cache-clear!)
+                  (unsafe
+                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?

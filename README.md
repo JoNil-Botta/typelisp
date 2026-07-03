@@ -666,6 +666,8 @@ primitives kept for legacy code. The staged lint rule is available with
 `typelisp lint --deprecated-string-concat` while the remaining in-tree
 migrations land. `typelisp lint --redundant-function-name` enables the staged
 rule for functions or macros that repeat their module prefix in the local name.
+`typelisp lint --prefer-dotted-field` enables the staged rule that prefers
+`p.field` and `(set! p.field value)` over simple local `struct-get` forms.
 
 ### Memory and aliasing
 

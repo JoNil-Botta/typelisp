@@ -310,6 +310,50 @@
     (set! s (B x 2))
     x))")
 
+(define (lint-driver-smoke-prefer-dotted-field-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point]) : i64
+  (struct-get p x))")
+
+(define (lint-driver-smoke-prefer-dotted-field-set-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! (struct-get p x) y)
+    y))")
+
+(define (lint-driver-smoke-suppressed-prefer-dotted-field-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point]) : i64
+  ;; lint-allow: prefer-dotted-field
+  (struct-get p x))")
+
+(define (lint-driver-smoke-complex-prefer-dotted-field-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [items : (Array Point)]) : i64
+  (struct-get (array-ref items 0) x))")
+
+(define (lint-driver-smoke-nested-prefer-dotted-field-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(defstruct Outer
+  (inner Point))
+(define (main [p : Outer]) : i64
+  (struct-get (struct-get p inner) x))")
+
+(define (lint-driver-smoke-quoted-prefer-dotted-field-source) : String
+  "(defmacro (build [p : Expr]) : Expr
+  `(struct-get ,p x))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -326,6 +370,17 @@
     source
     (svec.new)
     false
+    true
+    false))
+
+(define (lint-driver-smoke-source-findings-with-prefer-dotted-field
+  [source : String]) : LintFindings
+  (selfhost-lint-source-with-roots-and-staged-options
+    "lint_driver_smoke_test.tl"
+    source
+    (svec.new)
+    false
+    false
     true))
 
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
@@ -333,6 +388,13 @@
   [rule : String]) : i64
   (selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-redundant-function-name source)
+    rule))
+
+(define (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+  [source : String]
+  [rule : String]) : i64
+  (selfhost-lint-findings-rule-count
+    (lint-driver-smoke-source-findings-with-prefer-dotted-field source)
     rule))
 
 (define (lint-driver-smoke-string-concat-finding-ok?
@@ -374,6 +436,22 @@
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
+          (= (struct-get fspan start-line) line)
+          (string.eq (struct-get finding rule-id) rule-id)))]
+    [(LintMaybeFinding.No) false]))
+
+(define (lint-driver-smoke-finding-rule-depth-line-ok?
+  [findings : LintFindings]
+  [index : i64]
+  [rule-id : String]
+  [depth : i64]
+  [line : i64]) : bool
+  (match (lint-findings-get findings index)
+    [(LintMaybeFinding.Some finding)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) depth)
           (= (struct-get fspan start-line) line)
           (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
@@ -739,6 +817,75 @@
         89]
       [else 42])))
 
+(define (lint-driver-smoke-prefer-dotted-field-self-test) : i64
+  (let
+    [rule : String (lint-rule-prefer-dotted-field-id)]
+    [reported : LintFindings
+      (lint-driver-smoke-source-findings-with-prefer-dotted-field
+        (lint-driver-smoke-prefer-dotted-field-source))]
+    [set-reported : LintFindings
+      (lint-driver-smoke-source-findings-with-prefer-dotted-field
+        (lint-driver-smoke-prefer-dotted-field-set-source))]
+    (cond
+      [(not (= (selfhost-lint-findings-rule-count reported rule) 1)) 90]
+      [(not (lint-driver-smoke-finding-rule-depth-line-ok? reported 0 rule 0 5))
+        91]
+      [(not (= (selfhost-lint-findings-rule-count set-reported rule) 1)) 92]
+      [(not
+          (lint-driver-smoke-finding-rule-depth-line-ok?
+            set-reported
+            0
+            rule
+            1
+            6))
+        93]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-prefer-dotted-field-source)
+              rule)
+            0))
+        94]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+              (lint-driver-smoke-suppressed-prefer-dotted-field-source)
+              rule)
+            0))
+        95]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+              (lint-driver-smoke-complex-prefer-dotted-field-source)
+              rule)
+            0))
+        96]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+              (lint-driver-smoke-nested-prefer-dotted-field-source)
+              rule)
+            0))
+        97]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
+              (lint-driver-smoke-quoted-prefer-dotted-field-source)
+              rule)
+            0))
+        98]
+      [(not
+          (string.eq
+            (lint-rule-message rule)
+            (lint-rule-prefer-dotted-field-message)))
+        99]
+      [(not
+          (string.eq
+            (lint-rule-suggestion rule)
+            (lint-rule-prefer-dotted-field-suggestion)))
+        100]
+      [else 42])))
+
 (define (lint-driver-smoke-redundant-import-alias-self-test) : i64
   (let
     [rule : String (lint-rule-redundant-import-alias-id)]
@@ -886,7 +1033,12 @@
                                                       (if (=
                                                         unused-unsafe-result
                                                         42)
-                                                        (lint-driver-smoke-copy-on-update-struct-self-test)
+                                                        (let
+                                                          [copy-result : i64
+                                                            (lint-driver-smoke-copy-on-update-struct-self-test)]
+                                                          (if (= copy-result 42)
+                                                            (lint-driver-smoke-prefer-dotted-field-self-test)
+                                                            copy-result))
                                                         unused-unsafe-result))
                                                     unused-variable-result))
                                                 divergence-result))

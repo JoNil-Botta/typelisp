@@ -2,7 +2,7 @@
 ;; the full load -> lint -> render path on an embedded source and returns 42.
 (import stdlib.io)
 (import stdlib.string)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../lint_driver_core.tl")
 
 (define (lint-driver-smoke-string-concat-source) : String

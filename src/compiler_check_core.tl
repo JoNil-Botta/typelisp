@@ -1,7 +1,7 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
 (import stdlib.io)
 (import stdlib.string)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")

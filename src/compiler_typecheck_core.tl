@@ -15,7 +15,7 @@
 (import "read.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))

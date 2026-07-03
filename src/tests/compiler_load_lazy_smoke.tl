@@ -1,6 +1,6 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes (#3871).
 (import stdlib.io)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../compiler_load.tl")
 (import sym_i64_env)
 

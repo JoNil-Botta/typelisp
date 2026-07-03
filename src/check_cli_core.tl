@@ -4,7 +4,7 @@
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")

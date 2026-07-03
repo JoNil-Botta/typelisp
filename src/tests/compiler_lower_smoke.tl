@@ -2,7 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 

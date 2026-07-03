@@ -6,7 +6,7 @@
 ;; path to exit non-zero when findings remain. The deprecated string.concat rule
 ;; and staged migration rules are opt-in until their in-tree migrations land.
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")

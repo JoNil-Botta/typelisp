@@ -8,7 +8,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.json)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")

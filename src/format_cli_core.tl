@@ -4,7 +4,7 @@
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import string_vec_core as svec)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 (import stdlib.string)

@@ -18652,7 +18652,8 @@
 ;; saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
 (define (compiler-backend-arg-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : String
+  [moves : CompilerBackendArgMoveList]
+  [all : CompilerBackendArgMoveList]) : String
   (let
     [point : i64
       (*
@@ -18662,8 +18663,22 @@
           compiler-backend-emit-current-count))]
     [occupied-mask : i64
       (compiler-backend-scavenge-occupied-mask-at-point point)]
+    ;; The cycle-break Temp must avoid every register the marshalling still needs:
+    ;; the sources/dests of the REMAINING moves (incl. redirect temps), AND every
+    ;; destination of the ORIGINAL move list. An already-emitted move has placed a
+    ;; final arg value into its dest register (live until the call), but that dest
+    ;; is no longer in `moves`, so excluding only `moves` could pick it as the Temp
+    ;; and clobber a placed argument (the sret/rcx<->r9 tail-call cycle bug). The
+    ;; occupancy mask reflects the allocation, not these marshalling transients.
+    ;; --cfg arg-temp-legacy forces the OLD (unsound) `moves`-only mask so the
+    ;; forcing gate can build a compiler that reproduces the miscompile.
     [exclude-mask : i64
-      (compiler-backend-arg-move-list-exclude-mask assignments moves)]
+      (cfg
+        arg-temp-legacy
+        (compiler-backend-arg-move-list-exclude-mask assignments moves)
+        (bit-or
+          (compiler-backend-arg-move-list-exclude-mask assignments moves)
+          (compiler-backend-arg-move-list-exclude-mask assignments all)))]
     [cands : (Array String) compiler-backend-scavenge-candidate-pool]
     (compiler-backend-phi-temp-pick-reg-iter
       occupied-mask
@@ -18676,6 +18691,16 @@
 (define (compiler-backend-emit-arg-move-list
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]) : ResultCompilerBackend
+  (compiler-backend-emit-arg-move-list-with-all assignments moves moves))
+
+;; `all` is the ORIGINAL (top-level) move list, carried unchanged through the
+;; recursion so the cycle-break Temp pick can exclude every destination register
+;; of the whole marshalling -- including those of already-emitted moves, which
+;; still hold placed argument values that must survive to the call.
+(define (compiler-backend-emit-arg-move-list-with-all
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]
+  [all : CompilerBackendArgMoveList]) : ResultCompilerBackend
   (match moves
     [(BackendArgMoveNil) (ResultCompilerBackend.Ok "")]
     [(BackendArgMoveCons first _)
@@ -18685,9 +18710,10 @@
             [(BackendArgMove dest _)
               (match (compiler-backend-emit-arg-move assignments move)
                 [(ResultCompilerBackend.Ok head)
-                  (match (compiler-backend-emit-arg-move-list
+                  (match (compiler-backend-emit-arg-move-list-with-all
                     assignments
-                    (compiler-backend-arg-move-list-remove moves dest))
+                    (compiler-backend-arg-move-list-remove moves dest)
+                    all)
                     [(ResultCompilerBackend.Ok tail)
                       (ResultCompilerBackend.Ok (string.append head tail))]
                     [(ResultCompilerBackend.Err m)
@@ -18704,9 +18730,10 @@
                 (if (string.eq srcreg "")
                   (match (compiler-backend-emit-arg-move assignments first)
                     [(ResultCompilerBackend.Ok head)
-                      (match (compiler-backend-emit-arg-move-list
+                      (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
-                        (compiler-backend-arg-move-list-remove moves dest))
+                        (compiler-backend-arg-move-list-remove moves dest)
+                        all)
                         [(ResultCompilerBackend.Ok tail)
                           (ResultCompilerBackend.Ok (string.append head tail))]
                         [(ResultCompilerBackend.Err m)
@@ -18722,7 +18749,7 @@
                       (cfg
                         arg-cycle-stack
                         ""
-                        (compiler-backend-arg-temp-pick-reg assignments moves))]
+                        (compiler-backend-arg-temp-pick-reg assignments moves all))]
                     (if (string.eq picked "")
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the STACK -- `pushq srcreg` saves its value before
@@ -18735,12 +18762,13 @@
                       ;; replaces the old raw `movq srcreg, %r11` fallback, which was
                       ;; neither occupancy-checked nor save/restore-wrapped and could
                       ;; clobber a value homed in %r11 (SCAV1).
-                      (match (compiler-backend-emit-arg-move-list
+                      (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
                         (compiler-backend-arg-move-list-redirect-to-stack
                           assignments
                           moves
-                          srcreg))
+                          srcreg)
+                        all)
                         [(ResultCompilerBackend.Ok tail)
                           (ResultCompilerBackend.Ok
                             (string.append
@@ -18748,13 +18776,14 @@
                               tail))]
                         [(ResultCompilerBackend.Err m)
                           (ResultCompilerBackend.Err m)])
-                      (match (compiler-backend-emit-arg-move-list
+                      (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
                         (compiler-backend-arg-move-list-redirect
                           assignments
                           moves
                           srcreg
-                          picked))
+                          picked)
+                        all)
                         [(ResultCompilerBackend.Ok tail)
                           (ResultCompilerBackend.Ok
                             (string.append

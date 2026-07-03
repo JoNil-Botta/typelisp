@@ -1824,6 +1824,7 @@
                       true
                       false)]
                   (and
+                    (> (ast-node-pool-context-expr-len pools-a) 0)
                     (> (ast-node-pool-context-type-len pools-a) 0)
                     (= active-type-len-before 2)
                     (= (ty-node-pool-len) active-type-len-before)

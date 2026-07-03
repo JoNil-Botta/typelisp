@@ -1291,7 +1291,7 @@
   (if (tc-dotted-local-field-name? type-env name)
     (match (tc-dotted-local-field-expr-id type-env name)
       [(ResultTcExprId.Ok virtual-id)
-        (tc-expr ctx type-env (ast-node-get virtual-id))]
+        (tc-expr ctx type-env (lower-context-expr-get ctx virtual-id))]
       [(ResultTcExprId.Err message) (ResultTcType.Err message)])
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
@@ -11532,7 +11532,7 @@
                 state
                 env
                 type-env
-                (ast-node-get virtual-id)
+                (lower-context-expr-get ctx virtual-id)
                 origin
                 result-ty)]
             [(ResultTcExprId.Err message)
@@ -11548,7 +11548,7 @@
             result-ty)))]
     [(AstExpr.StructGet receiver-box field)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
+        [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
         (lower-borrow-struct-field-address
           ctx
           state
@@ -11560,7 +11560,7 @@
           result-ty))]
     [(AstExpr.TupleRef tuple-expr-box index)
       (let
-        [tuple-expr : AstExpr (ast-node-get tuple-expr-box)]
+        [tuple-expr : AstExpr (lower-context-expr-get ctx tuple-expr-box)]
         (lower-borrow-tuple-field-address
           ctx
           state
@@ -11572,8 +11572,8 @@
           result-ty))]
     [(AstExpr.ArrayRef arr-box index-box)
       (let
-        [arr : AstExpr (ast-node-get arr-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
         (lower-borrow-array-element-address
           ctx
           state
@@ -11585,7 +11585,7 @@
           result-ty))]
     [(AstExpr.BoxGet box-box)
       (let
-        [box-expr : AstExpr (ast-node-get box-box)]
+        [box-expr : AstExpr (lower-context-expr-get ctx box-box)]
         (lower-box-storage-address
           ctx
           state
@@ -15636,7 +15636,8 @@
         result-ty)
       (if (= (struct-get (& args) len) 1)
         (let
-          [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          [arg : AstExpr
+            (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
           (match (lower-expr ctx state env type-env arg)
             [(ResultLowerExpr.Ok lowered)
               (match lowered
@@ -15680,7 +15681,8 @@
   [result-ty : AstType]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 1)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -16386,11 +16388,13 @@
           (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-call-explicit-mut-borrow-var-name [arg : AstExpr]) : TcMaybeString
+(define (lower-call-explicit-mut-borrow-var-name
+  [ctx : TcContext]
+  [arg : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan arg)
     [(AstExpr.Borrow mutable _ place-box)
       (if mutable
-        (match (ast-expr-unspan (ast-node-get place-box))
+        (match (ast-expr-unspan (lower-context-expr-get ctx place-box))
           [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
           [_ TcMaybeString.No])
         TcMaybeString.No)]
@@ -16485,7 +16489,7 @@
     [(ResultTcExpr.Ok effective-arg)
       (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
         [(AstType.MutRef _ _)
-          (match (lower-call-explicit-mut-borrow-var-name effective-arg)
+          (match (lower-call-explicit-mut-borrow-var-name ctx effective-arg)
             [(TcMaybeString.Some name)
               (lower-call-arg-mut-borrow-var-as
                 ctx
@@ -16597,7 +16601,8 @@
       (ResultLowerCallArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch")))
       (let
-        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [arg : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
         [expected : AstType (tc-context-type-get ctx expected-id)]
@@ -16698,7 +16703,8 @@
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch")))
       (let
-        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [arg : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
         [expected : AstType (tc-context-type-get ctx expected-id)]
@@ -17962,7 +17968,9 @@
                       env
                       type-env
                       type-cache
-                      (ast-node-get (ast-expr-list-get (& args) 0 0)))
+                      (lower-context-expr-get
+                        ctx
+                        (ast-expr-list-get (& args) 0 0)))
                     (ResultTcType.Err
                       "lower: call result type is not fast-pathable"))]
                 [else (ResultTcType.Err message)])
@@ -17971,7 +17979,7 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (match (tc-lambda-expr-allow-ref-captures
               ctx
               type-env
@@ -18102,7 +18110,7 @@
         env
         type-env
         type-cache
-        (ast-node-get (ast-expr-list-get (& exprs) (- len 1) 0))))))
+        (lower-context-expr-get ctx (ast-expr-list-get (& exprs) (- len 1) 0))))))
 
 (define (lower-pattern-list-bind-local-names
   [env : sym_i64_env.SymI64Env]
@@ -18163,7 +18171,7 @@
   (match arm
     [(AstMatchArm.Arm pattern body-box)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (lower-context-expr-get ctx body-box)]
         (match (tc-bind-match-pattern ctx type-env scrut-ty pattern)
           [(ResultTcEnv.Ok arm-type-env)
             (lower-expr-result-type-fast
@@ -18273,7 +18281,7 @@
             (match (box-get lambda-box)
               [(AstLambda.Lambda params maybe-ret body-box)
                 (let
-                  [body : AstExpr (ast-node-get body-box)]
+                  [body : AstExpr (lower-context-expr-get ctx body-box)]
                   (tc-lambda-expr-allow-ref-captures
                     ctx
                     type-env
@@ -20639,7 +20647,8 @@
       (ResultLowerState.Err
         (box (lower-diagnostic "lower: tuple arity mismatch")))
       (let
-        [value : AstExpr (ast-node-get (ast-expr-list-get values index 0))]
+        [value : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get values index 0))]
         [ty : AstType
           (tc-context-type-get
             ctx
@@ -20748,7 +20757,8 @@
   (if (>= value-index (struct-get values len))
     (ResultLowerState.Ok state)
     (let
-      [value : AstExpr (ast-node-get (ast-expr-list-get values value-index 0))]
+      [value : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get values value-index 0))]
       (if (> elem-size 0)
         (match (lower-direct-store-rhs-at-offset
           ctx
@@ -21943,7 +21953,8 @@
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch")))
       (let
-        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [arg : AstExpr
+          (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
         [expected : AstType (tc-context-type-get ctx expected-id)]
@@ -23050,9 +23061,12 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 3)
     (let
-      [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      [start : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
-      [len : AstExpr (ast-node-get (ast-expr-list-get (& args) 2 0))]
+      [str : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      [start : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
+      [len : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 2 0))]
       (lower-substring ctx state env type-env str start len))
     (lower-direct-call ctx state env type-env name args result-ty origin)))
 
@@ -23067,8 +23081,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 2)
     (let
-      [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [left : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      [right : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
       (lower-string-concat ctx state env type-env left right))
     (lower-direct-call ctx state env type-env name args result-ty origin)))
 
@@ -23117,7 +23133,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 1)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -23645,7 +23662,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 1)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -23685,7 +23703,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 1)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -23718,8 +23737,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 2)
     (let
-      [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [left : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      [right : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
       (match (lower-expr ctx state env type-env left)
         [(ResultLowerExpr.Ok lowered-left)
           (match lowered-left
@@ -23801,8 +23822,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 2)
     (let
-      [str : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [str : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      [index : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
       (lower-string-ref ctx state env type-env str index))
     (lower-direct-call ctx state env type-env name args result-ty origin)))
 
@@ -24082,7 +24105,7 @@
     (match value
       [(AstExpr.Spanned inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-direct-store-rhs-into
             ctx
             state
@@ -24094,7 +24117,7 @@
             origin))]
       [(AstExpr.Ann inner-box _)
         (let
-          [inner : AstExpr (ast-node-get inner-box)]
+          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-direct-store-rhs-into
             ctx
             state
@@ -24116,7 +24139,7 @@
           origin)]
       [(AstExpr.Call func-box args)
         (let
-          [func : AstExpr (ast-node-get func-box)]
+          [func : AstExpr (lower-context-expr-get ctx func-box)]
           (match (ast-expr-unspan func)
             [(AstExpr.Var name)
               (lower-direct-constructor-call-into
@@ -24192,7 +24215,7 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (match (tc-lambda-expr-allow-ref-captures
               ctx
               type-env
@@ -24480,7 +24503,9 @@
                               state
                               env
                               type-env
-                              (ast-node-get (ast-expr-list-get (& args) 0 0)))
+                              (lower-context-expr-get
+                                ctx
+                                (ast-expr-list-get (& args) 0 0)))
                             (ResultLowerExpr.Err
                               (box
                                 (lower-diagnostic
@@ -24591,7 +24616,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 1)
     (let
-      [arr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [arr : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       (match (lower-expr-result-type-fast
         ctx
         env
@@ -24954,8 +24980,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 2)
     (let
-      [leaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      [subleaf : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+      [leaf : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      [subleaf : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
       (match (lower-integer-expr-with-expected-or-actual
         ctx
         state
@@ -25016,7 +25044,7 @@
       state
       env
       type-env
-      (ast-node-get (ast-expr-list-get (& args) 0 0)))
+      (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0)))
     (ResultLowerExpr.Err
       (box
         (lower-diagnostic-at-expr origin "lower: xgetbv expects one argument")))))
@@ -25343,7 +25371,8 @@
   [tail : AstExprList]) : ResultLowerExpr
   (if (= (struct-get (& tail) len) 1)
     (let
-      [new-value : AstExpr (ast-node-get (ast-expr-list-get (& tail) 0 0))]
+      [new-value : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& tail) 0 0))]
       (match (lower-expr-expected
         ctx
         state
@@ -25383,7 +25412,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (> (struct-get (& tail0) len) 0)
     (let
-      [value : AstExpr (ast-node-get (ast-expr-list-get (& tail0) 0 0))]
+      [value : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& tail0) 0 0))]
       [tail1 : AstExprList (ast-expr-list-tail-from-ref (& tail0) 1)]
       (match (lower-expr-expected ctx state env type-env value elem-ty value)
         [(ResultLowerExpr.Ok value-lowered)
@@ -25474,7 +25504,8 @@
   [origin : AstExpr]) : ResultLowerExpr
   (if (> (struct-get (& args) len) 0)
     (let
-      [ptr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      [ptr : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       [tail0 : AstExprList (ast-expr-list-tail-from-ref (& args) 1)]
       (match (tc-expr ctx type-env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -25697,8 +25728,10 @@
             (lower-diagnostic
               "lower: atomic helper expects at least two arguments")))
         (let
-          [array : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-          [index : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
+          [array : AstExpr
+            (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+          [index : AstExpr
+            (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
           (if (lower-atomic-load-symbol? symbol)
             (if (= count 2)
               (lower-atomic-call-load
@@ -25724,7 +25757,7 @@
                 symbol
                 array
                 index
-                (ast-node-get (ast-expr-list-get (& args) 2 0))
+                (lower-context-expr-get ctx (ast-expr-list-get (& args) 2 0))
                 elem-ty
                 result-ty
                 origin)
@@ -26975,7 +27008,7 @@
                 state
                 env
                 type-env
-                (ast-node-get virtual-id)
+                (lower-context-expr-get ctx virtual-id)
                 origin)]
             [(ResultTcExprId.Err message)
               (ResultLowerExpr.Err
@@ -26983,7 +27016,7 @@
           (lower-mutable-var-address-id ctx state env type-env name origin)))]
     [(AstExpr.StructGet receiver-box field)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
+        [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
         (match (lower-mutable-place-address
           ctx
           state
@@ -27004,7 +27037,7 @@
           [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
     [(AstExpr.TupleRef tuple-box index)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
+        [tuple : AstExpr (lower-context-expr-get ctx tuple-box)]
         (match (lower-mutable-place-address ctx state env type-env tuple origin)
           [(ResultLowerExpr.Ok lowered)
             (match lowered
@@ -27019,8 +27052,8 @@
           [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
     [(AstExpr.ArrayRef arr-box index-box)
       (let
-        [arr : AstExpr (ast-node-get arr-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
         (lower-mutable-array-element-address
           ctx
           state
@@ -27031,7 +27064,7 @@
           origin))]
     [(AstExpr.BoxGet box-box)
       (let
-        [box-expr : AstExpr (ast-node-get box-box)]
+        [box-expr : AstExpr (lower-context-expr-get ctx box-box)]
         (match (lower-expr-result-type-or-check
           ctx
           env
@@ -27873,7 +27906,8 @@
   (if (>= index (struct-get args len))
     (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -27934,7 +27968,8 @@
   (if (>= index (struct-get args len))
     (ResultLowerArgs.Ok state CompilerIrValueList.Nil)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
       (match (lower-expr ctx state env type-env arg)
         [(ResultLowerExpr.Ok lowered)
           (match lowered
@@ -27970,7 +28005,7 @@
             (match (box-get lambda-box)
               [(AstLambda.Lambda params lambda-ret body-box)
                 (let
-                  [body : AstExpr (ast-node-get body-box)]
+                  [body : AstExpr (lower-context-expr-get ctx body-box)]
                   [expected-ty : AstType
                     (tc-type-without-regions (tc-resolve-type ctx ty))]
                   (match (lower-lambda
@@ -28018,7 +28053,7 @@
             (match (box-get lambda-box)
               [(AstLambda.Lambda params lambda-ret body-box)
                 (let
-                  [body : AstExpr (ast-node-get body-box)]
+                  [body : AstExpr (lower-context-expr-get ctx body-box)]
                   (match (tc-lambda-expr-allow-ref-captures
                     ctx
                     type-env
@@ -28123,8 +28158,8 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box cleanup-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (lower-context-expr-get ctx init-box)]
+          [cleanup : AstExpr (lower-context-expr-get ctx cleanup-box)]
           (match (tc-resource-cleanup-resource-type ctx type-env cleanup)
             [(ResultTcType.Ok expected-init-ty)
               (match (lower-expr-expected
@@ -29073,40 +29108,69 @@
 ;; Per-iteration accumulator update for an associative binop fold
 ;; (`sum`/`all`/`any`): `(set! acc (<op> acc value))`. `value` appears once so it
 ;; is evaluated exactly once per iteration.
-(define (spmd-reduce-acc-binop-update [op : AstBinOp] [value : i64]) : i64
-  (ast-expr-set
+(define (spmd-reduce-acc-binop-update
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [value : i64]) : i64
+  (ast-expr-set-with-pools
+    pools
     (lower-spmd-reduce-acc-name)
-    (ast-expr-binary
+    (ast-expr-binary-with-pools
+      pools
       op
-      (ast-node-push (AstExpr.Var (lower-spmd-reduce-acc-id)))
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Var (lower-spmd-reduce-acc-id)))
       value)))
 
 ;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
 ;; once into a temp, then keep it when `(<cmp> val acc)` holds, else keep `acc`.
 ;; The temp keeps `value` to a single evaluation even though the select names it
 ;; twice.
-(define (spmd-reduce-acc-select-update [cmp : AstBinOp] [value : i64]) : i64
-  (ast-expr-let
+(define (spmd-reduce-acc-select-update
+  [pools : AstNodePoolContext]
+  [cmp : AstBinOp]
+  [value : i64]) : i64
+  (ast-expr-let-with-pools
+    pools
     (ast-let-binding-cons
       (ast-let-binding (lower-spmd-reduce-val-name) (AstMaybeType.No) value)
       (ast-let-binding-list-new))
-    (ast-expr-set
+    (ast-expr-set-with-pools
+      pools
       (lower-spmd-reduce-acc-name)
-      (ast-expr-if
-        (ast-expr-binary
+      (ast-expr-if-with-pools
+        pools
+        (ast-expr-binary-with-pools
+          pools
           cmp
-          (ast-node-push (AstExpr.Var (lower-spmd-reduce-val-id)))
-          (ast-node-push (AstExpr.Var (lower-spmd-reduce-acc-id))))
-        (ast-node-push (AstExpr.Var (lower-spmd-reduce-val-id)))
-        (ast-node-push (AstExpr.Var (lower-spmd-reduce-acc-id)))))))
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.Var (lower-spmd-reduce-val-id)))
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.Var (lower-spmd-reduce-acc-id))))
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Var (lower-spmd-reduce-val-id)))
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Var (lower-spmd-reduce-acc-id)))))))
 
-(define (spmd-reduce-acc-update-expr [op : AstReduceOp] [value : i64]) : i64
+(define (spmd-reduce-acc-update-expr
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [value : i64]) : i64
   (match op
-    [(AstReduceOp.Sum) (spmd-reduce-acc-binop-update (AstBinOp.Add) value)]
-    [(AstReduceOp.All) (spmd-reduce-acc-binop-update (AstBinOp.And) value)]
-    [(AstReduceOp.Any) (spmd-reduce-acc-binop-update (AstBinOp.Or) value)]
-    [(AstReduceOp.Min) (spmd-reduce-acc-select-update (AstBinOp.Lt) value)]
-    [(AstReduceOp.Max) (spmd-reduce-acc-select-update (AstBinOp.Gt) value)]))
+    [(AstReduceOp.Sum)
+      (spmd-reduce-acc-binop-update pools (AstBinOp.Add) value)]
+    [(AstReduceOp.All)
+      (spmd-reduce-acc-binop-update pools (AstBinOp.And) value)]
+    [(AstReduceOp.Any) (spmd-reduce-acc-binop-update pools (AstBinOp.Or) value)]
+    [(AstReduceOp.Min)
+      (spmd-reduce-acc-select-update pools (AstBinOp.Lt) value)]
+    [(AstReduceOp.Max)
+      (spmd-reduce-acc-select-update pools (AstBinOp.Gt) value)]))
 
 ;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
 ;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
@@ -29130,52 +29194,68 @@
   [init : AstExpr]
   [acc-ty : AstType]
   [acc-update : i64]) : ResultLowerExpr
-  (lower-expr
-    ctx
-    state
-    env
-    type-env
-    (ast-node-get
-      (ast-expr-let
+  (let
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
+    [root-id : i64
+      (ast-expr-let-with-pools
+        pools
         (ast-let-binding-cons
           (ast-let-binding
             (lower-spmd-reduce-acc-name)
             (AstMaybeType.Some acc-ty)
-            (ast-node-push init))
+            (ast-node-pool-context-expr-push pools init))
           (ast-let-binding-cons
             (ast-let-binding
               (lower-spmd-reduce-end-name)
               (AstMaybeType.Some index-ty)
-              (ast-node-push end))
+              (ast-node-pool-context-expr-push pools end))
             (ast-let-binding-cons
               (ast-let-binding
                 index
                 (AstMaybeType.Some index-ty)
-                (ast-node-push start))
+                (ast-node-pool-context-expr-push pools start))
               (ast-let-binding-list-new))))
-        (ast-node-push
+        (ast-node-pool-context-expr-push
+          pools
           (AstExpr.Begin
             (ast-expr-cons
-              (ast-expr-while
-                (ast-expr-binary
+              (ast-expr-while-with-pools
+                pools
+                (ast-expr-binary-with-pools
+                  pools
                   (AstBinOp.Lt)
-                  (ast-node-push (AstExpr.Var (intern index)))
-                  (ast-node-push (AstExpr.Var (lower-spmd-reduce-end-id))))
-                (ast-node-push
+                  (ast-node-pool-context-expr-push
+                    pools
+                    (AstExpr.Var (intern index)))
+                  (ast-node-pool-context-expr-push
+                    pools
+                    (AstExpr.Var (lower-spmd-reduce-end-id))))
+                (ast-node-pool-context-expr-push
+                  pools
                   (AstExpr.Begin
                     (ast-expr-cons
                       acc-update
                       (ast-expr-cons
-                        (ast-expr-set
+                        (ast-expr-set-with-pools
+                          pools
                           index
-                          (ast-expr-binary
+                          (ast-expr-binary-with-pools
+                            pools
                             (AstBinOp.Add)
-                            (ast-node-push (AstExpr.Var (intern index)))
-                            (ast-node-push (AstExpr.Literal (ast-lit-int 1)))))
+                            (ast-node-pool-context-expr-push
+                              pools
+                              (AstExpr.Var (intern index)))
+                            (ast-node-pool-context-expr-push
+                              pools
+                              (AstExpr.Literal (ast-lit-int 1)))))
                         (ast-expr-list-new))))))
               (ast-expr-cons
-                (ast-node-push (AstExpr.Var (lower-spmd-reduce-acc-id)))
-                (ast-expr-list-new)))))))))
+                (ast-node-pool-context-expr-push
+                  pools
+                  (AstExpr.Var (lower-spmd-reduce-acc-id)))
+                (ast-expr-list-new))))))]
+    [root : AstExpr (lower-context-expr-get ctx root-id)]
+    (lower-expr ctx state env type-env root)))
 
 ;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
 ;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
@@ -29199,7 +29279,10 @@
       (let
         [acc-ty : AstType (tc-type-without-regions value-ty)]
         [acc-update : i64
-          (spmd-reduce-acc-update-expr op (ast-node-push value))]
+          (spmd-reduce-acc-update-expr
+            (tc-context-pools ctx)
+            op
+            (lower-context-expr-push ctx value))]
         (if (and
           (lower-mode-simd? (lower-state-mode state))
           (lower-type-i64? index-ty))
@@ -29269,32 +29352,55 @@
     [(ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr value message)))]))
 
-(define (spmd-scan-binop-prefix [op : AstBinOp] [value : i64]) : i64
-  (ast-expr-binary
+(define (spmd-scan-binop-prefix
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [value : i64]) : i64
+  (ast-expr-binary-with-pools
+    pools
     op
-    (ast-node-push (AstExpr.Var (lower-spmd-scan-acc-id)))
+    (ast-node-pool-context-expr-push
+      pools
+      (AstExpr.Var (lower-spmd-scan-acc-id)))
     value))
 
-(define (spmd-scan-select-prefix [cmp : AstBinOp] [value : i64]) : i64
-  (ast-expr-let
+(define (spmd-scan-select-prefix
+  [pools : AstNodePoolContext]
+  [cmp : AstBinOp]
+  [value : i64]) : i64
+  (ast-expr-let-with-pools
+    pools
     (ast-let-binding-cons
       (ast-let-binding (lower-spmd-scan-val-name) (AstMaybeType.No) value)
       (ast-let-binding-list-new))
-    (ast-expr-if
-      (ast-expr-binary
+    (ast-expr-if-with-pools
+      pools
+      (ast-expr-binary-with-pools
+        pools
         cmp
-        (ast-node-push (AstExpr.Var (lower-spmd-scan-val-id)))
-        (ast-node-push (AstExpr.Var (lower-spmd-scan-acc-id))))
-      (ast-node-push (AstExpr.Var (lower-spmd-scan-val-id)))
-      (ast-node-push (AstExpr.Var (lower-spmd-scan-acc-id))))))
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Var (lower-spmd-scan-val-id)))
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Var (lower-spmd-scan-acc-id))))
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Var (lower-spmd-scan-val-id)))
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Var (lower-spmd-scan-acc-id))))))
 
-(define (spmd-scan-prefix-expr [op : AstReduceOp] [value : i64]) : i64
+(define (spmd-scan-prefix-expr
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [value : i64]) : i64
   (match op
-    [(AstReduceOp.Sum) (spmd-scan-binop-prefix (AstBinOp.Add) value)]
-    [(AstReduceOp.All) (spmd-scan-binop-prefix (AstBinOp.And) value)]
-    [(AstReduceOp.Any) (spmd-scan-binop-prefix (AstBinOp.Or) value)]
-    [(AstReduceOp.Min) (spmd-scan-select-prefix (AstBinOp.Lt) value)]
-    [(AstReduceOp.Max) (spmd-scan-select-prefix (AstBinOp.Gt) value)]))
+    [(AstReduceOp.Sum) (spmd-scan-binop-prefix pools (AstBinOp.Add) value)]
+    [(AstReduceOp.All) (spmd-scan-binop-prefix pools (AstBinOp.And) value)]
+    [(AstReduceOp.Any) (spmd-scan-binop-prefix pools (AstBinOp.Or) value)]
+    [(AstReduceOp.Min) (spmd-scan-select-prefix pools (AstBinOp.Lt) value)]
+    [(AstReduceOp.Max) (spmd-scan-select-prefix pools (AstBinOp.Gt) value)]))
 
 (define (lower-spmd-scan-scaffold
   [ctx : TcContext]
@@ -29310,62 +29416,83 @@
   [init : AstExpr]
   [prefix-value : i64]
   [body : AstExpr]) : ResultLowerExpr
-  (lower-expr
-    ctx
-    state
-    env
-    type-env
-    (ast-node-get
-      (ast-expr-let
-        (ast-let-binding-cons
-          (ast-let-binding
-            (lower-spmd-scan-acc-name)
-            (AstMaybeType.Some prefix-ty)
-            (ast-node-push init))
+  (let
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
+    (lower-expr
+      ctx
+      state
+      env
+      type-env
+      (lower-context-expr-get
+        ctx
+        (ast-expr-let-with-pools
+          pools
           (ast-let-binding-cons
             (ast-let-binding
-              (lower-spmd-scan-end-name)
-              (AstMaybeType.Some index-ty)
-              (ast-node-push end))
+              (lower-spmd-scan-acc-name)
+              (AstMaybeType.Some prefix-ty)
+              (ast-node-pool-context-expr-push pools init))
             (ast-let-binding-cons
               (ast-let-binding
-                index
+                (lower-spmd-scan-end-name)
                 (AstMaybeType.Some index-ty)
-                (ast-node-push start))
-              (ast-let-binding-list-new))))
-        (ast-node-push
-          (AstExpr.Begin
-            (ast-expr-cons
-              (ast-expr-while
-                (ast-expr-binary
-                  (AstBinOp.Lt)
-                  (ast-node-push (AstExpr.Var (intern index)))
-                  (ast-node-push (AstExpr.Var (lower-spmd-scan-end-id))))
-                (ast-expr-let
-                  (ast-let-binding-cons
-                    (ast-let-binding
-                      prefix
-                      (AstMaybeType.Some prefix-ty)
-                      prefix-value)
-                    (ast-let-binding-list-new))
-                  (ast-node-push
-                    (AstExpr.Begin
-                      (ast-expr-cons
-                        (ast-expr-set
-                          (lower-spmd-scan-acc-name)
-                          (ast-node-push (AstExpr.Var (intern prefix))))
+                (ast-node-pool-context-expr-push pools end))
+              (ast-let-binding-cons
+                (ast-let-binding
+                  index
+                  (AstMaybeType.Some index-ty)
+                  (ast-node-pool-context-expr-push pools start))
+                (ast-let-binding-list-new))))
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.Begin
+              (ast-expr-cons
+                (ast-expr-while-with-pools
+                  pools
+                  (ast-expr-binary-with-pools
+                    pools
+                    (AstBinOp.Lt)
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Var (intern index)))
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Var (lower-spmd-scan-end-id))))
+                  (ast-expr-let-with-pools
+                    pools
+                    (ast-let-binding-cons
+                      (ast-let-binding
+                        prefix
+                        (AstMaybeType.Some prefix-ty)
+                        prefix-value)
+                      (ast-let-binding-list-new))
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Begin
                         (ast-expr-cons
-                          (ast-node-push body)
+                          (ast-expr-set-with-pools
+                            pools
+                            (lower-spmd-scan-acc-name)
+                            (ast-node-pool-context-expr-push
+                              pools
+                              (AstExpr.Var (intern prefix))))
                           (ast-expr-cons
-                            (ast-expr-set
-                              index
-                              (ast-expr-binary
-                                (AstBinOp.Add)
-                                (ast-node-push (AstExpr.Var (intern index)))
-                                (ast-node-push
-                                  (AstExpr.Literal (ast-lit-int 1)))))
-                            (ast-expr-list-new))))))))
-              (ast-expr-list-new))))))))
+                            (ast-node-pool-context-expr-push pools body)
+                            (ast-expr-cons
+                              (ast-expr-set-with-pools
+                                pools
+                                index
+                                (ast-expr-binary-with-pools
+                                  pools
+                                  (AstBinOp.Add)
+                                  (ast-node-pool-context-expr-push
+                                    pools
+                                    (AstExpr.Var (intern index)))
+                                  (ast-node-pool-context-expr-push
+                                    pools
+                                    (AstExpr.Literal (ast-lit-int 1)))))
+                              (ast-expr-list-new))))))))
+                (ast-expr-list-new)))))))))
 
 (define (lower-spmd-scan
   [ctx : TcContext]
@@ -29394,7 +29521,10 @@
     prefix
     prefix-ty
     init
-    (spmd-scan-prefix-expr op (ast-node-push value))
+    (spmd-scan-prefix-expr
+      (tc-context-pools ctx)
+      op
+      (lower-context-expr-push ctx value))
     body))
 
 (define (lower-spmd-broadcast
@@ -33873,6 +34003,7 @@
   (let
     [acc-name-id : i64 (lower-spmd-reduce-acc-id)]
     [current-name-id : i64 (lower-spmd-reduce-current-id)]
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
     (lower-expr
       ctx
       state
@@ -33884,10 +34015,12 @@
         (tc-bind-id type-env acc-name-id elem-ty)
         current-name-id
         elem-ty)
-      (ast-node-get
+      (lower-context-expr-get
+        ctx
         (spmd-reduce-acc-update-expr
+          pools
           op
-          (ast-node-push (AstExpr.Var current-name-id)))))))
+          (ast-node-pool-context-expr-push pools (AstExpr.Var current-name-id)))))))
 
 (define (lower-avx2-reduce-ok
   [state : LowerState]
@@ -35845,7 +35978,7 @@
       (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (lower-context-expr-get ctx init-box)]
           (match (lower-avx512-masked-expr
             ctx
             state
@@ -38395,7 +38528,7 @@
       (if mutable
         (lower-match-value ctx state env type-env scrutinee arms expr-ty)
         (let
-          [place : AstExpr (ast-node-get place-box)]
+          [place : AstExpr (lower-context-expr-get ctx place-box)]
           (match (tc-expr ctx type-env scrutinee)
             [(ResultTcType.Ok scrut-ty)
               (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
@@ -39084,7 +39217,7 @@
       (match arm
         [(AstMatchArm.Arm pat body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
             (if (ast-match-arm-list-empty? (& rest))
               (lower-match-enum-final-pattern
                 ctx
@@ -42104,22 +42237,23 @@
           (box (lower-diagnostic-at-expr body "lower: unsupported expression")))))))
 
 (define (lower-global-value
+  [ctx : TcContext]
   [names : LowerNameCache]
   [expr : AstExpr]
   [ty : AstType]) : ResultLowerValue
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner ty))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-global-value ctx names inner ty))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner ty))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-global-value ctx names inner ty))]
     [(AstExpr.Cast inner-box cast-ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner cast-ty))]
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-global-value ctx names inner cast-ty))]
     [(AstExpr.Literal lit)
       (ResultLowerValue.Ok (lower-literal-value-with-type lit ty))]
     [(AstExpr.BinaryData bytes)
@@ -43086,7 +43220,7 @@
   (match decl
     [(AstDecl.DefFn _ params ret body-box _)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (lower-context-expr-get ctx body-box)]
         (lower-function-escaping
           ctx
           top-env
@@ -43457,9 +43591,9 @@
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def name _ expr-box)
                   (let
-                    [expr : AstExpr (ast-node-get expr-box)]
                     [decl-ctx : TcContext
                       (tc-context-with-module ctx cur-module)]
+                    [expr : AstExpr (lower-context-expr-get decl-ctx expr-box)]
                     (match (lower-top-decl-type-or-check
                       decl-ctx
                       cur-local-top-env
@@ -43473,6 +43607,7 @@
                               cur-module
                               (intern-str name))]
                           (match (lower-global-value
+                            decl-ctx
                             cur-name-cache
                             expr
                             global-ty)
@@ -43572,9 +43707,9 @@
                         (set! cur-decls rest))))]
                 [(AstDecl.DefFn name params ret body-box export)
                   (let
-                    [body : AstExpr (ast-node-get body-box)]
                     [decl-ctx : TcContext
                       (tc-context-with-module ctx cur-module)]
+                    [body : AstExpr (lower-context-expr-get decl-ctx body-box)]
                     [logical-name : String
                       (lower-current-decl-logical-name-cache
                         cur-name-cache
@@ -44398,26 +44533,37 @@
       [_ true])
     false))
 
-(define (lower-source-node-has-import-call? [id : i64]) : bool
-  (lower-source-expr-has-import-call? (ast-node-get id)))
+(define (lower-source-node-has-import-call?
+  [pools : AstNodePoolContext]
+  [id : i64]) : bool
+  (lower-source-expr-has-import-call?
+    pools
+    (ast-node-pool-context-expr-get pools id)))
 
-(define (lower-source-expr-list-has-import-call? [exprs : AstExprList]) : bool
-  (lower-source-expr-list-has-import-call-at? (& exprs) 0))
+(define (lower-source-expr-list-has-import-call?
+  [pools : AstNodePoolContext]
+  [exprs : AstExprList]) : bool
+  (lower-source-expr-list-has-import-call-at? pools (& exprs) 0))
 
 (define (lower-source-expr-list-has-import-call-at?
+  [pools : AstNodePoolContext]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
   (if (>= index (struct-get exprs len))
     false
     (or
-      (lower-source-node-has-import-call? (ast-expr-list-get exprs index 0))
-      (lower-source-expr-list-has-import-call-at? exprs (+ index 1)))))
+      (lower-source-node-has-import-call?
+        pools
+        (ast-expr-list-get exprs index 0))
+      (lower-source-expr-list-has-import-call-at? pools exprs (+ index 1)))))
 
 (define (lower-source-let-bindings-have-import-call?
+  [pools : AstNodePoolContext]
   [bindings : AstLetBindingList]) : bool
-  (lower-source-let-bindings-have-import-call-at? (& bindings) 0))
+  (lower-source-let-bindings-have-import-call-at? pools (& bindings) 0))
 
 (define (lower-source-let-bindings-have-import-call-at?
+  [pools : AstNodePoolContext]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -44428,15 +44574,19 @@
         binding-index
         (ast-let-binding-fallback))
         [(AstLetBinding.Binding _ _ init-box)
-          (lower-source-node-has-import-call? init-box)])
+          (lower-source-node-has-import-call? pools init-box)])
       (lower-source-let-bindings-have-import-call-at?
+        pools
         bindings
         (+ binding-index 1)))))
 
-(define (lower-source-match-arms-have-import-call? [arms : AstMatchArmList]) : bool
-  (lower-source-match-arms-have-import-call-at? (& arms) 0))
+(define (lower-source-match-arms-have-import-call?
+  [pools : AstNodePoolContext]
+  [arms : AstMatchArmList]) : bool
+  (lower-source-match-arms-have-import-call-at? pools (& arms) 0))
 
 (define (lower-source-match-arms-have-import-call-at?
+  [pools : AstNodePoolContext]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
   (if (>= index (struct-get arms len))
@@ -44444,14 +44594,16 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (or
-          (lower-source-node-has-import-call? body-box)
-          (lower-source-match-arms-have-import-call-at? arms (+ index 1)))])))
+          (lower-source-node-has-import-call? pools body-box)
+          (lower-source-match-arms-have-import-call-at? pools arms (+ index 1)))])))
 
 (define (lower-source-resource-bindings-have-import-call?
+  [pools : AstNodePoolContext]
   [bindings : AstResourceBindingList]) : bool
-  (lower-source-resource-bindings-have-import-call-at? (& bindings) 0))
+  (lower-source-resource-bindings-have-import-call-at? pools (& bindings) 0))
 
 (define (lower-source-resource-bindings-have-import-call-at?
+  [pools : AstNodePoolContext]
   [bindings : (& bindings AstResourceBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-resource-binding-list-len bindings))
@@ -44463,104 +44615,119 @@
         (ast-resource-binding-fallback))
         [(AstResourceBinding.Binding _ acquire-box cleanup-box)
           (or
-            (lower-source-node-has-import-call? acquire-box)
-            (lower-source-node-has-import-call? cleanup-box))])
+            (lower-source-node-has-import-call? pools acquire-box)
+            (lower-source-node-has-import-call? pools cleanup-box))])
       (lower-source-resource-bindings-have-import-call-at?
+        pools
         bindings
         (+ binding-index 1)))))
 
-(define (lower-source-call-head-import? [func-box : i64]) : bool
-  (match (ast-expr-unspan (ast-node-get func-box))
+(define (lower-source-call-head-import?
+  [pools : AstNodePoolContext]
+  [func-box : i64]) : bool
+  (match (ast-expr-unspan-with-pools
+    pools
+    (ast-node-pool-context-expr-get pools func-box))
     [(AstExpr.Var name) (= name (intern "import"))]
     [_ false]))
 
-(define (lower-source-expr-has-import-call? [expr : AstExpr]) : bool
+(define (lower-source-expr-has-import-call?
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.Call func-box args)
       (or
-        (lower-source-call-head-import? func-box)
-        (lower-source-node-has-import-call? func-box)
-        (lower-source-expr-list-has-import-call? args))]
+        (lower-source-call-head-import? pools func-box)
+        (lower-source-node-has-import-call? pools func-box)
+        (lower-source-expr-list-has-import-call? pools args))]
     [(AstExpr.BracketClause items)
-      (lower-source-expr-list-has-import-call? items)]
+      (lower-source-expr-list-has-import-call? pools items)]
     [(AstExpr.Binary _ left-box right-box)
       (or
-        (lower-source-node-has-import-call? left-box)
-        (lower-source-node-has-import-call? right-box))]
-    [(AstExpr.Unary _ inner-box) (lower-source-node-has-import-call? inner-box)]
+        (lower-source-node-has-import-call? pools left-box)
+        (lower-source-node-has-import-call? pools right-box))]
+    [(AstExpr.Unary _ inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.If cond-box then-box else-box)
       (or
-        (lower-source-node-has-import-call? cond-box)
-        (lower-source-node-has-import-call? then-box)
-        (lower-source-node-has-import-call? else-box))]
+        (lower-source-node-has-import-call? pools cond-box)
+        (lower-source-node-has-import-call? pools then-box)
+        (lower-source-node-has-import-call? pools else-box))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (or
-            (lower-source-let-bindings-have-import-call? bindings)
-            (lower-source-node-has-import-call? body-box))])]
+            (lower-source-let-bindings-have-import-call? pools bindings)
+            (lower-source-node-has-import-call? pools body-box))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
-          (lower-source-node-has-import-call? body-box)])]
-    [(AstExpr.Tuple exprs) (lower-source-expr-list-has-import-call? exprs)]
+          (lower-source-node-has-import-call? pools body-box)])]
+    [(AstExpr.Tuple exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.TupleRef tuple-box index-box)
       (or
-        (lower-source-node-has-import-call? tuple-box)
-        (lower-source-node-has-import-call? index-box))]
-    [(AstExpr.Array exprs) (lower-source-expr-list-has-import-call? exprs)]
-    [(AstExpr.MakeArray _ len-box) (lower-source-node-has-import-call? len-box)]
+        (lower-source-node-has-import-call? pools tuple-box)
+        (lower-source-node-has-import-call? pools index-box))]
+    [(AstExpr.Array exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
+    [(AstExpr.MakeArray _ len-box)
+      (lower-source-node-has-import-call? pools len-box)]
     [(AstExpr.ArrayRef array-box index-box)
       (or
-        (lower-source-node-has-import-call? array-box)
-        (lower-source-node-has-import-call? index-box))]
+        (lower-source-node-has-import-call? pools array-box)
+        (lower-source-node-has-import-call? pools index-box))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (or
-        (lower-source-node-has-import-call? array-box)
-        (lower-source-node-has-import-call? index-box)
-        (lower-source-node-has-import-call? value-box))]
+        (lower-source-node-has-import-call? pools array-box)
+        (lower-source-node-has-import-call? pools index-box)
+        (lower-source-node-has-import-call? pools value-box))]
     [(AstExpr.ArrayPush array-box value-box)
       (or
-        (lower-source-node-has-import-call? array-box)
-        (lower-source-node-has-import-call? value-box))]
+        (lower-source-node-has-import-call? pools array-box)
+        (lower-source-node-has-import-call? pools value-box))]
     [(AstExpr.StringRef string-box index-box)
       (or
-        (lower-source-node-has-import-call? string-box)
-        (lower-source-node-has-import-call? index-box))]
+        (lower-source-node-has-import-call? pools string-box)
+        (lower-source-node-has-import-call? pools index-box))]
     [(AstExpr.While cond-box body-box)
       (or
-        (lower-source-node-has-import-call? cond-box)
-        (lower-source-node-has-import-call? body-box))]
-    [(AstExpr.Begin exprs) (lower-source-expr-list-has-import-call? exprs)]
-    [(AstExpr.Unsafe exprs) (lower-source-expr-list-has-import-call? exprs)]
-    [(AstExpr.Set _ rhs-box) (lower-source-node-has-import-call? rhs-box)]
-    [(AstExpr.Ann inner-box _) (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Cast inner-box _) (lower-source-node-has-import-call? inner-box)]
+        (lower-source-node-has-import-call? pools cond-box)
+        (lower-source-node-has-import-call? pools body-box))]
+    [(AstExpr.Begin exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
+    [(AstExpr.Unsafe exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
+    [(AstExpr.Set _ rhs-box) (lower-source-node-has-import-call? pools rhs-box)]
+    [(AstExpr.Ann inner-box _)
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Cast inner-box _)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.Borrow _ _ inner-box)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (or
-            (lower-source-node-has-import-call? scrutinee-box)
-            (lower-source-match-arms-have-import-call? arms))])]
+            (lower-source-node-has-import-call? pools scrutinee-box)
+            (lower-source-match-arms-have-import-call? pools arms))])]
     [(AstExpr.Foreach foreach-box)
       (match (box-get foreach-box)
         [(AstForeach.Foreach _ _ start-box end-box body-box)
           (or
-            (lower-source-node-has-import-call? start-box)
-            (lower-source-node-has-import-call? end-box)
-            (lower-source-node-has-import-call? body-box))])]
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools body-box))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (or
-            (lower-source-node-has-import-call? start-box)
-            (lower-source-node-has-import-call? end-box)
-            (lower-source-node-has-import-call? init-box)
-            (lower-source-node-has-import-call? value-box))])]
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools init-box)
+            (lower-source-node-has-import-call? pools value-box))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -44575,106 +44742,117 @@
             body-box
             _)
           (or
-            (lower-source-node-has-import-call? start-box)
-            (lower-source-node-has-import-call? end-box)
-            (lower-source-node-has-import-call? init-box)
-            (lower-source-node-has-import-call? value-box)
-            (lower-source-node-has-import-call? body-box))])]
+            (lower-source-node-has-import-call? pools start-box)
+            (lower-source-node-has-import-call? pools end-box)
+            (lower-source-node-has-import-call? pools init-box)
+            (lower-source-node-has-import-call? pools value-box)
+            (lower-source-node-has-import-call? pools body-box))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (or
-        (lower-source-node-has-import-call? value-box)
-        (lower-source-node-has-import-call? lane-box))]
+        (lower-source-node-has-import-call? pools value-box)
+        (lower-source-node-has-import-call? pools lane-box))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (or
-        (lower-source-node-has-import-call? value-box)
-        (lower-source-node-has-import-call? lane-box))]
+        (lower-source-node-has-import-call? pools value-box)
+        (lower-source-node-has-import-call? pools lane-box))]
     [(AstExpr.StructGet target-box _)
-      (lower-source-node-has-import-call? target-box)]
+      (lower-source-node-has-import-call? pools target-box)]
     [(AstExpr.StructSet target-box _ value-box)
       (or
-        (lower-source-node-has-import-call? target-box)
-        (lower-source-node-has-import-call? value-box))]
+        (lower-source-node-has-import-call? pools target-box)
+        (lower-source-node-has-import-call? pools value-box))]
     [(AstExpr.WithRegion _ exprs)
-      (lower-source-expr-list-has-import-call? exprs)]
+      (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.WithEscape escape-box exprs)
       (or
-        (lower-source-node-has-import-call? escape-box)
-        (lower-source-expr-list-has-import-call? exprs))]
+        (lower-source-node-has-import-call? pools escape-box)
+        (lower-source-expr-list-has-import-call? pools exprs))]
     [(AstExpr.WithScratch exprs)
-      (lower-source-expr-list-has-import-call? exprs)]
+      (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.InArena arena-box exprs)
       (or
-        (lower-source-node-has-import-call? arena-box)
-        (lower-source-expr-list-has-import-call? exprs))]
+        (lower-source-node-has-import-call? pools arena-box)
+        (lower-source-expr-list-has-import-call? pools exprs))]
     [(AstExpr.WithResource resource-box)
       (match (box-get resource-box)
         [(AstWithResource.WithResource bindings body)
           (or
-            (lower-source-resource-bindings-have-import-call? bindings)
-            (lower-source-expr-list-has-import-call? body))])]
-    [(AstExpr.Box inner-box) (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.BoxGet inner-box) (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.BoxTake inner-box) (lower-source-node-has-import-call? inner-box)]
+            (lower-source-resource-bindings-have-import-call? pools bindings)
+            (lower-source-expr-list-has-import-call? pools body))])]
+    [(AstExpr.Box inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.BoxGet inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.BoxTake inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.BoxSet inner-box value-box)
       (or
-        (lower-source-node-has-import-call? inner-box)
-        (lower-source-node-has-import-call? value-box))]
+        (lower-source-node-has-import-call? pools inner-box)
+        (lower-source-node-has-import-call? pools value-box))]
     [(AstExpr.Comptime inner-box)
-      (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Quote inner-box) (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Quote inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.Quasiquote inner-box)
-      (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Unquote inner-box) (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Unquote inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.UnquoteSplicing inner-box)
-      (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Try inner-box) (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Return inner-box) (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Try inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Return inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.PtrNullCheck inner-box)
-      (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.PtrRead inner-box) (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.PtrRead inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.PtrWrite pointer-box value-box)
       (or
-        (lower-source-node-has-import-call? pointer-box)
-        (lower-source-node-has-import-call? value-box))]
+        (lower-source-node-has-import-call? pools pointer-box)
+        (lower-source-node-has-import-call? pools value-box))]
     [(AstExpr.PtrOffset pointer-box offset-box)
       (or
-        (lower-source-node-has-import-call? pointer-box)
-        (lower-source-node-has-import-call? offset-box))]
+        (lower-source-node-has-import-call? pools pointer-box)
+        (lower-source-node-has-import-call? pools offset-box))]
     [(AstExpr.PtrCast inner-box _)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.PtrToInt inner-box)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.IntToPtr inner-box _)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.StringData inner-box)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.StringFromBytes data-box len-box)
       (or
-        (lower-source-node-has-import-call? data-box)
-        (lower-source-node-has-import-call? len-box))]
+        (lower-source-node-has-import-call? pools data-box)
+        (lower-source-node-has-import-call? pools len-box))]
     [(AstExpr.ArrayData inner-box)
-      (lower-source-node-has-import-call? inner-box)]
+      (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.CpuIdEax left-box right-box)
       (or
-        (lower-source-node-has-import-call? left-box)
-        (lower-source-node-has-import-call? right-box))]
+        (lower-source-node-has-import-call? pools left-box)
+        (lower-source-node-has-import-call? pools right-box))]
     [(AstExpr.CpuIdEbx left-box right-box)
       (or
-        (lower-source-node-has-import-call? left-box)
-        (lower-source-node-has-import-call? right-box))]
+        (lower-source-node-has-import-call? pools left-box)
+        (lower-source-node-has-import-call? pools right-box))]
     [(AstExpr.CpuIdEcx left-box right-box)
       (or
-        (lower-source-node-has-import-call? left-box)
-        (lower-source-node-has-import-call? right-box))]
+        (lower-source-node-has-import-call? pools left-box)
+        (lower-source-node-has-import-call? pools right-box))]
     [(AstExpr.CpuIdEdx left-box right-box)
       (or
-        (lower-source-node-has-import-call? left-box)
-        (lower-source-node-has-import-call? right-box))]
-    [(AstExpr.Xgetbv inner-box) (lower-source-node-has-import-call? inner-box)]
-    [(AstExpr.Syscall exprs) (lower-source-expr-list-has-import-call? exprs)]
+        (lower-source-node-has-import-call? pools left-box)
+        (lower-source-node-has-import-call? pools right-box))]
+    [(AstExpr.Xgetbv inner-box)
+      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Syscall exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
     [_ false]))
 
 (define (lower-source-decl-needs-loader?
+  [pools : AstNodePoolContext]
   [decl : AstDecl]
   [all-decls : AstDeclList]) : bool
   (match decl
@@ -44683,29 +44861,31 @@
     [(AstDecl.DefMacro _ _ ret body-box)
       (and
         (tc-macro-result-decl-emitting? ret)
-        (lower-source-node-has-import-call? body-box))]
+        (lower-source-node-has-import-call? pools body-box))]
     [(AstDecl.Unsafe inner-box)
-      (lower-source-decl-needs-loader? (box-get inner-box) all-decls)]
+      (lower-source-decl-needs-loader? pools (box-get inner-box) all-decls)]
     [(AstDecl.ComptimeDecl _ template-box)
-      (lower-source-decl-needs-loader? (box-get template-box) all-decls)]
+      (lower-source-decl-needs-loader? pools (box-get template-box) all-decls)]
     [_ false]))
 
 (define (lower-source-decls-need-loader?
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [all-decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (or
-        (lower-source-decl-needs-loader? decl all-decls)
-        (lower-source-decls-need-loader? rest all-decls))]))
+        (lower-source-decl-needs-loader? pools decl all-decls)
+        (lower-source-decls-need-loader? pools rest all-decls))]))
 
 (define (lower-source-program-needs-loader? [program : AstProgram]) : bool
   (match program
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (lower-source-decls-need-loader? decls decls))]))
+        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        (lower-source-decls-need-loader? pools decls decls))]))
 
 (define (lower-compiler-source-with-path-mode
   [path : String]

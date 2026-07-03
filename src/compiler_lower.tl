@@ -774,7 +774,10 @@
 (define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
   (lower-extern-list-reverse-onto externs CompilerIrExternList.Nil))
 
-(define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
+(define (lower-name-env-lookup-with-id
+  [names : LowerNameEnv]
+  [source-name : String]
+  [source-id : i64]) : TcMaybeString
   (let
     [cur : LowerNameEnv names]
     [result : TcMaybeString (TcMaybeString.No)]
@@ -787,13 +790,35 @@
           [_ true]))
         (match cur
           [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind source _ logical rest)
-            (if (string.eq source source-name)
-              (begin
-                (set! result (TcMaybeString.Some logical))
-                (set! done true))
+          [(LowerNameEnv.Bind source bind-id logical rest)
+            ;; interned-id gate: each Bind carries its source name's interned id
+            ;; (or -1 when the name was never interned). A string's interned id is
+            ;; stable within a compile, so two names with valid (>=0) but different
+            ;; ids cannot be the same string -- skip the string compare in that
+            ;; (overwhelmingly common) non-matching case. Fall back to an exact
+            ;; string compare when either id is the -1 sentinel or the ids are
+            ;; equal, so the Some/No result stays byte-identical to a string scan.
+            (if (if (< bind-id 0)
+              true
+              (if (< source-id 0)
+                true
+                (= bind-id source-id)))
+              (if (string.eq source source-name)
+                (begin
+                  (set! result (TcMaybeString.Some logical))
+                  (set! done true))
+                (set! cur (box-get rest)))
               (set! cur (box-get rest)))]))
       result)))
+
+;; Convenience wrapper: derive the canonical source id from the string. Hot
+;; callers that already hold the interned source id call lower-name-env-lookup-with-id
+;; directly to skip this per-call re-hash.
+(define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
+  (lower-name-env-lookup-with-id
+    names
+    source-name
+    (lower-name-cache-source-id-value source-name)))
 
 (define (lower-name-env-resolve [names : LowerNameEnv] [source-name : String]) : String
   (match (lower-name-env-lookup names source-name)
@@ -1346,7 +1371,7 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
-  (match (lower-name-env-lookup names source-name)
+  (match (lower-name-env-lookup-with-id names source-name source-id)
     [(TcMaybeString.Some _) names]
     [(TcMaybeString.No)
       (lower-name-env-bind-id source-name source-id logical-name names)]))

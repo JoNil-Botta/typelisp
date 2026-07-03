@@ -2714,10 +2714,16 @@
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.CallIndirectC 2 func (CompilerIrCallArgs.Nil) (AstType.I64))
+        (CompilerIrInstr.CallIndirectC
+          2
+          func
+          (CompilerIrCallArgs.Nil)
+          (AstType.I64))
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -2740,7 +2746,9 @@
         CompilerRegVarTypeList.Nil
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
-        (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
         3
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
@@ -2841,11 +2849,17 @@
         (box (CompilerIrCAbiReturnSlotList.Nil)))]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r13"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%r13"))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -2856,7 +2870,9 @@
           slots)
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -2879,7 +2895,9 @@
         CompilerRegVarTypeList.Nil
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
-        (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
         3
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
@@ -2932,7 +2950,9 @@
       (compiler-backend-c-abi-return-store-two-int-slots)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r11"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r11"))
         CompilerRegAssignmentList.Nil)]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -2943,7 +2963,9 @@
           slots)
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -3165,15 +3187,23 @@
   (let
     [gp-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r13"))
           CompilerRegAssignmentList.Nil))]
     [xmm-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%xmm3"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm4"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%xmm4"))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-pack-words
       gp-assignments
@@ -4108,14 +4138,20 @@
 (define (compiler-backend-mov-scratch-staging-ok?) : bool
   (let
     [index : CompilerBackendProgramIndex
-      (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)]
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)]
     [int-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)]
     [float-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-mov
@@ -4199,7 +4235,8 @@
                   (compiler-ir-value-cons
                     (CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
                     (compiler-ir-value-cons
-                      (CompilerIrValue.F64 (compiler-backend-test-f64-bits "2.0"))
+                      (CompilerIrValue.F64
+                        (compiler-backend-test-f64-bits "2.0"))
                       CompilerIrValueList.Nil))
                   ty)
                 CompilerIrInstrList.Nil))
@@ -5323,7 +5360,9 @@
         (IrInstrWord 1 (CompilerIrValue.Var 2) 0 (AstType.F64))
         CompilerIrInstrList.Nil)
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -5348,7 +5387,7 @@
               2
               (CompilerRegLocation.RegisterPair "%r12" "%r13"))
             CompilerRegAssignmentList.Nil)))]
-    [r8-tie-assignments : CompilerRegAssignmentList
+    [_r8-tie-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
@@ -5528,7 +5567,9 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-f64-cycle-blocks) : CompilerIrBlockList
@@ -5538,21 +5579,31 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           0
-          (compiler-ir-phi-input-cons (CompilerIrValue.Var 1) "back" CompilerIrPhiInputList.Nil)
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 1)
+            "back"
+            CompilerIrPhiInputList.Nil)
           (AstType.F64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             1
-            (compiler-ir-phi-input-cons (CompilerIrValue.Var 0) "back" CompilerIrPhiInputList.Nil)
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 0)
+              "back"
+              CompilerIrPhiInputList.Nil)
             (AstType.F64))
           CompilerIrInstrList.Nil)))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-phi-group-f64-cycle-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.RegisterPair "%xmm2" "%xmm3"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.RegisterPair "%xmm2" "%xmm3"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.RegisterPair "%xmm4" "%xmm5"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.RegisterPair "%xmm4" "%xmm5"))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-group-f64-cycle-blocks) : CompilerIrBlockList
@@ -5564,12 +5615,18 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             0
-            (compiler-ir-phi-input-cons (CompilerIrValue.Var 1) "back" CompilerIrPhiInputList.Nil)
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 1)
+              "back"
+              CompilerIrPhiInputList.Nil)
             ty)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               1
-              (compiler-ir-phi-input-cons (CompilerIrValue.Var 0) "back" CompilerIrPhiInputList.Nil)
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "back"
+                CompilerIrPhiInputList.Nil)
               ty)
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
@@ -6091,7 +6148,9 @@
       (compiler-backend-phi-f64-cycle-blocks)
       "join"
       "back"
-      (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
       2)
       [(ResultCompilerBackend.Ok cycle)
         (and
@@ -7236,7 +7295,9 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-stack-memory-operand-ok?) : bool
@@ -7502,9 +7563,7 @@
     (AstType.I64)
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
-      (string.eq
-        asm
-        "    movq %rdi, %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
+      (string.eq asm "    movq %rdi, %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -7640,7 +7699,9 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
@@ -7674,7 +7735,9 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
@@ -9103,7 +9166,9 @@
         (CompilerBackendRuntimeTailPlan false false))
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil
-      (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
       (compiler-source-spans-empty)
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok asm)
@@ -9766,7 +9831,9 @@
         (compiler-ir-extern-cons
           (compiler-ir-extern-default "tl_region_reset" (AstType.Unit))
           CompilerIrExternList.Nil))]
-    (match (compiler-backend-runtime-plan-for CompilerIrFunctionList.Nil externs)
+    (match (compiler-backend-runtime-plan-for
+      CompilerIrFunctionList.Nil
+      externs)
       [(ResultBackendRuntimePlan.Ok plan)
         (and
           (compiler-backend-plan-provides? plan "tl_region_mark")
@@ -9983,10 +10050,18 @@
       (CompilerIrInstr.AddrOf 2 1)
       "    leaq -16(%rbp), %r8\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 1) (CompilerIrValue.I64 2) (AstType.I32))
+      (CompilerIrInstr.Gep
+        3
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 2)
+        (AstType.I32))
       "    addq $8, %r10\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 1) (CompilerIrValue.Var 2) (AstType.I32))
+      (CompilerIrInstr.Gep
+        3
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.Var 2)
+        (AstType.I32))
       "    leaq (%r10,%r8,4), %r10\n")
     (compiler-backend-instr-contains?
       (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.U8))
@@ -9998,7 +10073,11 @@
         (AstType.I32))
       "    movl $7, (%r10)\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.I8) (AstType.I64))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.I8)
+        (AstType.I64))
       "    movsbq -48(%rbp), %r8\n")
     (compiler-backend-instr-contains?
       (CompilerIrInstr.BoundsCheck
@@ -10014,7 +10093,9 @@
         (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.U64))
         CompilerIrInstrList.Nil)
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          4
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -10036,7 +10117,11 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 1)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.U64))
           CompilerIrInstrList.Nil))
@@ -10051,7 +10136,11 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.Var 2) (AstType.U64))
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 2)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.U64))
           CompilerIrInstrList.Nil))
@@ -10074,7 +10163,9 @@
         (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.F64))
         CompilerIrInstrList.Nil)
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          4
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -10099,12 +10190,18 @@
   (and
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 1)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.F64))
           CompilerIrInstrList.Nil))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          3
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -10114,7 +10211,11 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 1)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.F64))
           CompilerIrInstrList.Nil))
@@ -10128,12 +10229,18 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.Var 2) (AstType.U64))
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 2)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.F64))
           CompilerIrInstrList.Nil))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          4
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -10184,7 +10291,9 @@
 
 (define (compiler-backend-addr-of-spill-scratch-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
-    (compiler-ir-instr-cons (CompilerIrInstr.AddrOf 2 1) CompilerIrInstrList.Nil)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.AddrOf 2 1)
+      CompilerIrInstrList.Nil)
     CompilerRegAssignmentList.Nil
     4)
     [(ResultCompilerBackend.Ok asm)
@@ -10336,11 +10445,19 @@
 (define (compiler-backend-gep-float-load-r10-reuse-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.U64))
+      (CompilerIrInstr.Gep
+        2
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.U64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.F64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+          (CompilerIrInstr.Gep
+            4
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 1)
+            (AstType.U64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.F64))
             CompilerIrInstrList.Nil))))
@@ -10423,12 +10540,17 @@
   (and
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (ast-ty-mut-ptr (AstType.U8)))
+        (CompilerIrInstr.Load
+          1
+          (CompilerIrValue.Var 0)
+          (ast-ty-mut-ptr (AstType.U8)))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.F64))
           CompilerIrInstrList.Nil))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -10438,7 +10560,10 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (ast-ty-mut-ptr (AstType.U8)))
+        (CompilerIrInstr.Load
+          1
+          (CompilerIrValue.Var 0)
+          (ast-ty-mut-ptr (AstType.U8)))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.F64))
           CompilerIrInstrList.Nil))
@@ -10487,10 +10612,15 @@
   (and
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.StorePtr (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.I64))
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
         CompilerIrInstrList.Nil)
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)
       3)
       [(ResultCompilerBackend.Ok asm)
@@ -10500,7 +10630,10 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.StorePtr (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.I64))
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
         CompilerIrInstrList.Nil)
       CompilerRegAssignmentList.Nil
       3)
@@ -10512,7 +10645,10 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.StorePtr (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.F64))
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.F64))
         CompilerIrInstrList.Nil)
       CompilerRegAssignmentList.Nil
       3)
@@ -10524,9 +10660,16 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.Var 2) (AstType.U64))
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 2)
+          (AstType.U64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 3) (CompilerIrValue.Var 1) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
           CompilerIrInstrList.Nil))
       CompilerRegAssignmentList.Nil
       5)
@@ -10544,13 +10687,22 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r9"))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.Var 2) (AstType.U64))
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 2)
+          (AstType.U64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 3) (CompilerIrValue.I64 0) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
           CompilerIrInstrList.Nil))
       assignments
       4)
@@ -10569,37 +10721,47 @@
   (let
     [src-r9 : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r9"))
         CompilerRegAssignmentList.Nil)]
     [pair-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r8"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r8"))
         CompilerRegAssignmentList.Nil)]
     [plain-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
           CompilerIrInstrList.Nil)
         src-r9
         3)
         [(ResultCompilerBackend.Ok asm)
-          (string.eq
-            asm
-            "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n")]
+          (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n")]
         [(ResultCompilerBackend.Err _) false])]
     [gep-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+          (CompilerIrInstr.Gep
+            2
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 1)
+            (AstType.U64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.StorePtr (CompilerIrValue.Var 2) (CompilerIrValue.Var 1) (AstType.I64))
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 1)
+              (AstType.I64))
             CompilerIrInstrList.Nil))
         src-r9
         3)
         [(ResultCompilerBackend.Ok asm)
-          (string.eq
-            asm
-            "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
+          (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
         [(ResultCompilerBackend.Err _) false])]
     ;; #107: the pair case leaves var 1 UNASSIGNED (spilled), so its store source
     ;; is loaded through a SCAVENGED scratch. emit-test-instrs is not hermetic
@@ -10614,11 +10776,21 @@
     [pair-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.U64))
+            (CompilerIrInstr.Gep
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 1)
+              (AstType.U64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.StorePtr (CompilerIrValue.Var 3) (CompilerIrValue.Var 2) (AstType.I64))
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 2)
+                (AstType.I64))
               CompilerIrInstrList.Nil)))
         pair-assignments
         4)
@@ -10636,11 +10808,15 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)]
     [r11-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r11"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r11"))
         CompilerRegAssignmentList.Nil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -10687,13 +10863,24 @@
 (define (compiler-backend-gep-load-store-order-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 0) (CompilerIrValue.Var 3) (AstType.U8))
+      (CompilerIrInstr.Gep
+        4
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 3)
+        (AstType.U8))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 5 (CompilerIrValue.Var 1) (CompilerIrValue.Var 2) (AstType.U8))
+        (CompilerIrInstr.Gep
+          5
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          (AstType.U8))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.U8))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.StorePtr (CompilerIrValue.Var 4) (CompilerIrValue.Var 6) (AstType.U8))
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 6)
+              (AstType.U8))
             CompilerIrInstrList.Nil))))
     CompilerRegAssignmentList.Nil
     8)
@@ -10730,17 +10917,29 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r8"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegAssignment.Assignment
+              3
+              (CompilerRegLocation.Register "%rcx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r9"))
+              (CompilerRegAssignment.Assignment
+                4
+                (CompilerRegLocation.Register "%r9"))
               CompilerRegAssignmentList.Nil))))]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) (AstType.U8))
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.U8))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.U8))
           (compiler-ir-instr-cons
@@ -10775,11 +10974,17 @@
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            4
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%r10"))
+            (CompilerRegAssignment.Assignment
+              5
+              (CompilerRegLocation.Register "%r10"))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -10787,16 +10992,25 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 7) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.I64 24) (AstType.U64))
+            (CompilerIrInstr.Gep
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 24)
+              (AstType.U64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.StorePtr (CompilerIrValue.Var 2) (CompilerIrValue.Var 1) (AstType.I64))
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 2)
+                  (CompilerIrValue.Var 1)
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 6 (CompilerIrValue.Var 5) (AstType.I64))
                   CompilerIrInstrList.Nil))))))]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -10844,13 +11058,21 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rcx"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%rdx"))
+        (CompilerRegAssignment.Assignment
+          3
+          (CompilerRegLocation.Register "%rdx"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r10"))
+          (CompilerRegAssignment.Assignment
+            4
+            (CompilerRegLocation.Register "%r10"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%r11"))
+            (CompilerRegAssignment.Assignment
+              5
+              (CompilerRegLocation.Register "%r11"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%r8"))
+              (CompilerRegAssignment.Assignment
+                6
+                (CompilerRegLocation.Register "%r8"))
               CompilerRegAssignmentList.Nil)))))))
 
 (define (compiler-backend-gep-load-multi-emergency-instrs) : CompilerIrInstrList
@@ -10895,26 +11117,42 @@
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 20 (CompilerIrValue.Var 0) (CompilerIrValue.I64 24) (AstType.U64))
+          (CompilerIrInstr.Gep
+            20
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 24)
+            (AstType.U64))
           instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 6 (CompilerIrValue.I64 6) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 6 (CompilerIrValue.I64 6) (AstType.I64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 5) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 5) (AstType.I64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 4) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 4) (AstType.I64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 3) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 3) (AstType.I64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 2) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 2) (AstType.I64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64)) instrs))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64))
+          instrs))
       instrs)))
 
 (define (compiler-backend-gep-load-multi-emergency-asm) : ResultCompilerBackend
@@ -10935,7 +11173,9 @@
     [instrs : CompilerIrInstrList
       (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -11021,20 +11261,31 @@
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r12"))
+          (CompilerRegAssignment.Assignment
+            4
+            (CompilerRegLocation.Register "%r12"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%r13"))
+            (CompilerRegAssignment.Assignment
+              5
+              (CompilerRegLocation.Register "%r13"))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.CopyBytes (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) 24)
+        (CompilerIrInstr.CopyBytes
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          24)
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 3 (CompilerIrValue.Var 2) (AstType.I64))
           CompilerIrInstrList.Nil))]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -11087,26 +11338,51 @@
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          5
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 8 (CompilerRegLocation.Register "%r12"))
+          (CompilerRegAssignment.Assignment
+            8
+            (CompilerRegLocation.Register "%r12"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 9 (CompilerRegLocation.Register "%r13"))
+            (CompilerRegAssignment.Assignment
+              9
+              (CompilerRegLocation.Register "%r13"))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.CopyBytes (CompilerIrValue.Var 0) (CompilerIrValue.Var 1) 24)
+        (CompilerIrInstr.CopyBytes
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          24)
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 6 (CompilerIrValue.Var 0) (CompilerIrValue.I64 3) (AstType.U64))
+          (CompilerIrInstr.Gep
+            6
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 3)
+            (AstType.U64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.CopyBytes (CompilerIrValue.Var 6) (CompilerIrValue.Var 3) 24)
+            (CompilerIrInstr.CopyBytes
+              (CompilerIrValue.Var 6)
+              (CompilerIrValue.Var 3)
+              24)
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Gep 7 (CompilerIrValue.Var 0) (CompilerIrValue.I64 6) (AstType.U64))
+              (CompilerIrInstr.Gep
+                7
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 6)
+                (AstType.U64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.CopyBytes (CompilerIrValue.Var 7) (CompilerIrValue.Var 5) 24)
+                (CompilerIrInstr.CopyBytes
+                  (CompilerIrValue.Var 7)
+                  (CompilerIrValue.Var 5)
+                  24)
                 CompilerIrInstrList.Nil)))))]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -11208,7 +11484,9 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-test-instrs
@@ -11460,13 +11738,17 @@
         CompilerRegAssignmentList.Nil)]
     [pair-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
         CompilerRegAssignmentList.Nil)]
     [r11-occupied-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r11"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r11"))
           CompilerRegAssignmentList.Nil))]
     [no-location-ok? : bool
       (match (compiler-backend-emit-test-instrs
@@ -11531,7 +11813,8 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.EntryArgc 0)
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
             CompilerIrInstrList.Nil))
         r11-occupied-assignments
         2)
@@ -11685,13 +11968,25 @@
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
   (backend-and8
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.I64) (AstType.F64))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.I64)
+        (AstType.F64))
       "    cvtsi2sdq %r8, %xmm2\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.I64) (AstType.F32))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.I64)
+        (AstType.F32))
       "    cvtsi2ssq %r8, %xmm2\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.U8) (AstType.F64))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.U8)
+        (AstType.F64))
       "    cvtsi2sdq %r8, %xmm2\n")
     (compiler-backend-instr-contains?
       (CompilerIrInstr.Cast
@@ -11701,16 +11996,32 @@
         (AstType.F64))
       "    js .L_tl_test_cast_u64_float_entry_v6_high\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.U64) (AstType.F32))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.U64)
+        (AstType.F32))
       "    addss %xmm2, %xmm2\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.F64) (AstType.I64))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.F64)
+        (AstType.I64))
       "    cvttsd2siq %xmm2, %r8\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.F64) (AstType.F32))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.F64)
+        (AstType.F32))
       "    cvtsd2ss %xmm2, %xmm2\n")
     (compiler-backend-instr-contains?
-      (CompilerIrInstr.Cast 6 (CompilerIrValue.Var 5) (AstType.F32) (AstType.F64))
+      (CompilerIrInstr.Cast
+        6
+        (CompilerIrValue.Var 5)
+        (AstType.F32)
+        (AstType.F64))
       "    cvtss2sd %xmm2, %xmm2\n")))
 
 (define (compiler-backend-direct-float-precision-cast-asm
@@ -11720,15 +12031,21 @@
     "test_cast"
     "entry"
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
     from-ty
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-direct-float-precision-cast-home-ok?) : bool
   (match (compiler-backend-direct-float-precision-cast-asm
@@ -11764,7 +12081,9 @@
     "test_cast"
     "entry"
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -11772,10 +12091,14 @@
     (CompilerIrValue.Var 0)
     from-ty
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-float-precision-cast-home-ok?) : bool
-  (match (compiler-backend-spill-float-precision-cast-asm (AstType.F64) (AstType.F32))
+  (match (compiler-backend-spill-float-precision-cast-asm
+    (AstType.F64)
+    (AstType.F32))
     [(ResultCompilerBackend.Ok narrow-asm)
       (match (compiler-backend-spill-float-precision-cast-asm
         (AstType.F32)
@@ -11812,13 +12135,17 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm2"))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
     (AstType.I64)
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-direct-int-to-float-cast-home-ok?) : bool
   (match (compiler-backend-direct-int-to-float-cast-asm (AstType.F64))
@@ -11852,7 +12179,9 @@
     (CompilerIrValue.Var 0)
     (AstType.I64)
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-int-to-float-cast-home-ok?) : bool
   (match (compiler-backend-spill-int-to-float-cast-asm (AstType.F64))
@@ -11892,7 +12221,9 @@
     (CompilerIrValue.Var 0)
     (AstType.U64)
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-u64-to-float-cast-home-ok?) : bool
   (match (compiler-backend-spill-u64-to-float-cast-asm (AstType.F64))
@@ -11932,15 +12263,21 @@
     "test_cast"
     "entry"
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
     from-ty
     (AstType.I64)
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-direct-float-to-int-cast-home-ok?) : bool
   (match (compiler-backend-direct-float-to-int-cast-asm (AstType.F64))
@@ -11966,7 +12303,9 @@
     "test_cast"
     "entry"
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -11974,7 +12313,9 @@
     (CompilerIrValue.Var 0)
     from-ty
     (AstType.I64)
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-float-to-int-cast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-int-cast-asm (AstType.F64))
@@ -12014,7 +12355,9 @@
     (CompilerIrValue.Var 0)
     (AstType.I32)
     (AstType.I64)
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil))
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movslq %r12d, %r8\n")
@@ -12026,16 +12369,32 @@
   (and
     (backend-and4
       (compiler-backend-instr-contains?
-        (CompilerIrInstr.Bitcast 6 (CompilerIrValue.Var 5) (AstType.F32) (AstType.U64))
+        (CompilerIrInstr.Bitcast
+          6
+          (CompilerIrValue.Var 5)
+          (AstType.F32)
+          (AstType.U64))
         "    movd %xmm2, %r8d\n")
       (compiler-backend-instr-contains?
-        (CompilerIrInstr.Bitcast 6 (CompilerIrValue.Var 5) (AstType.U64) (AstType.F32))
+        (CompilerIrInstr.Bitcast
+          6
+          (CompilerIrValue.Var 5)
+          (AstType.U64)
+          (AstType.F32))
         "    movd %r8d, %xmm2\n")
       (compiler-backend-instr-contains?
-        (CompilerIrInstr.Bitcast 6 (CompilerIrValue.Var 5) (AstType.F64) (AstType.U64))
+        (CompilerIrInstr.Bitcast
+          6
+          (CompilerIrValue.Var 5)
+          (AstType.F64)
+          (AstType.U64))
         "    movq %xmm2, %r8\n")
       (compiler-backend-instr-contains?
-        (CompilerIrInstr.Bitcast 6 (CompilerIrValue.Var 5) (AstType.U64) (AstType.F64))
+        (CompilerIrInstr.Bitcast
+          6
+          (CompilerIrValue.Var 5)
+          (AstType.U64)
+          (AstType.F64))
         "    movq %r8, %xmm2\n"))
     (not
       (compiler-backend-instr-contains?
@@ -12053,15 +12412,21 @@
   [dst-home : String]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register src-home))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register src-home))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register dst-home))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register dst-home))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
     from-ty
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-direct-bitcast-home-ok?) : bool
   (match (compiler-backend-direct-bitcast-asm
@@ -12118,7 +12483,9 @@
 (define (compiler-backend-spill-float-to-int-bitcast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -12126,7 +12493,9 @@
     (CompilerIrValue.Var 0)
     from-ty
     (AstType.U64)
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-float-to-int-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-int-bitcast-asm (AstType.F64))
@@ -12160,7 +12529,9 @@
     (CompilerIrValue.Var 0)
     (AstType.U64)
     to-ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-int-to-float-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-int-to-float-bitcast-asm (AstType.F64))
@@ -12188,7 +12559,9 @@
 (define (compiler-backend-spill-float-to-float-bitcast-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -12196,7 +12569,9 @@
     (CompilerIrValue.Var 0)
     ty
     ty
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-spill-float-to-float-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-float-bitcast-asm (AstType.F64))
@@ -12232,7 +12607,9 @@
     (CompilerIrValue.Var 0)
     (AstType.I64)
     (AstType.U64)
-    (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil))
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
@@ -13087,9 +13464,13 @@
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
   (match (compiler-backend-emit-unop
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrUnOp.Neg)
@@ -13107,7 +13488,9 @@
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
   (match (compiler-backend-emit-unop
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -13169,11 +13552,17 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%xmm4"))
+          (CompilerRegAssignment.Assignment
+            2
+            (CompilerRegLocation.Register "%xmm4"))
           CompilerRegAssignmentList.Nil)))
     2
     op
@@ -13182,9 +13571,13 @@
     ty))
 
 (define (compiler-backend-direct-float-arith-home-ok?) : bool
-  (match (compiler-backend-direct-float-binop-asm (CompilerIrBinOp.Add) (AstType.F64))
+  (match (compiler-backend-direct-float-binop-asm
+    (CompilerIrBinOp.Add)
+    (AstType.F64))
     [(ResultCompilerBackend.Ok f64-asm)
-      (match (compiler-backend-direct-float-binop-asm (CompilerIrBinOp.Add) (AstType.F32))
+      (match (compiler-backend-direct-float-binop-asm
+        (CompilerIrBinOp.Add)
+        (AstType.F32))
         [(ResultCompilerBackend.Ok f32-asm)
           (and
             (backend-and4
@@ -13218,9 +13611,13 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm4"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm4"))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -13273,11 +13670,17 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+          (CompilerRegAssignment.Assignment
+            2
+            (CompilerRegLocation.Register "%r12"))
           CompilerRegAssignmentList.Nil)))
     2
     (CompilerIrBinOp.Lt)
@@ -13326,9 +13729,13 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm3"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm4"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm4"))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -13383,9 +13790,13 @@
         CompilerRegVarTypeList.Nil))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%xmm4"))
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm4"))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Add)
@@ -13406,9 +13817,13 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -24))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+          (CompilerRegAssignment.Assignment
+            2
+            (CompilerRegLocation.Register "%r12"))
           CompilerRegAssignmentList.Nil)))
     2
     (CompilerIrBinOp.Lt)
@@ -13460,9 +13875,13 @@
         CompilerRegVarTypeList.Nil))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register lhs-home))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register lhs-home))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register rhs-home))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register rhs-home))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Add)
@@ -13510,9 +13929,13 @@
         CompilerRegVarTypeList.Nil))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register "%xmm2"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Lt)
@@ -13533,7 +13956,9 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -24))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Lt)
@@ -13585,7 +14010,9 @@
     [ends : (Array i64) (make-array i64 2)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r8"))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil))]
@@ -13962,9 +14389,13 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r12"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r13"))
+          (CompilerRegAssignment.Assignment
+            2
+            (CompilerRegLocation.Register "%r13"))
           CompilerRegAssignmentList.Nil)))
     1
     (CompilerIrBinOp.Lt)
@@ -14007,7 +14438,9 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil))
     1
     op
@@ -14016,9 +14449,13 @@
     ty))
 
 (define (compiler-backend-direct-immediate-shift-home-ok?) : bool
-  (match (compiler-backend-direct-immediate-shift-asm (CompilerIrBinOp.Shl) (AstType.I64))
+  (match (compiler-backend-direct-immediate-shift-asm
+    (CompilerIrBinOp.Shl)
+    (AstType.I64))
     [(ResultCompilerBackend.Ok shl-asm)
-      (match (compiler-backend-direct-immediate-shift-asm (CompilerIrBinOp.Shr) (AstType.I64))
+      (match (compiler-backend-direct-immediate-shift-asm
+        (CompilerIrBinOp.Shr)
+        (AstType.I64))
         [(ResultCompilerBackend.Ok shr-asm)
           (and
             (backend-and4
@@ -14050,9 +14487,13 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%rcx"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+          (CompilerRegAssignment.Assignment
+            2
+            (CompilerRegLocation.Register "%r12"))
           CompilerRegAssignmentList.Nil)))
     2
     op
@@ -14114,9 +14555,13 @@
     result-ty))
 
 (define (compiler-backend-spill-immediate-binop-home-ok?) : bool
-  (match (compiler-backend-spill-immediate-binop-asm (CompilerIrBinOp.Add) (AstType.I64))
+  (match (compiler-backend-spill-immediate-binop-asm
+    (CompilerIrBinOp.Add)
+    (AstType.I64))
     [(ResultCompilerBackend.Ok add-asm)
-      (match (compiler-backend-spill-immediate-binop-asm (CompilerIrBinOp.Lt) (AstType.Bool))
+      (match (compiler-backend-spill-immediate-binop-asm
+        (CompilerIrBinOp.Lt)
+        (AstType.Bool))
         [(ResultCompilerBackend.Ok cmp-asm)
           (and
             (backend-and4
@@ -14150,7 +14595,9 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r13"))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -14161,9 +14608,13 @@
     result-ty))
 
 (define (compiler-backend-spill-source-binop-home-ok?) : bool
-  (match (compiler-backend-spill-source-binop-asm (CompilerIrBinOp.Add) (AstType.I64))
+  (match (compiler-backend-spill-source-binop-asm
+    (CompilerIrBinOp.Add)
+    (AstType.I64))
     [(ResultCompilerBackend.Ok add-asm)
-      (match (compiler-backend-spill-source-binop-asm (CompilerIrBinOp.Lt) (AstType.Bool))
+      (match (compiler-backend-spill-source-binop-asm
+        (CompilerIrBinOp.Lt)
+        (AstType.Bool))
         [(ResultCompilerBackend.Ok cmp-asm)
           (and
             (backend-and4
@@ -15134,7 +15585,9 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-scalar-stack-call-arg
       (CompilerBackendTarget.Linux)
@@ -15154,7 +15607,9 @@
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.RegisterPair "%xmm3" "%xmm4"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.RegisterPair "%xmm3" "%xmm4"))
         CompilerRegAssignmentList.Nil)]
     [ty : AstType (compiler-backend-register-group-f64-test-type)]
     (match (compiler-backend-emit-group-stack-arg
@@ -15180,10 +15635,14 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
     [params : CompilerIrParamList
-      (compiler-ir-param-cons (CompilerIrParam.Param "pair" ty 0) CompilerIrParamList.Nil)]
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "pair" ty 0)
+        CompilerIrParamList.Nil)]
     [reg-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-param-spills
@@ -15551,7 +16010,9 @@
     [callee-ty : AstType (ast-ty-func (ast-type-list-new) (AstType.I64))]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r11"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r11"))
         CompilerRegAssignmentList.Nil)]
     [types : CompilerRegVarTypeList
       (compiler-reg-var-type-cons
@@ -15559,10 +16020,15 @@
         CompilerRegVarTypeList.Nil)]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.TailCallIndirect (CompilerIrValue.Var 0) (CompilerIrCallArgs.Nil) (AstType.I64))
+        (CompilerIrInstr.TailCallIndirect
+          (CompilerIrValue.Var 0)
+          (CompilerIrCallArgs.Nil)
+          (AstType.I64))
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) CompilerIrBlockList.Nil)]
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -15587,7 +16053,9 @@
         1
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
-        (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
       (begin
@@ -15820,9 +16288,12 @@
       (CompilerBackendTarget.Linux))
     (compiler-backend-indirect-tail-call-r11-callee-target-ok?
       (CompilerBackendTarget.Windows))
-    (compiler-backend-non-direct-tail-call-target-ok? (CompilerBackendTarget.Linux))
-    (compiler-backend-non-direct-tail-call-target-ok? (CompilerBackendTarget.Windows))
-    (compiler-backend-non-direct-tail-call-unit-target-ok? (CompilerBackendTarget.Linux))
+    (compiler-backend-non-direct-tail-call-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-non-direct-tail-call-target-ok?
+      (CompilerBackendTarget.Windows))
+    (compiler-backend-non-direct-tail-call-unit-target-ok?
+      (CompilerBackendTarget.Linux))
     (compiler-backend-non-direct-tail-call-unit-target-ok?
       (CompilerBackendTarget.Linux))
     (compiler-backend-non-direct-tail-call-unit-target-ok?
@@ -16746,25 +17217,43 @@
     [ends : (Array i64) (make-array i64 5)]
     [r10-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rdx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r8"))
+              (CompilerRegAssignment.Assignment
+                4
+                (CompilerRegLocation.Register "%r8"))
               CompilerRegAssignmentList.Nil))))]
     [r11-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rdx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%r10"))
+              (CompilerRegAssignment.Assignment
+                3
+                (CompilerRegLocation.Register "%r10"))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r8"))
+                (CompilerRegAssignment.Assignment
+                  4
+                  (CompilerRegLocation.Register "%r8"))
                 CompilerRegAssignmentList.Nil)))))]
     (begin
       (array-set! starts 0 0)
@@ -16807,25 +17296,43 @@
     [ends : (Array i64) (make-array i64 5)]
     [r10-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rdx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r8"))
+              (CompilerRegAssignment.Assignment
+                4
+                (CompilerRegLocation.Register "%r8"))
               CompilerRegAssignmentList.Nil))))]
     [r11-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rdx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%r10"))
+              (CompilerRegAssignment.Assignment
+                3
+                (CompilerRegLocation.Register "%r10"))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r8"))
+                (CompilerRegAssignment.Assignment
+                  4
+                  (CompilerRegLocation.Register "%r8"))
                 CompilerRegAssignmentList.Nil)))))]
     (begin
       (array-set! starts 0 0)
@@ -16868,17 +17375,29 @@
     [ends : (Array i64) (make-array i64 7)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rcx"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rdx"))
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%r8"))
+              (CompilerRegAssignment.Assignment
+                3
+                (CompilerRegLocation.Register "%r8"))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%r13"))
+                (CompilerRegAssignment.Assignment
+                  5
+                  (CompilerRegLocation.Register "%r13"))
                 (compiler-reg-assignment-cons
-                  (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%r14"))
+                  (CompilerRegAssignment.Assignment
+                    6
+                    (CompilerRegLocation.Register "%r14"))
                   CompilerRegAssignmentList.Nil))))))]
     (begin
       (array-set! starts 0 0)
@@ -16956,7 +17475,9 @@
     [ends : (Array i64) (make-array i64 1)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)]
     [exclude : (Array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
@@ -17020,15 +17541,23 @@
     [ends : (Array i64) (make-array i64 5)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r10"))
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.RegisterPair "%r11" "%xmm2"))
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.RegisterPair "%r11" "%xmm2"))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill 0))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%r9"))
+                (CompilerRegAssignment.Assignment
+                  4
+                  (CompilerRegLocation.Register "%r9"))
                 CompilerRegAssignmentList.Nil)))))]
     [assignment-index : CompilerRegAssignmentIndex
       (compiler-reg-assignment-index-build assignments 5)]
@@ -17112,12 +17641,19 @@
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
-            (compiler-ir-instr-cons (CompilerIrInstr.Jump "header") CompilerIrInstrList.Nil)))))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "header")
+              CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
         "header"
         (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp 2 (CompilerIrBinOp.Lt) (CompilerIrValue.Var 1) (CompilerIrValue.Var 0) (AstType.Bool))
+          (CompilerIrInstr.BinOp
+            2
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "body" "exit")
             CompilerIrInstrList.Nil)))
@@ -17125,10 +17661,16 @@
         (compiler-ir-block
           "body"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 5) (CompilerIrValue.Var 1) (AstType.I64))
+            (CompilerIrInstr.Gep
+              3
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.Var 1)
+              (AstType.I64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
-              (compiler-ir-instr-cons (CompilerIrInstr.Jump "header") CompilerIrInstrList.Nil))))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "header")
+                CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "exit"
@@ -17140,7 +17682,8 @@
                 (CompilerIrValue.I64 8)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
                 CompilerIrInstrList.Nil)))
           CompilerIrBlockList.Nil)))))
 
@@ -17158,7 +17701,9 @@
       (compiler-backend-scavenge-loop-live-through-blocks)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r8"))
         CompilerRegAssignmentList.Nil)]
     (begin
       (compiler-backend-test-scavenge-install-ctx!
@@ -17202,10 +17747,14 @@
             (CompilerIrParam.Param "c" (AstType.U64) 2)
             (compiler-ir-param-cons
               (CompilerIrParam.Param "d" (AstType.U64) 3)
-              (compiler-ir-param-cons (CompilerIrParam.Param "e" (AstType.Bool) 4) CompilerIrParamList.Nil)))))]
+              (compiler-ir-param-cons
+                (CompilerIrParam.Param "e" (AstType.Bool) 4)
+                CompilerIrParamList.Nil)))))]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Register "%r9"))
+        (CompilerRegAssignment.Assignment
+          3
+          (CompilerRegLocation.Register "%r9"))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-param-spills
       (CompilerBackendTarget.Windows)
@@ -17215,7 +17764,9 @@
       0
       0
       0
-      (compiler-backend-program-index-build CompilerIrFunctionList.Nil CompilerIrExternList.Nil)
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
         (and

@@ -13946,7 +13946,8 @@
                   (box-get rest)
                   selected
                   (OptCopyEnv.Cons dst (CompilerIrValue.Var canon) (box env)))]
-              [(option_i64.None) (opt-licm-dedup-env (box-get rest) selected env)])]
+              [(option_i64.None)
+                (opt-licm-dedup-env (box-get rest) selected env)])]
           [(OptLicmDupNone)
             (opt-licm-dedup-env
               (box-get rest)
@@ -14019,7 +14020,10 @@
               ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
               (let
                 [dedup-env : OptCopyEnv
-                  (opt-licm-dedup-env hoisted (CompilerIrInstrList.Nil) (OptCopyEnv.Nil))]
+                  (opt-licm-dedup-env
+                    hoisted
+                    (CompilerIrInstrList.Nil)
+                    (OptCopyEnv.Nil))]
                 (match dedup-env
                   [(OptCopyEnv.Nil)
                     (opt-licm-insert-preheader-blocks
@@ -43181,7 +43185,8 @@
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
         [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
         (match class
-          [(OptLoadStoreUnknown) (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+          [(OptLoadStoreUnknown)
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
           [_
             (let
               [filtered : OptLoadTable
@@ -43216,7 +43221,8 @@
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
         (match class
-          [(OptLoadStoreUnknown) (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+          [(OptLoadStoreUnknown)
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
           [_
             (OptLoadCseState.State
               facts2
@@ -43297,7 +43303,9 @@
         (OptLoadCseResult.Result
           (opt-load-cse-state-clear-for-memory hs state instr)
           instr)
-        (OptLoadCseResult.Result (opt-load-cse-state-step-other hs state instr) instr))]))
+        (OptLoadCseResult.Result
+          (opt-load-cse-state-step-other hs state instr)
+          instr))]))
 
 (define (opt-load-cse-instrs-from
   [hs : OptLoadHeaderSet]
@@ -43332,7 +43340,10 @@
   (Rewrite OptLoadCseState CompilerIrInstrList))
 
 (define (opt-load-cse-empty-state) : OptLoadCseState
-  (OptLoadCseState.State (opt-alias-empty) (OptLoadTable.Nil) (opt-load-kinds-empty)))
+  (OptLoadCseState.State
+    (opt-alias-empty)
+    (OptLoadTable.Nil)
+    (opt-load-kinds-empty)))
 
 ;; The load table is a persistent list, but the alias facts and pointer kinds
 ;; are mutable tables; entering a block through a single predecessor must
@@ -43481,7 +43492,13 @@
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
-      (opt-load-gvn-instr-seq-from hs entry-state sources instrs 0 CompilerIrInstrList.Nil)]))
+      (opt-load-gvn-instr-seq-from
+        hs
+        entry-state
+        sources
+        instrs
+        0
+        CompilerIrInstrList.Nil)]))
 
 (define (opt-load-gvn-process-id
   [context : OptCfgContext]
@@ -43735,8 +43752,12 @@
     (opt-load-header-set-from-function
       (compiler-ir-param-cons
         (CompilerIrParam.Param "xs" (AstType.DynArray 0) 0)
-        (compiler-ir-param-cons (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1) (CompilerIrParamList.Nil)))
-      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) (CompilerIrBlockList.Nil)))
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1)
+          (CompilerIrParamList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        (CompilerIrBlockList.Nil)))
     (opt-load-cse-empty-state)
     instrs))
 
@@ -43906,11 +43927,18 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Alloc 0 (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Gep 1 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 1) (CompilerIrValue.I64 9) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
@@ -43921,11 +43949,19 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Alloc 0 (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Gep 1 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
@@ -43935,19 +43971,38 @@
 ;; Var 0 is a header-typed param (opt-load-cse-run-with-array-param).
 (define (opt-load-cse-element-store-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.I64))
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep 6 (CompilerIrValue.Var 5) (CompilerIrValue.I64 2) (AstType.I64))
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.StorePtr (CompilerIrValue.Var 6) (CompilerIrValue.I64 7) (AstType.I64))
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 7)
+                (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Gep 7 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.I64))
+                (CompilerIrInstr.Gep
+                  7
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
                   (CompilerIrInstrList.Nil))))))))))
@@ -43955,17 +44010,32 @@
 ;; GAP4: an element store MUST drop element-load entries (same buffer).
 (define (opt-load-cse-element-invalidate-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 3) (CompilerIrValue.I64 1) (AstType.I64))
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep 6 (CompilerIrValue.Var 3) (CompilerIrValue.I64 2) (AstType.I64))
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.StorePtr (CompilerIrValue.Var 6) (CompilerIrValue.I64 7) (AstType.I64))
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 7)
+                (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Load 7 (CompilerIrValue.Var 4) (AstType.I64))
                 (CompilerIrInstrList.Nil)))))))))
@@ -43974,13 +44044,24 @@
 ;; 1) may alias var 0's descriptor -- the len re-load must stay a load.
 (define (opt-load-cse-other-base-store-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.I64))
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 1) (CompilerIrValue.I64 1) (AstType.I64))
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 4) (CompilerIrValue.I64 5) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 5)
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
@@ -43989,13 +44070,24 @@
 ;; entry) -- the len entry survives.
 (define (opt-load-cse-same-base-disjoint-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 0) (CompilerIrValue.I64 1) (AstType.I64))
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Gep 4 (CompilerIrValue.Var 0) (CompilerIrValue.I64 0) (AstType.I64))
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.StorePtr (CompilerIrValue.Var 4) (CompilerIrValue.I64 5) (AstType.I64))
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 5)
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
@@ -44007,7 +44099,10 @@
     ;; GAP4: a store through an UNKNOWN pointer still clears everything.
     [store : bool
       (opt-load-cse-barrier-blocked?
-        (CompilerIrInstr.StorePtr (CompilerIrValue.Var 99) (CompilerIrValue.I64 9) (AstType.I64)))]
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 99)
+          (CompilerIrValue.I64 9)
+          (AstType.I64)))]
     [store-forward : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-store-forward-instrs))]
     [canonical-gep : CompilerIrInstrList

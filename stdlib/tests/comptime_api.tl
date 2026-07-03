@@ -5,9 +5,9 @@
   x)
 
 (defmacro (stdlib-comptime-first-or-zero [args : comptime.Expr ...]) : i64
-  (if (comptime.expr-list-empty? args)
+  (if (= (comptime.expr-list-length args) 0)
     (comptime.expr-int 0)
-    (comptime.expr-list-head args)))
+    (comptime.expr-list-nth args 0)))
 
 (defmacro (stdlib-comptime-match-int-or-zero [x : comptime.Expr]) : i64
   (match x

@@ -26,28 +26,52 @@
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
 (defmacro (and [args : bool ...]) : bool
-  (if (comptime.expr-list-empty? args)
-    (comptime.expr-bool true)
-    `(if ,(comptime.expr-list-head args)
-      (and ,@(comptime.expr-list-tail args))
-      false)))
+  `(core-and-from (__core-and-args ,@args) 0))
+
+;: Internal index step for `and`: emit the short-circuiting if-chain over the
+;: carrier's operands, read by index (`expr-list-nth`) instead of a shrinking
+;: tail. `carrier` wraps the operands in a marker call built once by `and`.
+(defmacro (core-and-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            (comptime.expr-bool true)
+            `(if ,(comptime.expr-list-nth elems i)
+              (core-and-from ,carrier ,(comptime.expr-int (+ i 1)))
+              false))]
+        [_ (comptime.expr-bool true)])]
+    [_ (comptime.expr-bool true)]))
 
 ;: Short-circuiting boolean disjunction.
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `false`.
 (defmacro (or [args : bool ...]) : bool
-  (if (comptime.expr-list-empty? args)
-    (comptime.expr-bool false)
-    `(if ,(comptime.expr-list-head args)
-      true
-      (or ,@(comptime.expr-list-tail args)))))
+  `(core-or-from (__core-or-args ,@args) 0))
+
+;: Internal index step for `or`: emit the short-circuiting if-chain over the
+;: carrier's operands, read by index (`expr-list-nth`) instead of a shrinking
+;: tail. `carrier` wraps the operands in a marker call built once by `or`.
+(defmacro (core-or-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            (comptime.expr-bool false)
+            `(if ,(comptime.expr-list-nth elems i)
+              true
+              (core-or-from ,carrier ,(comptime.expr-int (+ i 1)))))]
+        [_ (comptime.expr-bool false)])]
+    [_ (comptime.expr-bool false)]))
 
 ;: Evaluate `body` expressions only when `condition` is true.
 ;:
 ;: Each body expression must be unit-valued.
 (defmacro (when [condition : bool] [body : unit ...]) : unit
-  (if (comptime.expr-list-empty? body)
+  (if (= (comptime.expr-list-length body) 0)
     (comptime.expr-var "core-when-missing-body")
     `(if ,condition
       (begin
@@ -58,7 +82,7 @@
 ;:
 ;: Each body expression must be unit-valued.
 (defmacro (unless [condition : bool] [body : unit ...]) : unit
-  (if (comptime.expr-list-empty? body)
+  (if (= (comptime.expr-list-length body) 0)
     (comptime.expr-var "core-unless-missing-body")
     `(if ,condition
       unit
@@ -72,30 +96,42 @@
 ;: results are captured as `ExprClause` operands; the expanded `if` chain
 ;: performs the ordinary post-expansion bool/result typechecking.
 (defmacro (cond [arms : ExprClause ...]) : Expr
-  (if (comptime.expr-clause-list-empty? arms)
-    (comptime.expr-var "core-cond-missing-else")
-    (let
-      [arm : ExprClause (comptime.expr-clause-list-head arms)]
-      [rest : ExprClauseList (comptime.expr-clause-list-tail arms)]
-      (match arm
-        [(ExprClause test result)
-          (match test
-            [(comptime.ExprVar name)
-              (if (string-eq name "else")
-                (if (comptime.expr-clause-list-empty? rest)
-                  result
-                  (comptime.expr-var "core-cond-else-must-be-final"))
-                (if (comptime.expr-clause-list-empty? rest)
-                  (comptime.expr-var "core-cond-missing-else")
-                  `(if ,test
-                    ,result
-                    (cond ,@(comptime.expr-clause-list->expr-list rest)))))]
-            [_
-              (if (comptime.expr-clause-list-empty? rest)
-                (comptime.expr-var "core-cond-missing-else")
-                `(if ,test
-                  ,result
-                  (cond ,@(comptime.expr-clause-list->expr-list rest))))])]))))
+  `(core-cond-from 0 ,@(comptime.expr-clause-list->expr-list arms)))
+
+;: Internal index step for `cond`: read clauses by index (`expr-clause-list-nth`)
+;: instead of peeling a tail. `idx` is the current clause position and the full
+;: clause list is threaded so each step can address the remaining arms.
+(defmacro (core-cond-from [idx : comptime.Expr] [arms : ExprClause ...]) : Expr
+  (match idx
+    [(comptime.ExprInt i)
+      (let
+        [n : i64 (comptime.expr-clause-list-length arms)]
+        (if (>= i n)
+          (comptime.expr-var "core-cond-missing-else")
+          (match (comptime.expr-clause-list-nth arms i)
+            [(ExprClause test result)
+              (match test
+                [(comptime.ExprVar name)
+                  (if (string-eq name "else")
+                    (if (= (+ i 1) n)
+                      result
+                      (comptime.expr-var "core-cond-else-must-be-final"))
+                    (if (= (+ i 1) n)
+                      (comptime.expr-var "core-cond-missing-else")
+                      `(if ,test
+                        ,result
+                        (core-cond-from
+                          ,(comptime.expr-int (+ i 1))
+                          ,@(comptime.expr-clause-list->expr-list arms)))))]
+                [_
+                  (if (= (+ i 1) n)
+                    (comptime.expr-var "core-cond-missing-else")
+                    `(if ,test
+                      ,result
+                      (core-cond-from
+                        ,(comptime.expr-int (+ i 1))
+                        ,@(comptime.expr-clause-list->expr-list arms))))])])))]
+    [_ (comptime.expr-var "core-cond-missing-else")]))
 
 (test
   core-macros-api

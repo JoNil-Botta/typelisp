@@ -3868,11 +3868,19 @@
 (define answer : i64 7)
 (define (get) : i64 answer)
 (defmacro (all [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (all ,@(expr-list-tail args))
-       false)))
+  `(all-from (__all-args ,@args) 0))
+(defmacro (all-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (all-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
 (module main)

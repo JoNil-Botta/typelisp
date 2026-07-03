@@ -7037,18 +7037,34 @@
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
   "(import stdlib.comptime)
 (defmacro (all [args : bool ...]) : bool
-  (if (comptime.expr-list-empty? args)
-    (comptime.expr-bool true)
-    `(if ,(comptime.expr-list-head args)
-       (all ,@(comptime.expr-list-tail args))
-       false)))
+  `(all-from (__all-args ,@args) 0))
+(defmacro (all-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            (comptime.expr-bool true)
+            `(if ,(comptime.expr-list-nth elems i)
+               (all-from ,carrier ,(comptime.expr-int (+ i 1)))
+               false))]
+        [_ (comptime.expr-bool true)])]
+    [_ (comptime.expr-bool true)]))
 (defmacro (pick [arms : ExprClause ...]) : i64
-  (if (comptime.expr-clause-list-empty? arms)
-    (comptime.expr-int 0)
-    `(if ,(comptime.expr-clause-first (comptime.expr-clause-list-head arms))
-       ,(comptime.expr-clause-second (comptime.expr-clause-list-head arms))
-       (pick ,@(comptime.expr-clause-list->expr-list
-                 (comptime.expr-clause-list-tail arms))))))
+  `(pick-from 0 ,@(comptime.expr-clause-list->expr-list arms)))
+(defmacro (pick-from [idx : comptime.Expr] [arms : ExprClause ...]) : i64
+  (match idx
+    [(comptime.ExprInt i)
+      (if (>= i (comptime.expr-clause-list-length arms))
+        (comptime.expr-int 0)
+        (let
+          [arm : ExprClause (comptime.expr-clause-list-nth arms i)]
+          `(if ,(comptime.expr-clause-first arm)
+             ,(comptime.expr-clause-second arm)
+             (pick-from
+               ,(comptime.expr-int (+ i 1))
+               ,@(comptime.expr-clause-list->expr-list arms)))))]
+    [_ (comptime.expr-int 0)]))
 (define (main) : i64
   (if (all true true)
     (pick [false 1] [true 42])
@@ -7218,12 +7234,11 @@
 
 (define (compiler-typecheck-macro-binding-clause-variadic-source) : String
   "(defmacro (sum-bindings [bindings : ExprBindingClause ...]) : i64
-  (if (expr-binding-clause-list-empty? bindings)
+  (if (= (expr-binding-clause-list-length bindings) 0)
     (expr-int 0)
     (if (= (expr-binding-clause-list-length bindings) 2)
       (let
-        [first : ExprBindingClause (expr-binding-clause-list-head bindings)]
-        [rest : ExprBindingClauseList (expr-binding-clause-list-tail bindings)]
+        [first : ExprBindingClause (expr-binding-clause-list-nth bindings 0)]
         [second : ExprBindingClause (expr-binding-clause-list-nth bindings 1)]
         (if (__tl_string_eq (expr-binding-clause-name first) \"a\")
           (if (__tl_string_eq (expr-binding-clause-name second) \"b\")
@@ -7527,17 +7542,33 @@
     unit))
 (module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (defmacro (when [condition : bool] [body : unit]) : unit
   `(if ,condition ,body unit))
 (defmacro (unless [condition : bool] [body : unit]) : unit
@@ -7553,17 +7584,33 @@
 (define (compiler-typecheck-macro-prelude-module-source) : String
   "(module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (module main)
 ")
 
@@ -7745,11 +7792,19 @@
 
 (define (compiler-typecheck-macro-own-and-source) : String
   "(defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (define (main [x : bool] [y : bool] [z : bool]) : i64
   (if (and)
     (if (and x)
@@ -7759,11 +7814,19 @@
 
 (define (compiler-typecheck-macro-own-or-source) : String
   "(defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (define (main [x : bool] [y : bool] [z : bool]) : i64
   (if (or)
     0

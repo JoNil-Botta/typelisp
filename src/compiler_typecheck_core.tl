@@ -52359,13 +52359,21 @@
       (tc-string-prefix? identity "stdlib.vector:vector(")
       (tc-name-base-eq? macro-name "vector"))))
 
+(define (macro-generated-surface-result?
+  [macro-name : String]
+  [identity : String]) : bool
+  (or
+    (tc-string-prefix? identity "stdlib.result:result(")
+    (tc-name-base-eq? macro-name "result")))
+
 (define (macro-generated-surface-filtered?
   [module : String]
   [macro-name : String]
   [identity : String]) : bool
   (or
     (macro-generated-surface-hashmap? macro-name identity)
-    (macro-generated-surface-vector? module macro-name identity)))
+    (macro-generated-surface-vector? module macro-name identity)
+    (macro-generated-surface-result? macro-name identity)))
 
 (cfg
   test
@@ -52384,6 +52392,12 @@
           "vector"
           "stdlib.vector:vector(String)")
         "hot generated vector imports should use surface filtering")
+      (test.assert-true
+        (macro-generated-surface-filtered?
+          "compiler.lex"
+          "result"
+          "stdlib.result:result(i64 String)")
+        "generated result imports should use surface filtering")
       (test.assert-false
         (macro-generated-surface-filtered?
           "stdlib.args"
@@ -55230,6 +55244,44 @@
   [paths : AstDeclPathList]) : MacroFollowupWorkList
   (macro-module-placeholder-followup-work-list-in decls paths "" 0))
 
+(define (macro-decl-module-macro-placeholder? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Macro _ _) true]
+        [_ false])]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-module-macro-placeholder? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-module-macro-placeholder? (box-get template-box))]
+    [_ false]))
+
+(define (macro-followup-work-module-macro-placeholder?
+  [decls : AstDeclList]
+  [work : MacroFollowupWork]) : bool
+  (let
+    [start-index : i64 (struct-get work start-index)]
+    [end-index : i64 (struct-get work end-index)]
+    [count : i64 (- end-index start-index)]
+    (if (= count 1)
+      (match (ast-decl-list-step (tc-decl-list-drop decls start-index))
+        [(AstDeclListStep.Cons decl _)
+          (macro-decl-module-macro-placeholder? decl)]
+        [(AstDeclListStep.Nil) false])
+      false)))
+
+(define (macro-followup-work-list-module-macro-placeholders?
+  [decls : AstDeclList]
+  [work : MacroFollowupWorkList]) : bool
+  (match work
+    [(MacroFollowupWorkList.Nil) true]
+    [(MacroFollowupWorkList.Cons item rest)
+      (and
+        (macro-followup-work-module-macro-placeholder? decls item)
+        (macro-followup-work-list-module-macro-placeholders?
+          decls
+          (box-get rest)))]))
+
 (define (macro-decl-module-placeholder-count [decl : AstDecl]) : i64
   (match decl
     [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
@@ -56182,7 +56234,13 @@
                 (and
                   has-pass-followup
                   (macro-local-followup-work-supported? pass-followup-work))]
-              [can-process-local-module-placeholder : bool false]
+              [can-process-local-module-placeholder : bool
+                (and
+                  has-module-placeholder-followup
+                  (macro-local-followup-work-supported? module-placeholder-work)
+                  (macro-followup-work-list-module-macro-placeholders?
+                    decls
+                    module-placeholder-work))]
               (cond
                 [can-process-local-pass-followup
                   (match (macro-expand-local-followup-with-setup
@@ -56224,18 +56282,23 @@
                         local-normalized-paths
                         remaining-work)
                       (if (macro-followup-work-list-empty? remaining-work)
-                        (macro-expand-program-with-paths-loop-and-pools
+                        (macro-expand-finish-rematerialized-local
                           local-normalized
                           local-normalized-paths
+                          MacroFollowupWorkList.Nil
+                          true
                           pools
                           stdlib-roots
                           cfgs
-                          (- fuel 1))
-                        (macro-expand-finish-materialized
+                          fuel)
+                        (macro-expand-finish-rematerialized-local
                           local-normalized
                           local-normalized-paths
                           remaining-work
-                          MacroFollowupWorkList.Nil
+                          (not
+                            (macro-program-followup-work-has-module-placeholder?
+                              local-normalized
+                              remaining-work))
                           pools
                           stdlib-roots
                           cfgs
@@ -56271,6 +56334,38 @@
                       (- fuel 1)))]
                 [else (ResultMacroExpand.Ok normalized normalized-paths)]))])]
       [(ResultGenProgramWithPaths.Err diag) (ResultMacroExpand.Err diag)])))
+
+(define (macro-expand-finish-rematerialized-local
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pass-followup-work : MacroFollowupWorkList]
+  [drop-pass-followup? : bool]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.StringVector]
+  [cfgs : SymI64Env]
+  [fuel : i64]) : ResultMacroExpand
+  (match (macro-materialize-generated-imports
+    program
+    paths
+    stdlib-roots
+    cfgs
+    pools)
+    [(ResultMacroMaterializeImport.Ok
+        materialized-decls
+        materialized-paths
+        _
+        materialized-followup-work)
+      (macro-expand-finish-materialized-with-local
+        (ast-program materialized-decls)
+        materialized-paths
+        pass-followup-work
+        materialized-followup-work
+        drop-pass-followup?
+        pools
+        stdlib-roots
+        cfgs
+        fuel)]
+    [(ResultMacroMaterializeImport.Err diag) (ResultMacroExpand.Err diag)]))
 
 (define (macro-expand-finish-materialized-with-local
   [materialized : AstProgram]

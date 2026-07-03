@@ -1500,9 +1500,7 @@
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
                         input-path)))
-                  (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (compiler-driver-lowered-from-pools program spans pools))))]
+                  (compiler-driver-lowered-from-pools program spans pools)))]
             [(ResultCompilerLower.Err diag)
               (begin
                 (cfg
@@ -1554,9 +1552,7 @@
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
                         input-path)))
-                  (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (compiler-driver-lowered-from-pools program spans pools))))]
+                  (compiler-driver-lowered-from-pools program spans pools)))]
             [(ResultCompilerLower.Err diag)
               (begin
                 (cfg

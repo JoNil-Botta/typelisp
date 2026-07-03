@@ -149,6 +149,43 @@
   [state : CompilerDriverState]) : bool
   (not (= (compiler-driver-state-owned-pool-arena state) 0)))
 
+(define (compiler-driver-state-adopt-pools!
+  [state : CompilerDriverState]
+  [pools : AstNodePoolContext]) : unit
+  (begin
+    (array-set!
+      (struct-get state pool-arena)
+      0
+      (ast-node-pool-context-base-arena pools))
+    (array-set!
+      (struct-get state expr-pool)
+      0
+      (array-ref (struct-get pools expr-pool) 0))
+    (array-set!
+      (struct-get state type-pool)
+      0
+      (array-ref (struct-get pools type-pool) 0))
+    (compiler-driver-state-install-pools! state)))
+
+(define (compiler-driver-state-can-release-checked-lower-source-pools?
+  [state : CompilerDriverState]) : bool
+  (and
+    (compiler-driver-state-has-owned-pool-arena? state)
+    (not (compiler-driver-state-session-cache-enabled? state))))
+
+(define (compiler-driver-state-new-checked-lower-pools) : AstNodePoolContext
+  (let
+    [pool-arena : i64 (arena.tl_arena_make)]
+    (ast-node-pool-context-new-with-capacities-in-arena
+      compiler-driver-compile-expr-pool-initial-capacity
+      compiler-driver-compile-type-pool-initial-capacity
+      pool-arena)))
+
+(define (compiler-driver-state-destroy-uncommitted-pools!
+  [pools : AstNodePoolContext]) : unit
+  (unsafe
+    (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+
 (define (compiler-driver-state-clear-pool-backed-caches!) : unit
   (begin
     (compiler-load-session-floors-set! 0 0 0)
@@ -1479,34 +1516,82 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
-              stdlib-roots
-              cfgs)
-            pools)
-            [(ResultCompilerLower.Ok program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (if (ast-node-pool-reader-type-exhausted?)
-                  (ResultCompilerDriverLowered.Err
-                    (box
-                      (compiler-driver-ty-node-pool-exhausted-diagnostic
-                        input-path)))
-                  (compiler-driver-lowered-from-pools program spans pools)))]
-            [(ResultCompilerLower.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ResultCompilerDriverLowered.Err diag))]))]
+          (let
+            [release-source-pools? : bool
+              (compiler-driver-state-can-release-checked-lower-source-pools?
+                state)]
+            [dest-pools : AstNodePoolContext
+              (if release-source-pools?
+                (compiler-driver-state-new-checked-lower-pools)
+                pools)]
+            [entry-arena : i64 (arena.tl_arena_current)]
+            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
+            [_clear-source-floors : unit
+              (if release-source-pools?
+                (compiler-load-session-floors-set! 0 0 0)
+                unit)]
+            [_arm-release : unit
+              (if release-source-pools?
+                (compiler-lower-checked-dest-pools-use!
+                  dest-pools
+                  (compiler-driver-state-owned-pool-arena state))
+                (compiler-lower-checked-dest-pools-clear!))]
+            [lowered : ResultCompilerLower
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+                input-path
+                (ast-program decls)
+                paths
+                (compiler-driver-lower-mode-for-target target mode)
+                stdlib-roots
+                (compiler-load-prelude-cache-key
+                  "typecheck-prefix-lower"
+                  stdlib-roots
+                  cfgs)
+                pools)]
+            [dest-committed? : bool
+              (compiler-lower-checked-dest-pools-committed?)]
+            [result-pools : AstNodePoolContext
+              (if dest-committed?
+                (compiler-lower-checked-dest-pools-current)
+                pools)]
+            [_adopt-dest : unit
+              (if dest-committed?
+                (compiler-driver-state-adopt-pools! state result-pools)
+                unit)]
+            [_destroy-unused-dest : unit
+              (if (and release-source-pools? (not dest-committed?))
+                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_restore-entry-arena : unit
+              (if release-source-pools?
+                (unsafe
+                  (arena.tl_arena_set
+                    (if (and dest-committed? (= entry-arena source-pools-arena))
+                      (ast-node-pool-context-base-arena result-pools)
+                      entry-arena)))
+                unit)]
+            [_clear-release : unit (compiler-lower-checked-dest-pools-clear!)]
+            (match lowered
+              [(ResultCompilerLower.Ok program spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (if (ast-node-pool-reader-type-exhausted?)
+                    (ResultCompilerDriverLowered.Err
+                      (box
+                        (compiler-driver-ty-node-pool-exhausted-diagnostic
+                          input-path)))
+                    (compiler-driver-lowered-from-pools
+                      program
+                      spans
+                      result-pools)))]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -1531,34 +1616,82 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
-              stdlib-roots
-              cfgs)
-            pools)
-            [(ResultCompilerLower.Ok program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (if (ast-node-pool-reader-type-exhausted?)
-                  (ResultCompilerDriverLowered.Err
-                    (box
-                      (compiler-driver-ty-node-pool-exhausted-diagnostic
-                        input-path)))
-                  (compiler-driver-lowered-from-pools program spans pools)))]
-            [(ResultCompilerLower.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ResultCompilerDriverLowered.Err diag))]))]
+          (let
+            [release-source-pools? : bool
+              (compiler-driver-state-can-release-checked-lower-source-pools?
+                state)]
+            [dest-pools : AstNodePoolContext
+              (if release-source-pools?
+                (compiler-driver-state-new-checked-lower-pools)
+                pools)]
+            [entry-arena : i64 (arena.tl_arena_current)]
+            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
+            [_clear-source-floors : unit
+              (if release-source-pools?
+                (compiler-load-session-floors-set! 0 0 0)
+                unit)]
+            [_arm-release : unit
+              (if release-source-pools?
+                (compiler-lower-checked-dest-pools-use!
+                  dest-pools
+                  (compiler-driver-state-owned-pool-arena state))
+                (compiler-lower-checked-dest-pools-clear!))]
+            [lowered : ResultCompilerLower
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+                input-path
+                (ast-program decls)
+                paths
+                (compiler-driver-lower-mode-for-target target mode)
+                stdlib-roots
+                (compiler-load-prelude-cache-key
+                  "typecheck-prefix-lower"
+                  stdlib-roots
+                  cfgs)
+                pools)]
+            [dest-committed? : bool
+              (compiler-lower-checked-dest-pools-committed?)]
+            [result-pools : AstNodePoolContext
+              (if dest-committed?
+                (compiler-lower-checked-dest-pools-current)
+                pools)]
+            [_adopt-dest : unit
+              (if dest-committed?
+                (compiler-driver-state-adopt-pools! state result-pools)
+                unit)]
+            [_destroy-unused-dest : unit
+              (if (and release-source-pools? (not dest-committed?))
+                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_restore-entry-arena : unit
+              (if release-source-pools?
+                (unsafe
+                  (arena.tl_arena_set
+                    (if (and dest-committed? (= entry-arena source-pools-arena))
+                      (ast-node-pool-context-base-arena result-pools)
+                      entry-arena)))
+                unit)]
+            [_clear-release : unit (compiler-lower-checked-dest-pools-clear!)]
+            (match lowered
+              [(ResultCompilerLower.Ok program spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (if (ast-node-pool-reader-type-exhausted?)
+                    (ResultCompilerDriverLowered.Err
+                      (box
+                        (compiler-driver-ty-node-pool-exhausted-diagnostic
+                          input-path)))
+                    (compiler-driver-lowered-from-pools
+                      program
+                      spans
+                      result-pools)))]
+              [(ResultCompilerLower.Err diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))

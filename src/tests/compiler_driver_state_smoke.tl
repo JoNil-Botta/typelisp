@@ -2021,6 +2021,52 @@
           (compiler-driver-state-capture-session-floors! state)
           ok)))))
 
+(define (compiler-driver-state-smoke-checked-lower-adopts-dest-pools?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.StringVector
+      (let
+        [items : svec.StringVector (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (compiler-driver-state-reset-file-state! state)
+      (let
+        [source-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-escaping-with-state
+            state
+            "tests/integration/calc.tl"
+            (CompilerBackendTarget.Linux)
+            roots
+            (CompilerBackendMode.Scalar)
+            (compiler-driver-target-cfgs
+              (CompilerBackendTarget.Linux)
+              (compiler-cfg-empty)))]
+        [state-pools : AstNodePoolContext
+          (compiler-driver-state-pool-context state)]
+        [dest-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+        [ok : bool
+          (match lowered
+            [(ResultCompilerDriverLowered.Ok _ _ result-pools)
+              (and
+                (not (= source-arena 0))
+                (not (= dest-arena 0))
+                (not (= source-arena dest-arena))
+                (= dest-arena (ast-node-pool-context-base-arena state-pools))
+                (= dest-arena (ast-node-pool-context-base-arena result-pools))
+                (> (ast-node-pool-context-expr-len result-pools) 0)
+                (> (ast-node-pool-context-type-len result-pools) 0))]
+            [(ResultCompilerDriverLowered.Err _) false])]
+        (begin
+          (compiler-driver-state-capture-session-floors! state)
+          (compiler-load-session-cache-disable-for-test!)
+          ok)))))
+
 (define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
   (let
     [state : CompilerDriverState
@@ -2304,6 +2350,9 @@
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))
+    (unless
+      (compiler-driver-state-smoke-checked-lower-adopts-dest-pools?)
+      (return 28))
     (unless
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))

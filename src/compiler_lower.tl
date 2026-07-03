@@ -430,6 +430,121 @@
   (Ok CompilerIrProgram CompilerSourceSpans)
   (Err (Box CompilerDiagnostic)))
 
+(define lower-checked-dest-pools-active : bool
+  false)
+(define lower-checked-dest-pools-committed : bool
+  false)
+(define lower-checked-dest-pools-context : AstNodePoolContext
+  (ast-node-pool-context-capture-active))
+(define lower-checked-source-release-arena : i64
+  0)
+
+(define (compiler-lower-checked-dest-pools-use!
+  [dest-pools : AstNodePoolContext]
+  [source-release-arena : i64]) : unit
+  (begin
+    (set! lower-checked-dest-pools-context dest-pools)
+    (set! lower-checked-source-release-arena source-release-arena)
+    (set! lower-checked-dest-pools-committed false)
+    (set! lower-checked-dest-pools-active true)))
+
+(define (compiler-lower-checked-dest-pools-clear!) : unit
+  (begin
+    (set! lower-checked-dest-pools-active false)
+    (set! lower-checked-dest-pools-committed false)
+    (set! lower-checked-source-release-arena 0)))
+
+(define (compiler-lower-checked-dest-pools-committed?) : bool
+  lower-checked-dest-pools-committed)
+
+(define (compiler-lower-checked-dest-pools-current) : AstNodePoolContext
+  lower-checked-dest-pools-context)
+
+(define (lower-copy-string-into-pools
+  [text : String]
+  [pools : AstNodePoolContext]) : String
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
+    [out : String (string.copy (& text))]
+    (begin
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      out)))
+
+(define (lower-copy-paths-into-pools
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : AstDeclPathList
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
+    [count : i64 (ast-decl-path-list-len (& paths))]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [path : String (ast-decl-path-list-get (& paths) index "")]
+          [owned-path : String (string.copy (& path))]
+          (begin
+            (ast-decl-path-list-push (&mut out) owned-path)
+            (set! index (+ index 1)))))
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      out)))
+
+(define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
+  (match names
+    [(LowerNameEnv.Nil) LowerNameEnv.Nil]
+    [(LowerNameEnv.Bind source source-id lowered rest)
+      (LowerNameEnv.Bind
+        (string.copy (& source))
+        source-id
+        (string.copy (& lowered))
+        (box (lower-name-env-copy-active (box-get rest))))]))
+
+(define (lower-name-env-copy-into-pools
+  [names : LowerNameEnv]
+  [pools : AstNodePoolContext]) : LowerNameEnv
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
+    [out : LowerNameEnv (lower-name-env-copy-active names)]
+    (begin
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      out)))
+
+(define (lower-checked-dest-pools-commit! [pools : AstNodePoolContext]) : unit
+  (if lower-checked-dest-pools-active
+    (let
+      [old-arena : i64 lower-checked-source-release-arena]
+      [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+      (begin
+        (set! lower-checked-dest-pools-context pools)
+        (set! lower-checked-dest-pools-committed true)
+        (set! lower-checked-source-release-arena 0)
+        (ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (if (= old-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy old-arena)))))
+    unit))
+
 (defenum LowerFieldInfo
   (Info i64 AstType))
 
@@ -44219,12 +44334,53 @@
                               (compiler-lower-profile-finish "clone_roots"))
                             (cfg compile-profile (compiler-lower-profile-start))
                             (let
+                              [checked-compaction : AstProgramCompaction
+                                (if lower-checked-dest-pools-active
+                                  (clone-augment-program-with-roots-from-pools
+                                    clone-pools
+                                    lower-checked-dest-pools-context
+                                    base-program
+                                    clone-roots)
+                                  (AstProgramCompaction
+                                    (clone-augment-program-with-roots-and-pools
+                                      clone-pools
+                                      base-program
+                                      clone-roots)
+                                    clone-pools))]
                               [checked-program : AstProgram
-                                (clone-augment-program-with-roots-and-pools
-                                  clone-pools
-                                  base-program
-                                  clone-roots)]
-                              [checked-paths : AstDeclPathList base-paths]
+                                (match checked-compaction
+                                  [(AstProgramCompaction out _) out])]
+                              [checked-pools : AstNodePoolContext
+                                (match checked-compaction
+                                  [(AstProgramCompaction _ out-pools) out-pools])]
+                              [checked-entry-path : String
+                                (if lower-checked-dest-pools-active
+                                  (lower-copy-string-into-pools
+                                    entry-path
+                                    checked-pools)
+                                  entry-path)]
+                              [checked-cache-scope : String
+                                (if lower-checked-dest-pools-active
+                                  (lower-copy-string-into-pools
+                                    cache-scope
+                                    checked-pools)
+                                  cache-scope)]
+                              [checked-paths : AstDeclPathList
+                                (if lower-checked-dest-pools-active
+                                  (lower-copy-paths-into-pools
+                                    base-paths
+                                    checked-pools)
+                                  base-paths)]
+                              [escaped-names : LowerNameEnv
+                                (if (and
+                                  lower-checked-dest-pools-active
+                                  needs-specialization)
+                                  (lower-name-env-copy-into-pools
+                                    names
+                                    checked-pools)
+                                  names)]
+                              [_commit-dest : unit
+                                (lower-checked-dest-pools-commit! checked-pools)]
                               [checked-names : LowerNameEnv
                                 (match checked-program
                                   [(AstProgram.Program decls-box)
@@ -44233,7 +44389,7 @@
                                       (lower-name-env-from-decls
                                         decls
                                         checked-paths
-                                        entry-path
+                                        checked-entry-path
                                         LowerNameEnv.Nil))])]
                               [lower-names : LowerNameEnv
                                 (if needs-specialization
@@ -44245,8 +44401,8 @@
                                         (lower-name-env-add-clone-decls
                                           decls
                                           checked-paths
-                                          entry-path
-                                          names))])
+                                          checked-entry-path
+                                          escaped-names))])
                                   checked-names)]
                               (begin
                                 (cfg
@@ -44260,8 +44416,8 @@
                                   checked-program
                                   checked-paths
                                   stdlib-roots
-                                  cache-scope
-                                  clone-pools)
+                                  checked-cache-scope
+                                  checked-pools)
                                   [(ResultCompilerTypecheckChecked.Ok
                                       _
                                       ctx
@@ -44275,12 +44431,12 @@
                                         compile-profile
                                         (compiler-lower-profile-pools
                                           "typecheck"
-                                          clone-pools))
+                                          checked-pools))
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-pools
                                           "pre_decls"
-                                          clone-pools))
+                                          checked-pools))
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-program-counts
@@ -44321,7 +44477,7 @@
                                               (box
                                                 (lower-diagnostic-with-path
                                                   (box-get diag)
-                                                  entry-path))))]))]
+                                                  checked-entry-path))))]))]
                                   [(ResultCompilerTypecheckChecked.Err diag)
                                     (begin
                                       (cfg

@@ -1556,9 +1556,13 @@
                         [checked-program : AstProgram
                           (ast-program checked-decls)]
                         [out : AstProgramCompaction
-                          (AstProgramCompaction
-                            checked-program
-                            (ast-node-pool-context-snapshot dest-pools))]
+                          (begin
+                            (ast-node-pool-context-sync-base-arena!
+                              dest-pools
+                              (arena.tl_arena_current))
+                            (AstProgramCompaction
+                              checked-program
+                              (ast-node-pool-context-snapshot dest-pools)))]
                         (begin
                           (unsafe
                             (arena.tl_arena_set prev-arena))

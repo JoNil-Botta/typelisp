@@ -922,7 +922,14 @@ EOF
     ' "$target_dir/main.s")"
     [ -n "$runtime_write_body" ] || fail "$target_alias runtime-os-write body missing"
     printf '%s\n' "$runtime_write_body" | grep -q "    call tl_alloc" && fail "$target_alias runtime-os-write still calls tl_alloc"
-    printf '%s\n' "$runtime_write_body" | grep -q "    leaq -" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
+    # The WriteFile out-param cell (lpNumberOfBytesWritten) must be a STACK
+    # address, materialized by `leaq` of a frame slot (the ptr-addr-of path) —
+    # NOT a heap pointer (the tl_alloc path, guarded above), because the OOM
+    # abort handler that shares this code must never allocate. The FPO /
+    # rsp-rebase campaign spells frame slots rsp-relative with positive offsets
+    # (`leaq N(%rsp)`); the legacy keep-rbp form is `leaq -N(%rbp)`. Both take
+    # the address of a stack cell, so accept either spelling.
+    printf '%s\n' "$runtime_write_body" | grep -Eq "    leaq -?[0-9]+\(%r(bp|sp)\)," || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
 done
 
 cat > "$CLI_MATRIX/main.tl" <<'EOF'
@@ -1741,7 +1748,13 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%r9), %r9'
+    # opt2 register allocation folds `(+ y x)` into a two-register LEA. The
+    # M-A param-homing campaign keeps the incoming scalar args in their arg
+    # registers (rdi/rsi) instead of stack-homing then reloading into the
+    # zero-call caller-saved pool (rcx/r9), so the fold is now
+    # `leaq (%rsi,%rax), %rsi` (was `leaq (%rcx,%r9), %r9`). Still opt2-only:
+    # opt0/opt1 emit `addq %r8, %rax` for the final add.
+    SELFHOST_OPT2_REGALLOC='    leaq (%rsi,%rax), %rsi'
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"

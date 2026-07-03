@@ -483,40 +483,6 @@
       (- index 1)
       (ast-decl-path-list-prepend-builder (array-ref items index) out))))
 
-(define (tltest-decl-list-reverse-onto
-  [items : AstDeclList]
-  [out : AstDeclList]) : AstDeclList
-  (let
-    [index : i64 (- (ast-decl-list-len (& items)) 1)]
-    [result : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& items)) (ast-decl-list-len (& out))))]
-    (begin
-      (while (>= index 0)
-        (begin
-          (ast-decl-list-push (&mut result) (ast-decl-list-ref items index))
-          (set! index (- index 1))))
-      (ast-decl-list-append-from (&mut result) (& out) 0)
-      result)))
-
-(define (tltest-path-list-reverse-onto
-  [items : AstDeclPathList]
-  [out : AstDeclPathList]) : AstDeclPathList
-  (let
-    [index : i64 (- (ast-decl-path-list-len (& items)) 1)]
-    [result : AstDeclPathList
-      (ast-decl-path-list-with-capacity
-        (+ (ast-decl-path-list-len (& items)) (ast-decl-path-list-len (& out))))]
-    (begin
-      (while (>= index 0)
-        (begin
-          (ast-decl-path-list-push
-            (&mut result)
-            (ast-decl-path-list-get (& items) index ""))
-          (set! index (- index 1))))
-      (ast-decl-path-list-append-from (&mut result) (& out) 0)
-      result)))
-
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
   (let
     [cur : AstDeclList items]
@@ -962,16 +928,6 @@
     (ast-decl-cons (tltest-main-decl tests) (ast-decl-list-new))))
 
 (define (tltest-main-paths [source : String]) : AstDeclPathList
-  (ast-decl-path-cons
-    source
-    (ast-decl-path-cons source (ast-decl-path-list-new))))
-
-(define (tltest-empty-main-decls) : AstDeclList
-  (ast-decl-cons
-    (ast-decl-module "")
-    (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new))))
-
-(define (tltest-empty-main-paths [source : String]) : AstDeclPathList
   (ast-decl-path-cons
     source
     (ast-decl-path-cons source (ast-decl-path-list-new))))

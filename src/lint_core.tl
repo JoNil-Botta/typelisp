@@ -7918,11 +7918,6 @@
             (lint-walk-expr init threshold acc)
             (+ index 1)))])))
 
-(define (lint-let-bindings-contain-name?
-  [bindings : AstLetBindingList]
-  [name : i64]) : bool
-  (lint-let-bindings-contain-name-at? (& bindings) name 0))
-
 (define (lint-let-bindings-contain-name-at?
   [bindings : (& bindings AstLetBindingList)]
   [name : i64]

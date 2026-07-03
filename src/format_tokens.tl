@@ -243,9 +243,6 @@
 (define (fmt-is-hex-digit [c : char]) : bool
   (or (fmt-is-digit c) (and (>= c 'a') (<= c 'f')) (and (>= c 'A') (<= c 'F'))))
 
-(define (fmt-is-binary-digit [c : char]) : bool
-  (or (= c '0') (= c '1')))
-
 (define (fmt-is-alpha [c : char]) : bool
   (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 

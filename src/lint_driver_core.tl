@@ -3174,22 +3174,6 @@
           "transitional core macro qualifier: use when instead of core.when"))]
     [(LintMaybeFinding.No) false]))
 
-(define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
-  (if (= (lint-findings-count findings) 2)
-    (match (lint-findings-get findings 1)
-      [(LintMaybeFinding.Some rendered-first)
-        (match (lint-findings-get findings 0)
-          [(LintMaybeFinding.Some rendered-second)
-            (let
-              [first-span : AstSourceSpan (struct-get rendered-first span)]
-              [second-span : AstSourceSpan (struct-get rendered-second span)]
-              (and
-                (= (struct-get first-span start-line) 11)
-                (= (struct-get second-span start-line) 2)))]
-          [(LintMaybeFinding.No) false])]
-      [(LintMaybeFinding.No) false])
-    false))
-
 (define (compiler-lint-driver-self-test) : i64
   (let
     [reported : LintFindings

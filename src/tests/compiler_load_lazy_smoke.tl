@@ -119,6 +119,29 @@
           (not (sym_i64_env.sym-i64-contains seen "stdlib.array")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
+(define (lazy-stdlib-result-macro-import-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_stdlib_result")
+    (io.write-file
+      "target/cl_lazy_stdlib_result/entry.tl"
+      "(module lazy.stdlib.result.entry)
+(import stdlib.result)
+(import (result i64 String) as result_i64_string)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_stdlib_result/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 1)
+          (compiler-load-decl-list-has-import-alias?
+            decls
+            "stdlib.result"
+            "result")
+          (sym_i64_env.sym-i64-contains seen "lazy.stdlib.result.entry")
+          (not (sym_i64_env.sym-i64-contains seen "stdlib.result")))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
 (define (package-lazy-unused-dotted-import-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted")
@@ -187,6 +210,9 @@
     (unless
       (lazy-canonical-stdlib-array-import-ok?)
       (return (io.panic "lazy canonical stdlib.array import smoke mismatch")))
+    (unless
+      (lazy-stdlib-result-macro-import-ok?)
+      (return (io.panic "lazy stdlib.result macro import smoke mismatch")))
     (unless
       (package-lazy-unused-dotted-import-ok?)
       (return (io.panic "package lazy unused dotted import smoke mismatch")))

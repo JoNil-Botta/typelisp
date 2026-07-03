@@ -571,7 +571,6 @@ end
 
 case|selfhost_doc_test|src/doc_test.tl|assembly|skip|direct
 contains|_tl_doc_test_extract_source:
-contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
 contains|_tl_doc_test_parse_output_spec:
 contains|_tl_doc_test_parse_fence_info:
@@ -581,7 +580,6 @@ contains|_tl_doc_test_run_source:
 contains|_tl_doc_test_run_source_with_roots:
 contains|_tl_doc_test_check_example:
 contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_doc_test_typecheck_package_file_with_roots:
 contains|_tl_doc_test_run_examples:
 contains|_tl_doc_test_errors_to_failures:
 contains|_tl_doc_test_run_failure_render:

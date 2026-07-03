@@ -3,7 +3,6 @@
 # This is the audited public command surface for the freshly built
 # src/main.tl binary in scripts/verify-selfhost-cli-build-run.sh.
 # `active` entries must have a lightweight smoke assertion in that script.
-# `pending` entries must be listed in help and return cli-pending diagnostics.
 active|build|-
 active|clean|-
 active|run|-

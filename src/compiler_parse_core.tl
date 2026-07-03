@@ -745,6 +745,18 @@
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
 
+(define compiler-parse-current-load-has-type-literal : bool
+  false)
+
+(define (compiler-parse-type-literal-tracking-reset!) : unit
+  (set! compiler-parse-current-load-has-type-literal false))
+
+(define (compiler-parse-type-literal-tracking-mark!) : unit
+  (set! compiler-parse-current-load-has-type-literal true))
+
+(define (compiler-parse-current-load-has-type-literal?) : bool
+  compiler-parse-current-load-has-type-literal)
+
 (define (compiler-parse-tag-expr-init) : i64
   288)
 
@@ -4010,10 +4022,12 @@
         [(SpannedSexpr.Nil _)
           (match (parse-ast-type-spanned dispatch pools (sp-node-get ty))
             [(ResultAstType.Ok parsed-ty)
-              (ResultAstExpr.Ok
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExpr.TypeLiteral parsed-ty)))]
+              (begin
+                (compiler-parse-type-literal-tracking-mark!)
+                (ResultAstExpr.Ok
+                  (ast-node-pool-context-expr-push
+                    pools
+                    (AstExpr.TypeLiteral parsed-ty))))]
             [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
         [_ (ResultAstExpr.Err "parse: type expects exactly one type")])]
     [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))

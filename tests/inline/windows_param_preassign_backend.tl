@@ -110,14 +110,14 @@
       (and
         (not (compiler-live-set-contains? ineligible 1))
         (match (compiler-reg-assignment-lookup assignments 1)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister r)
+              [(CompilerRegLocation.Register r)
                 (compiler-reg-string-list-contains?
                   (compiler-reg-win64-callee-saved-integer-registers)
                   r)]
               [_ false])]
-          [(CompilerRegNoLocation) false]))]))
+          [(CompilerRegMaybeLocation.No) false]))]))
 
 (define (win-param-preassign-backend-ok?) : bool
   (begin

@@ -395,14 +395,56 @@ EOF
     echo "[selfhost-native] compiler_driver stack-arg call shape"
     run_compiler_driver "$_driver" compiler-driver-stack-args "$_src" "$_asm"
     assert_not_contains "$_asm" "backend: too many call args" compiler-driver-stack-args
+    # The 7th integer arg overflows the 6 SysV arg registers and must be
+    # marshalled to the bottom of the outgoing stack-arg area, then the call is
+    # made. This is the load-bearing stack-arg placement check and is unchanged
+    # by the FPO/push-CSR-prologue campaign.
     for _snippet in \
-        "subq \$16, %rsp" \
         "movq \$7, 0(%rsp)" \
-        "addq \$16, %rsp" \
         "call f"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stack-args
     done
+    # main must reserve a stack frame that covers that outgoing arg and release
+    # it before returning. The former per-call `subq $16 / addq $16` dip around
+    # the call was replaced by the frame-pointer-omission prologue, which folds
+    # the outgoing-arg reservation into the function frame (`subq $N,%rsp`,
+    # matched by `addq $N,%rsp` at the epilogue; N is 8-mod-16 here so rsp is
+    # 16-aligned at the call). Verify main sets up and tears down a matching,
+    # non-trivial frame rather than hardcoding a codegen-dependent size.
+    assert_stack_arg_call_frame "$_asm" compiler-driver-stack-args
+}
+
+# Verify `main`'s frame is reserved (subq $N,%rsp) and released with a matching
+# addq $N,%rsp (the FPO epilogue; a keep-rbp `leave` would leave no matching
+# addq and fail), with N large enough to hold the 8-byte outgoing stack arg.
+assert_stack_arg_call_frame() {
+    _saf_asm=$1
+    _saf_label=$2
+    awk -v label="$_saf_label" '
+        function bail(msg) { printf("FAIL: %s %s\n", label, msg) > "/dev/stderr"; failed = 1 }
+        /^main:$/ { in_main = 1; next }
+        in_main && /^[A-Za-z_][A-Za-z0-9_]*:$/ { in_main = 0 }
+        in_main {
+            if ($0 ~ /^    subq \$[0-9]+, %rsp$/ && !saw_sub) {
+                t = $0; gsub(/[^0-9]/, "", t); sub_n = t + 0; saw_sub = 1
+            }
+            if ($0 ~ /^    addq \$[0-9]+, %rsp$/) {
+                t = $0; gsub(/[^0-9]/, "", t); add_n = t + 0; saw_add = 1
+            }
+        }
+        END {
+            if (!saw_sub) bail("main missing stack-frame reservation (subq $N, %rsp)")
+            if (!saw_add) bail("main missing stack-frame release (addq $N, %rsp)")
+            if (saw_sub && saw_add && sub_n != add_n) {
+                bail("main frame reserve/release mismatch: subq $" sub_n " vs addq $" add_n)
+            }
+            if (saw_sub && sub_n < 8) {
+                bail("main frame $" sub_n " too small to hold the outgoing stack arg")
+            }
+            exit failed
+        }
+    ' "$_saf_asm" || exit 1
 }
 
 verify_extern_function_pointer_data() {
@@ -602,11 +644,17 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-string-runtime "$_src" "$_asm"
     for _snippet in \
         "tl_oob_abort:" \
-        "jb .Lf" \
         "str_bounds_ok"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime
     done
+    # The __tl_string_ref bounds check emits a conditional branch to the
+    # str_bounds_ok continuation and otherwise falls through to tl_oob_abort.
+    # The branch mnemonic depends on the compare operand order: a general index
+    # emits `jb` (idx < len), while the campaign's constant-index-0 access here
+    # folds the check to `len > 0` and emits `ja`. Accept either direction --
+    # the bounds check (compare + conditional guard) is present regardless.
+    assert_contains_any "$_asm" compiler-driver-string-runtime "jb .Lf" "ja .Lf"
     assert_not_contains "$_asm" "call tl_substring" compiler-driver-string-runtime
     assert_not_contains "$_asm" "call tl_string_concat" compiler-driver-string-runtime
     assemble_link_run_asm compiler-driver-string-runtime "$_asm" 42 - - 1

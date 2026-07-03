@@ -123,6 +123,23 @@ else
     fi
 fi
 
+echo "[doc-site] expanding generated-module API sections"
+if [ "$HOST_OS" = linux ]; then
+    SITE_EXPAND="$WORK/.doc_site_expand"
+    compile_linux_binary doc-site-expand tools/doc-site/doc_site_expand_pages.tl "$SITE_EXPAND"
+    if ! "$SITE_EXPAND" "$SITE" >"$WORK/.expand.out" 2>"$WORK/.expand.err"; then
+        echo "site generated-module expansion failed:" >&2
+        sed 's/^/  /' "$WORK/.expand.err" >&2 || true
+        fail "tools/doc-site/doc_site_expand_pages.tl did not update the site"
+    fi
+else
+    if ! "$COMPILER" run tools/doc-site/doc_site_expand_pages.tl -- "$SITE" >"$WORK/.expand.out" 2>"$WORK/.expand.err"; then
+        echo "site generated-module expansion failed:" >&2
+        sed 's/^/  /' "$WORK/.expand.err" >&2 || true
+        fail "tools/doc-site/doc_site_expand_pages.tl did not update the site"
+    fi
+fi
+
 echo "[doc-site] running tools/doc-site/doc_site_smoke.tl"
 set +e
 if [ "$HOST_OS" = linux ]; then
@@ -137,6 +154,22 @@ set -e
 if [ "$smoke_code" -ne 42 ]; then
     sed 's/^/  /' "$WORK/.smoke.err" >&2 || true
     fail "doc_site_smoke.tl returned $smoke_code (expected 42)"
+fi
+
+echo "[doc-site] running tools/doc-site/doc_site_expand_smoke.tl"
+set +e
+if [ "$HOST_OS" = linux ]; then
+    SITE_EXPAND_SMOKE="$WORK/.doc_site_expand_smoke"
+    compile_linux_binary doc-site-expand-smoke tools/doc-site/doc_site_expand_smoke.tl "$SITE_EXPAND_SMOKE"
+    "$SITE_EXPAND_SMOKE" >"$WORK/.expand_smoke.out" 2>"$WORK/.expand_smoke.err"
+else
+    "$COMPILER" run tools/doc-site/doc_site_expand_smoke.tl -- >"$WORK/.expand_smoke.out" 2>"$WORK/.expand_smoke.err"
+fi
+expand_smoke_code=$?
+set -e
+if [ "$expand_smoke_code" -ne 42 ]; then
+    sed 's/^/  /' "$WORK/.expand_smoke.err" >&2 || true
+    fail "doc_site_expand_smoke.tl returned $expand_smoke_code (expected 42)"
 fi
 
 echo "[doc-site] running tools/doc-site/doc_md_smoke.tl"
@@ -159,6 +192,13 @@ fi
 for required in index.html readme.html spec.html stdlib.html typelisp-docs.css; do
     [ -f "$SITE/$required" ] || fail "missing required output: $required"
 done
+
+grep -q 'stdlib.vector.generated.i64' "$SITE/stdlib-vector.html" \
+    || fail "stdlib-vector.html is missing generated vector module docs"
+grep -q 'generated-module-import' "$SITE/stdlib-vector.html" \
+    || fail "stdlib-vector.html is missing generated module import docs"
+grep -q 'href="#tl-push"' "$SITE/stdlib-vector.html" \
+    || fail "stdlib-vector.html is missing generated push API docs"
 
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
 [ -z "$hidden_payload" ] || fail "docs-site output contains scratch artifact: $(basename "$hidden_payload")"

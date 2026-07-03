@@ -902,6 +902,7 @@ Build the site locally into any output directory:
 
 ```bash
 typelisp run tools/doc-site/doc_site.tl -- target/site
+typelisp run tools/doc-site/doc_site_expand_pages.tl -- target/site
 # Build + validate links/anchors the way CI does (no publish):
 scripts/verify-doc-site.sh
 ```

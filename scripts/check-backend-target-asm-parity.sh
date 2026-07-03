@@ -121,17 +121,50 @@ normalize_asm() {
             gsub(/[ \t\r]+$/, "", s)
             return s
         }
+        function normalize_frame_teardown(s) {
+            # The function epilogue restores %rsp before `ret`. Frame-pointer
+            # omission (the Linux scalar path) tears the frame down with
+            # `addq $N, %rsp`; the keep-rbp Win64 path (retained so SEH can
+            # unwind the in-body rsp dips) uses `leave`. Both discard the local
+            # frame and are behavior-equivalent. The Linux frame constant is
+            # intentionally +8 vs the Win64 one — it replaces the omitted
+            # `pushq %rbp`, which keeps every absolute stack-slot address
+            # identical across the two targets (so the rest of each body still
+            # compares byte-for-byte). Collapse both epilogue spellings to one
+            # token so the gate accepts the deliberate FPO/keep-rbp divergence
+            # while still catching any real cross-target difference elsewhere.
+            # (No corpus body emits a mid-body `addq $N,%rsp` c-abi call dip;
+            # the --self-test mutation guard fails loudly if that assumption
+            # ever changes and this over-collapses.)
+            if (s == "leave") return "FRAME_TEARDOWN"
+            if (s ~ /^addq \$[0-9]+, %rsp$/) return "FRAME_TEARDOWN"
+            return s
+        }
         function abi_arg_normalize_enabled() {
+            # At opt2 the M-A campaign homes incoming scalar params in their
+            # ABI arg register instead of a stack slot, so the param appears in
+            # the body as its arg register — %rdi (SysV arg0) vs %rcx (Win64
+            # arg0), etc. That is an ABI-mandated, behavior-identical divergence;
+            # normalize the arg registers to position-indexed %ABIn tokens for
+            # the corpus bodies whose params are register-homed at opt2, so the
+            # gate compares the param *uses* rather than the ABI register names.
             return opt_level == "2" &&
                 (name == "functions" ||
                     name == "lambda_capture_struct_enum" ||
-                    name == "many_args")
+                    name == "many_args" ||
+                    name == "register_group_phi_return" ||
+                    name == "register_resident_enum")
         }
         function abi_arg_allowed(arg_index) {
             if (!abi_arg_normalize_enabled()) return 0
             if (name == "lambda_capture_struct_enum") return arg_index == 0
             if (name == "functions") return arg_index >= 0 && arg_index <= 2
             if (name == "many_args") return arg_index >= 0 && arg_index <= 7
+            # Both register_* corpus bodies take a single enum param (arg0),
+            # register-homed at opt2 -> %rdi (SysV) / %rcx (Win64) in the
+            # match dispatch (testq/cmpq); no other use of those registers.
+            if (name == "register_group_phi_return") return arg_index == 0
+            if (name == "register_resident_enum") return arg_index == 0
             return 0
         }
         function normalize_one_arg_reg(s, reg, arg_index) {
@@ -266,6 +299,7 @@ normalize_asm() {
 
             gsub(/\.Lf[0-9]+/, ".LfN", line)
             gsub(/\.Ltmp[0-9]+/, ".LtmpN", line)
+            line = normalize_frame_teardown(line)
             line = normalize_arg_regs(line)
             line = consume_pending_stack_arg(line)
             if (maybe_capture_stack_arg_load(line)) {
@@ -363,7 +397,20 @@ expected_target_asm_mismatch() {
     # (opt2 cross-fixpoint + 26/26
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
+    #
+    # opt0/opt1 lambda_capture_struct_enum: the unoptimized backend emits a few
+    # EXTRA redundant home stores (`movq %rN, K(%rsp)`) on Windows that Linux
+    # does not, because the two ABIs lay the frame out differently (Win64's
+    # 4 arg registers + 32-byte shadow space vs SysV's 6 arg registers). The
+    # Windows body is a strict superset of the Linux body (only additive stores
+    # of already-correct values to owned frame slots -- diff shows only `+`
+    # lines), so it is behavior-identical; the lambda_capture integration
+    # fixture runs correctly on both targets. Not normalizable without the gate
+    # itself assuming which stores are dead, so it is allowlisted like the
+    # opt2 register-choice cases above.
     case "${_etm_opt}:${_etm_name}" in
+        0:lambda_capture_struct_enum) return 0 ;;
+        1:lambda_capture_struct_enum) return 0 ;;
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;

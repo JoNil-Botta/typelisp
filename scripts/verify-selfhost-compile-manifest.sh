@@ -26,8 +26,17 @@ EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # single compile (~2.8GB for the whole-compiler drivers), not the sum of all
 # entries. Without that scoping a 16-case chunk accumulated 9.7GB and
 # SIGSEGV'd the Windows CI runner (freestanding runtime: a failed memory
-# commit surfaces as an access violation, exit 139).
-BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
+# commit surfaces as an access violation, exit 139). Linux keeps the 16-case
+# stress chunk; Windows CI runners have tighter commit headroom, so split the
+# same manifest coverage into smaller default chunks unless explicitly
+# overridden.
+if [ -n "${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-}" ]; then
+    BATCH_CHUNK_SIZE=$TYPELISP_COMPILE_MANIFEST_BATCH_SIZE
+elif [ "$HOST_OS" = windows ]; then
+    BATCH_CHUNK_SIZE=4
+else
+    BATCH_CHUNK_SIZE=16
+fi
 
 case "$EXPECTATION_MODE" in
     stage0 | stage1) ;;

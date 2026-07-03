@@ -777,6 +777,7 @@
 (define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
   (let
     [cur : LowerNameEnv names]
+    [source-id : i64 (lower-name-cache-source-id-value source-name)]
     [result : TcMaybeString (TcMaybeString.No)]
     [done : bool false]
     (begin
@@ -787,11 +788,24 @@
           [_ true]))
         (match cur
           [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind source _ logical rest)
-            (if (string.eq source source-name)
-              (begin
-                (set! result (TcMaybeString.Some logical))
-                (set! done true))
+          [(LowerNameEnv.Bind source bind-id logical rest)
+            ;; interned-id gate: each Bind carries its source name's interned id
+            ;; (or -1 when the name was never interned). A string's interned id is
+            ;; stable within a compile, so two names with valid (>=0) but different
+            ;; ids cannot be the same string -- skip the string compare in that
+            ;; (overwhelmingly common) non-matching case. Fall back to an exact
+            ;; string compare when either id is the -1 sentinel or the ids are
+            ;; equal, so the Some/No result stays byte-identical to a string scan.
+            (if (if (< bind-id 0)
+              true
+              (if (< source-id 0)
+                true
+                (= bind-id source-id)))
+              (if (string.eq source source-name)
+                (begin
+                  (set! result (TcMaybeString.Some logical))
+                  (set! done true))
+                (set! cur (box-get rest)))
               (set! cur (box-get rest)))]))
       result)))
 

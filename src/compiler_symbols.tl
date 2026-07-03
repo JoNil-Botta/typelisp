@@ -3921,7 +3921,7 @@
                   (compiler-symbol-lookup-score
                     (compiler-symbols-lookup-type symbols "Point")
                     (compiler-symbol-kind-defstruct)
-                    4)
+                    5)
                   1)
                 (=
                   (compiler-registry-miss-score
@@ -3931,7 +3931,7 @@
                   (compiler-registry-lookup-score
                     (compiler-registries-lookup-variant registries "Some")
                     (compiler-symbol-kind-enum-variant)
-                    3
+                    4
                     1)
                   1)
                 (=

@@ -5388,6 +5388,7 @@
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [prev-persist : bool (intern-persistent-storage-on?)]
+    [prev-pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
       (tc-nominal-owner-cache-reset!)
@@ -5397,32 +5398,47 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
-          (match (build-compiler-symbols program)
-            [(ResultCompilerSymbols.Ok symbols)
-              (match (build-compiler-registries-with-symbols program symbols)
-                [(ResultCompilerRegistries.Ok registries)
-                  (let
-                    [ctx : TcContext
-                      (TcContext program symbols registries "" pools)]
-                    (match (tc-build-top-env ctx program)
-                      [(ResultTcEnv.Ok top-env)
-                        (begin
-                          (tc-context-capture-active-pools! ctx)
-                          (let
-                            [roots : CloneNameList
-                              (lower-clone-roots-program
-                                ctx
-                                top-env
-                                names
-                                program)]
-                            (ResultLowerCloneRoots.Ok roots)))]
-                      [(ResultTcEnv.Err message)
+          (begin
+            ;; Clone-root discovery still calls typecheck helpers that use the
+            ;; compatibility AST/type readers internally. Keep this scoped to
+            ;; the clone-root subphase; the lowerer entrypoints pass explicit
+            ;; pools and do not install active pools themselves.
+            (ast-node-pool-context-install! pools)
+            (let
+              [result : ResultLowerCloneRoots
+                (match (build-compiler-symbols program)
+                  [(ResultCompilerSymbols.Ok symbols)
+                    (match (build-compiler-registries-with-symbols
+                      program
+                      symbols)
+                      [(ResultCompilerRegistries.Ok registries)
+                        (let
+                          [ctx : TcContext
+                            (TcContext program symbols registries "" pools)]
+                          (match (tc-build-top-env ctx program)
+                            [(ResultTcEnv.Ok top-env)
+                              (begin
+                                (tc-context-capture-active-pools! ctx)
+                                (let
+                                  [roots : CloneNameList
+                                    (lower-clone-roots-program
+                                      ctx
+                                      top-env
+                                      names
+                                      program)]
+                                  (ResultLowerCloneRoots.Ok roots)))]
+                            [(ResultTcEnv.Err message)
+                              (ResultLowerCloneRoots.Err
+                                (box (lower-diagnostic message)))]))]
+                      [(ResultCompilerRegistries.Err message)
                         (ResultLowerCloneRoots.Err
-                          (box (lower-diagnostic message)))]))]
-                [(ResultCompilerRegistries.Err message)
-                  (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
-            [(ResultCompilerSymbols.Err message)
-              (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
+                          (box (lower-diagnostic message)))])]
+                  [(ResultCompilerSymbols.Err message)
+                    (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
+              (begin
+                (ast-node-pool-context-capture-active! pools)
+                (ast-node-pool-context-install! prev-pools)
+                result)))]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           ;; Re-home the result in the persistent arena while the scratch is
@@ -44120,10 +44136,10 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
-    (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
     (let
-      [needs-specialization : bool (compiler-specialize-needed? program)]
+      [needs-specialization : bool
+        (compiler-specialize-needed-with-pools program pools)]
       [specialized-paths : AstDeclPathList
         (if needs-specialization
           (ast-decl-path-list-new)
@@ -44143,7 +44159,6 @@
         (ResultSpecProgram.Ok program))
         [(ResultSpecProgram.Ok specialized)
           (begin
-            (ast-node-pool-context-install! pools)
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (cfg compile-profile (compiler-lower-profile-start))
             (let
@@ -44172,7 +44187,6 @@
                       compile-profile
                       (compiler-lower-profile-finish "prune"))
                     (cfg compile-profile (compiler-lower-profile-start))
-                    (ast-node-pool-context-capture-active! pools)
                     (let
                       [clone-pools : AstNodePoolContext pools]
                       (match (lower-reachable-clone-roots
@@ -44217,7 +44231,6 @@
                                           names))])
                                   checked-names)]
                               (begin
-                                (ast-node-pool-context-install! clone-pools)
                                 (cfg
                                   compile-profile
                                   (compiler-lower-profile-finish
@@ -44236,8 +44249,6 @@
                                       ctx
                                       top-env)
                                     (begin
-                                      (ast-node-pool-context-install!
-                                        clone-pools)
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-finish
@@ -44365,28 +44376,26 @@
   [stdlib-roots : svec.StringVector]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
-  (begin
-    (ast-node-pool-context-install! pools)
-    (let
-      [prev-active : bool lower-entry-main-module-active]
-      [prev-module : String lower-entry-main-module]
-      [selection : LowerMaybeEntryMainModule
-        (lower-entry-main-selection-for-program entry-path program paths)]
-      (begin
-        (lower-entry-main-selection-install! selection)
-        (let
-          [result : ResultCompilerLower
-            (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
-              entry-path
-              program
-              paths
-              mode
-              stdlib-roots
-              cache-scope
-              pools)]
-          (begin
-            (lower-entry-main-selection-restore! prev-active prev-module)
-            result))))))
+  (let
+    [prev-active : bool lower-entry-main-module-active]
+    [prev-module : String lower-entry-main-module]
+    [selection : LowerMaybeEntryMainModule
+      (lower-entry-main-selection-for-program entry-path program paths)]
+    (begin
+      (lower-entry-main-selection-install! selection)
+      (let
+        [result : ResultCompilerLower
+          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+            entry-path
+            program
+            paths
+            mode
+            stdlib-roots
+            cache-scope
+            pools)]
+        (begin
+          (lower-entry-main-selection-restore! prev-active prev-module)
+          result)))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
@@ -44426,7 +44435,6 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
-    (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
     (tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see
@@ -44437,38 +44445,35 @@
       entry-path
       pools)
       [(ResultGenProgramWithPaths.Ok generated generated-paths)
-        (begin
-          (ast-node-pool-context-install! pools)
-          (match (macro-expand-program-with-paths-and-pools-roots-cfg
-            generated
-            generated-paths
-            pools
-            stdlib-roots
-            (typecheck-compiler-source-language-cfgs))
-            [(ResultMacroExpand.Ok expanded expanded-paths)
-              (begin
-                (ast-node-pool-context-install! pools)
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "macro_expand"))
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-pools "macro_expand" pools))
-                (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
-                  entry-path
-                  expanded
-                  expanded-paths
-                  mode
-                  stdlib-roots
-                  cache-scope
-                  pools))]
-            [(ResultMacroExpand.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "macro_expand"))
-                (ResultCompilerLower.Err
-                  (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))]
+        (match (macro-expand-program-with-paths-and-pools-roots-cfg
+          generated
+          generated-paths
+          pools
+          stdlib-roots
+          (typecheck-compiler-source-language-cfgs))
+          [(ResultMacroExpand.Ok expanded expanded-paths)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish "macro_expand"))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-pools "macro_expand" pools))
+              (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+                entry-path
+                expanded
+                expanded-paths
+                mode
+                stdlib-roots
+                cache-scope
+                pools))]
+          [(ResultMacroExpand.Err diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish "macro_expand"))
+              (ResultCompilerLower.Err
+                (box (lower-diagnostic-with-path (box-get diag) entry-path))))])]
       [(ResultGenProgramWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))

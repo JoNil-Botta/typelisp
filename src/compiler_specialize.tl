@@ -401,7 +401,9 @@
       patterns
       (+ index 1))))
 
-(define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
+(define (spec-collect-templates-with-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]) : SpecTemplateList
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) (SpecTemplateList.Nil)]
     [(AstDeclListStep.Cons decl rest)
@@ -414,22 +416,28 @@
               (match inner
                 [(AstDecl.DefFn name params ret body-box _)
                   (let
-                    [body : AstExpr (ast-node-get body-box)]
+                    [body : AstExpr
+                      (ast-node-pool-context-expr-get pools body-box)]
                     (if (spec-param-list-has-comptime? params)
                       (spec-template-cons
                         (SpecTemplate.Item (intern-str name) params ret body)
-                        (spec-collect-templates rest))
-                      (spec-collect-templates rest)))]
-                [_ (spec-collect-templates rest)]))]
+                        (spec-collect-templates-with-pools pools rest))
+                      (spec-collect-templates-with-pools pools rest)))]
+                [_ (spec-collect-templates-with-pools pools rest)]))]
           [(AstDecl.DefFn name params ret body-box _)
             (let
-              [body : AstExpr (ast-node-get body-box)]
+              [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
               (if (spec-param-list-has-comptime? params)
                 (spec-template-cons
                   (SpecTemplate.Item (intern-str name) params ret body)
-                  (spec-collect-templates rest))
-                (spec-collect-templates rest)))]
-          [_ (spec-collect-templates rest)]))]))
+                  (spec-collect-templates-with-pools pools rest))
+                (spec-collect-templates-with-pools pools rest)))]
+          [_ (spec-collect-templates-with-pools pools rest)]))]))
+
+(define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
+  (spec-collect-templates-with-pools
+    (ast-node-pool-context-capture-active)
+    decls))
 
 (define (spec-cache-lookup [cache : hashmap.StringStringMap] [key : String]) : SpecMaybeString
   (match (hashmap.string-string-map-get cache key)
@@ -5209,16 +5217,23 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (compiler-specialize-needed? [program : AstProgram]) : bool
+(define (compiler-specialize-needed-with-pools
+  [program : AstProgram]
+  [pools : AstNodePoolContext]) : bool
   (match program
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (if (gen-decls-needed? decls)
           true
-          (match (spec-collect-templates decls)
+          (match (spec-collect-templates-with-pools pools decls)
             [(SpecTemplateList.Nil) false]
             [_ true])))]))
+
+(define (compiler-specialize-needed? [program : AstProgram]) : bool
+  (compiler-specialize-needed-with-pools
+    program
+    (ast-node-pool-context-capture-active)))
 
 (define (compiler-specialize-decl-list-defines?
   [decls : AstDeclList]

@@ -6654,6 +6654,9 @@
           (let
             [out : AstProgram (ast-compaction-remap-program remap program)]
             (begin
+              (ast-node-pool-context-sync-base-arena!
+                dest-pools
+                (arena.tl_arena_current))
               (unsafe
                 (arena.tl_arena_set prev-arena))
               out)))]

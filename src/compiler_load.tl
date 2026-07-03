@@ -178,6 +178,8 @@
   (CompilerLoadSurfaceSummaryNil))
 (define compiler-load-stdlib-array-surface-summary : CompilerLoadMaybeSurfaceSummary
   (CompilerLoadNoSurfaceSummary))
+(define compiler-load-stdlib-result-surface-summary : CompilerLoadMaybeSurfaceSummary
+  (CompilerLoadNoSurfaceSummary))
 (define compiler-load-surface-summary-load-depth : i64
   0)
 (define compiler-load-lazy-import-skip-record-count : i64
@@ -2562,6 +2564,9 @@
     (set!
       compiler-load-stdlib-array-surface-summary
       (CompilerLoadNoSurfaceSummary))
+    (set!
+      compiler-load-stdlib-result-surface-summary
+      (CompilerLoadNoSurfaceSummary))
     (set! compiler-load-lazy-import-skip-record-count 0)))
 
 (define (compiler-load-surface-summary-load-enter!) : unit
@@ -2595,12 +2600,23 @@
     (compiler-load-string-eq? module-id "stdlib/array")
     (compiler-load-string-eq? module-id "stdlib/array.tl")))
 
+(define (compiler-load-stdlib-result-module-id? [module-id : String]) : bool
+  (or
+    (compiler-load-string-eq? module-id "stdlib.result")
+    (compiler-load-string-eq? module-id "stdlib/result")
+    (compiler-load-string-eq? module-id "stdlib/result.tl")))
+
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
   (begin
     (if (compiler-load-stdlib-array-module-id? (struct-get summary module-id))
       (set!
         compiler-load-stdlib-array-surface-summary
+        (CompilerLoadSomeSurfaceSummary summary))
+      unit)
+    (if (compiler-load-stdlib-result-module-id? (struct-get summary module-id))
+      (set!
+        compiler-load-stdlib-result-surface-summary
         (CompilerLoadSomeSurfaceSummary summary))
       unit)
     (set!
@@ -2632,18 +2648,26 @@
           (compiler-load-surface-summary-find-source-in
             compiler-load-active-surface-summaries
             normalized)])
-      (compiler-load-surface-summary-find-source-in
-        compiler-load-active-surface-summaries
-        normalized))))
+      (if (compiler-load-string-eq? normalized "stdlib/result.tl")
+        (match compiler-load-stdlib-result-surface-summary
+          [(CompilerLoadSomeSurfaceSummary summary)
+            (CompilerLoadSomeSurfaceSummary summary)]
+          [(CompilerLoadNoSurfaceSummary)
+            (compiler-load-surface-summary-find-source-in
+              compiler-load-active-surface-summaries
+              normalized)])
+        (compiler-load-surface-summary-find-source-in
+          compiler-load-active-surface-summaries
+          normalized)))))
 
-(define (compiler-load-stdlib-array-surface-summary-ensure-with-pools
+(define (compiler-load-stdlib-surface-summary-ensure-with-pools
   [path : String]
   [stdlib-roots : svec.StringVector]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (match compiler-load-stdlib-array-surface-summary
+  (match (compiler-load-surface-summary-find-source path)
     [(CompilerLoadSomeSurfaceSummary _) unit]
     [(CompilerLoadNoSurfaceSummary)
       (let
@@ -2682,6 +2706,42 @@
               [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
           [(ResultAstProgramDiagnostic.Err _) unit]))]))
 
+(define (compiler-load-stdlib-array-surface-summary-ensure-with-pools
+  [path : String]
+  [stdlib-roots : svec.StringVector]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (match compiler-load-stdlib-array-surface-summary
+    [(CompilerLoadSomeSurfaceSummary _) unit]
+    [(CompilerLoadNoSurfaceSummary)
+      (compiler-load-stdlib-surface-summary-ensure-with-pools
+        path
+        stdlib-roots
+        expected-module
+        import-root
+        cfgs
+        pools)]))
+
+(define (compiler-load-stdlib-result-surface-summary-ensure-with-pools
+  [path : String]
+  [stdlib-roots : svec.StringVector]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (match compiler-load-stdlib-result-surface-summary
+    [(CompilerLoadSomeSurfaceSummary _) unit]
+    [(CompilerLoadNoSurfaceSummary)
+      (compiler-load-stdlib-surface-summary-ensure-with-pools
+        path
+        stdlib-roots
+        expected-module
+        import-root
+        cfgs
+        pools)]))
+
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
   (or
@@ -2710,6 +2770,17 @@
     (struct-get summary has-decl-emitting-macro)
     (compiler-load-surface-summary-decls-require-eager?
       (struct-get summary decls))))
+
+(define (compiler-load-surface-summary-requires-eager-for-lazy-import?
+  [summary : CompilerLoadSurfaceSummary]) : bool
+  (if (compiler-load-stdlib-result-module-id? (struct-get summary module-id))
+    (or
+      (struct-get summary has-tests)
+      (struct-get summary has-export-metadata)
+      (struct-get summary has-generated-decls)
+      (compiler-load-surface-summary-decls-require-eager?
+        (struct-get summary decls)))
+    (compiler-load-surface-summary-requires-eager? summary)))
 
 (define (compiler-load-lazy-variant-name-used?
   [variant : AstVariantDef]
@@ -2821,6 +2892,25 @@
         alias
         (compiler-load-source-scan-start span source))]))
 
+(define (compiler-load-stdlib-result-alias-used-after?
+  [importer-path : String]
+  [alias : String]
+  [span : AstSourceSpan]) : bool
+  (match (compiler-load-source-for-lazy-scan importer-path)
+    [(CompilerLoadNoString) true]
+    [(CompilerLoadSomeString source)
+      (let
+        [start : i64 (compiler-load-source-scan-start span source)]
+        (or
+          (compiler-load-string-contains-from?
+            source
+            (string.append alias ".")
+            start)
+          (compiler-load-string-contains-from?
+            source
+            (string.append alias "/")
+            start)))]))
+
 (define (compiler-load-lazy-import-preload-candidate?
   [importer-path : String]
   [kind : AstImportKind]
@@ -2838,7 +2928,34 @@
       [(AstMaybeImportAlias.No) false])
     (or
       (compiler-load-string-eq? import-path "stdlib.array")
-      (compiler-load-stdlib-array-module-id? resolved))))
+      (compiler-load-stdlib-array-module-id? resolved)
+      (compiler-load-string-eq? import-path "stdlib.result")
+      (compiler-load-stdlib-result-module-id? resolved))))
+
+(define (compiler-load-lazy-import-preload-summary-with-pools
+  [resolved : String]
+  [stdlib-roots : svec.StringVector]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (if (compiler-load-stdlib-array-module-id? resolved)
+    (compiler-load-stdlib-array-surface-summary-ensure-with-pools
+      resolved
+      stdlib-roots
+      expected-module
+      import-root
+      cfgs
+      pools)
+    (if (compiler-load-stdlib-result-module-id? resolved)
+      (compiler-load-stdlib-result-surface-summary-ensure-with-pools
+        resolved
+        stdlib-roots
+        expected-module
+        import-root
+        cfgs
+        pools)
+      unit)))
 
 (define (compiler-load-lazy-import-skip?
   [importer-path : String]
@@ -2853,7 +2970,8 @@
     (match (compiler-load-surface-summary-find-source resolved)
       [(CompilerLoadNoSurfaceSummary) false]
       [(CompilerLoadSomeSurfaceSummary summary)
-        (if (compiler-load-surface-summary-requires-eager? summary)
+        (if (compiler-load-surface-summary-requires-eager-for-lazy-import?
+          summary)
           false
           (match kind
             [(AstImportKind.Module)
@@ -2870,13 +2988,20 @@
                           importer-path
                           alias-name
                           span)))
-                    (not
-                      (compiler-load-lazy-module-used-after?
-                        importer-path
-                        summary
-                        alias-name
-                        span
-                        (not (compiler-load-stdlib-import? resolved)))))]
+                    (if (compiler-load-stdlib-result-module-id?
+                      (struct-get summary module-id))
+                      (not
+                        (compiler-load-stdlib-result-alias-used-after?
+                          importer-path
+                          alias-name
+                          span))
+                      (not
+                        (compiler-load-lazy-module-used-after?
+                          importer-path
+                          summary
+                          alias-name
+                          span
+                          (not (compiler-load-stdlib-import? resolved))))))]
                 [(AstMaybeImportAlias.No) false])]
             [(AstImportKind.Path) false]
             [_ false]))])))
@@ -3704,7 +3829,7 @@
                         alias)]
                     [_preload-summary : unit
                       (if preload-candidate
-                        (compiler-load-stdlib-array-surface-summary-ensure-with-pools
+                        (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
                           stdlib-roots
                           expected-module
@@ -5906,25 +6031,34 @@
                         resolved
                         expected-module
                         importer-source-module)]
+                    [preload-candidate : bool
+                      (and
+                        (not package-externs)
+                        (compiler-load-lazy-import-preload-candidate?
+                          importer-path
+                          kind
+                          import-path
+                          resolved
+                          alias))]
+                    [_preload-summary : unit
+                      (if preload-candidate
+                        (compiler-load-lazy-import-preload-summary-with-pools
+                          resolved
+                          stdlib-roots
+                          expected-module
+                          manifest-dir
+                          cfgs
+                          (ast-node-pool-context-capture-active))
+                        unit)]
                     [preload-skip : bool
-                      (if package-externs
-                        false
-                        (let
-                          [preload-candidate : bool
-                            (compiler-load-lazy-import-preload-candidate?
-                              importer-path
-                              kind
-                              import-path
-                              resolved
-                              alias)]
-                          (if preload-candidate
-                            (compiler-load-lazy-import-skip?
-                              importer-path
-                              kind
-                              resolved
-                              alias
-                              span)
-                            false)))]
+                      (if preload-candidate
+                        (compiler-load-lazy-import-skip?
+                          importer-path
+                          kind
+                          resolved
+                          alias
+                          span)
+                        false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
                         (ast-decl-list-new)

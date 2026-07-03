@@ -12339,19 +12339,19 @@
       [_ false])))
 
 (define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
-  (match env
-    [(TcTypeEnv.Nil)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done)
       (ResultTcType.Err
         "typecheck: ptr-addr-of requires a local or parameter name")]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-ptr-addr-of-local-lookup (box-get rest) name)]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (tc-ptr-addr-of-local-lookup rest-env name)]
+    [(TcTypeEnvSpineStep.Bind key ty rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
         (ResultTcType.Err
           "typecheck: ptr-addr-of requires a local or parameter name")
         (if (= key (tc-name-id name))
           (ResultTcType.Ok ty)
-          (tc-ptr-addr-of-local-lookup (box-get rest) name)))]))
+          (tc-ptr-addr-of-local-lookup rest-env name)))]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -12595,21 +12595,21 @@
   (TcSpmdBinding name ty class scope role))
 
 (define (tc-spmd-env-binding-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Nil) 0]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-spmd-env-binding-count (box-get rest))]
-    [(TcTypeEnv.Bind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]))
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) 0]
+    [(TcTypeEnvSpineStep.Cache rest-env) (tc-spmd-env-binding-count rest-env)]
+    [(TcTypeEnvSpineStep.Bind _ _ rest-env)
+      (+ 1 (tc-spmd-env-binding-count rest-env))]))
 
 (define (tc-spmd-env-fill-from-type-env
   [env : TcTypeEnv]
   [bindings : (Array TcSpmdBinding)]
   [index : i64]) : unit
-  (match env
-    [(TcTypeEnv.Nil) unit]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-spmd-env-fill-from-type-env (box-get rest) bindings index)]
-    [(TcTypeEnv.Bind name-id ty rest)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) unit]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (tc-spmd-env-fill-from-type-env rest-env bindings index)]
+    [(TcTypeEnvSpineStep.Bind name-id ty rest-env)
       (begin
         (array-set!
           bindings
@@ -12620,7 +12620,7 @@
             TcSpmdClass.Uniform
             TcSpmdScope.Outer
             TcSpmdRole.Value))
-        (tc-spmd-env-fill-from-type-env (box-get rest) bindings (- index 1)))]))
+        (tc-spmd-env-fill-from-type-env rest-env bindings (- index 1)))]))
 
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (let
@@ -13162,8 +13162,8 @@
     [unsafe-env : TcTypeEnv
       (tc-bind-unsafe (tc-empty-env) "unsafe-value" (AstType.I64))]
     [hygiene-top : TcTypeEnv (tc-bind (tc-empty-env) "visible" (AstType.I64))]
-    [hygiene-env : TcTypeEnv
-      (tc-bind (tc-hygiene-global-env hygiene-top) "visible" (AstType.Bool))]
+    [hygiene-root : TcTypeEnv (tc-hygiene-global-env hygiene-top)]
+    [hygiene-env : TcTypeEnv (tc-bind hygiene-root "visible" (AstType.Bool))]
     (and
       (match (tc-type-env-lookup-step lookup-local (tc-name-id "local"))
         [(TcTypeEnvLookupStep.Found (AstType.I64)) true]
@@ -13184,6 +13184,12 @@
         unsafe-env
         (tc-name-id "unsafe-value"))
         [(TcTypeEnvUnsafeLookupStep.Found (AstType.I64) unsafe) unsafe]
+        [_ false])
+      (match (tc-ptr-addr-of-local-lookup hygiene-env "visible")
+        [(ResultTcType.Ok (AstType.Bool)) true]
+        [_ false])
+      (match (tc-ptr-addr-of-local-lookup hygiene-root "visible")
+        [(ResultTcType.Err _) true]
         [_ false])
       (match (tc-lookup lookup-deep "global")
         [(ResultTcType.Ok (AstType.String)) true]
@@ -37621,19 +37627,18 @@
   [exprs : AstExprList]
   [lifetime : String]
   [seen : TcStringList]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+  (match (tc-type-env-spine-step env)
+    [(TcTypeEnvSpineStep.Done) false]
+    [(TcTypeEnvSpineStep.Cache rest-env)
       (tc-borrow-check-env-lifetime-used-in-exprs?
         ctx
-        (box-get rest)
+        rest-env
         exprs
         lifetime
         seen)]
-    [(TcTypeEnv.Bind name-id ty rest)
+    [(TcTypeEnvSpineStep.Bind name-id ty rest-env)
       (let
         [name : String (intern-str name-id)]
-        [rest-env : TcTypeEnv (box-get rest)]
         (if (tc-string-list-contains seen name)
           (tc-borrow-check-env-lifetime-used-in-exprs?
             ctx

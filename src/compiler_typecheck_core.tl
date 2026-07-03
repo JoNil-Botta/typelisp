@@ -48885,6 +48885,225 @@
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-vector-family-fast-arity-error call-expr)))
 
+;; Fast path for stdlib.result's small generated module macro. The public macro
+;; is a deterministic quasiquote, so direct AST construction avoids CTFE
+;; evaluation and macro-output parsing for otherwise-unused generated imports.
+(define (macro-result-module-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (string.eq definition-module "stdlib.result")
+    (tc-name-base-eq? macro-name "result")))
+
+(define (macro-result-var [name : String]) : i64
+  (ast-node-push (AstExpr.Var (intern name))))
+
+(define (macro-result-bool [value : bool]) : i64
+  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
+
+(define (macro-result-expr-list1 [a : i64]) : AstExprList
+  (ast-expr-cons a (ast-expr-list-new)))
+
+(define (macro-result-expr-list2 [a : i64] [b : i64]) : AstExprList
+  (ast-expr-cons a (macro-result-expr-list1 b)))
+
+(define (macro-result-param [name : String] [ty : AstType]) : AstParam
+  (ast-param name ty false))
+
+(define (macro-result-param-list1 [a : AstParam]) : AstParamList
+  (ast-param-cons a (ast-param-list-new)))
+
+(define (macro-result-param-list2 [a : AstParam] [b : AstParam]) : AstParamList
+  (ast-param-cons a (macro-result-param-list1 b)))
+
+(define (macro-result-type-list1 [ty : AstType]) : AstTypeList
+  (ast-type-cons ty (ast-type-list-new)))
+
+(define (macro-result-cleanup-list1) : AstVariantPayloadCleanupList
+  (ast-variant-payload-cleanup-cons
+    AstVariantPayloadCleanup.No
+    (ast-variant-payload-cleanup-list-new)))
+
+(define (macro-result-call [name : String] [args : AstExprList]) : i64
+  (ast-expr-call (macro-result-var name) args))
+
+(define (macro-result-call1 [name : String] [a : i64]) : i64
+  (macro-result-call name (macro-result-expr-list1 a)))
+
+(define (macro-result-enum-decl [ok-ty : AstType] [err-ty : AstType]) : AstDecl
+  (ast-decl-def-enum
+    "Result"
+    AstEnumCleanup.No
+    (ast-variant-def-cons
+      (ast-variant-def
+        "Ok"
+        (macro-result-type-list1 ok-ty)
+        (macro-result-cleanup-list1))
+      (ast-variant-def-cons
+        (ast-variant-def
+          "Err"
+          (macro-result-type-list1 err-ty)
+          (macro-result-cleanup-list1))
+        (ast-variant-def-list-new)))))
+
+(define (macro-result-result-ty) : AstType
+  (AstType.Var (intern "Result")))
+
+(define (macro-result-ok-decl [ok-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    "ok"
+    (macro-result-param-list1 (macro-result-param "value" ok-ty))
+    (macro-result-result-ty)
+    (macro-result-call1 "Result.Ok" (macro-result-var "value"))))
+
+(define (macro-result-err-decl [err-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    "err"
+    (macro-result-param-list1 (macro-result-param "error" err-ty))
+    (macro-result-result-ty)
+    (macro-result-call1 "Result.Err" (macro-result-var "error"))))
+
+(define (macro-result-pattern1 [variant : String] [payload : AstPattern]) : AstPattern
+  (ast-pat-variant variant (ast-pattern-cons payload (ast-pattern-list-new))))
+
+(define (macro-result-match-arm
+  [variant : String]
+  [payload : AstPattern]
+  [body : i64]) : AstMatchArm
+  (ast-match-arm (macro-result-pattern1 variant payload) body))
+
+(define (macro-result-match2
+  [scrutinee : i64]
+  [first : AstMatchArm]
+  [second : AstMatchArm]) : i64
+  (ast-expr-match
+    scrutinee
+    (ast-match-arm-cons
+      first
+      (ast-match-arm-cons second (ast-match-arm-list-new)))))
+
+(define (macro-result-predicate-decl
+  [name : String]
+  [ok-value : bool]
+  [err-value : bool]) : AstDecl
+  (ast-decl-def-fn
+    name
+    (macro-result-param-list1
+      (macro-result-param "value" (ast-ty-ref "value" (macro-result-result-ty))))
+    (AstType.Bool)
+    (macro-result-match2
+      (macro-result-var "value")
+      (macro-result-match-arm
+        "Ok"
+        AstPattern.Wildcard
+        (macro-result-bool ok-value))
+      (macro-result-match-arm
+        "Err"
+        AstPattern.Wildcard
+        (macro-result-bool err-value)))))
+
+(define (macro-result-value-or-decl [ok-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    "value-or"
+    (macro-result-param-list2
+      (macro-result-param "value" (macro-result-result-ty))
+      (macro-result-param "fallback" ok-ty))
+    ok-ty
+    (macro-result-match2
+      (macro-result-var "value")
+      (macro-result-match-arm
+        "Ok"
+        (ast-pat-binding "inner")
+        (macro-result-var "inner"))
+      (macro-result-match-arm
+        "Err"
+        AstPattern.Wildcard
+        (macro-result-var "fallback")))))
+
+(define (macro-result-map-decl [ok-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    "map"
+    (macro-result-param-list2
+      (macro-result-param "value" (macro-result-result-ty))
+      (macro-result-param
+        "mapper"
+        (ast-ty-func (macro-result-type-list1 ok-ty) ok-ty)))
+    (macro-result-result-ty)
+    (macro-result-match2
+      (macro-result-var "value")
+      (macro-result-match-arm
+        "Ok"
+        (ast-pat-binding "inner")
+        (macro-result-call1
+          "ok"
+          (macro-result-call1 "mapper" (macro-result-var "inner"))))
+      (macro-result-match-arm
+        "Err"
+        (ast-pat-binding "error")
+        (macro-result-call1 "err" (macro-result-var "error"))))))
+
+(define (macro-result-fast-body [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
+  (ast-decl-cons
+    (macro-result-enum-decl ok-ty err-ty)
+    (ast-decl-cons
+      (macro-result-ok-decl ok-ty)
+      (ast-decl-cons
+        (macro-result-err-decl err-ty)
+        (ast-decl-cons
+          (macro-result-predicate-decl "is-ok?" true false)
+          (ast-decl-cons
+            (macro-result-predicate-decl "is-err?" false true)
+            (ast-decl-cons
+              (macro-result-value-or-decl ok-ty)
+              (ast-decl-cons (macro-result-map-decl ok-ty) (ast-decl-list-new)))))))))
+
+(define (macro-result-fast-decls-for-types [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
+  (ast-decl-cons
+    (ast-decl-module (macro-result-fast-target-module-for-types ok-ty err-ty))
+    (macro-result-fast-body ok-ty err-ty)))
+
+(define (macro-result-fast-target-module-for-types
+  [ok-ty : AstType]
+  [err-ty : AstType]) : String
+  (str_cat.str-cat
+    "stdlib.result.generated."
+    (ctfe-type-key ok-ty)
+    "."
+    (ctfe-type-key err-ty)))
+
+(define (macro-result-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
+  (ResultMacroParsedDecls.Err
+    (box
+      (ctfe-diagnostic-at-expr
+        call-expr
+        "typecheck: result expects exactly two arguments"))))
+
+(define (macro-result-fast-decls
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [fallback-module : String]
+  [args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroParsedDecls
+  (if (= (struct-get (& args) len) 2)
+    (let
+      [ok-id : i64 (ast-expr-list-get (& args) 0 0)]
+      [err-id : i64 (ast-expr-list-get (& args) 1 0)]
+      [ok-expr : AstExpr (ast-node-get ok-id)]
+      [err-expr : AstExpr (ast-node-get err-id)]
+      (match (macro-type-arg-with-fallback ctx decls fallback-module ok-expr)
+        [(ResultMacroTypeArg.Ok ok-ty)
+          (match (macro-type-arg-with-fallback
+            ctx
+            decls
+            fallback-module
+            err-expr)
+            [(ResultMacroTypeArg.Ok err-ty)
+              (ResultMacroParsedDecls.Ok
+                (macro-result-fast-decls-for-types ok-ty err-ty))]
+            [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
+    (macro-result-fast-arity-error call-expr)))
+
 ;; The core prelude macros below are deterministic syntax rewrites. Expanding
 ;; them in the compiler avoids running the CTFE evaluator for thousands of hot
 ;; self-compile calls while preserving normal CTFE for user-defined macros.
@@ -52329,6 +52548,11 @@
     (macro-generated-surface-vector? module macro-name identity)
     (macro-generated-surface-result? macro-name identity)))
 
+(define (macro-generated-surface-empty? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [_ false]))
+
 (cfg
   test
   (test
@@ -52428,67 +52652,45 @@
       (ast-decl-list-prepend-builder
         (ast-decl-module target-module)
         generated-body)]
-    (match (macro-find-module-body-decls orig-decls target-module)
-      [(MacroMaybeDeclList.Some existing-body)
-        (if (macro-decls-contain-generated-key? existing-body identity)
-          (let
-            [same-identity-body : AstDeclList
-              (macro-decls-filter-generated-key existing-body identity)]
-            ;: Exports/imports in generated module bodies are unkeyed scaffolding,
-            ;: so replay compatibility compares only declarations owned by this
-            ;: generated identity. Other identities may share the same module.
-            [generated-key-body : AstDeclList
-              (macro-decls-filter-generated-key generated-body identity)]
-            [same-body? : bool
-              (if (macro-decl-list-structural-eq?
-                same-identity-body
-                generated-key-body)
-                true
-                (macro-generated-key-body-replay-compatible?
-                  ctx
-                  top-env
-                  orig-decls
-                  target-module
-                  decl-path
-                  identity
-                  (macro-decls-filter-generated-key-context
-                    existing-body
-                    identity)
-                  (macro-decls-filter-generated-key-context
-                    generated-body
-                    identity)))]
-            (if same-body?
-              (match (macro-check-generated-import-collisions
-                orig-decls
-                generated-body
-                module
-                alias
-                identity)
-                [CompilerNoString
-                  (let
-                    [expanded : AstDeclList
-                      (macro-module-replay-marker-decls
-                        target-module
-                        module
-                        alias
-                        span
-                        generated-body
-                        existing-body)]
-                    (ResultMacroDeclExpansion.Ok
-                      expanded
-                      (macro-paths-for-decls expanded decl-path)))]
-                [(CompilerSomeString message)
-                  (ResultMacroDeclExpansion.Err
-                    (box (macro-generated-import-diag span message)))])
-              (ResultMacroDeclExpansion.Err
-                (box (macro-module-incompatible-output-diag call-expr identity)))))
-          (let
-            [generated-key-body : AstDeclList
-              (macro-decls-filter-generated-key generated-body identity)]
-            (match (macro-generated-target-replay
-              existing-body
-              generated-key-body)
-              [(MacroGeneratedTargetReplay.ReplayCompatible)
+    (if (and
+      (macro-generated-surface-filtered? module macro-name identity)
+      (macro-generated-surface-empty? surface-body))
+      (let
+        [expanded : AstDeclList
+          (macro-module-import-marker-decls target-module alias span)]
+        (ResultMacroDeclExpansion.Ok
+          expanded
+          (macro-paths-for-decls expanded decl-path)))
+      (match (macro-find-module-body-decls orig-decls target-module)
+        [(MacroMaybeDeclList.Some existing-body)
+          (if (macro-decls-contain-generated-key? existing-body identity)
+            (let
+              [same-identity-body : AstDeclList
+                (macro-decls-filter-generated-key existing-body identity)]
+              ;: Exports/imports in generated module bodies are unkeyed scaffolding,
+              ;: so replay compatibility compares only declarations owned by this
+              ;: generated identity. Other identities may share the same module.
+              [generated-key-body : AstDeclList
+                (macro-decls-filter-generated-key generated-body identity)]
+              [same-body? : bool
+                (if (macro-decl-list-structural-eq?
+                  same-identity-body
+                  generated-key-body)
+                  true
+                  (macro-generated-key-body-replay-compatible?
+                    ctx
+                    top-env
+                    orig-decls
+                    target-module
+                    decl-path
+                    identity
+                    (macro-decls-filter-generated-key-context
+                      existing-body
+                      identity)
+                    (macro-decls-filter-generated-key-context
+                      generated-body
+                      identity)))]
+              (if same-body?
                 (match (macro-check-generated-import-collisions
                   orig-decls
                   generated-body
@@ -52510,56 +52712,91 @@
                         (macro-paths-for-decls expanded decl-path)))]
                   [(CompilerSomeString message)
                     (ResultMacroDeclExpansion.Err
-                      (box (macro-generated-import-diag span message)))])]
-              [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                      (box (macro-generated-import-diag span message)))])
                 (ResultMacroDeclExpansion.Err
                   (box
-                    (macro-module-incompatible-output-diag call-expr identity)))]
-              [(MacroGeneratedTargetReplay.NoReplay)
-                (match (macro-check-generated-import-collisions
-                  orig-decls
-                  generated-body
-                  module
-                  alias
-                  identity)
-                  [CompilerNoString
-                    (let
-                      [expanded : AstDeclList
-                        (macro-decl-list-append
-                          materialized
-                          (ast-decl-list-prepend-builder
-                            (ast-decl-module module)
-                            (macro-module-import-marker-decls
-                              target-module
-                              alias
-                              span)))]
-                      (ResultMacroDeclExpansion.Ok
-                        expanded
-                        (macro-paths-for-decls expanded decl-path)))]
-                  [(CompilerSomeString message)
-                    (ResultMacroDeclExpansion.Err
-                      (box (macro-generated-import-diag span message)))])])))]
-      [(MacroMaybeDeclList.No)
-        (match (macro-check-generated-import-collisions
-          orig-decls
-          generated-body
-          module
-          alias
-          identity)
-          [CompilerNoString
+                    (macro-module-incompatible-output-diag call-expr identity)))))
             (let
-              [expanded : AstDeclList
-                (macro-decl-list-append
-                  materialized
-                  (ast-decl-list-prepend-builder
-                    (ast-decl-module module)
-                    (macro-module-import-marker-decls target-module alias span)))]
-              (ResultMacroDeclExpansion.Ok
-                expanded
-                (macro-paths-for-decls expanded decl-path)))]
-          [(CompilerSomeString message)
-            (ResultMacroDeclExpansion.Err
-              (box (macro-generated-import-diag span message)))])])))
+              [generated-key-body : AstDeclList
+                (macro-decls-filter-generated-key generated-body identity)]
+              (match (macro-generated-target-replay
+                existing-body
+                generated-key-body)
+                [(MacroGeneratedTargetReplay.ReplayCompatible)
+                  (match (macro-check-generated-import-collisions
+                    orig-decls
+                    generated-body
+                    module
+                    alias
+                    identity)
+                    [CompilerNoString
+                      (let
+                        [expanded : AstDeclList
+                          (macro-module-replay-marker-decls
+                            target-module
+                            module
+                            alias
+                            span
+                            generated-body
+                            existing-body)]
+                        (ResultMacroDeclExpansion.Ok
+                          expanded
+                          (macro-paths-for-decls expanded decl-path)))]
+                    [(CompilerSomeString message)
+                      (ResultMacroDeclExpansion.Err
+                        (box (macro-generated-import-diag span message)))])]
+                [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                  (ResultMacroDeclExpansion.Err
+                    (box
+                      (macro-module-incompatible-output-diag call-expr identity)))]
+                [(MacroGeneratedTargetReplay.NoReplay)
+                  (match (macro-check-generated-import-collisions
+                    orig-decls
+                    generated-body
+                    module
+                    alias
+                    identity)
+                    [CompilerNoString
+                      (let
+                        [expanded : AstDeclList
+                          (macro-decl-list-append
+                            materialized
+                            (ast-decl-list-prepend-builder
+                              (ast-decl-module module)
+                              (macro-module-import-marker-decls
+                                target-module
+                                alias
+                                span)))]
+                        (ResultMacroDeclExpansion.Ok
+                          expanded
+                          (macro-paths-for-decls expanded decl-path)))]
+                    [(CompilerSomeString message)
+                      (ResultMacroDeclExpansion.Err
+                        (box (macro-generated-import-diag span message)))])])))]
+        [(MacroMaybeDeclList.No)
+          (match (macro-check-generated-import-collisions
+            orig-decls
+            generated-body
+            module
+            alias
+            identity)
+            [CompilerNoString
+              (let
+                [expanded : AstDeclList
+                  (macro-decl-list-append
+                    materialized
+                    (ast-decl-list-prepend-builder
+                      (ast-decl-module module)
+                      (macro-module-import-marker-decls
+                        target-module
+                        alias
+                        span)))]
+                (ResultMacroDeclExpansion.Ok
+                  expanded
+                  (macro-paths-for-decls expanded decl-path)))]
+            [(CompilerSomeString message)
+              (ResultMacroDeclExpansion.Err
+                (box (macro-generated-import-diag span message)))])]))))
 
 (define (macro-expand-module-generated-decls
   [ctx : TcContext]
@@ -52950,26 +53187,28 @@
                                           expanded
                                           decl-path)))]
                                   [(CompilerNoString)
-                                    (match (macro-eval-transformer-expanded-with-env
-                                      call-ctx
-                                      orig-decls
-                                      definition-module
-                                      global-env
+                                    (if (macro-result-module-macro?
                                       macro-name
-                                      params
-                                      body
-                                      expanded-args
-                                      call-expr)
-                                      [(ResultMacroValueEnv.Ok value macro-env)
-                                        (let
-                                          [parse-dispatch : sym_i64_env.SymI64Env
-                                            (macro-parse-dispatch-for-macro
+                                      definition-module)
+                                      (let
+                                        [fast-result : ResultMacroParsedDecls
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-macro-profile-start))
+                                            (macro-result-fast-decls
+                                              call-ctx
+                                              orig-decls
+                                              module
+                                              expanded-args
+                                              call-expr))]
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-macro-profile-finish
                                               macro-name
-                                              definition-module)]
-                                          (match (macro-module-decls-from-ctfe-value
-                                            value
-                                            call-expr
-                                            parse-dispatch)
+                                              expanded-args))
+                                          (match fast-result
                                             [(ResultMacroParsedDecls.Ok
                                                 generated)
                                               (macro-expand-module-generated-decls
@@ -52983,16 +53222,59 @@
                                                 macro-name
                                                 identity
                                                 definition-module
-                                                macro-env
-                                                (tc-macro-param-list-needs-call-context?
-                                                  params)
+                                                (ctfe-env-empty-with-pools
+                                                  (tc-context-pools call-ctx))
+                                                false
                                                 generated
                                                 call-expr)]
                                             [(ResultMacroParsedDecls.Err diag)
                                               (ResultMacroDeclExpansion.Err
-                                                diag)]))]
-                                      [(ResultMacroValueEnv.Err diag)
-                                        (ResultMacroDeclExpansion.Err diag)])]))]
+                                                diag)])))
+                                      (match (macro-eval-transformer-expanded-with-env
+                                        call-ctx
+                                        orig-decls
+                                        definition-module
+                                        global-env
+                                        macro-name
+                                        params
+                                        body
+                                        expanded-args
+                                        call-expr)
+                                        [(ResultMacroValueEnv.Ok
+                                            value
+                                            macro-env)
+                                          (let
+                                            [parse-dispatch : sym_i64_env.SymI64Env
+                                              (macro-parse-dispatch-for-macro
+                                                macro-name
+                                                definition-module)]
+                                            (match (macro-module-decls-from-ctfe-value
+                                              value
+                                              call-expr
+                                              parse-dispatch)
+                                              [(ResultMacroParsedDecls.Ok
+                                                  generated)
+                                                (macro-expand-module-generated-decls
+                                                  ctx
+                                                  top-env
+                                                  orig-decls
+                                                  module
+                                                  alias
+                                                  span
+                                                  decl-path
+                                                  macro-name
+                                                  identity
+                                                  definition-module
+                                                  macro-env
+                                                  (tc-macro-param-list-needs-call-context?
+                                                    params)
+                                                  generated
+                                                  call-expr)]
+                                              [(ResultMacroParsedDecls.Err diag)
+                                                (ResultMacroDeclExpansion.Err
+                                                  diag)]))]
+                                        [(ResultMacroValueEnv.Err diag)
+                                          (ResultMacroDeclExpansion.Err diag)]))]))]
                             [(ResultGenKey.Err diag)
                               (ResultMacroDeclExpansion.Err diag)])]
                         [(ResultMacroExprList.Err diag)
@@ -54632,6 +54914,24 @@
         (macro-expanded-decl-inert? decl can-share)
         (macro-expanded-decls-inert? rest can-share))]))
 
+(define (macro-expanded-decl-scaffold-only? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Module _) true]
+    [(AstDecl.Import _) true]
+    [(AstDecl.Unsafe inner-box)
+      (macro-expanded-decl-scaffold-only? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-expanded-decl-scaffold-only? (box-get template-box))]
+    [_ false]))
+
+(define (macro-expanded-decls-scaffold-only? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
+      (and
+        (macro-expanded-decl-scaffold-only? decl)
+        (macro-expanded-decls-scaffold-only? rest))]))
+
 (define (macro-decl-vector-family-placeholder-call?
   [ctx : TcContext]
   [orig-decls : AstDeclList]
@@ -54681,6 +54981,59 @@
         [_ false])]
     [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-vector-family-placeholder?
+        ctx
+        orig-decls
+        module
+        (box-get template-box))]
+    [_ false]))
+
+(define (macro-decl-result-module-placeholder-call?
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [call-id : i64]
+  [context : AstMaybeModuleName]) : bool
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExpr.Call func-box _)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (macro-call-decl-with-context
+            ctx
+            func
+            orig-decls
+            module
+            context
+            call-expr)
+            [(ResultMacroCallDeclModule.Ok maybe-decl _)
+              (match maybe-decl
+                [(MacroMaybeDecl.Some macro-name definition-module _ ret _)
+                  (and
+                    (tc-macro-result-module? ret)
+                    (macro-result-module-macro? macro-name definition-module))]
+                [(MacroMaybeDecl.No) false])]
+            [(ResultMacroCallDeclModule.Err _) false]))]
+      [_ false])))
+
+(define (macro-decl-result-module-placeholder?
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Macro call-id context)
+          (macro-decl-result-module-placeholder-call?
+            ctx
+            orig-decls
+            module
+            call-id
+            context)]
+        [_ false])]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-result-module-placeholder?
         ctx
         orig-decls
         module
@@ -54758,11 +55111,17 @@
                         (macro-decl-import-placeholder? decl)
                         batched-inert-splice?
                         (not
-                          (macro-decl-vector-family-placeholder?
-                            cur-ctx
-                            cur-orig-decls
-                            cur-module
-                            decl)))
+                          (or
+                            (macro-decl-vector-family-placeholder?
+                              cur-ctx
+                              cur-orig-decls
+                              cur-module
+                              decl)
+                            (macro-decl-result-module-placeholder?
+                              cur-ctx
+                              cur-orig-decls
+                              cur-module
+                              decl))))
                       (begin
                         (set!
                           result
@@ -54795,12 +55154,24 @@
                           (let
                             [next-module : String
                               (macro-decls-final-module expanded cur-module)]
-                            (if (macro-expanded-decls-inert? expanded can-share)
-                              (if (macro-decl-vector-family-placeholder?
-                                cur-ctx
-                                cur-orig-decls
-                                cur-module
-                                decl)
+                            [result-placeholder-scaffold? : bool
+                              (and
+                                (macro-decl-result-module-placeholder?
+                                  cur-ctx
+                                  cur-orig-decls
+                                  cur-module
+                                  decl)
+                                (macro-expanded-decls-scaffold-only? expanded))]
+                            (if (or
+                              (macro-expanded-decls-inert? expanded can-share)
+                              result-placeholder-scaffold?)
+                              (if (or
+                                (macro-decl-vector-family-placeholder?
+                                  cur-ctx
+                                  cur-orig-decls
+                                  cur-module
+                                  decl)
+                                result-placeholder-scaffold?)
                                 (match (tc-build-top-env-list-in-module
                                   cur-ctx
                                   expanded

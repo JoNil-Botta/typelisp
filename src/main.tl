@@ -337,19 +337,6 @@ Options:
           (cli-cat " built " (cli-cat cli-build-date "\n")))))
     0))
 
-;; A stage0 command listed in the help but not yet wired into the selfhost CLI.
-(define (cli-pending [command : String] [issue : String]) : i64
-  (begin
-    (cli-err
-      (cli-cat
-        "typelisp: '"
-        (cli-cat
-          command
-          (cli-cat
-            "' is not yet available in the selfhost CLI (tracked in "
-            (cli-cat issue ")\n")))))
-    1))
-
 (define (cli-dispatch [command : String] [count : i64]) : i64
   (cond
     [(or

@@ -328,19 +328,6 @@
   (lsp-json-object
     (lsp-json-member k1 v1 (lsp-json-member k2 v2 json.JsonMemberListNil))))
 
-(define (lsp-json-object3
-  [k1 : String]
-  [v1 : json.Json]
-  [k2 : String]
-  [v2 : json.Json]
-  [k3 : String]
-  [v3 : json.Json]) : json.Json
-  (lsp-json-object
-    (lsp-json-member
-      k1
-      v1
-      (lsp-json-member k2 v2 (lsp-json-member k3 v3 json.JsonMemberListNil)))))
-
 (define (lsp-json-object4
   [k1 : String]
   [v1 : json.Json]

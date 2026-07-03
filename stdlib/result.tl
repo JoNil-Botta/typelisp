@@ -75,7 +75,9 @@
         (module ,module-name)
         (import (result ,T ,E) as local_result)
         (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
-          (local_result.value-or value fallback))))))
+          (match value
+            [(local_result.Ok inner) inner]
+            [(local_result.Err _) fallback]))))))
 
 (cfg test (import (result-test-user i64 String) as result_i64_string_user))
 

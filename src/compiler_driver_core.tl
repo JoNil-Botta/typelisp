@@ -1516,10 +1516,13 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
+          (compiler-driver-state-install-pools! state)
           (let
             [release-source-pools? : bool
-              (compiler-driver-state-can-release-checked-lower-source-pools?
-                state)]
+              (and
+                (compiler-driver-state-can-release-checked-lower-source-pools?
+                  state)
+                (not (ctfe-program-has-type-literal? decls)))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1616,10 +1619,13 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
+          (compiler-driver-state-install-pools! state)
           (let
             [release-source-pools? : bool
-              (compiler-driver-state-can-release-checked-lower-source-pools?
-                state)]
+              (and
+                (compiler-driver-state-can-release-checked-lower-source-pools?
+                  state)
+                (not (ctfe-program-has-type-literal? decls)))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)

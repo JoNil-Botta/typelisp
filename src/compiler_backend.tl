@@ -32065,12 +32065,6 @@
 (define compiler-backend-rsp-rebase-last-ok : bool
   true)
 
-;; M-G3 stage 2: %rbp-pool permission for the CURRENT function's plan. True
-;; except during the demotion retry (see the _rbp-pool-flag note in
-;; emit-function for why this is a global, not a parameter).
-(define compiler-backend-emit-function-allow-rbp : bool
-  true)
-
 ;; M-G3 stage 2 census: functions emitted frame-pointer-free / whose final plan
 ;; homes a value in %rbp / demoted (FPO audit failed on an rbp-planned function
 ;; -> re-planned without %rbp).
@@ -33640,7 +33634,8 @@
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [crt-entry : bool]
+  [allow-rbp : bool]) : ResultCompilerBackend
   (match func
     [(CompilerIrFunction.Function name params ret-ty vars raw-blocks)
       ;; The provenance fallback diagnostic for this function (#605): backend
@@ -33663,20 +33658,13 @@
           (compiler-reg-set-group-class-masks!
             (struct-get program-index group-word-class-masks))]
         ;; M-G3 stage 2: enable %rbp as the 6th CSR for this function's plan --
-        ;; Linux scalar-opt2 text path only. The allow-rbp GLOBAL is false only
-        ;; on the DEMOTION retry (the FPO audit failed on an rbp-planned
-        ;; function). NOTE: this is deliberately a global rather than a 14th
-        ;; emit-function parameter -- the published SEED stage0 miscompiles the
-        ;; 14th parameter's USES to constant 0 (the spill from 72(%rbp) is
-        ;; emitted but the read is lowered as `xorl %r9d,%r9d`), which HEAD's
-        ;; own codegen does not do; a parameter would therefore work in
-        ;; s1-compiled compilers but not the seed-compiled s1, diverging the
-        ;; bootstrap fixpoint. The flag is set unconditionally per function so
-        ;; no state leaks across functions.
+        ;; Linux scalar-opt2 text path only. The `allow-rbp` parameter is false
+        ;; only on the DEMOTION retry (the FPO audit failed on an rbp-planned
+        ;; function).
         [_rbp-pool-flag : unit
           (compiler-reg-set-rbp-pool-enabled!
             (and
-              compiler-backend-emit-function-allow-rbp
+              allow-rbp
               (compiler-backend-target-linux? target)
               (compiler-backend-mode-scalar? mode)
               compiler-backend-scalar-registers-enabled))]
@@ -34173,30 +34161,24 @@
                             (set!
                               compiler-backend-fpo-demote-count
                               (+ compiler-backend-fpo-demote-count 1))
-                            (set!
-                              compiler-backend-emit-function-allow-rbp
-                              false)
-                            (let
-                              [demoted : ResultCompilerBackend
-                                (compiler-backend-emit-function
-                                  target
-                                  mode
-                                  func
-                                  functions
-                                  globals
-                                  global-types
-                                  externs
-                                  plan
-                                  program-index
-                                  spans
-                                  span-index
-                                  emit-entry
-                                  crt-entry)]
-                              (begin
-                                (set!
-                                  compiler-backend-emit-function-allow-rbp
-                                  true)
-                                demoted)))
+                            ;; DEMOTE retry: re-plan/re-emit without %rbp in the
+                            ;; pool (allow-rbp=false => no %rbp homes, so it
+                            ;; cannot demote again).
+                            (compiler-backend-emit-function
+                              target
+                              mode
+                              func
+                              functions
+                              globals
+                              global-types
+                              externs
+                              plan
+                              program-index
+                              spans
+                              span-index
+                              emit-entry
+                              crt-entry
+                              false))
                           (let
                             [_fpo-census : unit
                               (if fpo-ok
@@ -34351,7 +34333,8 @@
           spans
           span-index
           emit-entry
-          crt-entry))]
+          crt-entry
+          true))]
     (begin
       (compiler-backend-user-symbol-cache-reset!)
       result)))
@@ -34390,7 +34373,8 @@
           spans
           span-index
           emit-entry
-          crt-entry)
+          crt-entry
+          true)
         (compiler-backend-emit-function-scratch
           target
           mode
@@ -39846,7 +39830,6 @@ tl_memchr:
     (set! compiler-backend-fpo-rbp-plan-count 0)
     (set! compiler-backend-fpo-demote-count 0)
     (set! compiler-backend-fpo-push-count 0)
-    (set! compiler-backend-emit-function-allow-rbp true)
     ;; GAP5: clear the post-emission dead-frame-store sweep metadata before
     ;; recording this program's FPO functions (a stale entry from a prior
     ;; program emit in the same process must not leak into the sweep).

@@ -5164,9 +5164,13 @@
         length-rax
         2)
         [(ResultCompilerBackend.Ok asm)
+          ;; The merged emitter folds the constant index 0 directly into the
+          ;; bounds compare (`cmpq $0, %rax`) instead of materializing it in a
+          ;; scratch register. The Win64 safety invariant is unchanged: the
+          ;; length (in %rax) is never clobbered, so no degenerate
+          ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (compiler-backend-string-contains? asm "    xorl %r10d, %r10d\n")
-            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")
             (not
               (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
         [(ResultCompilerBackend.Err _) false])]
@@ -5194,9 +5198,13 @@
         "else"
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok asm)
+          ;; The merged emitter folds the spilled LHS (var0 at -8(%rbp)) directly
+          ;; into the compare as a memory operand (`cmpq %rax, -8(%rbp)`) instead
+          ;; of loading it into a scratch register first. The Win64 safety
+          ;; invariant is unchanged: the RHS in %rax is never clobbered, so no
+          ;; degenerate `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
-            (compiler-backend-string-contains? asm "    cmpq %rax, %r10\n")
+            (compiler-backend-string-contains? asm "    cmpq %rax, -8(%rbp)\n")
             (not
               (compiler-backend-string-contains? asm "    cmpq %rax, %rax\n")))]
         [(ResultCompilerBackend.Err _) false])]
@@ -10395,13 +10403,16 @@
         assignments
         3)
         [(ResultCompilerBackend.Ok asm)
+          ;; The merged emitter fuses base + index*8 into a single scale-index
+          ;; leaq that writes the result home directly (`leaq (%rsi,%rax,8),
+          ;; %rax`) instead of staging base/index through scratch registers. The
+          ;; Win64 safety invariant is unchanged: the base (%rsi) is never moved
+          ;; into the shared index/result home %rax before the leaq consumes the
+          ;; index, so no clobbering `movq %rsi, %rax` is emitted.
           (and
-            (compiler-backend-string-contains? asm "    movq %rsi, %r10\n")
-            (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
             (compiler-backend-string-contains?
               asm
-              "    leaq (%r10,%r8,8), %r10\n")
-            (compiler-backend-string-contains? asm "    movq %r10, %rax\n")
+              "    leaq (%rsi,%rax,8), %rax\n")
             (not
               (compiler-backend-string-contains? asm "    movq %rsi, %rax\n")))]
         [(ResultCompilerBackend.Err _) false])]

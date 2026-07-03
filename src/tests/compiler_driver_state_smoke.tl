@@ -285,6 +285,40 @@
     [(AstExpr.Literal (AstLiteral.Int value _)) (= value want)]
     [_ false]))
 
+(define (compiler-driver-state-smoke-lower-state-instrs [state : LowerState]) : CompilerIrInstrList
+  (match state
+    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _) (box-get instrs)]))
+
+(define (compiler-driver-state-smoke-instr-i64-mov?
+  [instr : CompilerIrInstr]
+  [want : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ (CompilerIrValue.I64 got) _) (= got want)]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-instrs-contain-i64-mov?
+  [instrs : CompilerIrInstrList]
+  [want : i64]) : bool
+  (match instrs
+    [(CompilerIrInstrList.Nil) false]
+    [(CompilerIrInstrList.Cons instr rest)
+      (or
+        (compiler-driver-state-smoke-instr-i64-mov? instr want)
+        (compiler-driver-state-smoke-instrs-contain-i64-mov?
+          (box-get rest)
+          want))]))
+
+(define (compiler-driver-state-smoke-lower-args-from-state-a?
+  [state : LowerState]) : bool
+  (let
+    [instrs : CompilerIrInstrList
+      (compiler-driver-state-smoke-lower-state-instrs state)]
+    (and
+      (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 3)
+      (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 5)
+      (not (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 3000))
+      (not (compiler-driver-state-smoke-instrs-contain-i64-mov? instrs 5000)))))
+
 (define (compiler-driver-state-smoke-context-if-bool-lits?
   [pools : AstNodePoolContext]
   [id : i64]) : bool
@@ -1017,6 +1051,14 @@
           (ast-node-pool-context-expr-push
             pools-a
             (AstExpr.Literal (ast-lit-int 11)))]
+        [arg0-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 3)))]
+        [arg1-a : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExpr.Literal (ast-lit-int 5)))]
         [cond-b : i64
           (ast-node-pool-context-expr-push
             pools-b
@@ -1029,6 +1071,28 @@
           (ast-node-pool-context-expr-push
             pools-b
             (AstExpr.Literal (ast-lit-int 1100)))]
+        [arg0-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 3000)))]
+        [arg1-b : i64
+          (ast-node-pool-context-expr-push
+            pools-b
+            (AstExpr.Literal (ast-lit-int 5000)))]
+        [args-a : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) arg0-a)
+              (ast-expr-list-push (&mut items) arg1-a)
+              items))]
+        [result-exprs-a : AstExprList
+          (let
+            [items : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push (&mut items) arg0-a)
+              (ast-expr-list-push (&mut items) cond-a)
+              items))]
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries-with-symbols program symbols)
@@ -1061,16 +1125,40 @@
                       (sym_i64_env.sym-i64-empty)
                       (TcTypeEnv.Nil)
                       (AstExpr.If cond-a then-a else-a))]
+                  [args-lowered : ResultLowerArgs
+                    (lower-args
+                      ctx
+                      lower-state
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      args-a)]
+                  [result-type : ResultTcType
+                    (lower-expr-list-result-type-fast
+                      ctx
+                      (sym_i64_env.sym-i64-empty)
+                      (TcTypeEnv.Nil)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      result-exprs-a)]
                   [active-after : i64 (ast-node-pool-len)]
                   (and
                     (= cond-a cond-b)
                     (= then-a then-b)
                     (= else-a else-b)
+                    (= arg0-a arg0-b)
+                    (= arg1-a arg1-b)
                     (= active-before (ast-node-pool-context-expr-len pools-b))
                     (= active-after active-before)
                     (match lowered
                       [(ResultLowerExpr.Ok _) true]
-                      [(ResultLowerExpr.Err _) false])))]
+                      [(ResultLowerExpr.Err _) false])
+                    (match args-lowered
+                      [(ResultLowerArgs.Ok arg-state _)
+                        (compiler-driver-state-smoke-lower-args-from-state-a?
+                          arg-state)]
+                      [(ResultLowerArgs.Err _) false])
+                    (match result-type
+                      [(ResultTcType.Ok ty) (tc-type-eq ty (AstType.Bool))]
+                      [(ResultTcType.Err _) false])))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 

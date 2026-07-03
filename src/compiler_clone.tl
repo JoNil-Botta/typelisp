@@ -13,6 +13,7 @@
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
+(import stdlib.arena)
 (import stdlib.hashmap)
 (import (hashmap String i64) as clone_name_map)
 (import stdlib.string)
@@ -1510,6 +1511,59 @@
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
           (clone-augment-decls-with-roots-and-pools pools decls roots)))]))
+
+(define (clone-augment-program-with-roots-from-pools
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [program : AstProgram]
+  [roots : CloneNameList]) : AstProgramCompaction
+  (match program
+    [(AstProgram.Program source-decls-box)
+      (let
+        [source-decls : AstDeclList (box-get source-decls-box)]
+        [able : CloneNameSet
+          (clone-fixpoint
+            source-pools
+            source-decls
+            (clone-all-type-names source-decls (clone-name-set-empty)))]
+        [expanded : CloneNameList
+          (clone-root-expand source-pools source-decls able roots roots)]
+        [compacted : AstProgramCompaction
+          (ast-program-compact-with-pools source-pools dest-pools program)]
+        (match compacted
+          [(AstProgramCompaction copied-program _)
+            (match copied-program
+              [(AstProgram.Program copied-decls-box)
+                (let
+                  [copied-decls : AstDeclList (box-get copied-decls-box)]
+                  [prev-arena : i64 (arena.tl_arena_current)]
+                  [result : AstProgramCompaction
+                    (begin
+                      (unsafe
+                        (arena.tl_arena_set
+                          (ast-node-pool-context-base-arena dest-pools)))
+                      (let
+                        [clone-decls : AstDeclList
+                          (clone-generate-decls
+                            dest-pools
+                            copied-decls
+                            (clone-name-list-to-set
+                              expanded
+                              (clone-name-set-empty))
+                            (ast-decl-list-new))]
+                        [checked-decls : AstDeclList
+                          (clone-decl-list-append copied-decls clone-decls)]
+                        [checked-program : AstProgram
+                          (ast-program checked-decls)]
+                        [out : AstProgramCompaction
+                          (AstProgramCompaction
+                            checked-program
+                            (ast-node-pool-context-snapshot dest-pools))]
+                        (begin
+                          (unsafe
+                            (arena.tl_arena_set prev-arena))
+                          out)))]
+                  result)])]))]))
 
 (define (clone-augment-program [program : AstProgram]) : AstProgram
   (let

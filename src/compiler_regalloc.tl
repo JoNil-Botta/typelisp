@@ -357,11 +357,6 @@
   [rest : CompilerRegMoveList]) : CompilerRegMoveList
   (CompilerRegMoveList.Cons head (box rest)))
 
-(define (compiler-reg-min [a : i64] [b : i64]) : i64
-  (if (< a b)
-    a
-    b))
-
 (define (compiler-reg-max [a : i64] [b : i64]) : i64
   (if (> a b)
     a
@@ -399,9 +394,6 @@
         (compiler-reg-string-cons
           "%r15"
           (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil))))))
-
-(define (compiler-reg-sysv-integer-register-count) : i64
-  (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers)))
 
 ;; M-G3 stage 2 (FPO): %rbp as the 6th callee-saved pool register. Only enabled
 ;; per-function by the backend (compiler-reg-set-rbp-pool-enabled!) when the
@@ -512,14 +504,6 @@
       (compiler-reg-string-cons
         reg
         (compiler-reg-string-list-append (box-get rest) right))]))
-
-(define (compiler-reg-caller-saved-integer-registers-for-abi
-  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
-  (match abi
-    [(CompilerRegTargetAbi.Linux)
-      (compiler-reg-zero-call-caller-saved-integer-registers)]
-    [(CompilerRegTargetAbi.Windows)
-      (compiler-reg-win64-caller-saved-integer-registers)]))
 
 (define (compiler-reg-callee-saved-integer-registers-for-abi
   [abi : CompilerRegTargetAbi]) : CompilerRegStringList
@@ -4316,20 +4300,6 @@
           (and (= got-start start) (= got-end end))])]
     [(CompilerRegMaybeInterval.No) false]))
 
-(define (compiler-reg-vars-interfere?
-  [intervals : CompilerRegIntervalList]
-  [left : i64]
-  [right : i64]) : bool
-  (if (= left right)
-    true
-    (match (compiler-reg-interval-lookup intervals left)
-      [(CompilerRegMaybeInterval.Some left-interval)
-        (match (compiler-reg-interval-lookup intervals right)
-          [(CompilerRegMaybeInterval.Some right-interval)
-            (compiler-reg-interval-overlap? left-interval right-interval)]
-          [(CompilerRegMaybeInterval.No) true])]
-      [(CompilerRegMaybeInterval.No) true])))
-
 (define (compiler-reg-vars-interfere-index?
   [intervals : CompilerRegIntervalIndex]
   [left : i64]
@@ -5905,27 +5875,6 @@
               (+ 1 (compiler-reg-spill-count (box-get rest)))]
             [_ (compiler-reg-spill-count (box-get rest))])])]))
 
-;; Spill weight for `var` (#3473/#3490). The scalar opt2 path passes
-;; loop-depth-weighted counts; unweighted/empty arrays still keep the old
-;; deterministic policy for other stages. Out-of-range vars score 0.
-(define (compiler-reg-spill-weight [ref-counts : (Array i64)] [var : i64]) : i64
-  (if (and (>= var 0) (< var (array-length ref-counts)))
-    (array-ref ref-counts var)
-    0))
-
-;; Does `var` already hold a hard register (single or pair) in the table? Used to
-;; let the primary callee-saved pass skip values a prior pass already homed.
-(define (compiler-reg-assignment-table-register-assigned?
-  [assignments : CompilerRegAssignmentTable]
-  [var : i64]) : bool
-  (match (compiler-reg-assignment-table-lookup assignments var)
-    [(CompilerRegMaybeLocation.Some location)
-      (match location
-        [(CompilerRegLocation.Register _) true]
-        [(CompilerRegLocation.RegisterPair _ _) true]
-        [_ false])]
-    [(CompilerRegMaybeLocation.No) false]))
-
 (define (compiler-reg-copy-hints-add-move!
   [hints : (Array i64)]
   [parents : (Array i64)]
@@ -6433,11 +6382,6 @@
       (compiler-reg-backend-caller-clobber-blocks?
         (compiler-ir-block-seq-to-list seq))]))
 
-(define (compiler-reg-backend-caller-clobber? [func : CompilerIrFunction]) : bool
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-backend-caller-clobber-blocks? blocks)]))
-
 ;; Backend caller-clobber points include ordinary calls plus non-call IR that
 ;; emits caller-clobbering machine instructions or helper calls. The zero-call
 ;; caller-saved pass rejects any interval spanning one of these points.
@@ -6545,22 +6489,6 @@
         (compiler-ir-block-seq-to-list seq)
         point
         set)]))
-
-(define (compiler-reg-backend-caller-clobber-points-for-abi
-  [abi : CompilerRegTargetAbi]
-  [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match abi
-    [(CompilerRegTargetAbi.Linux)
-      (compiler-reg-backend-caller-clobber-points func)]
-    [(CompilerRegTargetAbi.Windows)
-      (match func
-        [(CompilerIrFunction.Function _ _ _ _ blocks)
-          (match (compiler-reg-backend-caller-clobber-points-blocks-for-abi
-            abi
-            blocks
-            0
-            (compiler-live-set-empty))
-            [(CompilerRegCallScan.Scan _ set) set])])]))
 
 ;; Per-register clobber model (15c). The merged caller-clobber set above is too
 ;; coarse for the greedy: it treats a div/shift exactly like a call (all
@@ -6811,12 +6739,6 @@
         end
         (+ word-index 1)))))
 
-(define (compiler-reg-call-set-count-in-range-model
-  [set : CompilerLiveI64Set]
-  [start : i64]
-  [end : i64]) : i64
-  (compiler-reg-call-set-count-in-range-model-words set start end 0))
-
 (define (compiler-reg-direct-call-points-seq
   [instrs : CompilerIrInstrSeq]
   [point : i64]
@@ -6965,20 +6887,6 @@
         abi
         (compiler-ir-block-seq-to-list seq)
         set)]))
-
-(define (compiler-reg-backend-caller-clobber-vars-for-abi
-  [abi : CompilerRegTargetAbi]
-  [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (match abi
-    [(CompilerRegTargetAbi.Linux)
-      (compiler-reg-backend-caller-clobber-vars func)]
-    [(CompilerRegTargetAbi.Windows)
-      (match func
-        [(CompilerIrFunction.Function _ _ _ _ blocks)
-          (compiler-reg-backend-caller-clobber-vars-blocks-for-abi
-            abi
-            blocks
-            (compiler-live-set-empty))])]))
 
 (define (compiler-reg-loop-depth-max) : i64
   8)
@@ -7322,15 +7230,6 @@
 
 (define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
   (compiler-reg-remat-defn-with-invariant-loads? instr false))
-
-(define (compiler-reg-remat-candidates-add-instr
-  [candidates : CompilerLiveI64Set]
-  [instr : CompilerIrInstr]) : CompilerLiveI64Set
-  (let
-    [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
-    (if (compiler-reg-remat-defn? instr)
-      (compiler-live-set-union candidates defs)
-      candidates)))
 
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
@@ -7725,19 +7624,6 @@
             coalesce)
           counts))]))
 
-(define (compiler-reg-call-spanning-caller-saved-benefit?
-  [ref-count : i64]
-  [calls : i64]) : bool
-  ;; Static gate for the first split caller-saved slice: register segments must
-  ;; save more spilled-value memory traffic than the call-boundary materializing
-  ;; moves add. Each normal call crossed costs one spill and one reload, plus a
-  ;; small frame-overhead budget. This intentionally rejects marginal ranges.
-  (> ref-count (+ (* 2 calls) 1)))
-
-(define (compiler-reg-interval-index-has-segment-table?
-  [index : CompilerRegIntervalIndex]) : bool
-  (> (array-length (struct-get index segments)) 0))
-
 (define (compiler-reg-interval-index-var-has-segments?
   [index : CompilerRegIntervalIndex]
   [var : i64]) : bool
@@ -7759,11 +7645,6 @@
         (compiler-live-set-union
           (compiler-live-set-union set (compiler-live-block-live-in block))
           (compiler-live-block-live-out block)))]))
-
-(define (compiler-reg-call-split-boundary-vars [func : CompilerIrFunction]) : CompilerLiveI64Set
-  (compiler-reg-call-split-boundary-vars-blocks
-    (compiler-live-function-blocks (compiler-live-analyze-function func))
-    (compiler-live-set-empty)))
 
 (define (compiler-reg-edge-copy-list-reverse-onto
   [copies : CompilerRegEdgeCopyList]
@@ -8291,11 +8172,6 @@
       (match instr
         [(CompilerIrInstr.Phi _ _ _) true]
         [_ (compiler-reg-loop-split-instr-list-has-phi? (box-get rest))])]))
-
-(define (compiler-reg-loop-split-instr-seq-has-phi?
-  [instrs : CompilerIrInstrSeq]) : bool
-  (compiler-reg-loop-split-instr-list-has-phi?
-    (compiler-ir-instr-seq-to-list instrs)))
 
 ;; SplitKit step 1 (redefined write-back). Does any phi instruction in this block
 ;; DEFINE `var`? Phi-defined loop-carried values are EXCLUDED from the redefined
@@ -10538,11 +10414,6 @@
                   parents
                   merged-roots)]))]))))
 
-(define (compiler-reg-loop-split-max-rounds) : i64
-  ;; 5 callee-saved + the 4 caller-saved (r8/r9/rsi/rdi) the rescue may use in
-  ;; clobber-free regions; extra rounds stop early when no free candidate remains.
-  (compiler-reg-loop-split-max-rounds-for-abi CompilerRegTargetAbi.Linux))
-
 (define (compiler-reg-loop-split-max-rounds-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   ;; Campaign: +4 for the caller-saved rescue rounds (r8/r9/rsi/rdi) in
@@ -12318,16 +12189,6 @@
           types
           (compiler-reg-group-vars-blocks (compiler-live-set-empty) blocks))
         blocks)]))
-
-;; #2386: whether a function has ANY register-group var (structural OR type-based,
-;; e.g. a group-typed call result/param). The backend uses this to reserve the
-;; word1 stack region for stack-homed groups; a type-based group var the structural
-;; scan misses would otherwise write word1 below the allocated frame (clobbered by
-;; an intervening call's pushed return address / callee frame).
-(define (compiler-reg-function-has-group-vars?
-  [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]) : bool
-  (> (compiler-live-set-count (compiler-reg-function-group-vars func types)) 0))
 
 ;; #3489 (PR2): LLVM-style coalescing-by-rename. LLVM removes a copy by renaming
 ;; the two virtual registers into ONE, so a coalesced class is a single value the
@@ -17586,10 +17447,6 @@
   (match plan
     [(CompilerRegPlan.Plan _ _ _ types _ _) types]))
 
-(define (compiler-reg-plan-caller-save-shadows [plan : CompilerRegPlan]) : CompilerLiveI64Set
-  (match plan
-    [(CompilerRegPlan.Plan _ _ _ _ split _) (compiler-reg-call-split-shadows split)]))
-
 (define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (Array
     String)
   (match plan
@@ -18758,15 +18615,6 @@
         [(CompilerRegLocation.Register found) (string.eq found reg)]
         [(CompilerRegLocation.RegisterPair a b)
           (or (string.eq a reg) (string.eq b reg))]
-        [_ false])]
-    [_ false]))
-
-(define (compiler-reg-location-spill?
-  [maybe-location : CompilerRegMaybeLocation]) : bool
-  (match maybe-location
-    [(CompilerRegMaybeLocation.Some location)
-      (match location
-        [(CompilerRegLocation.Spill offset) (< offset 0)]
         [_ false])]
     [_ false]))
 

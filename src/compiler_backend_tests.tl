@@ -14535,13 +14535,6 @@
         (not (compiler-backend-string-contains? asm "_tl_tl_shift_abort")))]
     (and trap-branches helper-shapes op-shapes no-externs)))
 
-(define (compiler-backend-checked-trap-emit-shape-ok?) : bool
-  (match (compiler-backend-emit-program-linux
-    (compiler-backend-checked-trap-program))
-    [(ResultCompilerBackend.Ok asm)
-      (compiler-backend-checked-trap-asm-shape-ok? asm)]
-    [(ResultCompilerBackend.Err _) false]))
-
 (define (compiler-backend-narrow-binop-types
   [lhs-ty : AstType]
   [rhs-ty : AstType]) : CompilerRegVarTypeList

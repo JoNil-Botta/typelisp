@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (main) : i64
   (let
@@ -15,5 +15,5 @@
           (set! c (+ c (* i 3)))
           (set! d (+ d (* i 4)))
           (set! i (+ i 1))))
-      (print (+ (+ a b) (+ c d)))
+      (io.print (+ (+ a b) (+ c d)))
       0)))

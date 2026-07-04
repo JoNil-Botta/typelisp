@@ -3,8 +3,8 @@
 ;; This is the first compiler front-end component authored in TypeLisp, the
 ;; opening slice of the self-hosting milestone (#27, phase 4). It scans a
 ;; hardcoded source String character-by-character and produces a token stream,
-;; proving the language primitives - String indexing (`string-ref`,
-;; `string-length`), `substring` (#104), `char`->`i64` casts and comparison,
+;; proving the language primitives - String indexing (`string.string-ref`,
+;; `string.string-length`), `string.substring` (#104), `char`->`i64` casts and comparison,
 ;; `defenum` + `match` with String-payload variants (#101), `while`/`let`/
 ;; `set!`/`begin`, and a generated vector of `Token` aggregates compose into
 ;; the scanning loop a real lexer needs.
@@ -19,15 +19,15 @@
 ;;
 ;; Token stream representation (refs #13/#27/#41): the scanner records each
 ;; emitted token as a real `Token` value in a generated `Token` vector. Identifier
-;; tokens carry a `String` payload sliced out of the source with `substring`, so
+;; tokens carry a `String` payload sliced out of the source with `string.substring`, so
 ;; vector reads can return a `(Token.Ident text)` token whose payload is still
 ;; projectable through `match`.
 ;;
 ;; Deferred - current language gaps, recorded as self-hosting signal:
 ;;   - Digit and whitespace classification compares each char's `i64` code
 ;;     point against ASCII constants.
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 (import stdlib.vector)
 
 (defenum Token
@@ -96,7 +96,7 @@
     [(= c '/') Token.Slash]
     [(= c '(') Token.LParen]
     [(= c ')') Token.RParen]
-    [else (panic "lexer: unexpected character")]))
+    [else (io.panic "lexer: unexpected character")]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
@@ -104,21 +104,21 @@
   (let
     [j : i64 start]
     (begin
-      (while (and (< j n) (is-ident-char (string-ref src j)))
+      (while (and (< j n) (is-ident-char (string.string-ref src j)))
         (set! j (+ j 1)))
       j)))
 
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(Token.Ident text)` token.
 (define (ident-token [src : String] [start : i64] [end : i64]) : Token
-  (Token.Ident (substring src start (- end start))))
+  (Token.Ident (string.substring src start (- end start))))
 
 ;; Length of the String payload of a `Token.Ident` token (0 for any other token):
 ;; projects the payload back out of the enum in a `match` arm, the way a parser
 ;; consuming the token stream would.
 (define (ident-text-length [t : Token]) : i64
   (match t
-    [(Token.Ident s) (string-length s)]
+    [(Token.Ident s) (string.string-length s)]
     [(Token.Int _) 0]
     [(Token.Plus) 0]
     [(Token.Minus) 0]
@@ -131,16 +131,16 @@
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is exactly the shape of a real lexer: a cursor over the
 ;; input, a whitespace skip, multi-char accumulation for integers, an identifier
-;; run sliced out with `substring`, and single-char tokens.
+;; run sliced out with `string.substring`, and single-char tokens.
 (define (lex [src : String] [toks : (&mut toks token_vec.Vec)]) : i64
   (let
     [i : i64 0]
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [count : i64 0]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref src i)]
+          [c : char (string.string-ref src i)]
           (cond
             [(is-space c) (set! i (+ i 1))]
             [(is-alpha c)
@@ -157,9 +157,11 @@
               (let
                 [acc : i64 0]
                 (begin
-                  (while (and (< i n) (is-digit (string-ref src i)))
+                  (while (and (< i n) (is-digit (string.string-ref src i)))
                     (begin
-                      (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
+                      (set!
+                        acc
+                        (+ (* acc 10) (digit-value (string.string-ref src i))))
                       (set! i (+ i 1))))
                   (token_vec.push toks (Token.Int acc))
                   (set! count (+ count 1))))]

@@ -22,9 +22,9 @@
 ;#
 ;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
 (import stdlib.json)
-(import "stdlib/io.tl")
-(import "stdlib/random.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.random)
+(import stdlib.string)
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.
@@ -75,9 +75,9 @@
 
 (define (read-all-stdin-acc [acc : String]) : String
   (let
-    [chunk : String (read-stdin-bytes stdin-read-size)]
-    [text : String (append acc chunk)]
-    (if (stdin-eof?)
+    [chunk : String (io.read-stdin-bytes stdin-read-size)]
+    [text : String (string.append acc chunk)]
+    (if (io.stdin-eof?)
       text
       (read-all-stdin-acc text))))
 
@@ -89,24 +89,24 @@
 ;: JSON parser cannot decode. The chooser only needs display text, so normalize
 ;: the queue snapshot to parser-safe ASCII while preserving JSON syntax.
 (define (chooser-char-code-at [text : String] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
+  (cast (string.string-ref text idx) : i64))
 
 (define (chooser-has-utf8-bom? [text : String]) : bool
   (and
-    (>= (string-length text) 3)
+    (>= (string.string-length text) 3)
     (= (chooser-char-code-at text 0) 239)
     (= (chooser-char-code-at text 1) 187)
     (= (chooser-char-code-at text 2) 191)))
 
 (define (chooser-strip-utf8-bom [text : String]) : String
   (if (chooser-has-utf8-bom? text)
-    (substring text 3 (- (string-length text) 3))
+    (string.substring text 3 (- (string.string-length text) 3))
     text))
 
 (define (chooser-normalize-json-input [text : String]) : String
   (let
     [input : String (chooser-strip-utf8-bom text)]
-    [n : i64 (string-length input)]
+    [n : i64 (string.string-length input)]
     [i : i64 0]
     [segment-start : i64 0]
     [out : String ""]
@@ -118,15 +118,17 @@
             (begin
               (set!
                 out
-                (append
-                  (append
+                (string.append
+                  (string.append
                     out
-                    (substring input segment-start (- i segment-start)))
+                    (string.substring input segment-start (- i segment-start)))
                   "?"))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
-      (append out (substring input segment-start (- n segment-start))))))
+      (string.append
+        out
+        (string.substring input segment-start (- n segment-start))))))
 
 ;: Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
 (define (json-field-number [item : json.Json] [field : String]) : i64
@@ -135,7 +137,7 @@
     (match (json.object-get item (& key))
       [(json.JsonFound found)
         (match found
-          [(json.JsonNumber text) (>int text)]
+          [(json.JsonNumber text) (string.>int text)]
           [_ 0])]
       [(json.JsonMissing) 0])))
 
@@ -167,7 +169,7 @@
   (match labels
     [(json.JsonListNil) false]
     [(json.JsonListCons head rest)
-      (if (eq (json-field-string head "name") needle)
+      (if (string.eq (json-field-string head "name") needle)
         true
         (label-list-has? (box-get rest) needle))]))
 
@@ -204,22 +206,25 @@
 
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
-  (eq status "COMPLETED"))
+  (string.eq status "COMPLETED"))
 
 ;: Return true when a legacy status context state is terminal.
 (define (pr-check-state-complete? [state : String]) : bool
-  (or (eq state "SUCCESS") (eq state "FAILURE") (eq state "ERROR")))
+  (or
+    (string.eq state "SUCCESS")
+    (string.eq state "FAILURE")
+    (string.eq state "ERROR")))
 
 ;: Return true when a rollup entry is complete. Unknown entries do not block so
 ;: a missing check shape is treated like no checks rather than a pending check.
 (define (pr-check-entry-complete? [entry : json.Json]) : bool
   (let
     [status : String (json-field-string entry "status")]
-    (if (> (string-length status) 0)
+    (if (> (string.string-length status) 0)
       (pr-check-status-complete? status)
       (let
         [state : String (json-field-string entry "state")]
-        (if (> (string-length state) 0)
+        (if (> (string.string-length state) 0)
           (pr-check-state-complete? state)
           true)))))
 
@@ -345,11 +350,13 @@
 
 ;: Build the weight list from candidates, preserving order so a chosen weight
 ;: index maps back to the candidate at the same position.
-(define (cand-weights [cands : CandList]) : RandomWeightList
+(define (cand-weights [cands : CandList]) : random.RandomWeightList
   (match cands
-    [(CandList.Nil) (weight-list-empty)]
+    [(CandList.Nil) (random.weight-list-empty)]
     [(CandList.Cons head rest)
-      (weight-list-cons (struct-get head weight) (cand-weights (box-get rest)))]))
+      (random.weight-list-cons
+        (struct-get head weight)
+        (cand-weights (box-get rest)))]))
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
@@ -388,23 +395,23 @@
           (begin
             (if (= (cand-count cands) 5)
               unit
-              (panic "expected only complete/no-check PRs plus issue"))
+              (io.panic "expected only complete/no-check PRs plus issue"))
             (if (= (struct-get (cand-nth cands 0) number) 1)
               unit
-              (panic "non-draft PR without checks should remain eligible"))
+              (io.panic "non-draft PR without checks should remain eligible"))
             (if (= (struct-get (cand-nth cands 1) number) 2)
               unit
-              (panic "empty check rollup should remain eligible"))
+              (io.panic "empty check rollup should remain eligible"))
             (if (= (struct-get (cand-nth cands 2) number) 3)
               unit
-              (panic "completed check run should remain eligible"))
+              (io.panic "completed check run should remain eligible"))
             (if (= (struct-get (cand-nth cands 3) number) 6)
               unit
-              (panic "terminal legacy status should remain eligible"))
+              (io.panic "terminal legacy status should remain eligible"))
             (if (= (struct-get (cand-nth cands 4) number) 7)
               unit
-              (panic "issue should remain after skipped PRs"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "issue should remain after skipped PRs"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-p0-label-takes-precedence-over-p1
@@ -418,18 +425,18 @@
           (begin
             (if (= (cand-count cands) 2)
               unit
-              (panic "expected two issue candidates"))
+              (io.panic "expected two issue candidates"))
             (if (=
               (struct-get (cand-nth cands 0) weight)
               (+ implement-weight p0-priority-bonus))
               unit
-              (panic "issue with p0 and p1 should use p0 priority"))
+              (io.panic "issue with p0 and p1 should use p0 priority"))
             (if (=
               (struct-get (cand-nth cands 1) weight)
               (+ implement-weight p1-priority-bonus))
               unit
-              (panic "issue with only p1 should use p1 priority"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "issue with only p1 should use p1 priority"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-skips-blocked-issues
@@ -443,14 +450,14 @@
           (begin
             (if (= (cand-count cands) 2)
               unit
-              (panic "expected blocked issues to be skipped"))
+              (io.panic "expected blocked issues to be skipped"))
             (if (= (struct-get (cand-nth cands 0) number) 32)
               unit
-              (panic "first non-blocked issue should remain eligible"))
+              (io.panic "first non-blocked issue should remain eligible"))
             (if (= (struct-get (cand-nth cands 1) number) 33)
               unit
-              (panic "second non-blocked issue should remain eligible"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "second non-blocked issue should remain eligible"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-pr-review-weight-is-raised
@@ -464,11 +471,11 @@
           (begin
             (if (= (cand-count cands) 1)
               unit
-              (panic "expected one PR candidate"))
+              (io.panic "expected one PR candidate"))
             (if (= (struct-get (cand-nth cands 0) weight) 45)
               unit
-              (panic "PR review weight should be 45"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "PR review weight should be 45"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-never-chooses-draft-prs
@@ -482,15 +489,16 @@
           (begin
             (if (= (cand-count cands) 2)
               unit
-              (panic "only the non-draft PR and the triage issue should remain"))
+              (io.panic
+                "only the non-draft PR and the triage issue should remain"))
             (if (= (struct-get (cand-nth cands 0) number) 62)
               unit
-              (panic
+              (io.panic
                 "the sole non-draft PR should be the only review candidate"))
             (if (= (struct-get (cand-nth cands 1) number) 70)
               unit
-              (panic "triage issue should follow once draft PRs are dropped"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "triage issue should follow once draft PRs are dropped"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-caps-implement-when-many-open-prs
@@ -504,22 +512,23 @@
           (begin
             (if (= (cand-count cands) 5)
               unit
-              (panic "four review PRs plus the surviving triage issue expected"))
+              (io.panic
+                "four review PRs plus the surviving triage issue expected"))
             (if (cand-list-has-kind? cands kind-ready)
-              (panic
+              (io.panic
                 "ready-for-implementation issues must drop above the PR cap")
               unit)
             (if (cand-list-has-kind? cands kind-pr)
               unit
-              (panic "review candidates must stay eligible above the PR cap"))
+              (io.panic "review candidates must stay eligible above the PR cap"))
             (if (cand-list-has-kind? cands kind-triage)
               unit
-              (panic
+              (io.panic
                 "research/triage issues must stay eligible above the PR cap"))
             (if (= (struct-get (cand-nth cands 4) number) 51)
               unit
-              (panic "triage issue should remain after the four review PRs"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "triage issue should remain after the four review PRs"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-allows-implement-at-pr-cap-boundary
@@ -533,14 +542,14 @@
           (begin
             (if (= (cand-count cands) 5)
               unit
-              (panic "three review PRs plus both issues expected at the cap"))
+              (io.panic "three review PRs plus both issues expected at the cap"))
             (if (cand-list-has-kind? cands kind-ready)
               unit
-              (panic "exactly three open PRs is at the cap, not above it"))
+              (io.panic "exactly three open PRs is at the cap, not above it"))
             (if (= (struct-get (cand-nth cands 3) number) 50)
               unit
-              (panic "ready issue should remain right at the PR cap"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "ready issue should remain right at the PR cap"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-draft-prs-do-not-count-toward-pr-cap
@@ -554,15 +563,16 @@
           (begin
             (if (= (cand-count cands) 4)
               unit
-              (panic
+              (io.panic
                 "three non-draft review PRs plus the kept ready issue expected"))
             (if (cand-list-has-kind? cands kind-ready)
               unit
-              (panic "two draft PRs must not push three open PRs over the cap"))
+              (io.panic
+                "two draft PRs must not push three open PRs over the cap"))
             (if (= (struct-get (cand-nth cands 3) number) 50)
               unit
-              (panic "ready issue should sit right after the non-draft PRs"))))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+              (io.panic "ready issue should sit right after the non-draft PRs"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-implement-cap-can-empty-queue-when-only-ready-issues
@@ -575,8 +585,9 @@
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
             unit
-            (panic "saturated PRs with only ready issues should leave no work")))]
-      [(json.ErrJson _) (panic "test JSON should parse")])))
+            (io.panic
+              "saturated PRs with only ready issues should leave no work")))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 ;: The action verb for a candidate kind.
 (define (action-name [kind : i64]) : String
@@ -594,13 +605,13 @@
 
 ;: Render one candidate as the chooser's action line (without trailing newline).
 (define (candidate-line [cand : Candidate]) : String
-  (append
-    (append (action-name (struct-get cand kind)) " ")
-    (append
-      (append (github-kind (struct-get cand kind)) " #")
-      (append
-        (int->string (struct-get cand number))
-        (append ": " (struct-get cand title))))))
+  (string.append
+    (string.append (action-name (struct-get cand kind)) " ")
+    (string.append
+      (string.append (github-kind (struct-get cand kind)) " #")
+      (string.append
+        (string.int->string (struct-get cand number))
+        (string.append ": " (struct-get cand title))))))
 
 ;: Choose one candidate from the input JSON, returning an error message on
 ;: invalid input or an empty candidate set.
@@ -610,35 +621,35 @@
     [text : String normalized]
     (match (json.parse (& text))
       [(json.ErrJson message)
-        (ChooserResult.Err (append "Error: invalid JSON: " message))]
+        (ChooserResult.Err (string.append "Error: invalid JSON: " message))]
       [(json.OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
             (ChooserResult.Err "Error: no eligible candidates were provided")
-            (match (system-seed)
-              [(ErrSystemSeed err)
+            (match (random.system-seed)
+              [(random.ErrSystemSeed err)
                 (ChooserResult.Err
                   (match err
-                    [(RandomSystemSeedUnavailable message)
-                      (append "Error: " message)]))]
-              [(OkSystemSeed seed)
-                (match (weighted-index
+                    [(random.RandomSystemSeedUnavailable message)
+                      (string.append "Error: " message)]))]
+              [(random.OkSystemSeed seed)
+                (match (random.weighted-index
                   (stdlib.random.seed seed)
                   (cand-weights cands))
-                  [(ErrRandomWeightedIndex message)
-                    (ChooserResult.Err (append "Error: " message))]
-                  [(OkRandomWeightedIndex _ index)
+                  [(random.ErrRandomWeightedIndex message)
+                    (ChooserResult.Err (string.append "Error: " message))]
+                  [(random.OkRandomWeightedIndex _ index)
                     (ChooserResult.Ok (cand-nth cands index))])])))])))
 
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))
     [(ChooserResult.Err message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]
     [(ChooserResult.Ok cand)
       (begin
-        (print-string (candidate-line cand))
-        (print-newline)
+        (io.print-string (candidate-line cand))
+        (io.print-newline)
         0)]))

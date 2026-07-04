@@ -4,31 +4,24 @@
 ;; This is the multi-file-organization slice of the self-hosting milestone: the
 ;; `Token` type and the accessors that operate on it are lifted out of the
 ;; combined `calc.tl` into a module that defines NO `main` and NO lexer/parser
-;; logic. `calc.tl` `(import "token.tl")`s it and uses the shared type, so the
-;; lexer (which constructs `Token` values) and the parser (which classifies them
-;; through `token-tag` / projects operands with `token-int`) agree on one
-;; canonical definition rather than each carrying its own copy.
+;; logic. `calc.tl` `(import token)`s it and uses qualified `token.Token`,
+;; `token.token-tag`, and `token.token-int` references, so the lexer and parser
+;; agree on one canonical definition rather than each carrying its own copy.
 ;;
 ;; --------------------------------------------------------------------------
 ;; Why this composes cleanly across the import boundary (the key #44/#81 signal).
 ;; --------------------------------------------------------------------------
-;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
-;; imported module's declarations into a single `Program`, imported-before-
-;; importer, then runs the unchanged `typecheck -> lower -> codegen` pipeline.
-;; The selfhost namespace model specified in SPEC.md replaces this flat import
-;; behavior with qualified module identities. Consequently, in today's stage0:
+;; The selfhost namespace model specified in SPEC.md uses qualified module
+;; identities. Consequently:
 ;;
-;;   - The imported `defenum Token` defines ONE nominal type. The importer's
-;;     `Token` parameters/locals refer to that same type - there is no
-;;     per-module enum identity, so a `Token` built in the importer's lexer and a
-;;     `Token` matched by an imported accessor are the same type. No
-;;     cross-module nominal-identity gap surfaces.
-;;   - The constructors (`Token.Int`, `Token.Plus`, ... `Token.End`) and
-;;     `match` arms defined here are usable from the importer exactly as if
-;;     defined locally.
+;;   - The imported `defenum Token` defines one nominal type. The importer's
+;;     `token.Token` parameters/locals refer to that same type, so a token built
+;;     in the importer's lexer and a token matched by an imported accessor are
+;;     the same type.
+;;   - The constructors (`token.Token.Int`, `token.Token.Plus`, ...
+;;     `token.Token.End`) and accessors are usable through the module alias.
 ;;   - Because this module declares no `main` (and `calc.tl` no longer declares
-;;     its own `Token`/`token-tag`/`token-int`), concatenation yields exactly one
-;;     `main` and one of each accessor - no duplicate-symbol clash.
+;;     its own token model), there is exactly one entry point and one token API.
 ;; The token kinds the calculator surface needs: integer literals, the four
 ;; binary operators, parentheses, and an end-of-stream sentinel.
 (defenum Token

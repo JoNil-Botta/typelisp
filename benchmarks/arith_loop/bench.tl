@@ -6,11 +6,11 @@
 ;# wrap modulo 2^64 (SPEC), matching C `uint64_t`, so both programs produce
 ;# the identical exit code on a given host.
 ;#
-;# The trip count is `base-iterations + (arg-count)`, where `arg-count` is 1
+;# The trip count is `base-iterations + (io.arg-count)`, where `io.arg-count` is 1
 ;# with no extra arguments (matching C `argc`). Deriving it from a runtime
 ;# value keeps the result deterministic while preventing the compiler from
 ;# constant-folding the whole loop away.
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define base-iterations : i64
   1000000000)
@@ -19,7 +19,7 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    [iterations : i64 (+ base-iterations (arg-count))]
+    [iterations : i64 (+ base-iterations (io.arg-count))]
     (begin
       (while (< i iterations)
         (begin

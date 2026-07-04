@@ -1,5 +1,5 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (sum-tail [n : i64] [acc : i64]) : i64
   (if (= n 0)
@@ -8,7 +8,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (>int (arg 1))]
+    [n : i64 (string.>int (io.arg 1))]
     (begin
-      (print (sum-tail n 0))
+      (io.print (sum-tail n 0))
       0)))

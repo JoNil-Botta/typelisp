@@ -6,14 +6,14 @@
 ;# TypeLisp `+`/`*` wrap modulo 2^64 (SPEC), matching C `uint64_t`, so both
 ;# programs produce the identical exit code on a given host.
 ;#
-;# The array length and round count are `base + (arg-count)` (`arg-count` is 1
+;# The array length and round count are `base + (io.arg-count)` (`io.arg-count` is 1
 ;# with no extra arguments, matching C `argc`), so neither trip count is a
 ;# compile-time constant. The running accumulator is stored back into the
 ;# array each round (`xs[r] = acc`), creating a cross-round data dependency:
 ;# without it the per-round sum would be loop-invariant and the optimizer
 ;# could collapse every round into a single pass times `rounds`.
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define base-size : i64
   200003)
@@ -30,9 +30,9 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ base-size (arg-count))]
-    [rounds : i64 (+ base-rounds (arg-count))]
-    [xs : (Array i64) (array.make-array i64 (+ base-size (arg-count)))]
+    [n : i64 (+ base-size (io.arg-count))]
+    [rounds : i64 (+ base-rounds (io.arg-count))]
+    [xs : (Array i64) (array.make-array i64 (+ base-size (io.arg-count)))]
     [acc : i64 0]
     [r : i64 0]
     (begin

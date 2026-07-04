@@ -8,8 +8,8 @@
 ;# reduced modulo a prime so they stay non-negative and the printed decimal
 ;# matches the C baseline. The round count is a runtime argument.
 (import stdlib.array)
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define vm-prime : i64
   1000000007)
@@ -103,7 +103,7 @@
 
 (define (main) : i64
   (let
-    [rounds : i64 (>int (arg 1))]
+    [rounds : i64 (string.>int (io.arg 1))]
     (begin
-      (print (vm-bench rounds))
+      (io.print (vm-bench rounds))
       0)))

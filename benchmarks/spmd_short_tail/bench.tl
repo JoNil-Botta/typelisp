@@ -10,13 +10,13 @@
 ;#
 ;# The array is cache-resident and the outer repetition loop makes the work
 ;# runtime-dominant; the per-pass `r` term blocks kernel hoisting and the
-;# `base-reps + (arg-count)` trip count (arg-count is 1 with no extra
+;# `base-reps + (io.arg-count)` trip count (io.arg-count is 1 with no extra
 ;# arguments, matching C `argc`) keeps the result deterministic while
 ;# preventing whole-loop constant folding. The folded index `r % array-len`
 ;# (modulo, since the length is not a power of two) reads a different element
 ;# each pass so the stored array cannot be eliminated.
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define array-len : i64
   1000)
@@ -37,7 +37,7 @@
     [a : (Array i64) (array.make-array i64 array-len)]
     [b : (Array i64) (array.make-array i64 array-len)]
     [out : (Array i64) (array.make-array i64 array-len)]
-    [reps : i64 (+ base-reps (arg-count))]
+    [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin

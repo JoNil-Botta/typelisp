@@ -13,7 +13,7 @@
 ;# spmd_zip's uniform lane bodies. Runtime-opaque trip count and per-pass `r`
 ;# keep the result deterministic while defeating constant folding and hoisting.
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define array-len : i64
   4096)
@@ -32,7 +32,7 @@
   (let
     [a : (Array i64) (array.make-array i64 array-len)]
     [out : (Array i64) (array.make-array i64 array-len)]
-    [reps : i64 (+ base-reps (arg-count))]
+    [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin

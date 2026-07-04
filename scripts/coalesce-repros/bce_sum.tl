@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (sum-bce [xs : (Array i64)]) : i64
   (let
@@ -22,5 +22,5 @@
       (array-set! xs 2 30)
       (array-set! xs 3 40)
       (array-set! xs 4 50)
-      (print (sum-bce xs))
+      (io.print (sum-bce xs))
       0)))

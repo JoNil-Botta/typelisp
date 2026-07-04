@@ -1,5 +1,5 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (bench [n : i64]) : i64
   (let
@@ -14,7 +14,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (>int (arg 1))]
+    [n : i64 (string.>int (io.arg 1))]
     (begin
-      (print (bench n))
+      (io.print (bench n))
       0)))

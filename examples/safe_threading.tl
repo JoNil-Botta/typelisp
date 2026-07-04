@@ -1,6 +1,6 @@
 (import stdlib.arena)
-(import "stdlib/str_cat.tl")
-(import "stdlib/string.tl")
+(import stdlib.str_cat)
+(import stdlib.string)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
 
@@ -19,7 +19,7 @@
 
 (define (safe-threading-join-string-ok? [worker : ThreadString]) : bool
   (match (thread.join-string worker)
-    [(ThreadStringJoinOk text) (eq text "safe-thread")]
+    [(ThreadStringJoinOk text) (string.eq text "safe-thread")]
     [(ThreadStringJoinErr _) false]))
 
 (define (safe-threading-finish
@@ -52,7 +52,7 @@
           [(ThreadBoxI64SpawnOk cell)
             (match (thread.spawn-string
               (lambda () : String
-                (in-arena owner (str-cat "safe" "-" "thread"))))
+                (in-arena owner (str_cat.str-cat "safe" "-" "thread"))))
               [(ThreadStringSpawnErr _) 6]
               [(ThreadStringSpawnOk text)
                 (safe-threading-finish number cell text)])])])))

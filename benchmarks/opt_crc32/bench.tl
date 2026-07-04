@@ -9,8 +9,8 @@
 ;# arguments; the accumulator stays in [0, 2^32) so its printed decimal matches
 ;# the C baseline.
 (import stdlib.array)
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define crc-low-mask : i64
   4294967295)
@@ -84,8 +84,8 @@
 
 (define (main) : i64
   (let
-    [len : i64 (>int (arg 1))]
-    [rounds : i64 (>int (arg 2))]
+    [len : i64 (string.>int (io.arg 1))]
+    [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (print (crc-bench len rounds))
+      (io.print (crc-bench len rounds))
       0)))

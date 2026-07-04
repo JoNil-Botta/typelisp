@@ -453,12 +453,13 @@ assert_active_cli_surface_command() {
             assert_contains "$label" "$WORKDIR/$label.out" "metadata-version: v1"
             assert_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"
             bad_tlci="$CLI_SURFACE_DIR/bad.tlci"
+            bad_tlci_display=$(compiler_batch_path "$bad_tlci")
             printf 'bad' > "$bad_tlci"
             bad_label="${label}-bad"
             run_cli_capture "$bad_label" "$COMPILER" inspect "$bad_tlci"
             assert_status "$bad_label" "$status" 1
             assert_empty "$bad_label" "$WORKDIR/$bad_label.out"
-            assert_contains "$bad_label" "$WORKDIR/$bad_label.err" "inspect: tlci: truncated header"
+            assert_contains "$bad_label" "$WORKDIR/$bad_label.err" "inspect: $bad_tlci_display: tlci: truncated header"
             ;;
         test)
             run_cli_capture "$label" "$COMPILER" test --check "$CLI_SURFACE_SRC"

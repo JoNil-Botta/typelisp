@@ -111,6 +111,19 @@ Summary:
         (tlci-read-u64 bytes 144)
         tlci-section-symbol-record-size))))
 
+(define (tlci-inspect-error [path : String] [message : String]) : String
+  (str_cat.str-cat "inspect: " path ": " message "\n"))
+
+(cfg
+  test
+  (test
+    tlci-inspect-error-includes-path
+    (unless
+      (string.eq
+        (tlci-inspect-error "pkg/dep.tlci" "tlci: content hash mismatch")
+        "inspect: pkg/dep.tlci: tlci: content hash mismatch\n")
+      (io.panic "inspect error formatting failed"))))
+
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
     (begin
@@ -121,8 +134,7 @@ Summary:
       (match (io.try-read-file (& path))
         [(io.ErrIoString error)
           (begin
-            (io.print-error
-              (str_cat.str-cat "inspect: " (io.error-message error) "\n"))
+            (io.print-error (tlci-inspect-error path (io.error-message error)))
             1)]
         [(io.OkIoString contents)
           (let
@@ -130,7 +142,7 @@ Summary:
             (match (tlci-parse-image bytes)
               [(ResultTlciImage.Err message)
                 (begin
-                  (io.print-error (str_cat.str-cat "inspect: " message "\n"))
+                  (io.print-error (tlci-inspect-error path message))
                   1)]
               [(ResultTlciImage.Ok image)
                 (begin

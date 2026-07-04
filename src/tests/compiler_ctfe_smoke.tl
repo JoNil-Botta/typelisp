@@ -1,4 +1,5 @@
 ;; compiler_ctfe_smoke.tl - Runnable CTFE smoke for inline Rust migration (#1043).
+(import stdlib.hashmap)
 (import "../compiler_ctfe.tl")
 
 (define (main) : i64

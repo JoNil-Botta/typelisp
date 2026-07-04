@@ -416,6 +416,9 @@
         (compiler-lower-make-array-init-source))
       (panic "lower: make-array init smoke mismatch"))
     (unless
+      (compiler-lower-dyn-array-literal-shape-ok?)
+      (panic "lower: dynamic array literal smoke mismatch"))
+    (unless
       (compiler-lower-make-array-register-resident-fill8-shape-ok?)
       (panic "lower: make-array fill8 smoke mismatch"))
     (unless

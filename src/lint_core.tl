@@ -728,6 +728,7 @@
     [(AstExpr.Tuple _) true]
     [(AstExpr.TupleRef _ _) true]
     [(AstExpr.Array _) true]
+    [(AstExpr.DynArray _) true]
     [(AstExpr.MakeArray _ _) true]
     [(AstExpr.ArrayRef _ _) true]
     [(AstExpr.StringRef _ _) true]
@@ -1907,6 +1908,8 @@
     [(AstExpr.TupleRef tuple _)
       (lint-expr-uses-import? (ast-node-get tuple) alias module-name)]
     [(AstExpr.Array exprs)
+      (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExpr.DynArray exprs)
       (lint-expr-list-uses-import? exprs alias module-name)]
     [(AstExpr.MakeArray elem len)
       (if (lint-type-uses-import? elem alias module-name)
@@ -3182,6 +3185,7 @@
     [(AstExpr.TupleRef tuple _)
       (lint-copy-on-update-expr (ast-node-get tuple) state span)]
     [(AstExpr.Array exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(AstExpr.DynArray exprs) (lint-copy-on-update-expr-list exprs state)]
     [(AstExpr.MakeArray _ len)
       (lint-copy-on-update-expr (ast-node-get len) state span)]
     [(AstExpr.ArrayRef array index)
@@ -3663,6 +3667,7 @@
     [(AstExpr.TupleRef tuple _)
       (lint-prefer-dotted-field-expr (ast-node-get tuple) (lint-no-span) acc)]
     [(AstExpr.Array exprs) (lint-prefer-dotted-field-expr-list exprs acc)]
+    [(AstExpr.DynArray exprs) (lint-prefer-dotted-field-expr-list exprs acc)]
     [(AstExpr.MakeArray _ len)
       (lint-prefer-dotted-field-expr (ast-node-get len) (lint-no-span) acc)]
     [(AstExpr.ArrayRef array index)
@@ -4042,6 +4047,8 @@
         (lint-no-span)
         acc)]
     [(AstExpr.Array exprs)
+      (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
+    [(AstExpr.DynArray exprs)
       (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
     [(AstExpr.MakeArray _ len)
       (lint-prefer-dotted-field-quasiquote-expr
@@ -4919,6 +4926,7 @@
     [(AstExpr.TupleRef tuple _)
       (lint-single-element-array-expr (ast-node-get tuple) state)]
     [(AstExpr.Array exprs) (lint-single-element-array-expr-list exprs state)]
+    [(AstExpr.DynArray exprs) (lint-single-element-array-expr-list exprs state)]
     [(AstExpr.MakeArray _ len)
       (lint-single-element-array-expr (ast-node-get len) state)]
     [(AstExpr.ArrayRef array index)
@@ -5386,6 +5394,8 @@
     [(AstExpr.TupleRef tuple _)
       (lint-unused-assignment-note-reads (ast-node-get tuple) state)]
     [(AstExpr.Array exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExpr.DynArray exprs)
+      (lint-unused-assignment-note-reads-list exprs state)]
     [(AstExpr.MakeArray _ len)
       (lint-unused-assignment-note-reads (ast-node-get len) state)]
     [(AstExpr.ArrayRef array index)
@@ -6863,6 +6873,8 @@
       (lint-unused-variable-quasiquote-expr (ast-node-get tuple) state)]
     [(AstExpr.Array exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(AstExpr.DynArray exprs)
+      (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(AstExpr.MakeArray _ len)
       (lint-unused-variable-quasiquote-expr (ast-node-get len) state)]
     [(AstExpr.ArrayRef array index)
@@ -7276,6 +7288,7 @@
     [(AstExpr.TupleRef tuple _)
       (lint-unused-variable-expr (ast-node-get tuple) state span)]
     [(AstExpr.Array exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.DynArray exprs) (lint-unused-variable-expr-list exprs state)]
     [(AstExpr.MakeArray ty len)
       (lint-unused-variable-expr
         (ast-node-get len)
@@ -8575,6 +8588,7 @@
         [tuple : AstExpr (ast-node-get tuple-box)]
         (lint-walk-expr tuple threshold acc))]
     [(AstExpr.Array exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExpr.DynArray exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]

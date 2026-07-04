@@ -6,6 +6,7 @@
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl
 array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-
+dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-
 array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
 ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-

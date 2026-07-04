@@ -3779,6 +3779,15 @@
         [_ (ResultAstExpr.Err "parse: malformed tuple-ref")])]
     [_ (ResultAstExpr.Err "parse: malformed tuple-ref")]))
 
+(define (parse-ast-dyn-array-literal
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch pools rest)
+    [(ResultAstExprList.Ok exprs)
+      (ResultAstExpr.Ok (ast-expr-dyn-array-with-pools pools exprs))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
+
 (define (parse-ast-make-array
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -3805,10 +3814,11 @@
                           parsed-ty
                           parsed-len))]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
-            [_ (ResultAstExpr.Err "parse: malformed make-array")])]
-        [_ (ResultAstExpr.Err "parse: malformed make-array")])]
-    [_ (ResultAstExpr.Err "parse: malformed make-array")]))
+                [(ResultAstType.Err _)
+                  (parse-ast-dyn-array-literal dispatch pools rest)])]
+            [_ (parse-ast-dyn-array-literal dispatch pools rest)])]
+        [_ (parse-ast-dyn-array-literal dispatch pools rest)])]
+    [_ (parse-ast-dyn-array-literal dispatch pools rest)]))
 
 (define (parse-ast-array-ref-like
   [dispatch : sym_i64_env.SymI64Env]

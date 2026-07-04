@@ -322,6 +322,12 @@ semantics are deferred to a future feature.
 - `make-array` initializes every live element according to the ZII `init`
   rules in section 5.12.1. The language rule is source-level initialization,
   not "whatever bits the allocator happened to return".
+- `(make-array elem0 elem1 ...)` is also a compatibility dynamic-buffer
+  literal. Its length is the operand count. Non-empty literals infer the
+  element type from the first operand unless an expected `(Array T)` supplies
+  the element type; empty literals require an expected `(Array T)`. The
+  two-operand `(make-array T count)` form remains the compatibility allocation
+  form when `T` parses as a type.
 - A compatibility dynamic-buffer value is a pointer to inline fat storage
   `(data_ptr : u64, length : i64)` - 16 bytes total.
 - The stored `length` field is always non-negative.
@@ -3568,9 +3574,9 @@ There are two source forms:
 - `(init : T)` is the explicit form. It carries the target type in the source.
 - `(init)` is contextual. It is accepted only where an expected type is known,
   such as an annotated `define`, annotated `let`, declared function return,
-  function argument, struct/enum constructor field, array literal element,
-  `array-set!`, or `array-push!` position. Ambiguous `(init)` is rejected with
-  a diagnostic asking for `(init : T)` or an annotation.
+  function argument, struct/enum constructor field, fixed or dynamic array
+  literal element, `array-set!`, or `array-push!` position. Ambiguous `(init)`
+  is rejected with a diagnostic asking for `(init : T)` or an annotation.
 
 `init` remains compatible with ordinary functions named `init`: `(init)` and
 `(init : T)` are parser-owned special forms, while `(init arg...)` is parsed as
@@ -6979,6 +6985,8 @@ expr          ::= literal
                 | "(" "size-of" expr ")"
                 | "(" "align-of" expr ")"
                 | "(" "offset-of" expr ident ")"
+                | "(" "make-array" type expr ")" ; compatibility allocation
+                | "(" "make-array" expr* ")"     ; dynamic-buffer literal
                 | "(" expr call-operand* ")"  ; function or macro call
 
 macro-call    ::= "(" qualified-name call-operand* ")"

@@ -1231,6 +1231,7 @@
         [tuple : AstExpr (ast-node-get tuple-box)]
         (tltest-reach-mark-expr tuple names))]
     [(AstExpr.Array exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExpr.DynArray exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]

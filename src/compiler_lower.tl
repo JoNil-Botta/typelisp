@@ -4982,6 +4982,8 @@
         (lower-clone-roots-expr ctx env decls able roots value))]
     [(AstExpr.Array values)
       (lower-clone-roots-expr-list ctx env decls able roots values)]
+    [(AstExpr.DynArray values)
+      (lower-clone-roots-expr-list ctx env decls able roots values)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (tc-context-expr-get ctx len-box)]
@@ -5823,6 +5825,8 @@
         [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr pools all-functions names state value))]
     [(AstExpr.Array values)
+      (lower-reach-expr-list pools all-functions names state values)]
+    [(AstExpr.DynArray values)
       (lower-reach-expr-list pools all-functions names state values)]
     [(AstExpr.MakeArray _ len-box)
       (let
@@ -7414,6 +7418,8 @@
     [(AstExpr.TupleRef value-box _)
       (lower-used-types-add-expr-id pools used module value-box)]
     [(AstExpr.Array values)
+      (lower-used-types-add-expr-list pools used module values)]
+    [(AstExpr.DynArray values)
       (lower-used-types-add-expr-list pools used module values)]
     [(AstExpr.MakeArray ty len-box)
       (lower-used-types-add-expr-id
@@ -19780,6 +19786,8 @@
         (lower-make-array ctx state env type-env elem-ty len origin))]
     [(AstExpr.Array values)
       (lower-array-literal ctx state env type-env values expr-ty origin)]
+    [(AstExpr.DynArray values)
+      (lower-dyn-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExpr.ArrayRef arr-box index-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -20365,6 +20373,16 @@
         expected-ty
         expected-ty)]
     [(AstExpr.Array _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExpr.DynArray _)
       (lower-expr-with-type-and-coerce
         ctx
         state
@@ -21142,6 +21160,166 @@
           (lower-diagnostic-at-expr
             origin
             "lower: array literal requires fixed-array type")))]))
+
+(define (lower-dyn-array-literal-store-elems-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [values : (& values AstExprList)]
+  [value-index : i64]
+  [elem-ty : AstType]
+  [elem-size : i64]) : ResultLowerState
+  (if (>= value-index (struct-get values len))
+    (ResultLowerState.Ok state)
+    (let
+      [value : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get values value-index 0))]
+      (if (> elem-size 0)
+        (match (lower-emit-elem-addr-gep
+          ctx
+          state
+          buf-value
+          (CompilerIrValue.I64 value-index)
+          elem-ty)
+          [(LowerExpr.Expr addr-state elem-ptr _)
+            (match (lower-direct-store-rhs-into
+              ctx
+              addr-state
+              env
+              type-env
+              elem-ptr
+              value
+              elem-ty
+              value)
+              [(LowerMaybeDirectStore.Store elem-state)
+                (lower-dyn-array-literal-store-elems-at
+                  ctx
+                  elem-state
+                  env
+                  type-env
+                  buf-value
+                  values
+                  (+ value-index 1)
+                  elem-ty
+                  elem-size)]
+              [(LowerMaybeDirectStore.Err message)
+                (ResultLowerState.Err message)]
+              [(LowerMaybeDirectStore.No)
+                (match (lower-expr-expected
+                  ctx
+                  addr-state
+                  env
+                  type-env
+                  value
+                  elem-ty
+                  value)
+                  [(ResultLowerExpr.Ok lowered)
+                    (match lowered
+                      [(LowerExpr.Expr elem-state elem-value _)
+                        (lower-dyn-array-literal-store-elems-at
+                          ctx
+                          (lower-array-elem-store-state
+                            ctx
+                            elem-state
+                            elem-ptr
+                            elem-value
+                            elem-ty)
+                          env
+                          type-env
+                          buf-value
+                          values
+                          (+ value-index 1)
+                          elem-ty
+                          elem-size)])]
+                  [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])])
+        (match (lower-expr-expected ctx state env type-env value elem-ty value)
+          [(ResultLowerExpr.Ok lowered)
+            (match lowered
+              [(LowerExpr.Expr elem-state _ _)
+                (lower-dyn-array-literal-store-elems-at
+                  ctx
+                  elem-state
+                  env
+                  type-env
+                  buf-value
+                  values
+                  (+ value-index 1)
+                  elem-ty
+                  elem-size)])]
+          [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))))
+
+(define (lower-dyn-array-literal-store-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [values : AstExprList]
+  [elem-ty : AstType]
+  [elem-size : i64]) : ResultLowerState
+  (lower-dyn-array-literal-store-elems-at
+    ctx
+    state
+    env
+    type-env
+    buf-value
+    (& values)
+    0
+    elem-ty
+    elem-size))
+
+(define (lower-dyn-array-literal
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [values : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx result-ty))
+    [(AstType.DynArray elem-ty)
+      (let
+        [resolved-elem : AstType
+          (tc-resolve-type ctx (tc-context-type-get ctx elem-ty))]
+        [elem-size : i64 (lower-type-size ctx resolved-elem)]
+        [count : i64 (tc-expr-list-len values)]
+        [byte-count : CompilerIrValue (CompilerIrValue.I64 (* count elem-size))]
+        [arr-ty : AstType (ast-ty-dyn-array resolved-elem)]
+        (match (lower-state-alloc-var state)
+          [(LowerAlloc.Alloc buf-alloc buf-var)
+            (let
+              [alloc-state : LowerState
+                (lower-state-emit
+                  buf-alloc
+                  (CompilerIrInstr.Call
+                    buf-var
+                    "tl_alloc"
+                    (CompilerIrCallArgs.One byte-count)
+                    (AstType.U64)))]
+              (match (lower-dyn-array-literal-store-elems
+                ctx
+                alloc-state
+                env
+                type-env
+                (CompilerIrValue.Var buf-var)
+                values
+                resolved-elem
+                elem-size)
+                [(ResultLowerState.Ok final-state)
+                  (lower-make-array-store-fat
+                    final-state
+                    arr-ty
+                    buf-var
+                    (CompilerIrValue.I64 count))]
+                [(ResultLowerState.Err message) (ResultLowerExpr.Err message)]))]))]
+    [_
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            origin
+            "lower: dynamic array literal requires dynamic-array type")))]))
 
 ;; Lower `(tuple-ref t i)`: evaluate the tuple, compute element `i`'s offset, and
 ;; load it (returning the unit value for a zero-sized element, which was never
@@ -40490,6 +40668,7 @@
         (lower-rvo-node-has-early-return? ctx tuple-box)
         (lower-rvo-node-has-early-return? ctx index-box))]
     [(AstExpr.Array exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(AstExpr.DynArray exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(AstExpr.MakeArray _ len-box)
       (lower-rvo-node-has-early-return? ctx len-box)]
     [(AstExpr.ArrayRef arr-box index-box)
@@ -44972,6 +45151,8 @@
         (lower-source-node-has-import-call? pools index-box))]
     [(AstExpr.Array exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
+    [(AstExpr.DynArray exprs)
+      (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.MakeArray _ len-box)
       (lower-source-node-has-import-call? pools len-box)]
     [(AstExpr.ArrayRef array-box index-box)
@@ -45793,6 +45974,20 @@
   (let
     [items : (Array String) (make-array String n)]
     (array-length items)))")
+
+(define (compiler-lower-dyn-array-literal-source) : String
+  "(define dyn-array-literal-trace : i64 0)
+(define (side [value : i64]) : i64
+  (begin
+    (set! dyn-array-literal-trace (+ (* dyn-array-literal-trace 10) value))
+    value))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array (side 1) (side 2) (side 3))]
+    (+ (array-length items)
+       (+ (array-ref items 0)
+          (+ (array-ref items 1)
+             (+ (array-ref items 2) dyn-array-literal-trace))))))")
 
 (define (compiler-lower-private-array-length-source) : String
   "(define (dyn-len [a : (Array i64)]) : i64 (__tl_array-length a))
@@ -51774,6 +51969,19 @@
             (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-dyn-array-literal-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-dyn-array-literal-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_zero")
+              0)
+            (>= (lower-test-function-store-ptr-count functions "main") 3))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-array-function-counts-match?
   [private-funcs : CompilerIrFunctionList]
   [qualified-funcs : CompilerIrFunctionList]
@@ -55065,6 +55273,9 @@
         (set! ok false))
       (if (compiler-lower-make-array-init-shape-ok?
         (compiler-lower-make-array-init-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-dyn-array-literal-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-qualified-array-parity-ok?)

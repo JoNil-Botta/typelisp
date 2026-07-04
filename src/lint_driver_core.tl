@@ -1118,6 +1118,7 @@
     [(AstExpr.TupleRef tuple _)
       (selfhost-lint-dead-expr-refs (ast-node-get tuple) refs)]
     [(AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(AstExpr.DynArray exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(AstExpr.MakeArray elem len)
       (selfhost-lint-dead-expr-refs
         (ast-node-get len)

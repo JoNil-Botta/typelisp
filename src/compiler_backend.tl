@@ -22893,6 +22893,26 @@
             (compiler-backend-emit-switch-table function current-label cases))]
         [_ buf]))))
 
+(define (compiler-backend-emit-switch-tables-seq-into
+  [function : String]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    buf
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (compiler-backend-emit-switch-tables-seq-into
+          function
+          blocks
+          (+ index 1)
+          (compiler-backend-emit-switch-tables-instr-seq-into
+            function
+            label
+            instrs
+            0
+            buf))])))
+
 (define (compiler-backend-emit-switch-tables-blocks-into
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -22912,10 +22932,7 @@
               0
               buf))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-switch-tables-blocks-into
-        function
-        (compiler-ir-block-seq-to-list seq)
-        buf)]))
+      (compiler-backend-emit-switch-tables-seq-into function seq 0 buf)]))
 
 (define (compiler-backend-emit-switch-tables-functions-into
   [functions : CompilerIrFunctionList]
@@ -22929,10 +22946,18 @@
           (compiler-backend-emit-switch-tables-functions-into
             (box-get rest)
             program-index
-            (compiler-backend-emit-switch-tables-blocks-into
-              (compiler-backend-function-label-scope program-index name)
-              (compiler-ir-block-list-force-cons blocks)
-              buf))])]
+            (match blocks
+              [(CompilerIrBlockList.Array seq)
+                (compiler-backend-emit-switch-tables-seq-into
+                  (compiler-backend-function-label-scope program-index name)
+                  seq
+                  0
+                  buf)]
+              [_
+                (compiler-backend-emit-switch-tables-blocks-into
+                  (compiler-backend-function-label-scope program-index name)
+                  (compiler-ir-block-list-force-cons blocks)
+                  buf)]))])]
     [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-switch-tables-functions-into
         (compiler-ir-function-seq-to-list seq)
@@ -33704,7 +33729,7 @@
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
         [blocks : CompilerIrBlockList
-          (compiler-ir-block-list-force-cons raw-blocks)]
+          raw-blocks]
         [walk-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic

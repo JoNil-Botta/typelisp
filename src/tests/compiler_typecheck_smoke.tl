@@ -2627,6 +2627,17 @@
 (import (result i64 String) as result_i64_string)
 (define (main) : i64 42)")
 
+(define (compiler-typecheck-smoke-unused-result-import-local-type-source) : String
+  "(module main)
+(import stdlib.result)
+
+(defstruct LocalError
+  (message String))
+
+(import (result i64 LocalError) as local_result_unused)
+
+(define (main) : i64 42)")
+
 (define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String
   "(module main)
 (import stdlib.str_cat)
@@ -2829,6 +2840,35 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-unused-result-import-local-type-ok?) : bool
+  (let
+    [ok : bool
+      (begin
+        (compiler-load-test-mkdir "target/tc_unused_result_local_type")
+        (io.write-file
+          "target/tc_unused_result_local_type/main.tl"
+          (compiler-typecheck-smoke-unused-result-import-local-type-source))
+        (match (compiler-load-file-with-paths
+          "target/tc_unused_result_local_type/main.tl"
+          (sym_i64_env.sym-i64-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (typecheck-compiler-program-with-paths-checked
+              (ast-program decls)
+              paths)
+              [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+              [(ResultCompilerTypecheckChecked.Err diag)
+                (let
+                  [message : String
+                    (compiler-diagnostic-message (box-get diag))]
+                  (begin
+                    (io.stderr-write (& message))
+                    false))])]
+          [(ResultCompilerLoadWithPaths.Err _) false]))]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?) : bool
   (let
     [ok : bool
@@ -2948,6 +2988,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?)
       (io.panic "typecheck: lazy import stdlib.result macro smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-unused-result-import-local-type-ok?)
+      (io.panic "typecheck: unused result local type smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?)
       (io.panic "typecheck: lazy import stdlib.array alias smoke failed"))

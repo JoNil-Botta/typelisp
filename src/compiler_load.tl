@@ -8,7 +8,7 @@
 (import stdlib.fs)
 (import stdlib.hashmap)
 (import stdlib.vector as svec)
-(import "compiler_embedded_stdlib.tl")
+(import compiler_embedded_stdlib as ces)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
@@ -1298,9 +1298,11 @@
   (if (io.file-exists? path)
     (CompilerLoadSomeString (io.read-file path))
     (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(CompilerEmbeddedStdlibSomeSource source)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
         (CompilerLoadSomeString source)]
-      [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoString)])))
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        (CompilerLoadNoString)])))
 
 (define (compiler-load-lazy-env-disabled? [name : String]) : bool
   (match (env.get (& name))
@@ -1512,21 +1514,22 @@
     suffix
     (compiler-load-roots-with-env roots)))
 
-(define (compiler-load-embedded-stdlib-source [suffix : String]) : CompilerEmbeddedStdlibSource
+(define (compiler-load-embedded-stdlib-source [suffix : String]) : ces.CompilerEmbeddedStdlibSource
   (if (compiler-load-safe-relative? suffix)
-    (compiler-embedded-stdlib-lookup suffix)
-    (CompilerEmbeddedStdlibNoSource)))
+    (ces.compiler-embedded-stdlib-lookup suffix)
+    (ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)))
 
 (define (compiler-load-embedded-stdlib-path [suffix : String]) : CompilerLoadMaybePath
   (match (compiler-load-embedded-stdlib-source suffix)
-    [(CompilerEmbeddedStdlibSomeSource _)
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
       (CompilerLoadSomePath (string.append "stdlib/" suffix))]
-    [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoPath)]))
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+      (CompilerLoadNoPath)]))
 
-(define (compiler-load-embedded-stdlib-source-for-path [path : String]) : CompilerEmbeddedStdlibSource
+(define (compiler-load-embedded-stdlib-source-for-path [path : String]) : ces.CompilerEmbeddedStdlibSource
   (if (compiler-load-stdlib-import? path)
     (compiler-load-embedded-stdlib-source (compiler-load-stdlib-suffix path))
-    (CompilerEmbeddedStdlibNoSource)))
+    (ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)))
 
 (define (compiler-load-resolve-import
   [importer-path : String]
@@ -1968,10 +1971,11 @@
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-def name (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
-      [(CompilerEmbeddedStdlibSomeSource source)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-str-def name source))]
-      [(CompilerEmbeddedStdlibNoSource)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-str-read-error
@@ -1992,10 +1996,11 @@
         name
         (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
-      [(CompilerEmbeddedStdlibSomeSource source)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-str-def-with-pools pools name source))]
-      [(CompilerEmbeddedStdlibNoSource)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-str-read-error
@@ -2027,10 +2032,11 @@
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-bin-def name (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
-      [(CompilerEmbeddedStdlibSomeSource source)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-bin-def name source))]
-      [(CompilerEmbeddedStdlibNoSource)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-bin-read-error
@@ -2051,10 +2057,11 @@
         name
         (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
-      [(CompilerEmbeddedStdlibSomeSource source)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-bin-def-with-pools pools name source))]
-      [(CompilerEmbeddedStdlibNoSource)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-bin-read-error
@@ -2770,13 +2777,14 @@
         parse-cfgs
         pools)
       (match (compiler-load-embedded-stdlib-source-for-path path)
-        [(CompilerEmbeddedStdlibSomeSource source)
+        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+            source)
           (compiler-load-parse-embedded-source-diagnostic-session-with-pools
             path
             source
             parse-cfgs
             pools)]
-        [(CompilerEmbeddedStdlibNoSource)
+        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
           (compiler-load-parse-file-diagnostic-escaping-with-pools
             path
             parse-cfgs
@@ -5203,7 +5211,8 @@
             [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
-            [(CompilerEmbeddedStdlibSomeSource source)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                source)
               (match (if cache-current
                 (compiler-load-parse-embedded-source-diagnostic-session
                   path
@@ -5227,7 +5236,7 @@
                     path-key)]
                 [(ResultAstProgramDiagnostic.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])]
-            [(CompilerEmbeddedStdlibNoSource)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
               (ResultCompilerLoadWithPaths.Err
                 (box
                   (compiler-diagnostic-at-start
@@ -5312,7 +5321,8 @@
             [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
-            [(CompilerEmbeddedStdlibSomeSource source)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                source)
               (match (if cache-current
                 (compiler-load-parse-embedded-source-diagnostic-session-with-pools
                   path
@@ -5341,7 +5351,7 @@
                     path-key)]
                 [(ResultAstProgramDiagnostic.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])]
-            [(CompilerEmbeddedStdlibNoSource)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
               (ResultCompilerLoadWithPaths.Err
                 (box
                   (compiler-diagnostic-at-start
@@ -6544,7 +6554,8 @@
         [(ResultAstProgramDiagnostic.Err diag)
           (ResultCompilerLoadWithPaths.Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path path)
-        [(CompilerEmbeddedStdlibSomeSource source)
+        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+            source)
           (match (if cache-current
             (compiler-load-parse-embedded-source-diagnostic-session
               path
@@ -6568,7 +6579,7 @@
                 source-module-fallback)]
             [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])]
-        [(CompilerEmbeddedStdlibNoSource)
+        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
           (ResultCompilerLoadWithPaths.Err
             (box
               (compiler-diagnostic-at-start
@@ -8381,7 +8392,7 @@
 
 (define (compiler-load-embedded-stdlib-lookup-ok?) : bool
   (match (compiler-load-embedded-stdlib-source "string.tl")
-    [(CompilerEmbeddedStdlibSomeSource source)
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
       (match (compiler-load-source-with-paths-and-roots
         "stdlib/string.tl"
         source
@@ -8390,17 +8401,19 @@
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (> (compiler-load-decl-list-count decls) 0)]
         [(ResultCompilerLoadWithPaths.Err _) false])]
-    [(CompilerEmbeddedStdlibNoSource) false]))
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) false]))
 
 (define (compiler-load-embedded-stdlib-missing-ok?) : bool
   (match (compiler-load-embedded-stdlib-source "definitely_missing_xyz.tl")
-    [(CompilerEmbeddedStdlibNoSource) true]
-    [(CompilerEmbeddedStdlibSomeSource _) false]))
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) true]
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
+      false]))
 
 (define (compiler-load-embedded-stdlib-escape-rejected-ok?) : bool
   (match (compiler-load-embedded-stdlib-source "../string.tl")
-    [(CompilerEmbeddedStdlibNoSource) true]
-    [(CompilerEmbeddedStdlibSomeSource _) false]))
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) true]
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
+      false]))
 
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
 ;; imported file (not the importer), preserving imported-file provenance (#1074).

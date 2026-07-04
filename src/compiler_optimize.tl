@@ -12069,13 +12069,22 @@
     [_clear-marks : unit (opt-cfg-fill-bool! marks (array-length marks) false)]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
+    ;; #M-E: a self-loop (latch == header) has body {header}. Seeding the
+    ;; worklist with the latch unconditionally walked the HEADER's own
+    ;; predecessors, pulling the outside guard block into the body -- which
+    ;; left every rotated single-block loop with zero outside predecessors, so
+    ;; preheader detection AND synthesis failed and LICM/induction never ran
+    ;; on them. The classic algorithm only expands predecessors of body nodes
+    ;; other than the header.
     [body-labels : OptLabelSet
       (opt-natural-loop-collect-body
         pred-map
         index
         marks
         (opt-label-add (opt-label-add (OptLabelSet.Nil) header) latch)
-        (opt-label-add (OptLabelSet.Nil) latch))]
+        (if (string.eq header latch)
+          (OptLabelSet.Nil)
+          (opt-label-add (OptLabelSet.Nil) latch)))]
     [body : OptLoopBody
       (opt-loop-body-build blocks (struct-get pred-map index) body-labels)]
     (OptNaturalLoop.Loop
@@ -13293,10 +13302,16 @@
     [(OptMaybeAstType.Some ty) (opt-licm-array-header-type? ty)]
     [(OptMaybeAstType.No) false]))
 
-(define (opt-licm-data-slot? [offset : CompilerIrValue] [ty : AstType]) : bool
+;; #M-E: the data-pointer slot of an array/string descriptor is fat offset 0.
+;; A zero literal offset addresses byte 0 regardless of the GEP's scale type,
+;; so accept any element type here: the real array lowering emits
+;; `Gep arr 0 i64` (lower-array-element-addr-finish) while the string path
+;; emits `Gep arr 0 u8` -- the old U8-only match classified array data-slot
+;; GEPs as Unknown, which turned element stores into header-or-unknown stores
+;; and blocked descriptor-load hoisting.
+(define (opt-licm-data-slot? [offset : CompilerIrValue] [_ty : AstType]) : bool
   (match offset
-    [(CompilerIrValue.I64 value)
-      (and (= value 0) (opt-type-eq ty (AstType.U8)))]
+    [(CompilerIrValue.I64 value) (= value 0)]
     [_ false]))
 
 (define (opt-licm-header-slot-gep?
@@ -13862,6 +13877,111 @@
         hoisted
         (compiler-ir-block-seq-to-list seq))]))
 
+;; M-G (B1): duplicate-hoist dedup. The filter hoists EVERY invariant load/gep
+;; individually, so a loop whose body loads the same descriptor slot at N sites
+;; (one gep+load pair per inlined bounds check, kept distinct in-body because
+;; element stores conservatively clear the block-local load-CSE table) lands N
+;; IDENTICAL gep+load pairs in the preheader -- N live registers carrying one
+;; value through the loop (measured: qs_partition hoists the data-slot load 5x
+;; and the len-slot load 3x -> 3 spilled vars + per-iteration spill/scavenge
+;; traffic in a zero-call loop). Build a substitution env mapping every
+;; duplicate's dst to the FIRST hoisted def of the same (operand-substituted)
+;; shape, then rewrite all uses in the preheader instructions and the loop
+;; body. The duplicate defs are KEPT (their dsts become dead-or-preheader-local,
+;; zero loop-carried pressure), so any use the substituter conservatively skips
+;; (phi inputs, AddrOf raw vars) still reads a defined var -- partial
+;; substitution is always sound. Dsts are single-def (opt-gvn-stable-var? gates
+;; candidacy), so a body use can only see the preheader def.
+(defenum OptLicmDup
+  (OptLicmDupNone)
+  (OptLicmDupVar i64))
+
+;; First selected instruction computing the same value as `instr` (whose
+;; operands are already substituted through the env-so-far): loads must match
+;; on source value + type, geps on base + offset + element type.
+(define (opt-licm-dup-of
+  [selected : CompilerIrInstrList]
+  [instr : CompilerIrInstr]) : OptLicmDup
+  (match selected
+    [(CompilerIrInstrList.Nil) (OptLicmDupNone)]
+    [(CompilerIrInstrList.Cons prev rest)
+      (match prev
+        [(CompilerIrInstr.Load pdst psrc pty)
+          (match instr
+            [(CompilerIrInstr.Load _ src ty)
+              (if (and (opt-value-eq psrc src) (opt-type-eq pty ty))
+                (OptLicmDupVar pdst)
+                (opt-licm-dup-of (box-get rest) instr))]
+            [_ (opt-licm-dup-of (box-get rest) instr)])]
+        [(CompilerIrInstr.Gep pdst pbase poffset pty)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset ty)
+              (if (and
+                (opt-value-eq pbase base)
+                (opt-value-eq poffset offset)
+                (opt-type-eq pty ty))
+                (OptLicmDupVar pdst)
+                (opt-licm-dup-of (box-get rest) instr))]
+            [_ (opt-licm-dup-of (box-get rest) instr)])]
+        [_ (opt-licm-dup-of (box-get rest) instr)])]))
+
+;; Walk the hoisted list in program order, accumulating dup-dst -> canonical
+;; var bindings. Each instruction is operand-substituted through the env built
+;; so far BEFORE comparison, so a load through a duplicate gep matches the
+;; canonical load (its source resolves to the canonical gep dst).
+(define (opt-licm-dedup-env
+  [moved : CompilerIrInstrList]
+  [selected : CompilerIrInstrList]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (match moved
+    [(CompilerIrInstrList.Nil) env]
+    [(CompilerIrInstrList.Cons instr rest)
+      (let
+        [subst : CompilerIrInstr (opt-copy-subst-instr env instr)]
+        (match (opt-licm-dup-of selected subst)
+          [(OptLicmDupVar canon)
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (opt-licm-dedup-env
+                  (box-get rest)
+                  selected
+                  (OptCopyEnv.Cons dst (CompilerIrValue.Var canon) (box env)))]
+              [(option_i64.None)
+                (opt-licm-dedup-env (box-get rest) selected env)])]
+          [(OptLicmDupNone)
+            (opt-licm-dedup-env
+              (box-get rest)
+              (compiler-ir-instr-cons subst selected)
+              env)]))]))
+
+(define (opt-licm-subst-instr-list
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-ir-instr-cons
+        (opt-copy-subst-instr env instr)
+        (opt-licm-subst-instr-list env (box-get rest)))]))
+
+(define (opt-licm-subst-body-blocks
+  [env : OptCopyEnv]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              label
+              (opt-licm-subst-instr-list
+                env
+                (compiler-ir-instr-seq-to-list instrs)))
+            (opt-licm-subst-body-blocks env (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-subst-body-blocks env (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
   [sources : hashmap.I64I64Map]
@@ -13895,10 +14015,28 @@
           (hashmap.i64-i64-map-with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed
-              (opt-licm-insert-preheader-blocks
-                preheader
-                hoisted
-                (opt-licm-replace-body-blocks blocks filtered-body))
+              ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
+              ;; occurrence (see opt-licm-dedup-env). An empty env means no
+              ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
+              (let
+                [dedup-env : OptCopyEnv
+                  (opt-licm-dedup-env
+                    hoisted
+                    (CompilerIrInstrList.Nil)
+                    (OptCopyEnv.Nil))]
+                (match dedup-env
+                  [(OptCopyEnv.Nil)
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      hoisted
+                      (opt-licm-replace-body-blocks blocks filtered-body))]
+                  [_
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      (opt-licm-subst-instr-list dedup-env hoisted)
+                      (opt-licm-replace-body-blocks
+                        blocks
+                        (opt-licm-subst-body-blocks dedup-env filtered-body)))]))
               blocks)]))]
     [(OptLoopPreheader.No) blocks]))
 
@@ -17638,7 +17776,8 @@
       (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
     [gvn : CompilerIrBlockList
       (opt-gvn-rewrite-dom context table sources blocks)]
-    (opt-load-gvn-blocks-with-context context sources gvn)))
+    [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]
+    (opt-load-gvn-blocks-with-context context sources hs gvn)))
 
 (define (opt-gvn-blocks
   [params : CompilerIrParamList]
@@ -20838,7 +20977,7 @@
         frame
         (opt-loop-bce-blocks summaries params blocks))]))
 
-(define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
+(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
@@ -20856,27 +20995,45 @@
           (opt-copy-instrs
             (OptCopyEnv.Nil)
             (opt-load-cse-instrs
-              (OptLoadCseState.State (opt-alias-empty) (OptLoadTable.Nil))
+              hs
+              (opt-load-cse-empty-state)
               (opt-cse-instrs
                 (OptExprTable.Nil)
                 (opt-strength-instrs
                   (OptConstEnv.Nil)
                   (opt-fold-instr-seq (OptConstEnv.Nil) instrs)))))))]))
 
-(define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
-  (match block
-    [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-copy-instr-seq (OptCopyEnv.Nil) instrs))]))
+(define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
+  (optimize-block-hs (opt-load-header-set-empty) block))
 
-(define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (optimize-block-list-hs
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-cons
-        (optimize-block block)
-        (optimize-block-list (box-get rest)))]
+        (optimize-block-hs hs block)
+        (optimize-block-list-hs hs (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (optimize-block-list (compiler-ir-block-seq-to-list seq))]))
+      (optimize-block-list-hs hs (compiler-ir-block-seq-to-list seq))]))
+
+;; GAP4: the header-typed handle set feeds gep classification; build it from
+;; the whole function so the block-local pass sees params and cross-block defs.
+(define (optimize-block-list-for-function
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (optimize-block-list-hs
+    (opt-load-header-set-from-function params blocks)
+    blocks))
+
+(define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (optimize-block-list-hs (opt-load-header-set-empty) blocks))
+
+(define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (compiler-ir-block label (opt-copy-instr-seq (OptCopyEnv.Nil) instrs))]))
 
 (define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -21210,7 +21367,8 @@
               (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [folded : CompilerIrBlockList (optimize-block-list blocks)]
+          [folded : CompilerIrBlockList
+            (optimize-block-list-for-function params blocks)]
           [_p-fold : unit
             (cfg
               compile-profile
@@ -21612,7 +21770,8 @@
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [folded : CompilerIrBlockList (optimize-block-list blocks)]
+        [folded : CompilerIrBlockList
+          (optimize-block-list-for-function params blocks)]
         [_p-fold : unit
           (cfg
             compile-profile
@@ -42230,47 +42389,590 @@
       [else 42])))
 
 ;; --- block-local redundant-load CSE (#2342) ---------------------------------
+;;
+;; GAP4: alias-granular invalidation + store-to-load forwarding + canonical
+;; address keys.
+;;
+;; The original pass keyed loads by raw address VALUE (the gep temp) and wiped
+;; the whole table on ANY memory write. Three upgrades, shared with the
+;; cross-block #2343 pass below:
+;;
+;; 1. CANONICAL KEYS: every array/string access re-emits a fresh descriptor
+;;    gep (`Gep arr 0/1 ty`), and the only pass that unified those geps (#1530
+;;    global GVN) runs LAST in the optimize iteration (and needs a full SSA
+;;    verify), so load CSE never saw two repeats under one key. A load whose
+;;    address var is a CONST-offset gep of base B is now keyed structurally as
+;;    (B, byte-offset, load-type); the byte offset is offset*type-size exactly
+;;    as the backend scales gep displacements. Base redefinition drops the
+;;    entries (extended invalidation below), so var identity == value identity
+;;    for the key's lifetime.
+;;
+;; 2. ALIAS-GRANULAR INVALIDATION: a StorePtr/CopyBytes drops only MAY-ALIAS
+;;    entries. Sound keep rules (everything else is dropped):
+;;      - an ELEMENT store (pointer derived from a loaded array/string data
+;;        pointer) keeps DESCRIPTOR-FIELD entries: data buffers never contain
+;;        descriptor headers (descriptors are their own allocations; buffer
+;;        elements are handles/scalars/inline structs) -- the #1801 LICM
+;;        element-only-store proof, ported.
+;;      - a DESCRIPTOR-FIELD store keeps element entries (same disjointness,
+;;        mirrored) and same-base entries at provably disjoint byte ranges
+;;        (two fields of one object cannot overlap).
+;;      - a generic FIELD store (const-offset gep off a non-descriptor base)
+;;        keeps only same-base disjoint-range entries: two handles may name
+;;        the same object, and structs can live inline inside array buffers,
+;;        so neither element nor other-base entries are safe.
+;;    Alias facts (OptAliasFacts) are threaded exactly as before; they gate
+;;    nothing here and keep their conservative store-clears semantics.
+;;
+;; 3. STORE-TO-LOAD FORWARDING: a classified 8-byte StorePtr binds its
+;;    (address, type) key to the stored value, so a later same-key load
+;;    becomes a Mov (the coalescer eats the copy; literal stores forward the
+;;    literal). Only 8-byte-wide types forward: sub-word IR vars are not
+;;    guaranteed high-bit-canonical, while an actual load re-canonicalizes.
+;;
+;; Location kinds are tracked per pointer var (OptLoadPtrKinds); the
+;; header-typedness of gep bases comes from a per-function pre-pass
+;; (OptLoadHeaderSet) marking vars that are array/string descriptor handles at
+;; EVERY def site (multi-def vars with disagreeing types are poisoned -- the
+;; block-local pass runs pre-SSA).
+;; Function-constant header-typed var set: var -> 1 (array/string handle at
+;; every typed def) or 2 (poisoned: any non-handle or untyped def).
+(defenum OptLoadHeaderSet
+  (OptLoadHeaderSet hashmap.I64I64Map))
+
+(define (opt-load-header-set-empty) : OptLoadHeaderSet
+  (OptLoadHeaderSet (hashmap.i64-i64-map-with-capacity 17)))
+
+(define (opt-load-header-set-mark
+  [set : OptLoadHeaderSet]
+  [var : i64]
+  [header? : bool]) : OptLoadHeaderSet
+  (match set
+    [(OptLoadHeaderSet map)
+      (if header?
+        (if (hashmap.i64-i64-map-contains? map var)
+          set
+          (OptLoadHeaderSet (hashmap.i64-i64-map-put map var 1)))
+        (OptLoadHeaderSet (hashmap.i64-i64-map-put map var 2)))]))
+
+(define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
+  (match set
+    [(OptLoadHeaderSet map)
+      (match (hashmap.i64-i64-map-get map var)
+        [(hashmap.I64I64MapFound value) (= value 1)]
+        [(hashmap.I64I64MapMissing) false])]))
+
+(define (opt-load-header-set-add-params
+  [params : CompilerIrParamList]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (match params
+    [(CompilerIrParamList.Nil) set]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty var)
+          (opt-load-header-set-add-params
+            (box-get rest)
+            (opt-load-header-set-mark set var (opt-licm-array-header-type? ty)))])]))
+
+;; Defs with a declared result type mark it; every OTHER defining instruction
+;; poisons its dst (its handle-ness is unknown).
+(define (opt-load-header-set-add-instr
+  [set : OptLoadHeaderSet]
+  [instr : CompilerIrInstr]) : OptLoadHeaderSet
+  (match instr
+    [(CompilerIrInstr.Mov dst _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.Load dst _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.Call dst _ _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.CallIndirect dst _ _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.CallIndirectC dst _ _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.Phi dst _ ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+    [(CompilerIrInstr.Cast dst _ _ to-ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? to-ty))]
+    [(CompilerIrInstr.Bitcast dst _ _ to-ty)
+      (opt-load-header-set-mark set dst (opt-licm-array-header-type? to-ty))]
+    [_
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst) (opt-load-header-set-mark set dst false)]
+        [(option_i64.None) set])]))
+
+(define (opt-load-header-set-add-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    set
+    (opt-load-header-set-add-instr-seq-from
+      instrs
+      (+ index 1)
+      (opt-load-header-set-add-instr
+        set
+        (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-load-header-set-add-blocks
+  [blocks : CompilerIrBlockList]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-load-header-set-add-blocks
+            (box-get rest)
+            (opt-load-header-set-add-instr-seq-from instrs 0 set))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-load-header-set-add-blocks (compiler-ir-block-seq-to-list seq) set)]))
+
+(define (opt-load-header-set-from-function
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptLoadHeaderSet
+  (opt-load-header-set-add-blocks
+    blocks
+    (opt-load-header-set-add-params params (opt-load-header-set-empty))))
+
+;; Byte width of a scalar Load/StorePtr and the gep displacement scale. MUST
+;; mirror compiler-backend-type-size (gep disp = offset * this); 0 means
+;; zero-sized/unclassifiable and callers must treat the location as unknown.
+(define (opt-load-loc-type-size [ty : AstType]) : i64
+  (match ty
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
+    [(AstType.F64) 8]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F32) 4]
+    [(AstType.I16) 2]
+    [(AstType.U16) 2]
+    [(AstType.I8) 1]
+    [(AstType.U8) 1]
+    [(AstType.Bool) 1]
+    [(AstType.Char) 1]
+    [(AstType.Unit) 0]
+    [(AstType.Never) 0]
+    [(AstType.Expr) 0]
+    [(AstType.ExprList) 0]
+    [(AstType.Func _ _) 8]
+    [(AstType.Tuple _) 8]
+    [(AstType.Array _ _) 8]
+    [(AstType.DynArray _) 8]
+    [(AstType.Box _) 8]
+    [(AstType.Ptr _) 8]
+    [(AstType.MutPtr _) 8]
+    [(AstType.Ref _ _) 8]
+    [(AstType.MutRef _ _) 8]
+    [(AstType.Region _ inner) (opt-load-loc-type-size (ty-node-get inner))]
+    [(AstType.Enum _) 8]
+    [(AstType.EnumArgs _ _) 8]
+    [(AstType.Struct _) 8]
+    [(AstType.StructArgs _ _) 8]
+    [(AstType.String) 8]
+    [(AstType.Str) 8]
+    [(AstType.Bytes) 8]
+    [(AstType.Var _) 8]
+    [(AstType.VarArgs _ _) 8]))
+
+;; What memory a pointer-valued var addresses:
+;;   Element          -- points at/into some array/string DATA BUFFER (the
+;;                       loaded data pointer, or any gep derived from one).
+;;   Field B off w h  -- exactly (value of var B) + off bytes, w bytes wide at
+;;                       binding time; h = B is a descriptor handle, so the
+;;                       address lies inside a descriptor allocation.
+;; A kind is a property of the pointer VALUE, so it survives calls and stores;
+;; it dies only when its var (or a referenced base var) is redefined.
+(defenum OptLoadLocKind
+  (OptLoadLocUnknown)
+  (OptLoadLocElement)
+  (OptLoadLocField i64 i64 i64 bool))
+
+;; Encoding: 0 unknown, 1 element, field = 2 + h*4 + w*8 + off*4096 + B*2^32.
+(define (opt-load-loc-kind-encode [kind : OptLoadLocKind]) : i64
+  (match kind
+    [(OptLoadLocUnknown) 0]
+    [(OptLoadLocElement) 1]
+    [(OptLoadLocField base off width header?)
+      (+
+        2
+        (+
+          (if header?
+            4
+            0)
+          (+ (* width 8) (+ (* off 4096) (* base 4294967296)))))]))
+
+(define (opt-load-loc-kind-decode [value : i64]) : OptLoadLocKind
+  (cond
+    [(= value 0) (OptLoadLocUnknown)]
+    [(= value 1) (OptLoadLocElement)]
+    [else
+      (OptLoadLocField
+        (/ value 4294967296)
+        (% (/ value 4096) 1048576)
+        (% (/ value 8) 512)
+        (= (% (/ value 4) 2) 1))]))
+
+;; Range-checked Field constructor: out-of-range components degrade to Unknown
+;; (the encoding packs base<2^30, off<2^20, 0<w<512).
+(define (opt-load-loc-field-checked
+  [base : i64]
+  [off : i64]
+  [width : i64]
+  [header? : bool]) : OptLoadLocKind
+  (if (and
+    (>= base 0)
+    (< base 1073741824)
+    (>= off 0)
+    (< off 1048576)
+    (> width 0)
+    (< width 512))
+    (OptLoadLocField base off width header?)
+    (OptLoadLocUnknown)))
+
+;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
+;; common no-references case of a base redefinition skips the sweep. Mutable
+;; hashmaps threaded linearly (the opt-alias-facts pattern): block entries in
+;; the cross-block pass clone before processing.
+(defenum OptLoadPtrKinds
+  (OptLoadPtrKinds hashmap.I64I64Map hashmap.I64I64Map))
+
+(define (opt-load-kinds-empty) : OptLoadPtrKinds
+  (OptLoadPtrKinds
+    (hashmap.i64-i64-map-with-capacity 17)
+    (hashmap.i64-i64-map-with-capacity 17)))
+
+(define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
+  (match kinds
+    [(OptLoadPtrKinds map _)
+      (match (hashmap.i64-i64-map-get map var)
+        [(hashmap.I64I64MapFound value) (opt-load-loc-kind-decode value)]
+        [(hashmap.I64I64MapMissing) (OptLoadLocUnknown)])]))
+
+(define (opt-load-kinds-ref-count [refs : hashmap.I64I64Map] [base : i64]) : i64
+  (match (hashmap.i64-i64-map-get refs base)
+    [(hashmap.I64I64MapFound value) value]
+    [(hashmap.I64I64MapMissing) 0]))
+
+(define (opt-load-kinds-ref-add
+  [refs : hashmap.I64I64Map]
+  [base : i64]
+  [delta : i64]) : hashmap.I64I64Map
+  (hashmap.i64-i64-map-put
+    refs
+    base
+    (+ (opt-load-kinds-ref-count refs base) delta)))
+
+;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
+(define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds map refs)
+      (match (hashmap.i64-i64-map-get map var)
+        [(hashmap.I64I64MapFound old-value)
+          (let
+            [map2 : hashmap.I64I64Map
+              (match (hashmap.i64-i64-map-remove map var)
+                [(hashmap.I64I64MapRemoveOk updated) updated]
+                [(hashmap.I64I64MapRemoveMissing updated) updated])]
+            [refs2 : hashmap.I64I64Map
+              (match (opt-load-loc-kind-decode old-value)
+                [(OptLoadLocField base _ _ _)
+                  (opt-load-kinds-ref-add refs base (- 0 1))]
+                [_ refs])]
+            (OptLoadPtrKinds map2 refs2))]
+        [(hashmap.I64I64MapMissing) kinds])]))
+
+;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
+;; new pointers just stay unclassified once the cap is hit).
+(define (opt-load-kinds-bind
+  [kinds : OptLoadPtrKinds]
+  [var : i64]
+  [kind : OptLoadLocKind]) : OptLoadPtrKinds
+  (match kind
+    [(OptLoadLocUnknown) (opt-load-kinds-remove kinds var)]
+    [_
+      (let
+        [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
+        (match removed
+          [(OptLoadPtrKinds map refs)
+            (if (>= (hashmap.i64-i64-map-len map) 96)
+              removed
+              (let
+                [refs2 : hashmap.I64I64Map
+                  (match kind
+                    [(OptLoadLocField base _ _ _)
+                      (opt-load-kinds-ref-add refs base 1)]
+                    [_ refs])]
+                (OptLoadPtrKinds
+                  (hashmap.i64-i64-map-put
+                    map
+                    var
+                    (opt-load-loc-kind-encode kind))
+                  refs2)))]))]))
+
+;; Redefinition of `var`: drop its own binding, and (only when some Field kind
+;; references it as a base -- refcount-gated) sweep out every binding whose
+;; base is `var`, because base-var identity must mean base-VALUE identity.
+(define (opt-load-kinds-invalidate-def [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
+  (let
+    [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
+    (match removed
+      [(OptLoadPtrKinds map refs)
+        (if (<= (opt-load-kinds-ref-count refs var) 0)
+          removed
+          (let
+            [capacity : i64 (hashmap.i64-i64-map-capacity map)]
+            [out : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
+            [out-refs : hashmap.I64I64Map
+              (hashmap.i64-i64-map-with-capacity 17)]
+            [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
+            (begin
+              (while (< i capacity)
+                (begin
+                  (match (hashmap.i64-i64-map-entry-at map i)
+                    [(hashmap.I64I64MapEntrySome bound-var value)
+                      (let
+                        [drop? : bool
+                          (match (opt-load-loc-kind-decode value)
+                            [(OptLoadLocField base _ _ _) (= base var)]
+                            [_ false])]
+                        (if drop?
+                          unit
+                          (begin
+                            (set!
+                              out
+                              (hashmap.i64-i64-map-put out bound-var value))
+                            (match (opt-load-loc-kind-decode value)
+                              [(OptLoadLocField base _ _ _)
+                                (set!
+                                  out-refs
+                                  (opt-load-kinds-ref-add out-refs base 1))]
+                              [_ unit]))))]
+                    [(hashmap.I64I64MapEntryNone) unit])
+                  (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
+              (OptLoadPtrKinds out out-refs))))])))
+
+(define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds map refs)
+      (let
+        [out : hashmap.I64I64Map
+          (hashmap.i64-i64-map-with-capacity
+            (+ (* (hashmap.i64-i64-map-len map) 2) 17))]
+        [out-refs : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
+        [capacity : i64 (hashmap.i64-i64-map-capacity map)]
+        [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
+        (begin
+          (while (< i capacity)
+            (begin
+              (match (hashmap.i64-i64-map-entry-at map i)
+                [(hashmap.I64I64MapEntrySome var value)
+                  (begin
+                    (set! out (hashmap.i64-i64-map-put out var value))
+                    (match (opt-load-loc-kind-decode value)
+                      [(OptLoadLocField base _ _ _)
+                        (set! out-refs (opt-load-kinds-ref-add out-refs base 1))]
+                      [_ unit]))]
+                [(hashmap.I64I64MapEntryNone) unit])
+              (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
+          (OptLoadPtrKinds out out-refs)))]))
+
+;; Control-flow join: keep only bindings identical on both edges.
+(define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
+  (match a
+    [(OptLoadPtrKinds amap _)
+      (match b
+        [(OptLoadPtrKinds bmap _)
+          (let
+            [out : OptLoadPtrKinds (opt-load-kinds-empty)]
+            [capacity : i64 (hashmap.i64-i64-map-capacity amap)]
+            [i : i64 (hashmap.i64-i64-map-next-occupied amap 0)]
+            (begin
+              (while (< i capacity)
+                (begin
+                  (match (hashmap.i64-i64-map-entry-at amap i)
+                    [(hashmap.I64I64MapEntrySome var value)
+                      (match (hashmap.i64-i64-map-get bmap var)
+                        [(hashmap.I64I64MapFound bvalue)
+                          (if (= value bvalue)
+                            (set!
+                              out
+                              (opt-load-kinds-bind
+                                out
+                                var
+                                (opt-load-loc-kind-decode value)))
+                            unit)]
+                        [(hashmap.I64I64MapMissing) unit])]
+                    [(hashmap.I64I64MapEntryNone) unit])
+                  (set! i (hashmap.i64-i64-map-next-occupied amap (+ i 1)))))
+              out))])]))
+
+;; Kind transfer for one instruction: redefinitions first (own binding + the
+;; base-reference sweep), then the deriving arms.
+(define (opt-load-kinds-step
+  [kinds : OptLoadPtrKinds]
+  [hs : OptLoadHeaderSet]
+  [instr : CompilerIrInstr]) : OptLoadPtrKinds
+  (let
+    [invalidated : OptLoadPtrKinds
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst) (opt-load-kinds-invalidate-def kinds dst)]
+        [(option_i64.None) kinds])]
+    (match instr
+      [(CompilerIrInstr.Gep dst base offset ty)
+        (match base
+          [(CompilerIrValue.Var bvar)
+            (match (opt-load-kinds-lookup invalidated bvar)
+              [(OptLoadLocElement)
+                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))]
+              [(OptLoadLocField b0 o0 _ h0)
+                (match offset
+                  [(CompilerIrValue.I64 k)
+                    (let
+                      [sz : i64 (opt-load-loc-type-size ty)]
+                      (if (> sz 0)
+                        (opt-load-kinds-bind
+                          invalidated
+                          dst
+                          (opt-load-loc-field-checked b0 (+ o0 (* k sz)) sz h0))
+                        invalidated))]
+                  [_ invalidated])]
+              [(OptLoadLocUnknown)
+                ;; `Gep dst dst ...` must not bind Field(dst,...): the base
+                ;; var's post-instruction value is the RESULT, not the base.
+                (match offset
+                  [(CompilerIrValue.I64 k)
+                    (let
+                      [sz : i64 (opt-load-loc-type-size ty)]
+                      (if (and (> sz 0) (not (= bvar dst)))
+                        (opt-load-kinds-bind
+                          invalidated
+                          dst
+                          (opt-load-loc-field-checked
+                            bvar
+                            (* k sz)
+                            sz
+                            (opt-load-header-var? hs bvar)))
+                        invalidated))]
+                  [_ invalidated])])]
+          [_ invalidated])]
+      [(CompilerIrInstr.Load dst src ty)
+        (match src
+          [(CompilerIrValue.Var p)
+            (match (opt-load-kinds-lookup invalidated p)
+              [(OptLoadLocField _ off _ header?)
+                (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
+                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  invalidated)]
+              [_ invalidated])]
+          [_ invalidated])]
+      [(CompilerIrInstr.Mov dst src _)
+        (match src
+          [(CompilerIrValue.Var s)
+            (match (opt-load-kinds-lookup invalidated s)
+              [(OptLoadLocUnknown) invalidated]
+              [(OptLoadLocElement)
+                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))]
+              [(OptLoadLocField base off width header?)
+                (opt-load-kinds-bind
+                  invalidated
+                  dst
+                  (OptLoadLocField base off width header?))])]
+          [_ invalidated])]
+      [_ invalidated])))
+
+;; Load-table keys. Raw keys are address-value identity (with an element flag
+;; for the keep rules); Field keys are canonical (base var, byte offset,
+;; loaded type, header-typed base) so distinct gep temps of the same slot CSE.
 (defenum OptLoadKey
-  (Key CompilerIrValue AstType))
+  (Raw CompilerIrValue AstType bool)
+  (Field i64 i64 AstType bool))
 
 (defenum OptLoadEntry
-  (Entry OptLoadKey i64))
+  (Entry OptLoadKey CompilerIrValue))
 
 (defenum OptLoadTable
   (Nil)
   (Cons OptLoadEntry (Box OptLoadTable)))
 
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable))
+  (State OptAliasFacts OptLoadTable OptLoadPtrKinds))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState CompilerIrInstr))
 
+;; How a classified store writes memory (Unknown clears the whole table).
+(defenum OptLoadStoreClass
+  (OptLoadStoreUnknown)
+  (OptLoadStoreElement)
+  (OptLoadStoreField i64 i64 i64 bool))
+
 (define (opt-load-key-eq [a : OptLoadKey] [b : OptLoadKey]) : bool
   (match a
-    [(OptLoadKey.Key av aty)
+    [(OptLoadKey.Raw av aty aelem)
       (match b
-        [(OptLoadKey.Key bv bty)
-          (and (opt-value-eq av bv) (opt-type-eq aty bty))])]))
+        [(OptLoadKey.Raw bv bty belem)
+          (and
+            (opt-value-eq av bv)
+            (opt-type-eq aty bty)
+            (=
+              (if aelem
+                1
+                0)
+              (if belem
+                1
+                0)))]
+        [_ false])]
+    [(OptLoadKey.Field abase aoff aty ah)
+      (match b
+        [(OptLoadKey.Field bbase boff bty bh)
+          (and
+            (= abase bbase)
+            (= aoff boff)
+            (opt-type-eq aty bty)
+            (=
+              (if ah
+                1
+                0)
+              (if bh
+                1
+                0)))]
+        [_ false])]))
 
 (define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
   (match key
-    [(OptLoadKey.Key value _) (opt-value-is-var? value var)]))
+    [(OptLoadKey.Raw value _ _) (opt-value-is-var? value var)]
+    [(OptLoadKey.Field base _ _ _) (= base var)]))
+
+;; Canonical key for an address value under the current pointer kinds.
+(define (opt-load-key-for-address
+  [kinds : OptLoadPtrKinds]
+  [addr : CompilerIrValue]
+  [ty : AstType]) : OptLoadKey
+  (match addr
+    [(CompilerIrValue.Var p)
+      (match (opt-load-kinds-lookup kinds p)
+        [(OptLoadLocField base off _ header?)
+          (OptLoadKey.Field base off ty header?)]
+        [(OptLoadLocElement) (OptLoadKey.Raw addr ty true)]
+        [(OptLoadLocUnknown) (OptLoadKey.Raw addr ty false)])]
+    [_ (OptLoadKey.Raw addr ty false)]))
 
 (define (opt-load-entry-key [entry : OptLoadEntry]) : OptLoadKey
   (match entry
     [(OptLoadEntry.Entry key _) key]))
 
-(define (opt-load-entry-var [entry : OptLoadEntry]) : i64
+(define (opt-load-entry-value [entry : OptLoadEntry]) : CompilerIrValue
   (match entry
-    [(OptLoadEntry.Entry _ var) var]))
+    [(OptLoadEntry.Entry _ value) value]))
 
-(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : option_i64.Option
+(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
   (match table
-    [(OptLoadTable.Nil) (option_i64.None)]
+    [(OptLoadTable.Nil) (CompilerIrMaybeValue.No)]
     [(OptLoadTable.Cons entry rest)
       (if (opt-load-key-eq (opt-load-entry-key entry) key)
-        (option_i64.Some (opt-load-entry-var entry))
+        (CompilerIrMaybeValue.Some (opt-load-entry-value entry))
         (opt-load-table-lookup (box-get rest) key))]))
 
 (define (opt-load-table-remove-key-scan
@@ -42290,24 +42992,40 @@
 ;; the whole spine (see opt-alias-remove-var).
 (define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
   (match (opt-load-table-lookup table key)
-    [(option_i64.Some _) (opt-load-table-remove-key-scan table key)]
-    [(option_i64.None) table]))
+    [(CompilerIrMaybeValue.Some _) (opt-load-table-remove-key-scan table key)]
+    [(CompilerIrMaybeValue.No) table]))
 
+(define (opt-load-table-len [table : OptLoadTable]) : i64
+  (match table
+    [(OptLoadTable.Nil) 0]
+    [(OptLoadTable.Cons _ rest) (+ 1 (opt-load-table-len (box-get rest)))]))
+
+;; Bind key -> value. Since granular invalidation lets tables survive stores,
+;; cap growth: a fresh key is skipped once the table holds 128 entries.
 (define (opt-load-table-bind
   [table : OptLoadTable]
   [key : OptLoadKey]
-  [var : i64]) : OptLoadTable
-  (OptLoadTable.Cons
-    (OptLoadEntry.Entry key var)
-    (box (opt-load-table-remove-key table key))))
+  [value : CompilerIrValue]) : OptLoadTable
+  (match (opt-load-table-lookup table key)
+    [(CompilerIrMaybeValue.Some _)
+      (OptLoadTable.Cons
+        (OptLoadEntry.Entry key value)
+        (box (opt-load-table-remove-key-scan table key)))]
+    [(CompilerIrMaybeValue.No)
+      (if (>= (opt-load-table-len table) 128)
+        table
+        (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table)))]))
+
+(define (opt-load-entry-mentions-var? [entry : OptLoadEntry] [var : i64]) : bool
+  (or
+    (opt-value-is-var? (opt-load-entry-value entry) var)
+    (opt-load-key-uses-var? (opt-load-entry-key entry) var)))
 
 (define (opt-load-table-mentions-var? [table : OptLoadTable] [var : i64]) : bool
   (match table
     [(OptLoadTable.Nil) false]
     [(OptLoadTable.Cons entry rest)
-      (if (or
-        (= (opt-load-entry-var entry) var)
-        (opt-load-key-uses-var? (opt-load-entry-key entry) var))
+      (if (opt-load-entry-mentions-var? entry var)
         true
         (opt-load-table-mentions-var? (box-get rest) var))]))
 
@@ -42318,116 +43036,300 @@
       (let
         [rest2 : OptLoadTable
           (opt-load-table-invalidate-var-scan (box-get rest) var)]
-        (if (or
-          (= (opt-load-entry-var entry) var)
-          (opt-load-key-uses-var? (opt-load-entry-key entry) var))
+        (if (opt-load-entry-mentions-var? entry var)
           rest2
           (OptLoadTable.Cons entry (box rest2))))]))
 
-;; Drop entries whose address expression references `var`, or whose cached load
-;; result was `var`. The IR is not globally SSA, so any reused var id must make
-;; old load facts disappear before the new instruction is processed. This runs
-;; for every defining instruction, so the no-match case returns the table
-;; unchanged instead of re-boxing the whole spine.
+;; Drop entries whose key references `var` (raw address value or canonical
+;; base var), or whose cached value is `var`. The IR is not globally SSA, so
+;; any reused var id must make old load facts disappear before the new
+;; instruction is processed. This runs for every defining instruction, so the
+;; no-match case returns the table unchanged instead of re-boxing the spine.
 (define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
   (if (opt-load-table-mentions-var? table var)
     (opt-load-table-invalidate-var-scan table var)
     table))
 
-(define (opt-load-cse-state-invalidate-def
-  [state : OptLoadCseState]
-  [instr : CompilerIrInstr]) : OptLoadCseState
-  (match state
-    [(OptLoadCseState.State facts table)
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some dst)
-          (OptLoadCseState.State
-            facts
-            (opt-load-table-invalidate-var table dst))]
-        [(option_i64.None) state])]))
+;; Does an entry provably NOT alias a classified store? (GAP4 rules; anything
+;; not provably disjoint is dropped.)
+(define (opt-load-ranges-disjoint?
+  [alo : i64]
+  [awidth : i64]
+  [blo : i64]
+  [bwidth : i64]) : bool
+  (and
+    (> awidth 0)
+    (> bwidth 0)
+    (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo))))
 
-(define (opt-load-cse-state-update-facts
-  [state : OptLoadCseState]
-  [instr : CompilerIrInstr]) : OptLoadCseState
-  (match state
-    [(OptLoadCseState.State facts table)
-      (OptLoadCseState.State (opt-alias-update-facts facts instr) table)]))
+(define (opt-load-entry-survives-store?
+  [class : OptLoadStoreClass]
+  [entry : OptLoadEntry]) : bool
+  (match class
+    [(OptLoadStoreElement)
+      ;; Element stores write data-buffer memory; only descriptor-field
+      ;; entries (header-typed base) are provably outside every buffer.
+      (match (opt-load-entry-key entry)
+        [(OptLoadKey.Field _ _ _ header?) header?]
+        [_ false])]
+    [(OptLoadStoreField sbase slo swidth sheader?)
+      (match (opt-load-entry-key entry)
+        [(OptLoadKey.Raw _ _ element?)
+          ;; A descriptor-field store cannot touch buffer memory; a generic
+          ;; field store might (inline structs live inside buffers).
+          (and element? sheader?)]
+        [(OptLoadKey.Field ebase eoff ety _)
+          ;; Same object (same un-redefined base var) at disjoint byte
+          ;; ranges. Different base vars may name the same object -- drop.
+          (and
+            (= ebase sbase)
+            (opt-load-ranges-disjoint?
+              slo
+              swidth
+              eoff
+              (opt-load-loc-type-size ety)))])]
+    [(OptLoadStoreUnknown) false]))
 
-(define (opt-load-cse-state-clear-for-memory
+(define (opt-load-table-filter-store
+  [table : OptLoadTable]
+  [class : OptLoadStoreClass]) : OptLoadTable
+  (match table
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable (opt-load-table-filter-store (box-get rest) class)]
+        (if (opt-load-entry-survives-store? class entry)
+          (OptLoadTable.Cons entry (box tail))
+          tail))]))
+
+;; Classify a store's target from the pointer kinds; `width` is the byte size
+;; actually written (StorePtr type width / CopyBytes size).
+(define (opt-load-classify-store
+  [kinds : OptLoadPtrKinds]
+  [ptr : CompilerIrValue]
+  [width : i64]) : OptLoadStoreClass
+  (if (<= width 0)
+    (OptLoadStoreUnknown)
+    (match ptr
+      [(CompilerIrValue.Var p)
+        (match (opt-load-kinds-lookup kinds p)
+          [(OptLoadLocElement) (OptLoadStoreElement)]
+          [(OptLoadLocField base off _ header?)
+            (OptLoadStoreField base off width header?)]
+          [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
+      [_ (OptLoadStoreUnknown)])))
+
+;; GVN stability for a key's referenced vars (the cross-block pass only
+;; caches/forwards through single-source vars, mirroring the original #2343
+;; gates; the block-local pass needs none).
+(define (opt-load-key-gvn-stable?
+  [sources : hashmap.I64I64Map]
+  [key : OptLoadKey]) : bool
+  (match key
+    [(OptLoadKey.Raw value _ _) (opt-gvn-value-stable? sources value)]
+    [(OptLoadKey.Field base _ _ _) (opt-gvn-stable-var? sources base)]))
+
+(define (opt-load-value-gvn-stable?
+  [sources : hashmap.I64I64Map]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var v) (opt-gvn-stable-var? sources v)]
+    [_ true]))
+
+;; Any instruction that is neither Load/StorePtr/CopyBytes nor a clear-all:
+;; drop def-invalidated entries, update alias facts and pointer kinds.
+(define (opt-load-cse-state-step-other
+  [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _)
+    [(OptLoadCseState.State facts table kinds)
       (OptLoadCseState.State
         (opt-alias-update-facts facts instr)
-        (OptLoadTable.Nil))]))
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
+          [(option_i64.None) table])
+        (opt-load-kinds-step kinds hs instr))]))
 
-(define (opt-load-cse-record-load
+;; Calls/unknown effects: the table clears entirely; pointer kinds are value
+;; properties and survive (only the instr's own def is invalidated).
+(define (opt-load-cse-state-clear-for-memory
+  [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
-  [key : OptLoadKey]
-  [dst : i64]) : OptLoadCseState
+  [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table)
-      (if (opt-load-key-uses-var? key dst)
-        state
-        (OptLoadCseState.State facts (opt-load-table-bind table key dst)))]))
+    [(OptLoadCseState.State facts _ kinds)
+      (OptLoadCseState.State
+        (opt-alias-update-facts facts instr)
+        (OptLoadTable.Nil)
+        (opt-load-kinds-step kinds hs instr))]))
 
-(define (opt-load-cse-load
+;; StorePtr: granular invalidation, then store-to-load forwarding. The
+;; forwarded value must be a copy-safe source (no hidden global reads) and
+;; exactly 8 bytes wide: sub-word IR vars are not guaranteed canonical in
+;; their high bits, while a real load re-canonicalizes.
+(define (opt-load-cse-state-store
+  ;; lint-allow: unused-variable
+  [hs : OptLoadHeaderSet]
+  [gated? : bool]
+  [sources : hashmap.I64I64Map]
+  [state : OptLoadCseState]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State facts table kinds)
+      (let
+        [width : i64 (opt-load-loc-type-size ty)]
+        [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
+        [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
+        (match class
+          [(OptLoadStoreUnknown)
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+          [_
+            (let
+              [filtered : OptLoadTable
+                (opt-load-table-filter-store table class)]
+              [key : OptLoadKey (opt-load-key-for-address kinds ptr ty)]
+              [forward? : bool
+                (and
+                  (= width 8)
+                  (opt-copy-safe-source? value)
+                  (if gated?
+                    (and
+                      (opt-load-key-gvn-stable? sources key)
+                      (opt-load-value-gvn-stable? sources value))
+                    true))]
+              (OptLoadCseState.State
+                facts2
+                (if forward?
+                  (opt-load-table-bind filtered key value)
+                  filtered)
+                kinds))]))]))
+
+;; CopyBytes writes `size` bytes through its dst pointer: same granular
+;; invalidation, no forwarding.
+(define (opt-load-cse-state-copy-bytes
+  [state : OptLoadCseState]
+  [dst : CompilerIrValue]
+  [size : i64]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State facts table kinds)
+      (let
+        [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
+        [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
+        (match class
+          [(OptLoadStoreUnknown)
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+          [_
+            (OptLoadCseState.State
+              facts2
+              (opt-load-table-filter-store table class)
+              kinds)]))]))
+
+(define (opt-load-cse-core-load
+  [hs : OptLoadHeaderSet]
+  [gated? : bool]
+  [sources : hashmap.I64I64Map]
   [state : OptLoadCseState]
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseResult
-  (let
-    [invalidated : OptLoadCseState
-      (opt-load-cse-state-invalidate-def state instr)]
-    [key : OptLoadKey (OptLoadKey.Key src ty)]
-    (match invalidated
-      [(OptLoadCseState.State _ table)
-        (match (opt-load-table-lookup table key)
-          [(option_i64.Some earlier)
+  (match state
+    [(OptLoadCseState.State facts table kinds)
+      (let
+        ;; The dst redefinition drops stale entries first; the key is computed
+        ;; from the PRE-def kinds (a `Load dst <- dst` reads the old address).
+        [table2 : OptLoadTable (opt-load-table-invalidate-var table dst)]
+        [key : OptLoadKey (opt-load-key-for-address kinds src ty)]
+        [eligible? : bool
+          (if gated?
+            (and
+              (opt-gvn-stable-var? sources dst)
+              (opt-load-key-gvn-stable? sources key))
+            true)]
+        (match (if eligible?
+          (opt-load-table-lookup table2 key)
+          (CompilerIrMaybeValue.No))
+          [(CompilerIrMaybeValue.Some earlier)
+            ;; Entries whose cached value is dst were dropped above, so the
+            ;; rewrite never copies a var this instruction overwrites.
             (let
-              [new-instr : CompilerIrInstr
-                (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)]
-              [updated : OptLoadCseState
-                (opt-load-cse-state-update-facts invalidated new-instr)]
+              [new-instr : CompilerIrInstr (CompilerIrInstr.Mov dst earlier ty)]
               (OptLoadCseResult.Result
-                (opt-load-cse-record-load updated key dst)
+                (OptLoadCseState.State
+                  (opt-alias-update-facts facts new-instr)
+                  table2
+                  (opt-load-kinds-step kinds hs new-instr))
                 new-instr))]
-          [(option_i64.None)
+          [(CompilerIrMaybeValue.No)
             (let
-              [updated : OptLoadCseState
-                (opt-load-cse-state-update-facts invalidated instr)]
+              [record? : bool
+                (and eligible? (not (opt-load-key-uses-var? key dst)))]
               (OptLoadCseResult.Result
-                (opt-load-cse-record-load updated key dst)
-                instr))])])))
+                (OptLoadCseState.State
+                  (opt-alias-update-facts facts instr)
+                  (if record?
+                    (opt-load-table-bind table2 key (CompilerIrValue.Var dst))
+                    table2)
+                  (opt-load-kinds-step kinds hs instr))
+                instr))]))]))
 
-(define (opt-load-cse-instr [state : OptLoadCseState] [instr : CompilerIrInstr]) : OptLoadCseResult
-  (if (opt-alias-instr-clears-all? instr)
-    (OptLoadCseResult.Result
-      (opt-load-cse-state-clear-for-memory state instr)
-      instr)
-    (match instr
-      [(CompilerIrInstr.Load dst src ty)
-        (opt-load-cse-load state dst src ty instr)]
-      [_
+;; Shared per-instruction dispatcher for #2342 (gated? false) and #2343
+;; (gated? true). StorePtr/CopyBytes are matched before the clear-all check:
+;; they ARE memory writes, handled granularly.
+(define (opt-load-cse-dispatch
+  [hs : OptLoadHeaderSet]
+  [gated? : bool]
+  [sources : hashmap.I64I64Map]
+  [state : OptLoadCseState]
+  [instr : CompilerIrInstr]) : OptLoadCseResult
+  (match instr
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-store hs gated? sources state ptr value ty instr)
+        instr)]
+    [(CompilerIrInstr.CopyBytes dst _ size)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-copy-bytes state dst size instr)
+        instr)]
+    [(CompilerIrInstr.Load dst src ty)
+      (opt-load-cse-core-load hs gated? sources state dst src ty instr)]
+    [_
+      (if (opt-alias-instr-clears-all? instr)
         (OptLoadCseResult.Result
-          (opt-load-cse-state-update-facts
-            (opt-load-cse-state-invalidate-def state instr)
-            instr)
-          instr)])))
+          (opt-load-cse-state-clear-for-memory hs state instr)
+          instr)
+        (OptLoadCseResult.Result
+          (opt-load-cse-state-step-other hs state instr)
+          instr))]))
 
-(define (opt-load-cse-instrs
+(define (opt-load-cse-instrs-from
+  [hs : OptLoadHeaderSet]
+  [sources : hashmap.I64I64Map]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
     [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-load-cse-instr state instr)
+      (match (opt-load-cse-dispatch hs false sources state instr)
         [(OptLoadCseResult.Result next-state new-instr)
           (compiler-ir-instr-cons
             new-instr
-            (opt-load-cse-instrs next-state (box-get rest)))])]))
+            (opt-load-cse-instrs-from hs sources next-state (box-get rest)))])]))
+
+(define (opt-load-cse-instrs
+  [hs : OptLoadHeaderSet]
+  [state : OptLoadCseState]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-load-cse-instrs-from
+    hs
+    (hashmap.i64-i64-map-with-capacity 1)
+    state
+    instrs))
 
 ;; --- cross-block redundant-load GVN (#2343) ---------------------------------
 (defenum OptMaybeLoadCseState
@@ -42438,23 +43340,30 @@
   (Rewrite OptLoadCseState CompilerIrInstrList))
 
 (define (opt-load-cse-empty-state) : OptLoadCseState
-  (OptLoadCseState.State (opt-alias-empty) (OptLoadTable.Nil)))
+  (OptLoadCseState.State
+    (opt-alias-empty)
+    (OptLoadTable.Nil)
+    (opt-load-kinds-empty)))
 
-;; The load table is a persistent list, but the alias facts are a mutable
-;; table; entering a block through a single predecessor must process a copy.
+;; The load table is a persistent list, but the alias facts and pointer kinds
+;; are mutable tables; entering a block through a single predecessor must
+;; process a copy.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table)
-      (OptLoadCseState.State (opt-alias-clone facts) table)]))
+    [(OptLoadCseState.State facts table kinds)
+      (OptLoadCseState.State
+        (opt-alias-clone facts)
+        table
+        (opt-load-kinds-clone kinds))]))
 
 (define (opt-load-table-contains-entry?
   [table : OptLoadTable]
   [entry : OptLoadEntry]) : bool
   (match entry
-    [(OptLoadEntry.Entry key var)
+    [(OptLoadEntry.Entry key value)
       (match (opt-load-table-lookup table key)
-        [(option_i64.Some found) (= found var)]
-        [(option_i64.None) false])]))
+        [(CompilerIrMaybeValue.Some found) (opt-value-eq found value)]
+        [(CompilerIrMaybeValue.No) false])]))
 
 (define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
   (match a
@@ -42470,12 +43379,13 @@
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable)
+    [(OptLoadCseState.State afacts atable akinds)
       (match b
-        [(OptLoadCseState.State bfacts btable)
+        [(OptLoadCseState.State bfacts btable bkinds)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
-            (opt-load-table-intersect atable btable))])]))
+            (opt-load-table-intersect atable btable)
+            (opt-load-kinds-intersect akinds bkinds))])]))
 
 (define (opt-load-state-array-fill-empty!
   [states : (Array OptMaybeLoadCseState)]
@@ -42549,62 +43459,8 @@
             (opt-load-cse-empty-state)))]
       [(option_i64.None) (opt-load-cse-empty-state)])))
 
-(define (opt-load-gvn-load
-  [state : OptLoadCseState]
-  [sources : hashmap.I64I64Map]
-  [dst : i64]
-  [src : CompilerIrValue]
-  [ty : AstType]
-  [instr : CompilerIrInstr]) : OptLoadCseResult
-  (let
-    [invalidated : OptLoadCseState
-      (opt-load-cse-state-invalidate-def state instr)]
-    [key : OptLoadKey (OptLoadKey.Key src ty)]
-    (if (and
-      (opt-gvn-stable-var? sources dst)
-      (opt-gvn-value-stable? sources src))
-      (match invalidated
-        [(OptLoadCseState.State _ table)
-          (match (opt-load-table-lookup table key)
-            [(option_i64.Some earlier)
-              (let
-                [new-instr : CompilerIrInstr
-                  (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)]
-                [updated : OptLoadCseState
-                  (opt-load-cse-state-update-facts invalidated new-instr)]
-                (OptLoadCseResult.Result
-                  (opt-load-cse-record-load updated key dst)
-                  new-instr))]
-            [(option_i64.None)
-              (let
-                [updated : OptLoadCseState
-                  (opt-load-cse-state-update-facts invalidated instr)]
-                (OptLoadCseResult.Result
-                  (opt-load-cse-record-load updated key dst)
-                  instr))])])
-      (OptLoadCseResult.Result
-        (opt-load-cse-state-update-facts invalidated instr)
-        instr))))
-
-(define (opt-load-gvn-instr
-  [state : OptLoadCseState]
-  [sources : hashmap.I64I64Map]
-  [instr : CompilerIrInstr]) : OptLoadCseResult
-  (if (opt-alias-instr-clears-all? instr)
-    (OptLoadCseResult.Result
-      (opt-load-cse-state-clear-for-memory state instr)
-      instr)
-    (match instr
-      [(CompilerIrInstr.Load dst src ty)
-        (opt-load-gvn-load state sources dst src ty instr)]
-      [_
-        (OptLoadCseResult.Result
-          (opt-load-cse-state-update-facts
-            (opt-load-cse-state-invalidate-def state instr)
-            instr)
-          instr)])))
-
 (define (opt-load-gvn-instr-seq-from
+  [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : hashmap.I64I64Map]
   [instrs : CompilerIrInstrSeq]
@@ -42614,12 +43470,15 @@
     (OptLoadGvnBlockRewrite.Rewrite
       state
       (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
-    (match (opt-load-gvn-instr
-      state
+    (match (opt-load-cse-dispatch
+      hs
+      true
       sources
+      state
       (compiler-ir-instr-seq-ref instrs index))
       [(OptLoadCseResult.Result next-state new-instr)
         (opt-load-gvn-instr-seq-from
+          hs
           next-state
           sources
           instrs
@@ -42627,12 +43486,14 @@
           (compiler-ir-instr-cons new-instr out-rev))])))
 
 (define (opt-load-gvn-rewrite-block
+  [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
   [sources : hashmap.I64I64Map]
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (opt-load-gvn-instr-seq-from
+        hs
         entry-state
         sources
         instrs
@@ -42641,6 +43502,7 @@
 
 (define (opt-load-gvn-process-id
   [context : OptCfgContext]
+  [hs : OptLoadHeaderSet]
   [sources : hashmap.I64I64Map]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
@@ -42657,7 +43519,7 @@
       [(OptMaybeBlock.Some block)
         (match block
           [(CompilerIrBlock.Block block-label _)
-            (match (opt-load-gvn-rewrite-block entry-state sources block)
+            (match (opt-load-gvn-rewrite-block hs entry-state sources block)
               [(OptLoadGvnBlockRewrite.Rewrite exit-state instrs)
                 (begin
                   (array-set!
@@ -42673,6 +43535,7 @@
 
 (define (opt-load-gvn-process-rpo
   [context : OptCfgContext]
+  [hs : OptLoadHeaderSet]
   [sources : hashmap.I64I64Map]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
@@ -42689,6 +43552,7 @@
         (begin
           (opt-load-gvn-process-id
             context
+            hs
             sources
             blocks
             exit-states
@@ -42697,6 +43561,7 @@
             id)
           (opt-load-gvn-process-rpo
             context
+            hs
             sources
             blocks
             exit-states
@@ -42707,6 +43572,7 @@
 (define (opt-load-gvn-blocks-with-context
   [context : OptCfgContext]
   [sources : hashmap.I64I64Map]
+  [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [index : OptCfgIndex (struct-get context index)]
@@ -42721,6 +43587,7 @@
       (opt-gvn-block-results-fill-empty! out 0)
       (opt-load-gvn-process-rpo
         context
+        hs
         sources
         blocks
         exit-states
@@ -42874,8 +43741,46 @@
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
-    (OptLoadCseState.State (opt-alias-empty) (OptLoadTable.Nil))
+    (opt-load-header-set-empty)
+    (opt-load-cse-empty-state)
     instrs))
+
+;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
+;; descriptors) so the descriptor/element granularity rules can be exercised.
+(define (opt-load-cse-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-load-cse-instrs
+    (opt-load-header-set-from-function
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "xs" (AstType.DynArray 0) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1)
+          (CompilerIrParamList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        (CompilerIrBlockList.Nil)))
+    (opt-load-cse-empty-state)
+    instrs))
+
+(define (opt-count-mov-dst-i64-src
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.Mov mov-dst mov-src _)
+            (if (= mov-dst dst)
+              (match mov-src
+                [(CompilerIrValue.I64 value)
+                  (if (= value src)
+                    1
+                    0)]
+                [_ 0])
+              0)]
+          [_ 0])
+        (opt-count-mov-dst-i64-src (box-get rest) dst src))]))
 
 (define (opt-load-cse-positive-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -43015,16 +43920,203 @@
       (= (opt-count-load-instrs optimized) 2)
       (= (opt-count-mov-dst-instrs optimized 3) 0))))
 
+;; GAP4: store-to-load forwarding -- the load after the store becomes a Mov of
+;; the stored literal (and the pre-store entry is provably dropped: the Mov's
+;; source is 9, not var 2).
+(define (opt-load-cse-store-forward-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; GAP4: canonical keys -- two DISTINCT gep temps of the same (base, offset)
+;; slot must CSE (the audit's #2343 bounds-chain miss shape).
+(define (opt-load-cse-canonical-gep-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; GAP4: an ELEMENT store (through the loaded data pointer) must keep
+;; descriptor-field entries; the re-load through a FRESH len gep still hits.
+;; Var 0 is a header-typed param (opt-load-cse-run-with-array-param).
+(define (opt-load-cse-element-store-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 7)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  7
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+                  (CompilerIrInstrList.Nil))))))))))
+
+;; GAP4: an element store MUST drop element-load entries (same buffer).
+(define (opt-load-cse-element-invalidate-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 7)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 7 (CompilerIrValue.Var 4) (AstType.I64))
+                (CompilerIrInstrList.Nil)))))))))
+
+;; GAP4 MUST-INVALIDATE: a descriptor-field store through ANOTHER handle (var
+;; 1) may alias var 0's descriptor -- the len re-load must stay a load.
+(define (opt-load-cse-other-base-store-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; GAP4: same base, provably disjoint byte ranges (data slot store vs len
+;; entry) -- the len entry survives.
+(define (opt-load-cse-same-base-disjoint-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-positive-instrs))]
+    ;; GAP4: a store through an UNKNOWN pointer still clears everything.
     [store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.StorePtr
-          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 99)
           (CompilerIrValue.I64 9)
           (AstType.I64)))]
+    [store-forward : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-store-forward-instrs))]
+    [canonical-gep : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-canonical-gep-instrs))]
+    [element-store : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param (opt-load-cse-element-store-instrs))]
+    [element-invalidate : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-element-invalidate-instrs))]
+    [other-base-store : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param (opt-load-cse-other-base-store-instrs))]
+    [same-base-disjoint : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-same-base-disjoint-instrs))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store "g" (CompilerIrValue.I64 9) (AstType.I64)))]
@@ -43102,4 +44194,17 @@
       [(not (= (opt-count-mov-dst-instrs vector-data-pointer 3) 1)) 18]
       [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 19]
       [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 20]
+      ;; GAP4 additions.
+      [(not (= (opt-count-load-instrs store-forward) 1)) 21]
+      [(not (= (opt-count-mov-dst-i64-src store-forward 3 9) 1)) 22]
+      [(not (= (opt-count-load-instrs canonical-gep) 1)) 23]
+      [(not (= (opt-count-mov-dst-instrs canonical-gep 4) 1)) 24]
+      [(not (= (opt-count-load-instrs element-store) 2)) 25]
+      [(not (= (opt-count-mov-dst-instrs element-store 8) 1)) 26]
+      [(not (= (opt-count-load-instrs element-invalidate) 3)) 27]
+      [(not (= (opt-count-mov-dst-instrs element-invalidate 7) 0)) 28]
+      [(not (= (opt-count-load-instrs other-base-store) 2)) 29]
+      [(not (= (opt-count-mov-dst-instrs other-base-store 6) 0)) 30]
+      [(not (= (opt-count-load-instrs same-base-disjoint) 1)) 31]
+      [(not (= (opt-count-mov-dst-instrs same-base-disjoint 6) 1)) 32]
       [else 42])))

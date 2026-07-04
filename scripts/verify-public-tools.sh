@@ -932,7 +932,7 @@ EOF
     ' "$target_dir/main.s")"
     [ -n "$runtime_write_body" ] || fail "$target_alias runtime-os-write body missing"
     printf '%s\n' "$runtime_write_body" | grep -q "    call tl_alloc" && fail "$target_alias runtime-os-write still calls tl_alloc"
-    printf '%s\n' "$runtime_write_body" | grep -q "    leaq -" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
+    printf '%s\n' "$runtime_write_body" | grep -qE "    leaq [0-9]+\(%rsp\)" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
 done
 
 cat > "$CLI_MATRIX/main.tl" <<'EOF'
@@ -1752,11 +1752,11 @@ EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
     if [ "$HOST_OS" = windows ]; then
-        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%rdx), %rbx'
-        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %r9'
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%rdx), %rax'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %rax'
     else
-        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%r9), %r9'
-        SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%r9), %r9'
+        SELFHOST_OPT2_REGALLOC_A='    leaq (%rdi,%rsi), %rax'
+        SELFHOST_OPT2_REGALLOC_B='    leaq (%rdi,%rsi), %rax'
     fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 

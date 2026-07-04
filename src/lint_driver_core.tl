@@ -2135,7 +2135,19 @@
   [prefer-dotted-field : bool]) : i64
   (let
     [source : String (io.read-file input-path)]
-    (match (parse-ast-source-diagnostic input-path source)
+    ;; Parse directly INTO the installed compat-context pools rather than the
+    ;; plain `parse-ast-source-diagnostic`, whose capture-active/install! dance
+    ;; is a no-op under an explicit compat context: when the parse grows
+    ;; (reallocates) its captured pool the fresh backing array is dropped, so the
+    ;; AST lint walk later reads stale/undersized slots via ast-node-get and
+    ;; mis-reports live params/imports as unused on large sources (the
+    ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
+    ;; context keeps ast-node-get pointed at the grown pool.
+    (match (parse-ast-source-diagnostic-with-cfg-and-pools
+      input-path
+      source
+      (compiler-cfg-empty)
+      (ast-node-pool-compat-context-current))
       [(ResultAstProgramDiagnostic.Ok program)
         (let
           [findings : LintFindings
@@ -2173,7 +2185,19 @@
   [dead-decls : SelfhostLintDeadDecls]) : i64
   (let
     [source : String (io.read-file input-path)]
-    (match (parse-ast-source-diagnostic input-path source)
+    ;; Parse directly INTO the installed compat-context pools rather than the
+    ;; plain `parse-ast-source-diagnostic`, whose capture-active/install! dance
+    ;; is a no-op under an explicit compat context: when the parse grows
+    ;; (reallocates) its captured pool the fresh backing array is dropped, so the
+    ;; AST lint walk later reads stale/undersized slots via ast-node-get and
+    ;; mis-reports live params/imports as unused on large sources (the
+    ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
+    ;; context keeps ast-node-get pointed at the grown pool.
+    (match (parse-ast-source-diagnostic-with-cfg-and-pools
+      input-path
+      source
+      (compiler-cfg-empty)
+      (ast-node-pool-compat-context-current))
       [(ResultAstProgramDiagnostic.Ok program)
         (let
           [findings : LintFindings

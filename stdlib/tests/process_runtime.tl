@@ -1,6 +1,8 @@
 (import stdlib.env)
 (import stdlib.io)
+(import stdlib.msvc)
 (import stdlib.process)
+(import stdlib.process_runtime)
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
@@ -11,6 +13,9 @@
   [expected : String]
   [message : String]) : unit
   (test.assert-string-eq (& actual) (& expected) message))
+
+(define (assert-u8-eq [actual : u8] [expected : i64] [message : String]) : unit
+  (test.assert-i64-eq (cast actual : i64) expected message))
 
 (define (assert-process-ok
   [result : process.ResultProcessOutput]
@@ -33,6 +38,13 @@
     (process.result-error-message-or result "<process-ok>")
     "process: spawn failed"
     message))
+
+(define (assert-process-spawned
+  [result : process.ResultProcessOutput]
+  [message : String]) : unit
+  (match result
+    [(process.OkProcessOutput _) unit]
+    [(process.ErrProcessOutput _) (io.panic message)]))
 
 (define (assert-process-child-ok
   [result : process.ResultProcessChild]
@@ -197,6 +209,40 @@
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
     (process.args-empty)))
 
+(define (assert-process-runtime-env-cstring) : unit
+  (let
+    [buf : (Array u8) (process_runtime.env-cstring "TL_TEST" "1")]
+    (begin
+      (test.assert-i64-eq (array-length buf) 10 "env cstring length")
+      (assert-u8-eq (array-ref buf 0) 84 "env cstring T")
+      (assert-u8-eq (array-ref buf 1) 76 "env cstring L")
+      (assert-u8-eq (array-ref buf 2) 95 "env cstring underscore")
+      (assert-u8-eq (array-ref buf 3) 84 "env cstring second T")
+      (assert-u8-eq (array-ref buf 4) 69 "env cstring E")
+      (assert-u8-eq (array-ref buf 5) 83 "env cstring S")
+      (assert-u8-eq (array-ref buf 6) 84 "env cstring final T")
+      (assert-u8-eq (array-ref buf 7) 61 "env cstring equals")
+      (assert-u8-eq (array-ref buf 8) 49 "env cstring value")
+      (assert-u8-eq (array-ref buf 9) 0 "env cstring nul"))))
+
+(define (assert-process-runtime-windows-msvc-env-output) : unit
+  (let
+    [target : String "x86_64-pc-windows-msvc"]
+    [tool : String "link.exe"]
+    (match (msvc.find-tool (& target) (& tool))
+      [(msvc.OkMsvcTool resolved)
+        (assert-process-spawned
+          (process.output
+            (process.command-with-env-list
+              (process.command
+                (msvc.tool-executable resolved)
+                (process.args-cons
+                  "/NOLOGO"
+                  (process.args-cons "/?" (process.args-empty))))
+              (msvc.tool-process-env resolved)))
+          "windows msvc process env output")]
+      [(msvc.ErrMsvcTool _) unit])))
+
 (define (main) : i64
   (if (string.eq (env.path-list-separator) ";")
     (begin
@@ -324,3 +370,11 @@
             (process.args-empty)))
         "process async missing executable")
       42)))
+
+(test process-runtime-env-cstring (assert-process-runtime-env-cstring))
+
+(test
+  process-runtime-windows-msvc-env-output
+  (if (string.eq (env.path-list-separator) ";")
+    (assert-process-runtime-windows-msvc-env-output)
+    unit))

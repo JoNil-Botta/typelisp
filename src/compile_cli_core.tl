@@ -957,6 +957,10 @@
               backend-mode
               opt-level
               false))]
+        ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
+        ;; live chain is reachable only from its newest segment (the active arena
+        ;; right after the balanced compile), not the make() root handle.
+        [scratch-end : arena.Arena (arena.current)]
         (begin
           (unsafe
             (arena.set! home))
@@ -966,7 +970,7 @@
           (unsafe
             (begin
               (arena.set! home)
-              (arena.destroy scratch)))
+              (arena.destroy scratch-end)))
           (if (= status 0)
             (compile-cli-run-batch-entries
               state

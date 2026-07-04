@@ -147,6 +147,9 @@
   (ci.intern-compat-state-install!
     (array-ref (struct-get state intern-state) 0)))
 
+(define (compiler-driver-node-pool-base-arena) : i64
+  (ast-node-pool-base-arena-handle))
+
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
     (struct-get state expr-pool)
@@ -210,7 +213,14 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (let
-      [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+      ;; The pool arena grew past its first 64 MiB segment during the compile;
+      ;; its live chain is reachable only from the newest segment (tracked by the
+      ;; installed pool's base-arena), not the make() root handle. Destroying the
+      ;; root leaves the overflow segments mapped, which accumulates across batch
+      ;; entries (the allocator frees a chain only from its newest link).
+      [old-newest : i64
+        (ast-node-pool-context-base-arena
+          (compiler-driver-state-pool-context state))]
       [new-arena : i64 (arena.tl_arena_make)]
       [pools : AstNodePoolContext
         (ast-node-pool-context-new-with-capacities-in-arena
@@ -233,7 +243,7 @@
           (array-ref (struct-get pools type-pool) 0))
         (compiler-driver-state-install-pools! state)
         (unsafe
-          (arena.tl_arena_destroy old-arena))))))
+          (arena.tl_arena_destroy old-newest))))))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -1579,7 +1589,11 @@
                 (compiler-driver-state-new-checked-lower-pools)
                 pools)]
             [entry-arena : i64 (arena.tl_arena_current)]
-            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
+            ;; Release the source pools from the newest segment of their arena
+            ;; chain, not the make() root handle: the chain is reachable only from
+            ;; its head, so destroying the root leaks every overflow segment (the
+            ;; whole-program parsed AST), which accumulates across batch entries.
+            [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-floors-set! 0 0 0)
@@ -1590,7 +1604,7 @@
                   dest-pools
                   (if defer-source-destroy?
                     0
-                    (compiler-driver-state-owned-pool-arena state)))
+                    source-pools-arena))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1696,7 +1710,11 @@
                 (compiler-driver-state-new-checked-lower-pools)
                 pools)]
             [entry-arena : i64 (arena.tl_arena_current)]
-            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
+            ;; Release the source pools from the newest segment of their arena
+            ;; chain, not the make() root handle: the chain is reachable only from
+            ;; its head, so destroying the root leaks every overflow segment (the
+            ;; whole-program parsed AST), which accumulates across batch entries.
+            [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-floors-set! 0 0 0)
@@ -1707,7 +1725,7 @@
                   dest-pools
                   (if defer-source-destroy?
                     0
-                    (compiler-driver-state-owned-pool-arena state)))
+                    source-pools-arena))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools

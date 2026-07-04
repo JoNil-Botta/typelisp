@@ -3,11 +3,12 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
+(import compiler_intern as ci)
 (import "compiler_load.tl")
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
@@ -36,6 +37,7 @@
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
+  (intern-state (Array ci.InternCompatState))
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
@@ -50,6 +52,8 @@
       (array.make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
+    [intern-cell : (Array ci.InternCompatState)
+      (array.make-array ci.InternCompatState 1)]
     [builtin-cell : (Array cbi.CompilerBuiltinIdsState)
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
@@ -58,12 +62,14 @@
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
+      (array-set! intern-cell 0 (ci.intern-compat-state-new))
       (array-set! builtin-cell 0 (cbi.state-new))
       (array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
+        intern-cell
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
@@ -136,6 +142,10 @@
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
+
+(define (compiler-driver-state-install-interns! [state : CompilerDriverState]) : unit
+  (ci.intern-compat-state-install!
+    (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -247,6 +257,24 @@
     (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
     (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
+(define (compiler-driver-state-capture-active-interns!
+  [state : CompilerDriverState]) : unit
+  (ci.intern-compat-state-capture-from-globals!
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-generation [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-generation
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-pool-len [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-pool-len
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-pool-data-addr
+  [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-pool-data-addr
+    (array-ref (struct-get state intern-state) 0)))
+
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
   (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
@@ -258,8 +286,10 @@
   [state : CompilerDriverState]) : i64
   (cbi.state-ids-data-addr (array-ref (struct-get state builtin-ids) 0)))
 
-(define (compiler-driver-builtin-reset!) : unit
-  (cbi.compiler-builtin-reset!))
+(define (compiler-driver-state-reset-builtins! [state : CompilerDriverState]) : unit
+  (begin
+    (cbi.state-reset! (array-ref (struct-get state builtin-ids) 0))
+    (compiler-driver-state-install-builtins! state)))
 
 (define (compiler-driver-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-typecheck-string-length-id? name-id))
@@ -288,6 +318,7 @@
   [state : CompilerDriverState]) : unit
   (begin
     (compiler-driver-state-capture-active-pools! state)
+    (compiler-driver-state-capture-active-interns! state)
     (compiler-driver-state-capture-active-transients! state)
     (compiler-load-session-state-use! (struct-get state load-session))))
 
@@ -371,16 +402,18 @@
       (begin
         (compiler-load-session-reset-pools-with-pools! pools)
         (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
         (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
-        (cbi.compiler-builtin-reset!)
+        (compiler-driver-state-reset-builtins! state)
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)
         ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (lower-arenas-release!)
+        (compiler-driver-state-capture-active-interns! state)
         (compiler-driver-state-capture-active-transients! state)))))
 
 (cfg
@@ -561,6 +594,19 @@
       [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
       [(CompilerBackendTarget.Windows)
         (compiler-driver-enable-windows-cfgs cfgs)])))
+
+(define (compiler-driver-state-target-cfgs
+  [state : CompilerDriverState]
+  [target : CompilerBackendTarget]
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (begin
+    (compiler-driver-state-install-interns! state)
+    (let
+      [target-cfgs : sym_i64_env.SymI64Env
+        (compiler-driver-target-cfgs target cfgs)]
+      (begin
+        (compiler-driver-state-capture-active-interns! state)
+        target-cfgs))))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -1022,7 +1068,7 @@
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
 (define (compiler-driver-load-runtime-prelude-cold
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg
     "stdlib/runtime.tl"
@@ -1057,7 +1103,7 @@
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
@@ -1085,7 +1131,7 @@
     loaded))
 
 (define (compiler-driver-load-runtime-prelude
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
@@ -1103,7 +1149,7 @@
 
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
@@ -1137,7 +1183,7 @@
 (define (compiler-driver-load-source-with-runtime
   [input-path : String]
   [source : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1170,7 +1216,7 @@
 
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg
     (sym_i64_env.sym-i64-empty)
@@ -1204,7 +1250,7 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
@@ -1242,7 +1288,7 @@
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
   [key : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
@@ -1275,7 +1321,7 @@
     loaded))
 
 (define (compiler-driver-load-runtime-prelude-with-pools
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
@@ -1298,7 +1344,7 @@
 
 (define (compiler-driver-load-file-with-runtime-with-pools
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
@@ -1336,7 +1382,7 @@
 (define (compiler-driver-load-source-with-runtime-with-pools
   [input-path : String]
   [source : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
@@ -1375,7 +1421,7 @@
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
@@ -1414,7 +1460,7 @@
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
@@ -1457,7 +1503,7 @@
 (define (compiler-driver-load-and-lower-pic-image
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
@@ -1501,11 +1547,12 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-with-runtime-with-pools
@@ -1617,11 +1664,12 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
@@ -1737,13 +1785,13 @@
     input-path
     target
     has-target
-    (svec.new)))
+    (svec.string-vec-new)))
 
 (define (compiler-driver-emit-file-with-target-and-roots
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
     target
@@ -1755,7 +1803,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-and-mode
     input-path
@@ -1769,7 +1817,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
@@ -1786,7 +1834,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
@@ -1804,7 +1852,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -1822,7 +1870,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1851,7 +1899,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
@@ -1875,7 +1923,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1901,7 +1949,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
@@ -1927,7 +1975,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
@@ -1941,7 +1989,7 @@
         target
         stdlib-roots
         mode
-        (compiler-driver-target-cfgs target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs))
       target
       has-target
       mode
@@ -1953,7 +2001,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
@@ -1967,7 +2015,7 @@
         target
         stdlib-roots
         mode
-        (compiler-driver-target-cfgs target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs))
       target
       has-target
       mode
@@ -1979,7 +2027,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -2001,7 +2049,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -2080,7 +2128,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
@@ -2122,7 +2170,7 @@
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
@@ -2138,7 +2186,7 @@
 (define (compiler-driver-load-package-file-with-runtime
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerLoadWithPaths
@@ -2153,7 +2201,7 @@
 (define (compiler-driver-load-package-file-with-runtime-owned
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -2182,7 +2230,7 @@
 
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -2352,7 +2400,7 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
     input-path
@@ -2363,7 +2411,7 @@
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
@@ -2382,7 +2430,7 @@
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
@@ -2393,12 +2441,12 @@
       target
       stdlib-roots
       mode
-      (compiler-driver-target-cfgs target cfgs))
+      (compiler-driver-state-target-cfgs state target cfgs))
     opt-level))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
@@ -2417,7 +2465,7 @@
 
 (define (compiler-driver-emit-file-with-roots
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     (CompilerBackendTarget.Linux)
@@ -2426,7 +2474,7 @@
 
 (define (compiler-driver-emit-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -2443,7 +2491,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]) : ResultCompilerDriver
+  [stdlib-roots : svec.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     target
@@ -2453,7 +2501,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots-and-level
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -2543,7 +2591,7 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : i64
@@ -2563,7 +2611,7 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : i64
@@ -2586,7 +2634,7 @@
     output-path
     (CompilerBackendTarget.Linux)
     false
-    (svec.new)
+    (svec.string-vec-new)
     (compiler-optimize-default-level)
     (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
@@ -2594,7 +2642,7 @@
 (define (compiler-driver-compile-file-with-roots
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -2608,7 +2656,7 @@
 (define (compiler-driver-compile-file-with-roots-and-level
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -2623,7 +2671,7 @@
 (define (compiler-driver-compile-file-with-roots-level-and-mode
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -2645,7 +2693,7 @@
     output-path
     target
     true
-    (svec.new)
+    (svec.string-vec-new)
     (compiler-optimize-default-level)
     (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
@@ -2654,7 +2702,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -2669,7 +2717,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -2685,7 +2733,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -2702,7 +2750,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : i64

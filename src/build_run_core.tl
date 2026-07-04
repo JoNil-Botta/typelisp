@@ -9,7 +9,7 @@
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import sym_i64_env)
 
 (defenum SourceToolCommandStatus
@@ -474,7 +474,7 @@
 
 (define (source-tool-link-inputs-for-source
   [source : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (compiler-load-file-with-paths-and-roots-cfg
@@ -705,7 +705,7 @@
 (define (source-tool-emit-assembly
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -791,7 +791,7 @@
 (define (source-tool-emit-linux-elf-object
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -953,7 +953,7 @@
 (define (source-tool-emit-windows-coff-object
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1533,7 +1533,7 @@
 (define (source-tool-try-windows-direct-object-and-link
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1566,7 +1566,7 @@
 (define (source-tool-try-linux-direct-object-and-link
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1679,7 +1679,7 @@
 (define (source-tool-emit-assembly-and-link
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1710,7 +1710,7 @@
 (define (source-tool-object-or-assembly-and-link
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1822,7 +1822,7 @@
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
@@ -1886,7 +1886,7 @@
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
@@ -1920,7 +1920,7 @@
 (define (source-tool-run-source-in-temp
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfg-names : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -2005,7 +2005,7 @@
 (define (source-tool-run-source
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfg-names : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]

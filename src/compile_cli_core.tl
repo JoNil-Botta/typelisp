@@ -18,7 +18,8 @@
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.arena)
+(import stdlib.vector as svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -74,7 +75,7 @@
     bool
     bool
     CompilerBackendTarget
-    svec.StringVector
+    svec.StringVec
     CompileCliCfgNames
     CompilerBackendMode
     i64))
@@ -84,7 +85,7 @@
     String
     bool
     CompilerBackendTarget
-    svec.StringVector
+    svec.StringVec
     CompileCliCfgNames
     CompilerBackendMode
     i64
@@ -101,12 +102,12 @@
 (defenum CompileCliAction
   (Run CompileCliConfig)
   (Batch CompileCliBatchConfig)
-  (Check String svec.StringVector)
+  (Check String svec.StringVec)
   (Help)
   (Error String))
 
 (defenum ResultCompileCliCheckConfig
-  (Ok String svec.StringVector)
+  (Ok String svec.StringVec)
   (Err String))
 
 (defenum ResultCompileCliTarget
@@ -204,7 +205,7 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
@@ -266,9 +267,11 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))
               cfgs
               emit-ir
@@ -415,7 +418,7 @@
   [batch-path : String]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -455,9 +458,11 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))
               cfgs
               has-opt-level
@@ -584,7 +589,7 @@
           false
           false
           (CompilerBackendTarget.Linux)
-          (svec.new)
+          (svec.string-vec-new)
           (compile-cli-cfg-names-empty)
           false
           false
@@ -609,7 +614,7 @@
           batch-path
           false
           (CompilerBackendTarget.Linux)
-          (svec.new)
+          (svec.string-vec-new)
           (compile-cli-cfg-names-empty)
           false
           (compiler-optimize-default-level)
@@ -630,7 +635,7 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : ResultCompileCliCheckConfig
+  [stdlib-roots : svec.StringVec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
     (let
@@ -644,9 +649,11 @@
             count
             input-path
             (let
-              [next-roots : svec.StringVector stdlib-roots]
+              [next-roots : svec.StringVec stdlib-roots]
               (begin
-                (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                (set!
+                  next-roots
+                  (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                 next-roots))))
         (begin
           (io.print-error (string.append "Warning: unknown flag: " current))
@@ -666,7 +673,7 @@
       (+ input-idx 1)
       count
       (io.arg input-idx)
-      (svec.new))))
+      (svec.string-vec-new))))
 
 (define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
   (compile-cli-check-config-from
@@ -700,7 +707,7 @@
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (match (io.try-read-file (& input-path))
     [(io.ErrIoString _) 0]
     [(io.OkIoString source)
@@ -722,7 +729,7 @@
   ;; lint-allow: unused-variable
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
@@ -792,7 +799,7 @@
 (define (compile-cli-run-batch-inline-tests
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]) : i64
   (match entries
     [(CompileCliBatchEntryList.Nil) 0]
@@ -920,7 +927,7 @@
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
@@ -928,12 +935,15 @@
     [(CompileCliBatchEntryList.Nil) 0]
     [(CompileCliBatchEntryList.Cons input-path output-path rest)
       (let
-        ;; Each batch entry gets a destroyable scratch arena, not just a
-        ;; lexical rewind region. Rewinds intentionally retain overflow chunks
-        ;; until the owning arena is destroyed (#2441), so long batches must
-        ;; destroy the entry arena to avoid inter-entry growth.
+        ;; Each batch entry gets a destroyable scratch arena, not just a lexical
+        ;; rewind region. Keep the exact scratch handle so cleanup does not
+        ;; depend on which arena compiler driver internals leave active.
+        [home : arena.Arena (arena.current)]
+        [scratch : arena.Arena (arena.make)]
         [status : i64
-          (with-scratch
+          (begin
+            (unsafe
+              (arena.set! scratch))
             (compile-cli-run-compile-file
               state
               input-path
@@ -947,23 +957,33 @@
               backend-mode
               opt-level
               false))]
-        (if (= status 0)
-          (compile-cli-run-batch-entries
-            state
-            (box-get rest)
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "\ncompile: batch source failed: "
-                input-path
-                "\n"))
-            status)))]))
+        (begin
+          (unsafe
+            (arena.set! home))
+          ;; Clear compile state while the entry scratch arena is still mapped:
+          ;; loader/typecheck caches may hold scratch-backed nodes until reset.
+          (compiler-driver-state-reset-file-state! state)
+          (unsafe
+            (begin
+              (arena.set! home)
+              (arena.destroy scratch)))
+          (if (= status 0)
+            (compile-cli-run-batch-entries
+              state
+              (box-get rest)
+              has-target
+              target
+              stdlib-roots
+              cfgs
+              backend-mode
+              opt-level)
+            (begin
+              (io.print-error
+                (str_cat.str-cat
+                  "\ncompile: batch source failed: "
+                  input-path
+                  "\n"))
+              status))))]))
 
 (define (compile-cli-run-batch-from
   [state : CompilerDriverState]
@@ -972,7 +992,7 @@
   [line : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64

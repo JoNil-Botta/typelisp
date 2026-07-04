@@ -10,56 +10,71 @@
 (import stdlib.array)
 (import stdlib.string)
 
-;: Internal recursive pack step used by `str-cat` expansion.
-(defmacro (pack [parts : (Array String)] [index : i64] [args : String ...]) : (Array
-    String)
-  (if (comptime.expr-list-empty? args)
-    parts
-    `(pack
-      (stdlib.string.concat-all-pack-part
-        ,parts
-        ,index
-        ,(comptime.expr-list-head args))
-      (+ ,index 1)
-      ,@(comptime.expr-list-tail args))))
+;: Internal pack step used by `str-cat` expansion for six or more operands.
+;:
+;: `carrier` wraps all operands in a marker call so each step reads the next
+;: operand by index (`expr-list-nth`) instead of copying a shrinking tail;
+;: `parts` threads the filled dynamic array and `idx` is the next literal slot.
+;: When every slot is filled it returns `parts`.
+(defmacro (str-cat-pack
+  [carrier : comptime.Expr]
+  [parts : (Array String)]
+  [idx : comptime.Expr]) : (Array String)
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            parts
+            `(str-cat-pack
+              ,carrier
+              (stdlib.string.concat-all-pack-part
+                ,parts
+                ,(comptime.expr-int i)
+                ,(comptime.expr-list-nth elems i))
+              ,(comptime.expr-int (+ i 1))))]
+        [_ parts])]
+    [_ parts]))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
+;:
+;: Dispatches on the operand count and indexes operands directly with
+;: `expr-list-nth`. With no operands it expands to `""`; with one operand it
+;: expands to that operand unchanged. Two to five operands use direct
+;: one-allocation helpers; six or more are packed into one dynamic parts array
+;: and copied by `string-concat-all`.
 (defmacro (str-cat [args : String ...]) : String
-  (if (comptime.expr-list-empty? args)
-    `""
-    (let
-      [a : comptime.Expr (comptime.expr-list-head args)]
-      [rest1 : comptime.ExprList (comptime.expr-list-tail args)]
-      (if (comptime.expr-list-empty? rest1)
-        a
-        (let
-          [b : comptime.Expr (comptime.expr-list-head rest1)]
-          [rest2 : comptime.ExprList (comptime.expr-list-tail rest1)]
-          (if (comptime.expr-list-empty? rest2)
-            `(stdlib.string.concat3 ,a ,b "")
-            (let
-              [c : comptime.Expr (comptime.expr-list-head rest2)]
-              [rest3 : comptime.ExprList (comptime.expr-list-tail rest2)]
-              (if (comptime.expr-list-empty? rest3)
-                `(stdlib.string.concat3 ,a ,b ,c)
-                (let
-                  [d : comptime.Expr (comptime.expr-list-head rest3)]
-                  [rest4 : comptime.ExprList (comptime.expr-list-tail rest3)]
-                  (if (comptime.expr-list-empty? rest4)
-                    `(stdlib.string.concat4 ,a ,b ,c ,d)
-                    (let
-                      [e : comptime.Expr (comptime.expr-list-head rest4)]
-                      [rest5 : comptime.ExprList
-                        (comptime.expr-list-tail rest4)]
-                      (if (comptime.expr-list-empty? rest5)
-                        `(stdlib.string.concat5 ,a ,b ,c ,d ,e)
-                        (let
-                          [string-type : comptime.Expr
-                            (comptime.expr-var "String")]
-                          [count : comptime.Expr
-                            (comptime.expr-int (comptime.expr-list-length args))]
-                          `(stdlib.string.concat-all
-                            (pack
-                              (stdlib.array.make-array ,string-type ,count)
-                              0
-                              ,@args)))))))))))))))
+  (match (comptime.expr-list-length args)
+    [0 `""]
+    [1 (comptime.expr-list-nth args 0)]
+    [2
+      `(stdlib.string.concat3
+        ,(comptime.expr-list-nth args 0)
+        ,(comptime.expr-list-nth args 1)
+        "")]
+    [3
+      `(stdlib.string.concat3
+        ,(comptime.expr-list-nth args 0)
+        ,(comptime.expr-list-nth args 1)
+        ,(comptime.expr-list-nth args 2))]
+    [4
+      `(stdlib.string.concat4
+        ,(comptime.expr-list-nth args 0)
+        ,(comptime.expr-list-nth args 1)
+        ,(comptime.expr-list-nth args 2)
+        ,(comptime.expr-list-nth args 3))]
+    [5
+      `(stdlib.string.concat5
+        ,(comptime.expr-list-nth args 0)
+        ,(comptime.expr-list-nth args 1)
+        ,(comptime.expr-list-nth args 2)
+        ,(comptime.expr-list-nth args 3)
+        ,(comptime.expr-list-nth args 4))]
+    [n
+      `(stdlib.string.concat-all
+        (str-cat-pack
+          (__str-cat-args ,@args)
+          (stdlib.array.make-array
+            ,(comptime.expr-var "String")
+            ,(comptime.expr-int n))
+          0))]))

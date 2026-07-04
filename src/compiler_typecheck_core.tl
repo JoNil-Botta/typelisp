@@ -15,7 +15,7 @@
 (import "read.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
@@ -2970,6 +2970,11 @@
   (array.make-array i64 262144))
 (define tc-unsafe-decl-marker-id-cache-gens : (Array i64)
   (array.make-array i64 262144))
+(define tc-marker-name-id-cache-epoch : i64
+  0)
+
+(define (tc-marker-name-id-cache-generation-token) : i64
+  (+ tc-marker-name-id-cache-epoch (intern-generation)))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
   (tc-marker-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
@@ -2978,7 +2983,7 @@
   (if (>= name-id 262144)
     (tc-unsafe-decl-marker-id-uncached name-id)
     (let
-      [gen : i64 (+ (intern-generation) 1)]
+      [gen : i64 (+ (tc-marker-name-id-cache-generation-token) 1)]
       (if (= (array-ref tc-unsafe-decl-marker-id-cache-gens name-id) gen)
         (array-ref tc-unsafe-decl-marker-id-cache name-id)
         (let
@@ -3022,7 +3027,7 @@
   (if (>= name-id 262144)
     (tc-c-abi-fnptr-marker-id-uncached name-id)
     (let
-      [gen : i64 (+ (intern-generation) 1)]
+      [gen : i64 (+ (tc-marker-name-id-cache-generation-token) 1)]
       (if (= (array-ref tc-c-abi-fnptr-marker-id-cache-gens name-id) gen)
         (array-ref tc-c-abi-fnptr-marker-id-cache name-id)
         (let
@@ -4188,6 +4193,14 @@
     (set! tc-unused-unsafe-current-block -1)
     (set! tc-unused-unsafe-current-path "")
     (set! tc-unused-unsafe-target-path "")))
+
+(define (tc-unused-unsafe-tracking-clear!) : unit
+  (begin
+    (tc-unused-unsafe-tracking-disable!)
+    (set! tc-unused-unsafe-block-spans (array.make-array AstSourceSpan 128))
+    (set! tc-unused-unsafe-block-paths (array.make-array String 128))
+    (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+    (set! tc-unused-unsafe-block-len 0)))
 
 (define (tc-unused-unsafe-block-count) : i64
   tc-unused-unsafe-block-len)
@@ -5977,18 +5990,6 @@
         out
         (tc-bind
           out
-          "expr-list-empty?"
-          (tc-fn1 (AstType.ExprList) (AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-list-empty?"
-          (tc-fn1 (AstType.ExprList) (AstType.Bool))))
-      (set!
-        out
-        (tc-bind
-          out
           "expr-list-length"
           (tc-fn1 (AstType.ExprList) (AstType.I64))))
       (set!
@@ -5997,25 +5998,6 @@
           out
           "expr-list-length"
           (tc-fn1 (AstType.ExprList) (AstType.I64))))
-      (set! out (tc-bind out "expr-list-head" (tc-fn1 (AstType.ExprList) expr)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-list-head"
-          (tc-fn1 (AstType.ExprList) expr)))
-      (set!
-        out
-        (tc-bind
-          out
-          "expr-list-tail"
-          (tc-fn1 (AstType.ExprList) (AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-list-tail"
-          (tc-fn1 (AstType.ExprList) (AstType.ExprList))))
       (set!
         out
         (tc-bind
@@ -6046,18 +6028,6 @@
         out
         (tc-bind
           out
-          "expr-clause-list-empty?"
-          (tc-fn1 clause-list (AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-clause-list-empty?"
-          (tc-fn1 clause-list (AstType.Bool))))
-      (set!
-        out
-        (tc-bind
-          out
           "expr-clause-list-length"
           (tc-fn1 clause-list (AstType.I64))))
       (set!
@@ -6066,24 +6036,6 @@
           out
           "expr-clause-list-length"
           (tc-fn1 clause-list (AstType.I64))))
-      (set!
-        out
-        (tc-bind out "expr-clause-list-head" (tc-fn1 clause-list clause)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-clause-list-head"
-          (tc-fn1 clause-list clause)))
-      (set!
-        out
-        (tc-bind out "expr-clause-list-tail" (tc-fn1 clause-list clause-list)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-clause-list-tail"
-          (tc-fn1 clause-list clause-list)))
       (set!
         out
         (tc-bind
@@ -6154,18 +6106,6 @@
         out
         (tc-bind
           out
-          "expr-binding-clause-list-empty?"
-          (tc-fn1 binding-clause-list (AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-binding-clause-list-empty?"
-          (tc-fn1 binding-clause-list (AstType.Bool))))
-      (set!
-        out
-        (tc-bind
-          out
           "expr-binding-clause-list-length"
           (tc-fn1 binding-clause-list (AstType.I64))))
       (set!
@@ -6174,30 +6114,6 @@
           out
           "expr-binding-clause-list-length"
           (tc-fn1 binding-clause-list (AstType.I64))))
-      (set!
-        out
-        (tc-bind
-          out
-          "expr-binding-clause-list-head"
-          (tc-fn1 binding-clause-list binding-clause)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-binding-clause-list-head"
-          (tc-fn1 binding-clause-list binding-clause)))
-      (set!
-        out
-        (tc-bind
-          out
-          "expr-binding-clause-list-tail"
-          (tc-fn1 binding-clause-list binding-clause-list)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          "expr-binding-clause-list-tail"
-          (tc-fn1 binding-clause-list binding-clause-list)))
       (set!
         out
         (tc-bind
@@ -6247,78 +6163,119 @@
 (define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
-        (ResultTcType.Err
-          (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
-          ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
-          ;; element stride, reading garbage.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcType.Ok (array-ref values index))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-id (box-get below) name-id)
-              (ResultTcType.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcType.Ok ty)
-          (tc-lookup-id (box-get rest) name-id))])))
+    (let
+      [cur : TcTypeEnv env]
+      [done : bool false]
+      [found : bool false]
+      [found-ty : AstType (AstType.Unit)]
+      (begin
+        (while (not done)
+          (match cur
+            [(TcTypeEnv.Nil) (set! done true)]
+            [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
+              (match (hashmap.i64-i64-map-get ids name-id)
+                ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value
+                ;; `AstType` is multi-word, and the raw ptr path mis-scales it.
+                [(hashmap.I64I64MapFound index)
+                  (begin
+                    (set! found-ty (array-ref values index))
+                    (set! found true)
+                    (set! done true))]
+                [(hashmap.I64I64MapMissing)
+                  (if partial
+                    (set! cur (box-get below))
+                    (set! done true))])]
+            [(TcTypeEnv.Bind key ty rest)
+              (if (= key name-id)
+                (begin
+                  (set! found-ty ty)
+                  (set! found true)
+                  (set! done true))
+                (set! cur (box-get rest)))]))
+        (if found
+          (ResultTcType.Ok found-ty)
+          (ResultTcType.Err
+            (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-id env (tc-name-id name)))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound _) true]
-        [(hashmap.I64I64MapMissing)
-          (if partial
-            (tc-name-bound-id? (box-get below) name-id)
-            false)])]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        true
-        (tc-name-bound-id? (box-get rest) name-id))]))
+  (let
+    [cur : TcTypeEnv env]
+    [done : bool false]
+    [found : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
+            (match (hashmap.i64-i64-map-get ids name-id)
+              [(hashmap.I64I64MapFound _)
+                (begin
+                  (set! found true)
+                  (set! done true))]
+              [(hashmap.I64I64MapMissing)
+                (if partial
+                  (set! cur (box-get below))
+                  (set! done true))])]
+          [(TcTypeEnv.Bind key _ rest)
+            (if (= key name-id)
+              (begin
+                (set! found true)
+                (set! done true))
+              (set! cur (box-get rest)))]))
+      found)))
 
 (define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
-        (ResultTcTypeUnsafe.Err
-          (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
-          ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
-          ;; is still sound there.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcTypeUnsafe.Ok
-              (array-ref values index)
-              (=
-                (unsafe
-                  (ptr-read
-                    (ptr-offset
-                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
-                      index)))
-                1))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-unsafe-id (box-get below) name-id)
-              (ResultTcTypeUnsafe.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcTypeUnsafe.Ok
-            ty
-            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
-          (tc-lookup-unsafe-id (box-get rest) name-id))])))
+    (let
+      [cur : TcTypeEnv env]
+      [done : bool false]
+      [found : bool false]
+      [found-ty : AstType (AstType.Unit)]
+      [found-unsafe : bool false]
+      (begin
+        (while (not done)
+          (match cur
+            [(TcTypeEnv.Nil) (set! done true)]
+            [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
+              (match (hashmap.i64-i64-map-get ids name-id)
+                ;; #2357: AstType read MUST stay `array-ref`; the unsafe flag is
+                ;; scalar i64, so the raw ptr path remains sound for that array.
+                [(hashmap.I64I64MapFound index)
+                  (begin
+                    (set! found-ty (array-ref values index))
+                    (set!
+                      found-unsafe
+                      (=
+                        (unsafe
+                          (ptr-read
+                            (ptr-offset
+                              (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                              index)))
+                        1))
+                    (set! found true)
+                    (set! done true))]
+                [(hashmap.I64I64MapMissing)
+                  (if partial
+                    (set! cur (box-get below))
+                    (set! done true))])]
+            [(TcTypeEnv.Bind key ty rest)
+              (if (= key name-id)
+                (begin
+                  (set! found-ty ty)
+                  (set!
+                    found-unsafe
+                    (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
+                  (set! found true)
+                  (set! done true))
+                (set! cur (box-get rest)))]))
+        (if found
+          (ResultTcTypeUnsafe.Ok found-ty found-unsafe)
+          (ResultTcTypeUnsafe.Err
+            (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))
@@ -9282,7 +9239,6 @@
     (string.eq name "string->int")
     (string.eq name "int->string")
     (ctfe-comptime-source-helper-name? name)
-    (ctfe-expr-list-inspector-name? name)
     (ctfe-expr-clause-list-inspector-name? name)
     (ctfe-expr-binding-clause-list-inspector-name? name)
     (string.eq name "comptime-error")))
@@ -32831,7 +32787,6 @@
       [(string.eq call-name "expr-if") true]
       [(string.eq call-name "expr-type") true]
       [(string.eq call-name "type-info") true]
-      [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-list-inspector-name? call-name) true]
       [(ctfe-expr-binding-clause-list-inspector-name? call-name) true]
       [(string.eq call-name "comptime-error") true]
@@ -46181,7 +46136,7 @@
     [_ (ast-node-push expr)]))
 
 (define (macro-expand-depth-limit) : i64
-  64)
+  512)
 
 (define (macro-find-decl-in-module
   [decls : AstDeclList]
@@ -49236,675 +49191,6 @@
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-result-fast-arity-error call-expr)))
 
-;; The core prelude macros below are deterministic syntax rewrites. Expanding
-;; them in the compiler avoids running the CTFE evaluator for thousands of hot
-;; self-compile calls while preserving normal CTFE for user-defined macros.
-(define (macro-core-prelude-module? [definition-module : String]) : bool
-  (or
-    (string.eq definition-module "stdlib.core_macros")
-    (string.eq definition-module "stdlib.core-macros")))
-
-(define (macro-core-fast-path-base [macro-name : String]) : String
-  (if (tc-name-qualified? macro-name)
-    (tc-qualified-name-base macro-name)
-    macro-name))
-
-(define (macro-core-fast-path-base-known? [base : String]) : bool
-  (or
-    (string.eq base "and")
-    (string.eq base "or")
-    (string.eq base "when")
-    (string.eq base "unless")
-    (string.eq base "cond")))
-
-(define (macro-str-cat-module? [definition-module : String]) : bool
-  (or
-    (string.eq definition-module "stdlib.str_cat")
-    (string.eq definition-module "stdlib.str-cat")))
-
-(define (macro-str-cat-fast-path?
-  [macro-name : String]
-  [definition-module : String]) : bool
-  (and
-    (macro-str-cat-module? definition-module)
-    (string.eq (macro-core-fast-path-base macro-name) "str-cat")))
-
-(define (macro-core-fast-bool [value : bool]) : i64
-  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
-
-(define (macro-core-fast-unit) : i64
-  (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
-
-(define (macro-core-fast-var [name : String]) : i64
-  (ast-node-push (AstExpr.Var (intern name))))
-
-(define (macro-core-fast-string [value : String]) : i64
-  (ast-node-push (AstExpr.Literal (AstLiteral.String value))))
-
-(define (macro-core-fast-int [value : i64]) : i64
-  (ast-node-push (AstExpr.Literal (ast-lit-int value))))
-
-(define (macro-core-fast-and [args : AstExprList]) : i64
-  (macro-core-fast-and-at (& args) 0))
-
-(define (macro-core-fast-and-at [args : (& args AstExprList)] [index : i64]) : i64
-  (if (>= index (struct-get args len))
-    (macro-core-fast-bool true)
-    (ast-expr-if
-      (ast-expr-list-get args index 0)
-      (macro-core-fast-and-at args (+ index 1))
-      (macro-core-fast-bool false))))
-
-(define (macro-core-fast-or [args : AstExprList]) : i64
-  (macro-core-fast-or-at (& args) 0))
-
-(define (macro-core-fast-or-at [args : (& args AstExprList)] [index : i64]) : i64
-  (if (>= index (struct-get args len))
-    (macro-core-fast-bool false)
-    (ast-expr-if
-      (ast-expr-list-get args index 0)
-      (macro-core-fast-bool true)
-      (macro-core-fast-or-at args (+ index 1)))))
-
-(define (macro-core-fast-arity-error [call-expr : AstExpr] [message : String]) : ResultMacroCompatCall
-  (ResultMacroCompatCall.Err (box (ctfe-diagnostic-at-expr call-expr message))))
-
-(define (macro-core-fast-guard
-  [args : AstExprList]
-  [is-unless : bool]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (let
-    [len : i64 (struct-get (& args) len)]
-    (cond
-      [(< len 2)
-        (macro-core-fast-arity-error
-          call-expr
-          "macro call has too few arguments")]
-      [(> len 2)
-        (macro-core-fast-arity-error
-          call-expr
-          "macro call has too many arguments")]
-      [else
-        (let
-          [cond : i64 (ast-expr-list-get (& args) 0 0)]
-          [body : i64 (ast-expr-list-get (& args) 1 0)]
-          [unit-expr : i64 (macro-core-fast-unit)]
-          (if is-unless
-            (ResultMacroCompatCall.Ok (ast-expr-if cond unit-expr body))
-            (ResultMacroCompatCall.Ok (ast-expr-if cond body unit-expr))))])))
-
-(define (macro-core-fast-cond-else? [test : i64]) : bool
-  (match (ast-expr-unspan (ast-node-get test))
-    [(AstExpr.Var name) (string.eq (intern-str name) "else")]
-    [_ false]))
-
-(define (macro-core-fast-cond [clauses : AstExprClauseList]) : i64
-  (macro-core-fast-cond-at (& clauses) 0))
-
-(define (macro-core-fast-cond-at
-  [clauses : (& clauses AstExprClauseList)]
-  [index : i64]) : i64
-  (if (>= index (struct-get clauses len))
-    (macro-core-fast-var "core-cond-missing-else")
-    (let
-      [clause : AstExprClause
-        (ast-expr-clause-list-get clauses index (ast-expr-clause-fallback))]
-      [test : i64 (struct-get clause first)]
-      [result : i64 (struct-get clause second)]
-      [last? : bool (= (+ index 1) (struct-get clauses len))]
-      (if (macro-core-fast-cond-else? test)
-        (if last?
-          result
-          (macro-core-fast-var "core-cond-else-must-be-final"))
-        (if last?
-          (macro-core-fast-var "core-cond-missing-else")
-          (ast-expr-if
-            test
-            result
-            (macro-core-fast-cond-at clauses (+ index 1))))))))
-
-(define (macro-core-fast-cond-call [args : AstExprList]) : ResultMacroCompatCall
-  (match (macro-expr-clause-list-from-args args)
-    [(ResultMacroClauseList.Ok clauses)
-      (ResultMacroCompatCall.Ok (macro-core-fast-cond clauses))]
-    [(ResultMacroClauseList.Err diag) (ResultMacroCompatCall.Err diag)]))
-
-(define (macro-str-cat-fast-length [args : AstExprList]) : i64
-  (struct-get (& args) len))
-
-(define (macro-str-cat-fast-call
-  [definition-module : String]
-  [name : String]
-  [args : AstExprList]) : i64
-  (ast-expr-call
-    (macro-core-fast-var
-      (tc-hygiene-global-context-name definition-module name))
-    args))
-
-(define (macro-str-cat-fast-list1 [a : i64]) : AstExprList
-  (ast-expr-cons a (ast-expr-list-new)))
-
-(define (macro-str-cat-fast-list2 [a : i64] [b : i64]) : AstExprList
-  (ast-expr-cons a (macro-str-cat-fast-list1 b)))
-
-(define (macro-str-cat-fast-list3 [a : i64] [b : i64] [c : i64]) : AstExprList
-  (ast-expr-cons a (macro-str-cat-fast-list2 b c)))
-
-(define (macro-str-cat-fast-list4 [a : i64] [b : i64] [c : i64] [d : i64]) : AstExprList
-  (ast-expr-cons a (macro-str-cat-fast-list3 b c d)))
-
-(define (macro-str-cat-fast-list5
-  [a : i64]
-  [b : i64]
-  [c : i64]
-  [d : i64]
-  [e : i64]) : AstExprList
-  (ast-expr-cons a (macro-str-cat-fast-list4 b c d e)))
-
-(define (macro-array-module? [definition-module : String]) : bool
-  (or
-    (string.eq definition-module "stdlib.array")
-    (string.eq definition-module "stdlib/array")))
-
-(define (macro-array-fast-path-base-known? [base : String]) : bool
-  (or
-    (string.eq base "make-array")
-    (string.eq base "length")
-    (string.eq base "array-length")
-    (string.eq base "ref")
-    (string.eq base "array-ref")
-    (string.eq base "array-set!")
-    (string.eq base "push!")
-    (string.eq base "array-push!")))
-
-(define (macro-array-fast-path?
-  [macro-name : String]
-  [definition-module : String]) : bool
-  (and
-    (macro-array-module? definition-module)
-    (macro-array-fast-path-base-known? (macro-core-fast-path-base macro-name))))
-
-(define (macro-array-fast-private-call [name : String] [args : AstExprList]) : i64
-  (ast-expr-call (macro-core-fast-var name) args))
-
-(define (macro-array-fast-make-array
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (= (struct-get (& args) len) 2)
-    (let
-      [type-id : i64 (ast-expr-list-get (& args) 0 0)]
-      [count-id : i64 (ast-expr-list-get (& args) 1 0)]
-      [type-expr : AstExpr (ast-node-get type-id)]
-      (match (macro-type-arg-with-fallback
-        ctx
-        decls
-        (tc-context-module ctx)
-        type-expr)
-        [(ResultMacroTypeArg.Ok elem-ty)
-          (match (macro-expand-expr
-            ctx
-            type-env
-            decls
-            depth
-            (ast-node-get count-id))
-            [(ResultMacroExpr.Ok ncount)
-              (begin
-                (tc-context-capture-active-pools! ctx)
-                (macro-core-fast-profile-ok
-                  macro-name
-                  args
-                  (ast-expr-make-array elem-ty ncount)))]
-            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-        [(ResultMacroTypeArg.Err diag) (ResultMacroCompatCall.Err diag)]))
-    (macro-core-fast-arity-error
-      call-expr
-      "typecheck: make-array expects exactly two arguments")))
-
-(define (macro-array-fast-array-length
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (= (struct-get (& args) len) 1)
-    (let
-      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
-      (match (macro-expand-expr
-        ctx
-        type-env
-        decls
-        depth
-        (ast-node-get items-id))
-        [(ResultMacroExpr.Ok nitems)
-          (begin
-            (tc-context-capture-active-pools! ctx)
-            (macro-core-fast-profile-ok
-              macro-name
-              args
-              (macro-array-fast-private-call
-                "__tl_array-length"
-                (macro-str-cat-fast-list1 nitems))))]
-        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
-    (macro-core-fast-arity-error
-      call-expr
-      "typecheck: array-length expects exactly one argument")))
-
-(define (macro-array-fast-array-ref
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (= (struct-get (& args) len) 2)
-    (let
-      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
-      [index-id : i64 (ast-expr-list-get (& args) 1 0)]
-      (match (macro-expand-expr
-        ctx
-        type-env
-        decls
-        depth
-        (ast-node-get items-id))
-        [(ResultMacroExpr.Ok nitems)
-          (match (macro-expand-expr
-            ctx
-            type-env
-            decls
-            depth
-            (ast-node-get index-id))
-            [(ResultMacroExpr.Ok nindex)
-              (begin
-                (tc-context-capture-active-pools! ctx)
-                (macro-core-fast-profile-ok
-                  macro-name
-                  args
-                  (ast-expr-array-ref nitems nindex)))]
-            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
-    (macro-core-fast-arity-error
-      call-expr
-      "typecheck: array-ref expects exactly two arguments")))
-
-(define (macro-array-fast-array-set
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (= (struct-get (& args) len) 3)
-    (let
-      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
-      [index-id : i64 (ast-expr-list-get (& args) 1 0)]
-      [value-id : i64 (ast-expr-list-get (& args) 2 0)]
-      (match (macro-expand-expr
-        ctx
-        type-env
-        decls
-        depth
-        (ast-node-get items-id))
-        [(ResultMacroExpr.Ok nitems)
-          (match (macro-expand-expr
-            ctx
-            type-env
-            decls
-            depth
-            (ast-node-get index-id))
-            [(ResultMacroExpr.Ok nindex)
-              (match (macro-expand-expr
-                ctx
-                type-env
-                decls
-                depth
-                (ast-node-get value-id))
-                [(ResultMacroExpr.Ok nvalue)
-                  (begin
-                    (tc-context-capture-active-pools! ctx)
-                    (macro-core-fast-profile-ok
-                      macro-name
-                      args
-                      (ast-expr-array-set nitems nindex nvalue)))]
-                [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
-    (macro-core-fast-arity-error
-      call-expr
-      "typecheck: array-set! expects exactly three arguments")))
-
-(define (macro-array-fast-array-push
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (= (struct-get (& args) len) 2)
-    (let
-      [items-id : i64 (ast-expr-list-get (& args) 0 0)]
-      [value-id : i64 (ast-expr-list-get (& args) 1 0)]
-      (match (macro-expand-expr
-        ctx
-        type-env
-        decls
-        depth
-        (ast-node-get items-id))
-        [(ResultMacroExpr.Ok nitems)
-          (match (macro-expand-expr
-            ctx
-            type-env
-            decls
-            depth
-            (ast-node-get value-id))
-            [(ResultMacroExpr.Ok nvalue)
-              (begin
-                (tc-context-capture-active-pools! ctx)
-                (macro-core-fast-profile-ok
-                  macro-name
-                  args
-                  (ast-expr-array-push nitems nvalue)))]
-            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
-        [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
-    (macro-core-fast-arity-error
-      call-expr
-      "typecheck: array-push! expects exactly two arguments")))
-
-(define (macro-array-fast-expand
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (let
-    [base : String (macro-core-fast-path-base macro-name)]
-    (cond
-      [(string.eq base "make-array")
-        (macro-array-fast-make-array
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "array-length")
-        (macro-array-fast-array-length
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "length")
-        (macro-array-fast-array-length
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "array-ref")
-        (macro-array-fast-array-ref
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "ref")
-        (macro-array-fast-array-ref
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "array-set!")
-        (macro-array-fast-array-set
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [(string.eq base "push!")
-        (macro-array-fast-array-push
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)]
-      [else
-        (macro-array-fast-array-push
-          ctx
-          type-env
-          decls
-          macro-name
-          args
-          depth
-          call-expr)])))
-
-(define (macro-str-cat-fast-pack
-  [definition-module : String]
-  [parts : i64]
-  [index : i64]
-  [args : AstExprList]) : i64
-  (macro-str-cat-fast-pack-at definition-module parts index (& args) 0))
-
-(define (macro-str-cat-fast-pack-at
-  [definition-module : String]
-  [parts : i64]
-  [part-index : i64]
-  [args : (& args AstExprList)]
-  [arg-index : i64]) : i64
-  (if (>= arg-index (struct-get args len))
-    parts
-    (macro-str-cat-fast-pack-at
-      definition-module
-      (macro-str-cat-fast-call
-        definition-module
-        "stdlib.string.concat-all-pack-part"
-        (macro-str-cat-fast-list3
-          parts
-          (macro-core-fast-int part-index)
-          (ast-expr-list-get args arg-index 0)))
-      (+ part-index 1)
-      args
-      (+ arg-index 1))))
-
-(define (macro-str-cat-fast-nth [args : AstExprList] [index : i64]) : i64
-  (if (< index (struct-get (& args) len))
-    (ast-expr-list-get (& args) index 0)
-    (macro-core-fast-string "")))
-
-(define (macro-str-cat-fast-expand
-  [definition-module : String]
-  [args : AstExprList]) : i64
-  (let
-    [arity : i64 (macro-str-cat-fast-length args)]
-    (cond
-      [(= arity 0) (macro-core-fast-string "")]
-      [(= arity 1) (macro-str-cat-fast-nth args 0)]
-      [(= arity 2)
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat3"
-          (macro-str-cat-fast-list3
-            (macro-str-cat-fast-nth args 0)
-            (macro-str-cat-fast-nth args 1)
-            (macro-core-fast-string "")))]
-      [(= arity 3)
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat3"
-          (macro-str-cat-fast-list3
-            (macro-str-cat-fast-nth args 0)
-            (macro-str-cat-fast-nth args 1)
-            (macro-str-cat-fast-nth args 2)))]
-      [(= arity 4)
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat4"
-          (macro-str-cat-fast-list4
-            (macro-str-cat-fast-nth args 0)
-            (macro-str-cat-fast-nth args 1)
-            (macro-str-cat-fast-nth args 2)
-            (macro-str-cat-fast-nth args 3)))]
-      [(= arity 5)
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat5"
-          (macro-str-cat-fast-list5
-            (macro-str-cat-fast-nth args 0)
-            (macro-str-cat-fast-nth args 1)
-            (macro-str-cat-fast-nth args 2)
-            (macro-str-cat-fast-nth args 3)
-            (macro-str-cat-fast-nth args 4)))]
-      [else
-        (macro-str-cat-fast-call
-          definition-module
-          "stdlib.string.concat-all"
-          (macro-str-cat-fast-list1
-            (macro-str-cat-fast-pack
-              definition-module
-              (ast-expr-make-array (AstType.String) (macro-core-fast-int arity))
-              0
-              args)))])))
-
-(define (macro-core-fast-profile-ok
-  [_macro-name : String]
-  [_args : AstExprList]
-  [expanded : i64]) : ResultMacroCompatCall
-  (begin
-    (cfg compile-profile (compiler-tc-macro-profile-start))
-    (cfg compile-profile (compiler-tc-macro-profile-finish _macro-name _args))
-    (ResultMacroCompatCall.Ok expanded)))
-
-(define (macro-core-fast-profile-result
-  [macro-name : String]
-  [args : AstExprList]
-  [result : ResultMacroCompatCall]) : ResultMacroCompatCall
-  (match result
-    [(ResultMacroCompatCall.Ok expanded)
-      (macro-core-fast-profile-ok macro-name args expanded)]
-    [(ResultMacroCompatCall.Err diag) (ResultMacroCompatCall.Err diag)]
-    [(ResultMacroCompatCall.No) (ResultMacroCompatCall.No)]))
-
-(define (macro-core-fast-expand
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [macro-name : String]
-  [definition-module : String]
-  [params : AstMacroParamList]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroCompatCall
-  (cond
-    [(macro-array-fast-path? macro-name definition-module)
-      (macro-array-fast-expand
-        ctx
-        type-env
-        decls
-        macro-name
-        args
-        depth
-        call-expr)]
-    [(macro-str-cat-fast-path? macro-name definition-module)
-      (match (macro-expand-exprs ctx type-env decls depth args)
-        [(ResultMacroExprList.Ok expanded-args)
-          (begin
-            (tc-context-capture-active-pools! ctx)
-            (match (macro-bind-params
-              ctx
-              decls
-              definition-module
-              type-env
-              params
-              expanded-args
-              (tc-ctfe-env ctx)
-              (tc-string-list-contains
-                macro-expand-expr-type-macro-names
-                macro-name)
-              call-expr)
-              [(ResultMacroEnv.Ok _)
-                (macro-core-fast-profile-ok
-                  macro-name
-                  expanded-args
-                  (macro-str-cat-fast-expand definition-module expanded-args))]
-              [(ResultMacroEnv.Err diag) (ResultMacroCompatCall.Err diag)]))]
-        [(ResultMacroExprList.Err diag) (ResultMacroCompatCall.Err diag)])]
-    [(macro-core-prelude-module? definition-module)
-      (let
-        [base : String (macro-core-fast-path-base macro-name)]
-        (if (macro-core-fast-path-base-known? base)
-          (match (macro-expand-exprs ctx type-env decls depth args)
-            [(ResultMacroExprList.Ok expanded-args)
-              (begin
-                (tc-context-capture-active-pools! ctx)
-                (match (macro-bind-params
-                  ctx
-                  decls
-                  definition-module
-                  type-env
-                  params
-                  expanded-args
-                  (tc-ctfe-env ctx)
-                  (tc-string-list-contains
-                    macro-expand-expr-type-macro-names
-                    macro-name)
-                  call-expr)
-                  [(ResultMacroEnv.Ok _)
-                    (cond
-                      [(string.eq base "and")
-                        (macro-core-fast-profile-ok
-                          macro-name
-                          expanded-args
-                          (macro-core-fast-and expanded-args))]
-                      [(string.eq base "or")
-                        (macro-core-fast-profile-ok
-                          macro-name
-                          expanded-args
-                          (macro-core-fast-or expanded-args))]
-                      [(string.eq base "when")
-                        (macro-core-fast-profile-result
-                          macro-name
-                          expanded-args
-                          (macro-core-fast-guard expanded-args false call-expr))]
-                      [(string.eq base "unless")
-                        (macro-core-fast-profile-result
-                          macro-name
-                          expanded-args
-                          (macro-core-fast-guard expanded-args true call-expr))]
-                      [else
-                        (macro-core-fast-profile-result
-                          macro-name
-                          expanded-args
-                          (macro-core-fast-cond-call expanded-args))])]
-                  [(ResultMacroEnv.Err diag) (ResultMacroCompatCall.Err diag)]))]
-            [(ResultMacroExprList.Err diag) (ResultMacroCompatCall.Err diag)])
-          (ResultMacroCompatCall.No)))]
-    [else (ResultMacroCompatCall.No)]))
-
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -49931,59 +49217,46 @@
           (ctfe-diagnostic-at-expr
             call-expr
             "typecheck: Decls macro can only be used at module scope")))
-      (match (macro-core-fast-expand
+      (match (macro-eval-transformer
         ctx
         type-env
         decls
-        macro-name
         definition-module
+        macro-name
         params
+        body
         args
         depth
         call-expr)
-        [(ResultMacroCompatCall.Ok expanded) (ResultMacroExpr.Ok expanded)]
-        [(ResultMacroCompatCall.Err diag) (ResultMacroExpr.Err diag)]
-        [(ResultMacroCompatCall.No)
-          (match (macro-eval-transformer
-            ctx
-            type-env
-            decls
-            definition-module
-            macro-name
-            params
-            body
-            args
-            depth
-            call-expr)
-            [(ResultMacroValue.Ok value)
-              (match value
-                [(CompilerCtfeValue.Expr expanded produced)
-                  (if (tc-macro-produced-type-compatible? ctx ret produced)
-                    (macro-expand-expr
-                      ctx
-                      type-env
-                      decls
-                      (+ depth 1)
-                      (ast-node-get
-                        (macro-hygiene-expr
-                          (ast-node-get expanded)
-                          MacroHygieneEnv.Nil
-                          (macro-hygiene-context-macro-name
-                            macro-name
-                            definition-module)
-                          (+ depth 1))))
-                    (ResultMacroExpr.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: macro expansion produced type does not match declaration"))))]
-                [_
-                  (ResultMacroExpr.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "macro transformer did not produce an Expr")))])]
-            [(ResultMacroValue.Err diag) (ResultMacroExpr.Err diag)])]))))
+        [(ResultMacroValue.Ok value)
+          (match value
+            [(CompilerCtfeValue.Expr expanded produced)
+              (if (tc-macro-produced-type-compatible? ctx ret produced)
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (ast-node-get
+                    (macro-hygiene-expr
+                      (ast-node-get expanded)
+                      MacroHygieneEnv.Nil
+                      (macro-hygiene-context-macro-name
+                        macro-name
+                        definition-module)
+                      (+ depth 1))))
+                (ResultMacroExpr.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: macro expansion produced type does not match declaration"))))]
+            [_
+              (ResultMacroExpr.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro transformer did not produce an Expr")))])]
+        [(ResultMacroValue.Err diag) (ResultMacroExpr.Err diag)]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -54415,12 +53688,11 @@
     [_ false]))
 
 ;; After an inert Decls splice, the next arbitrary macro expansion needs a
-;; rebuilt top env so generated symbols are visible. Core prelude macros are
-;; deterministic syntax rewrites handled by `macro-core-fast-expand`; they do
-;; not inspect the top env beyond the expressions already being expanded. Let
-;; the same macro pass continue through declarations whose remaining macro work
-;; is limited to those fast-path rewrites (or legacy bare when/unless guards),
-;; while still stopping before user CTFE/Decls/Module macros.
+;; rebuilt top env so generated symbols are visible. A resolved macro decl may
+;; expand to a form that references those generated symbols, so stop the batch
+;; and let the followup pass rebuild the env before expanding it. Only legacy
+;; bare when/unless guards -- which the parser rewrites without consulting the
+;; top env -- may continue in the same pass.
 (define (macro-call-safe-after-inert-splice?
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -54432,17 +53704,7 @@
         (match (macro-call-decl ctx func decls call-expr)
           [(ResultMacroCallDecl.Ok maybe-decl)
             (match maybe-decl
-              [(MacroMaybeDecl.Some macro-name definition-module _ ret _)
-                (and
-                  (not (tc-macro-result-decls? ret))
-                  (not (tc-macro-result-module? ret))
-                  (or
-                    (macro-array-fast-path? macro-name definition-module)
-                    (and
-                      (macro-core-prelude-module? definition-module)
-                      (macro-core-fast-path-base-known?
-                        (macro-core-fast-path-base macro-name)))
-                    (macro-str-cat-fast-path? macro-name definition-module)))]
+              [(MacroMaybeDecl.Some _ _ _ _ _) false]
               [(MacroMaybeDecl.No)
                 (or (string.eq name "when") (string.eq name "unless"))])]
           [(ResultMacroCallDecl.Err _) false])
@@ -56205,7 +55467,7 @@
   [module : String]
   [decl-index : i64]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match (macro-generated-normal-import decl)
@@ -56299,7 +55561,7 @@
 (define (macro-materialize-generated-imports-in
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (let
@@ -56429,7 +55691,7 @@
 (define (macro-materialize-generated-imports
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match program
@@ -56710,7 +55972,7 @@
   [pass-followup-work : MacroFollowupWorkList]
   [materialized-followup-work : MacroFollowupWorkList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (let
@@ -56850,7 +56112,7 @@
   [pass-followup-work : MacroFollowupWorkList]
   [drop-pass-followup? : bool]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (match (macro-materialize-generated-imports
@@ -56883,7 +56145,7 @@
   [materialized-followup-work : MacroFollowupWorkList]
   [drop-pass-followup? : bool]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (let
@@ -56944,7 +56206,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
@@ -57043,7 +56305,7 @@
       program
       paths
       (ast-node-pool-context-capture-active)
-      (svec.new)
+      (svec.string-vec-new)
       (compiler-cfg-empty)
       fuel)))
 
@@ -57051,7 +56313,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
@@ -57072,7 +56334,7 @@
     program
     paths
     pools
-    (svec.new)
+    (svec.string-vec-new)
     (compiler-cfg-empty)))
 
 (define (macro-expand-program-with-paths
@@ -57988,7 +57250,7 @@
 
 (define (tc-prefix-cache-stdlib-path?
   [path : String]
-  [stdlib-roots : svec.StringVector]) : bool
+  [stdlib-roots : svec.StringVec]) : bool
   (if (compiler-load-stdlib-import? path)
     true
     (let
@@ -57999,7 +57261,7 @@
           normalized
           stdlib-roots
           0
-          (svec.len (& stdlib-roots)))))))
+          (svec.string-vec-len (& stdlib-roots)))))))
 
 (define (tc-prefix-cache-module-marker? [decl : AstDecl]) : bool
   (match decl
@@ -58009,7 +57271,7 @@
 (define (tc-prefix-cache-decl-safe?
   [decl-path : String]
   [decl : AstDecl]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [same-path-module-safe : bool]) : bool
   (if (tc-prefix-cache-stdlib-path? decl-path stdlib-roots)
     true
@@ -58018,7 +57280,7 @@
 (define (tc-prefix-candidate-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [entry-path : String]
   [count : i64]
   [module : String]
@@ -58079,11 +57341,11 @@
 (define (tc-prefix-candidate
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : TcPrefixCandidate
   (let
     [entry-path : String (tc-decl-path-list-last paths "")]
-    [effective-roots : svec.StringVector
+    [effective-roots : svec.StringVec
       (compiler-load-roots-with-env stdlib-roots)]
     (if (string.eq entry-path "")
       (TcPrefixCandidate.No)
@@ -58234,7 +57496,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (if (tc-prefix-snapshot-cache-active?)
     (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
@@ -58492,7 +57754,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
@@ -58554,7 +57816,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
     program
@@ -58566,7 +57828,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (tc-typecheck-checked-result-with-pool-check
     (typecheck-compiler-specialized-program-with-paths-checked-inner
@@ -58578,7 +57840,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (tc-typecheck-checked-result-with-pool-check
@@ -58595,13 +57857,13 @@
   (typecheck-compiler-specialized-program-with-paths-checked-cache
     program
     paths
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-specialized-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache
     program
@@ -58616,7 +57878,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
@@ -58636,7 +57898,7 @@
   (typecheck-compiler-specialized-program-with-paths-cache
     program
     paths
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-typecheck-reset-file-state!) : unit
@@ -58672,6 +57934,20 @@
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin
+    (set!
+      tc-marker-name-id-cache-epoch
+      (+ tc-marker-name-id-cache-epoch 1000000))
+    (set! tc-default-boundary-id-cache-generation -1)
+    (set! tc-region-marker-id-cache-generation -1)
+    (set! tc-cleanup-owner-marker-id-cache-generation -1)
+    (set! tc-ordinary-arena-owner-marker-id-cache-generation -1)
+    (set! tc-atomic-arena-owner-marker-id-cache-generation -1)
+    (set! tc-return-type-id-cache-generation -1)
+    (set! tc-loop-target-id-cache-generation -1)
+    (set! tc-hygiene-global-boundary-id-cache-generation -1)
+    (set! tc-unsafe-marker-id-cache-generation -1)
+    (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
+    (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-marker-name-id-arena-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)

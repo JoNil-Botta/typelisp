@@ -1,6 +1,6 @@
 (import stdlib.string)
 (import stdlib.io)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "../compiler_driver_core.tl")
 (import "../compiler_lower.tl")
 (import "../compiler_clone.tl")
@@ -909,7 +909,7 @@
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
             (ast-decl-path-list-new)
-            (svec.new)
+            (svec.string-vec-new)
             (tc-prefix-default-cache-scope)
             pools)
             [(ResultCompilerTypecheck.Ok _)
@@ -1007,8 +1007,13 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [state-a-ids-addr : i64
+      (compiler-driver-state-builtin-ids-data-addr state-a)]
+    [state-b-ids-addr : i64
+      (compiler-driver-state-builtin-ids-data-addr state-b)]
     [ok : bool true]
     (begin
+      (unless (not (= state-a-ids-addr state-b-ids-addr)) (set! ok false))
       (compiler-driver-state-install-builtins! state-a)
       (let
         [string-length-id : i64 (intern "__tl_string_length")]
@@ -1033,9 +1038,22 @@
                   (compiler-driver-state-capture-active-builtins! state-b)
                   (compiler-driver-state-reset-file-state! state-b)
                   (unless
+                    (= (compiler-driver-state-builtin-generation state-b) -1)
+                    (set! ok false))
+                  (unless
+                    (=
+                      (compiler-driver-state-builtin-ids-data-addr state-b)
+                      state-b-ids-addr)
+                    (set! ok false))
+                  (unless
                     (=
                       (compiler-driver-state-builtin-generation state-a)
                       state-a-generation)
+                    (set! ok false))
+                  (unless
+                    (=
+                      (compiler-driver-state-builtin-ids-data-addr state-a)
+                      state-a-ids-addr)
                     (set! ok false))
                   (compiler-driver-state-install-builtins! state-a)
                   (let
@@ -1067,13 +1085,95 @@
             [after : i64 (compiler-driver-state-builtin-ids-data-addr state)]
             (begin
               (unless (= before after) (set! ok false))
-              (compiler-driver-builtin-reset!)
-              (compiler-driver-state-install-builtins! state)
+              (compiler-driver-state-reset-builtins! state)
+              (unless
+                (= (compiler-driver-state-builtin-generation state) -1)
+                (set! ok false))
+              (unless
+                (= (compiler-driver-state-builtin-ids-data-addr state) before)
+                (set! ok false))
               (unless
                 (compiler-driver-builtin-typecheck-string-length-id?
                   string-length-id)
                 (set! ok false))
+              (compiler-driver-state-capture-active-builtins! state)
+              (unless
+                (> (compiler-driver-state-builtin-generation state) -1)
+                (set! ok false))
               ok)))))))
+
+(define (compiler-driver-state-smoke-interns-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (unless
+        (not
+          (=
+            (compiler-driver-state-intern-pool-data-addr state-a)
+            (compiler-driver-state-intern-pool-data-addr state-b)))
+        (set! ok false))
+      (compiler-driver-state-reset-file-state! state-a)
+      (let
+        [a-shared : i64 (intern "shared-name")]
+        [a-only : i64 (intern "state-a-only")]
+        (begin
+          (compiler-driver-state-capture-active-interns! state-a)
+          (compiler-driver-state-reset-file-state! state-b)
+          (match (intern-lookup "state-a-only")
+            [(InternLookupMissing) unit]
+            [(InternLookupFound _) (set! ok false)])
+          (let
+            [b-shared : i64 (intern "shared-name")]
+            [b-only : i64 (intern "state-b-only")]
+            (begin
+              (compiler-driver-state-capture-active-interns! state-b)
+              (unless
+                (= (compiler-driver-state-intern-pool-len state-a) 2)
+                (set! ok false))
+              (unless
+                (= (compiler-driver-state-intern-pool-len state-b) 2)
+                (set! ok false))
+              (unless (= a-shared b-shared) (set! ok false))
+              (unless (= a-only 1) (set! ok false))
+              (unless (= b-only 1) (set! ok false))
+              (compiler-driver-state-install-interns! state-a)
+              (match (intern-lookup "state-a-only")
+                [(InternLookupFound found)
+                  (unless (= found a-only) (set! ok false))]
+                [(InternLookupMissing) (set! ok false)])
+              (match (intern-lookup "state-b-only")
+                [(InternLookupMissing) unit]
+                [(InternLookupFound _) (set! ok false)])
+              (unless (= (intern "shared-name") a-shared) (set! ok false))
+              (compiler-driver-state-install-interns! state-b)
+              (match (intern-lookup "state-b-only")
+                [(InternLookupFound found)
+                  (unless (= found b-only) (set! ok false))]
+                [(InternLookupMissing) (set! ok false)])
+              (match (intern-lookup "state-a-only")
+                [(InternLookupMissing) unit]
+                [(InternLookupFound _) (set! ok false)])
+              (unless (= (intern "shared-name") b-shared) (set! ok false))
+              (let
+                [state-a-generation : i64
+                  (compiler-driver-state-intern-generation state-a)]
+                [state-b-generation : i64
+                  (compiler-driver-state-intern-generation state-b)]
+                (begin
+                  (compiler-driver-state-reset-file-state! state-b)
+                  (unless
+                    (=
+                      (compiler-driver-state-intern-generation state-a)
+                      state-a-generation)
+                    (set! ok false))
+                  (unless
+                    (>
+                      (compiler-driver-state-intern-generation state-b)
+                      state-b-generation)
+                    (set! ok false))
+                  ok)))))))))
 
 (define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
   (let
@@ -1940,11 +2040,11 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -1957,7 +2057,8 @@
             (CompilerBackendTarget.Linux)
             roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state-a
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         (match lowered
@@ -1998,7 +2099,7 @@
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : bool
+  [stdlib-roots : svec.StringVec]) : bool
   (let
     [decoy-state : CompilerDriverState (compiler-driver-state-new)]
     (begin
@@ -2012,7 +2113,8 @@
             (CompilerBackendTarget.Linux)
             stdlib-roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))
             [(ResultCompilerDriverLowered.Ok _ _ _) true]
@@ -2026,11 +2128,11 @@
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-new-for-compile))]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -2044,7 +2146,8 @@
             (CompilerBackendTarget.Linux)
             roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         [state-pools : AstNodePoolContext
@@ -2073,11 +2176,11 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     [ok : bool true]
     (begin
@@ -2102,11 +2205,11 @@
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-new-for-compile))]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     [ok : bool true]
     (begin
@@ -2164,11 +2267,11 @@
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
@@ -2206,7 +2309,7 @@
 
 (define (compiler-driver-state-smoke-lower-loaded-with-pools
   [input-path : String]
-  [roots : svec.StringVector]
+  [roots : svec.StringVec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultCompilerLower
@@ -2221,7 +2324,7 @@
 
 (define (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
   [input-path : String]
-  [roots : svec.StringVector]
+  [roots : svec.StringVec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultCompilerLower
@@ -2236,11 +2339,11 @@
 
 (define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
   (let
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     [input-path : String
       (compiler-driver-state-smoke-double-lower-fixture-path)]
@@ -2322,6 +2425,7 @@
     (unless
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
+    (unless (compiler-driver-state-smoke-interns-isolated?) (return 29))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)

@@ -1,6 +1,6 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
@@ -9,7 +9,7 @@
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
@@ -22,7 +22,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (typecheck-compiler-specialized-program-with-paths-cache-with-pools
@@ -35,7 +35,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
@@ -48,7 +48,7 @@
 (define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
@@ -138,7 +138,7 @@
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-pools
     program
@@ -153,13 +153,55 @@
   (typecheck-compiler-program-with-paths-cache
     program
     paths
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
+
+(defenum ResultCompilerDocExpand
+  (Ok AstProgram AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
+
+(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.StringVec]
+  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  (begin
+    (tc-spmd-inline-helper-stack-reset!)
+    (let
+      [generated-result : ResultGenProgramWithPaths
+        (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+      (begin
+        (ast-node-pool-context-install! pools)
+        (match generated-result
+          [(ResultGenProgramWithPaths.Ok generated generated-paths)
+            (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              generated
+              generated-paths
+              pools
+              stdlib-roots
+              (typecheck-compiler-source-language-cfgs))
+              [(ResultMacroExpand.Ok expanded expanded-paths)
+                (begin
+                  (ast-node-pool-context-capture-active! pools)
+                  (ResultCompilerDocExpand.Ok expanded expanded-paths))]
+              [(ResultMacroExpand.Err diag) (ResultCompilerDocExpand.Err diag)])]
+          [(ResultGenProgramWithPaths.Err diag)
+            (ResultCompilerDocExpand.Err diag)])))))
+
+(define (typecheck-compiler-doc-expand-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.StringVec]) : ResultCompilerDocExpand
+  (typecheck-compiler-doc-expand-program-with-paths-and-pools
+    program
+    paths
+    stdlib-roots
+    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
@@ -244,7 +286,7 @@
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-pools
     program
@@ -259,7 +301,7 @@
   (typecheck-compiler-program-with-paths-checked-cache
     program
     paths
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
@@ -284,7 +326,7 @@
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let
-    [stdlib-roots : svec.StringVector (svec.new)]
+    [stdlib-roots : svec.StringVec (svec.string-vec-new)]
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
@@ -7037,18 +7079,34 @@
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
   "(import stdlib.comptime)
 (defmacro (all [args : bool ...]) : bool
-  (if (comptime.expr-list-empty? args)
-    (comptime.expr-bool true)
-    `(if ,(comptime.expr-list-head args)
-       (all ,@(comptime.expr-list-tail args))
-       false)))
+  `(all-from (__all-args ,@args) 0))
+(defmacro (all-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
+  (match idx
+    [(comptime.ExprInt i)
+      (match carrier
+        [(comptime.ExprCall _ elems)
+          (if (>= i (comptime.expr-list-length elems))
+            (comptime.expr-bool true)
+            `(if ,(comptime.expr-list-nth elems i)
+               (all-from ,carrier ,(comptime.expr-int (+ i 1)))
+               false))]
+        [_ (comptime.expr-bool true)])]
+    [_ (comptime.expr-bool true)]))
 (defmacro (pick [arms : ExprClause ...]) : i64
-  (if (comptime.expr-clause-list-empty? arms)
-    (comptime.expr-int 0)
-    `(if ,(comptime.expr-clause-first (comptime.expr-clause-list-head arms))
-       ,(comptime.expr-clause-second (comptime.expr-clause-list-head arms))
-       (pick ,@(comptime.expr-clause-list->expr-list
-                 (comptime.expr-clause-list-tail arms))))))
+  `(pick-from 0 ,@(comptime.expr-clause-list->expr-list arms)))
+(defmacro (pick-from [idx : comptime.Expr] [arms : ExprClause ...]) : i64
+  (match idx
+    [(comptime.ExprInt i)
+      (if (>= i (comptime.expr-clause-list-length arms))
+        (comptime.expr-int 0)
+        (let
+          [arm : ExprClause (comptime.expr-clause-list-nth arms i)]
+          `(if ,(comptime.expr-clause-first arm)
+             ,(comptime.expr-clause-second arm)
+             (pick-from
+               ,(comptime.expr-int (+ i 1))
+               ,@(comptime.expr-clause-list->expr-list arms)))))]
+    [_ (comptime.expr-int 0)]))
 (define (main) : i64
   (if (all true true)
     (pick [false 1] [true 42])
@@ -7218,12 +7276,11 @@
 
 (define (compiler-typecheck-macro-binding-clause-variadic-source) : String
   "(defmacro (sum-bindings [bindings : ExprBindingClause ...]) : i64
-  (if (expr-binding-clause-list-empty? bindings)
+  (if (= (expr-binding-clause-list-length bindings) 0)
     (expr-int 0)
     (if (= (expr-binding-clause-list-length bindings) 2)
       (let
-        [first : ExprBindingClause (expr-binding-clause-list-head bindings)]
-        [rest : ExprBindingClauseList (expr-binding-clause-list-tail bindings)]
+        [first : ExprBindingClause (expr-binding-clause-list-nth bindings 0)]
         [second : ExprBindingClause (expr-binding-clause-list-nth bindings 1)]
         (if (__tl_string_eq (expr-binding-clause-name first) \"a\")
           (if (__tl_string_eq (expr-binding-clause-name second) \"b\")
@@ -7527,17 +7584,33 @@
     unit))
 (module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (defmacro (when [condition : bool] [body : unit]) : unit
   `(if ,condition ,body unit))
 (defmacro (unless [condition : bool] [body : unit]) : unit
@@ -7553,17 +7626,33 @@
 (define (compiler-typecheck-macro-prelude-module-source) : String
   "(module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (module main)
 ")
 
@@ -7745,11 +7834,19 @@
 
 (define (compiler-typecheck-macro-own-and-source) : String
   "(defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (define (main [x : bool] [y : bool] [z : bool]) : i64
   (if (and)
     (if (and x)
@@ -7759,11 +7856,19 @@
 
 (define (compiler-typecheck-macro-own-or-source) : String
   "(defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (define (main [x : bool] [y : bool] [z : bool]) : i64
   (if (or)
     0

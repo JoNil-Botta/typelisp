@@ -4,7 +4,7 @@
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
 (import stdlib.io)
 (import stdlib.process)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
@@ -16,7 +16,7 @@
     String
     CompilerBackendTarget
     CompilerBackendMode
-    svec.StringVector
+    svec.StringVec
     SourceToolCfgNames
     process.ProcessStringList
     i64
@@ -38,7 +38,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -136,9 +136,11 @@
               target
               mode
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))
               cfgs
               runtime-args
@@ -229,7 +231,7 @@
           source
           (source-tool-default-target)
           (CompilerBackendMode.Scalar)
-          (svec.new)
+          (svec.string-vec-new)
           (source-tool-cfg-names-empty)
           (process.args-empty)
           (compiler-optimize-default-level)
@@ -237,7 +239,7 @@
 
 (define (run-cli-typecheck-doctests
   [source : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (match (io.try-read-file (& source))
     [(io.ErrIoString _) 0]
     [(io.OkIoString text)
@@ -253,7 +255,7 @@
 (define (run-cli-run-source-with-doctests
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]

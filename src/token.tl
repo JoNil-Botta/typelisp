@@ -65,6 +65,16 @@
   (message String)
   (span SourceSpan))
 
+(define (source-span-new
+  [start-line : i64]
+  [start-col : i64]
+  [end-line : i64]
+  [end-col : i64]) : SourceSpan
+  (SourceSpan start-line start-col end-line end-col))
+
+(define (source-error-new [message : String] [span : SourceSpan]) : SourceError
+  (SourceError message span))
+
 (define (span-start-line [span : SourceSpan]) : i64
   (struct-get span start-line))
 
@@ -265,6 +275,9 @@
 ;; stream and its accessors are unchanged, so existing callers keep working.
 (defenum SpannedToken
   (Spanned Token i64 i64))
+
+(define (spanned-token-new [tok : Token] [line : i64] [col : i64]) : SpannedToken
+  (SpannedToken.Spanned tok line col))
 
 (define (spanned-token-tok [s : SpannedToken]) : Token
   (match s

@@ -2,7 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
-(import "../string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 
@@ -25,11 +25,11 @@
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) root)
+          (set! items (svec.string-vec-push items root))
           items))]
     (begin
       (compiler-load-test-mkdir root)
@@ -64,11 +64,11 @@
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
@@ -113,11 +113,11 @@
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
     [path : String "target/lower_module_macro_vector_no_main.tl"]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     (begin
       (io.write-file
@@ -137,11 +137,11 @@
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
     [path : String "target/lower_direct_no_main_symbols.tl"]
-    [roots : svec.StringVector
+    [roots : svec.StringVec
       (let
-        [items : svec.StringVector (svec.new)]
+        [items : svec.StringVec (svec.string-vec-new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (set! items (svec.string-vec-push items "stdlib"))
           items))]
     (begin
       (io.write-file path "(define (no-main-direct-helper) : i64 7)")

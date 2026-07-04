@@ -210,7 +210,10 @@ fi
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
-assert_not_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat-pack"
+# str-cat's six-plus-operand path now packs operands through the vector-API
+# str-cat-pack step in CTFE (the native fast-path that used to inline it was
+# removed), so the pack step appears in the macro-expansion profile.
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat-pack arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/and arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=4"

@@ -21,7 +21,8 @@
   (Extern)
   (DefEnum)
   (DefStruct)
-  (DefMacro))
+  (DefMacro)
+  (GeneratedImport))
 
 (defenum DocItem
   (Item DocItemKind String String String))
@@ -44,7 +45,8 @@
     [(DocItemKind.Extern) 3]
     [(DocItemKind.DefEnum) 4]
     [(DocItemKind.DefStruct) 5]
-    [(DocItemKind.DefMacro) 6]))
+    [(DocItemKind.DefMacro) 6]
+    [(DocItemKind.GeneratedImport) 7]))
 
 (define (doc-kind-name [kind : DocItemKind]) : String
   (match kind
@@ -53,7 +55,8 @@
     [(DocItemKind.Extern) "extern"]
     [(DocItemKind.DefEnum) "defenum"]
     [(DocItemKind.DefStruct) "defstruct"]
-    [(DocItemKind.DefMacro) "defmacro"]))
+    [(DocItemKind.DefMacro) "defmacro"]
+    [(DocItemKind.GeneratedImport) "generated-module-import"]))
 
 (define (doc-extraction-module-doc [docs : DocExtraction]) : String
   (match docs

@@ -14075,20 +14075,36 @@
 ;; bool equality still uses the comparison/setcc path.
 (define (compiler-backend-bool-and-source) : String
   "(defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-       (and ,@(expr-list-tail args))
-       false)))
+  `(and-from (__and-args ,@args) 0))
+(defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (and-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
 (define (f [a : bool] [b : bool]) : bool (and a b))")
 
 (define (compiler-backend-bool-or-source) : String
   "(defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
-       true
-       (or ,@(expr-list-tail args)))))
+  `(or-from (__or-args ,@args) 0))
+(defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(ExprInt i)
+      (match carrier
+        [(ExprCall _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool false)
+            `(if ,(expr-list-nth elems i)
+               true
+               (or-from ,carrier ,(expr-int (+ i 1)))))]
+        [_ (expr-bool false)])]
+    [_ (expr-bool false)]))
 (define (f [a : bool] [b : bool]) : bool (or a b))")
 
 (define (compiler-backend-bool-eq-source) : String

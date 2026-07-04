@@ -8,13 +8,13 @@
 ;; enumeration fall back to the manifest entry source.
 (import stdlib.fs)
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import stdlib.string)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
 
 (defstruct PackageSourceList
-  (items svec.StringVector))
+  (items svec.StringVec))
 
 (defstruct PackageSourceSet
   (manifest-path String)
@@ -30,23 +30,23 @@
   (Ok PackageSourceList)
   (Err String))
 
-(define (package-source-list-from-vec [items : svec.StringVector]) : PackageSourceList
+(define (package-source-list-from-vec [items : svec.StringVec]) : PackageSourceList
   (PackageSourceList items))
 
 (define (package-source-list-new) : PackageSourceList
-  (package-source-list-from-vec (svec.new)))
+  (package-source-list-from-vec (svec.string-vec-new)))
 
-(define (package-source-list-items [sources : PackageSourceList]) : svec.StringVector
+(define (package-source-list-items [sources : PackageSourceList]) : svec.StringVec
   (struct-get sources items))
 
 (define (package-source-list-len [sources : PackageSourceList]) : i64
-  (svec.len (& (struct-get sources items))))
+  (svec.string-vec-len (& (struct-get sources items))))
 
 (define (package-source-list-get
   [sources : PackageSourceList]
   [index : i64]
   [fallback : String]) : String
-  (svec.get (& (struct-get sources items)) index fallback))
+  (svec.string-vec-get (& (struct-get sources items)) index fallback))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -77,13 +77,13 @@
         (< left-len right-len)))))
 
 (define (package-source-vec-insert-slot-from
-  [items : svec.StringVector]
+  [items : svec.StringVec]
   [value : String]
   [index : i64]) : i64
-  (if (>= index (svec.len (& items)))
+  (if (>= index (svec.string-vec-len (& items)))
     index
     (let
-      [head : String (svec.get (& items) index "")]
+      [head : String (svec.string-vec-get (& items) index "")]
       (if (string.eq head value)
         -1
         (if (package-source-string-less? value head)
@@ -91,30 +91,42 @@
           (package-source-vec-insert-slot-from items value (+ index 1)))))))
 
 (define (package-source-vec-copy-range
-  [items : svec.StringVector]
-  [out : (&mut out svec.StringVector)]
+  [items : svec.StringVec]
+  [out : svec.StringVec]
   [start : i64]
-  [end : i64]) : unit
+  [end : i64]) : svec.StringVec
   (let
     [idx : i64 start]
-    (while (< idx end)
-      (begin
-        (svec.push out (svec.get (& items) idx ""))
-        (set! idx (+ idx 1))))))
+    [cur : svec.StringVec out]
+    (begin
+      (while (< idx end)
+        (begin
+          (set!
+            cur
+            (svec.string-vec-push cur (svec.string-vec-get (& items) idx "")))
+          (set! idx (+ idx 1))))
+      cur)))
 
 (define (package-source-vec-insert-at
-  [items : svec.StringVector]
+  [items : svec.StringVec]
   [value : String]
-  [slot : i64]) : svec.StringVector
+  [slot : i64]) : svec.StringVec
   (let
-    [out : svec.StringVector (svec.with-capacity (+ (svec.len (& items)) 1))]
+    [out : svec.StringVec
+      (svec.string-vec-with-capacity (+ (svec.string-vec-len (& items)) 1))]
     (begin
-      (package-source-vec-copy-range items (&mut out) 0 slot)
-      (svec.push (&mut out) value)
-      (package-source-vec-copy-range items (&mut out) slot (svec.len (& items)))
+      (set! out (package-source-vec-copy-range items out 0 slot))
+      (set! out (svec.string-vec-push out value))
+      (set!
+        out
+        (package-source-vec-copy-range
+          items
+          out
+          slot
+          (svec.string-vec-len (& items))))
       out)))
 
-(define (package-source-vec-insert [items : svec.StringVector] [value : String]) : svec.StringVector
+(define (package-source-vec-insert [items : svec.StringVec] [value : String]) : svec.StringVec
   (let
     [slot : i64 (package-source-vec-insert-slot-from items value 0)]
     (if (< slot 0)
@@ -217,19 +229,19 @@
 
 (define (package-source-vec-insert-self-test?) : bool
   (let
-    [items : svec.StringVector
+    [items : svec.StringVec
       (package-source-vec-insert
         (package-source-vec-insert
           (package-source-vec-insert
-            (package-source-vec-insert (svec.new) "src/z.tl")
+            (package-source-vec-insert (svec.string-vec-new) "src/z.tl")
             "src/a.tl")
           "src/m.tl")
         "src/a.tl")]
     (and
-      (= (svec.len (& items)) 3)
-      (string.eq (svec.get (& items) 0 "") "src/a.tl")
-      (string.eq (svec.get (& items) 1 "") "src/m.tl")
-      (string.eq (svec.get (& items) 2 "") "src/z.tl"))))
+      (= (svec.string-vec-len (& items)) 3)
+      (string.eq (svec.string-vec-get (& items) 0 "") "src/a.tl")
+      (string.eq (svec.string-vec-get (& items) 1 "") "src/m.tl")
+      (string.eq (svec.string-vec-get (& items) 2 "") "src/z.tl"))))
 
 (test
   package-source-vector-insert-sorts-and-dedups
@@ -240,7 +252,7 @@
 (define (package-source-sort-entries-from
   [entries : fs.FsStringVector]
   [index : i64]
-  [acc : svec.StringVector]) : svec.StringVector
+  [acc : svec.StringVec]) : svec.StringVec
   (if (>= index (fs.fs-string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
@@ -250,13 +262,13 @@
         acc
         (fs.fs-string-vector-get (& entries) index "")))))
 
-(define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.StringVector
-  (package-source-sort-entries-from entries 0 (svec.new)))
+(define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.StringVec
+  (package-source-sort-entries-from entries 0 (svec.string-vec-new)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
     [entries : fs.FsStringVector (fs.fs-string-vector-new)]
-    [items : svec.StringVector
+    [items : svec.StringVec
       (begin
         (fs.fs-string-vector-push! (&mut entries) "zeta")
         (fs.fs-string-vector-push! (&mut entries) "alpha")
@@ -265,10 +277,10 @@
     (match items
       [_
         (and
-          (= (svec.len (& items)) 3)
-          (string.eq (svec.get (& items) 0 "") "alpha")
-          (string.eq (svec.get (& items) 1 "") "middle")
-          (string.eq (svec.get (& items) 2 "") "zeta"))])))
+          (= (svec.string-vec-len (& items)) 3)
+          (string.eq (svec.string-vec-get (& items) 0 "") "alpha")
+          (string.eq (svec.string-vec-get (& items) 1 "") "middle")
+          (string.eq (svec.string-vec-get (& items) 2 "") "zeta"))])))
 
 (test
   package-source-sorts-directory-entries-before-scanning
@@ -317,16 +329,16 @@
         (package-source-root-join
           (struct-get source-set manifest-dir)
           (struct-get manifest entry)))]
-    [items : svec.StringVector (svec.new)]
+    [items : svec.StringVec (svec.string-vec-new)]
     (begin
-      (svec.push (&mut items) entry)
+      (set! items (svec.string-vec-push items entry))
       (package-source-list-from-vec items))))
 
 (define (package-source-scan-dir
   [command : String]
   [root : String]
   [relative : String]
-  [acc : svec.StringVector]) : ResultPackageSourceList
+  [acc : svec.StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
@@ -344,7 +356,7 @@
   [command : String]
   [root : String]
   [relative : String]
-  [acc : svec.StringVector]) : ResultPackageSourceList
+  [acc : svec.StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
@@ -376,14 +388,14 @@
           root
           ""
           (package-source-sort-entries entries)
-          (svec.new))])))
+          (svec.string-vec-new))])))
 
 (define (package-source-scan-one
   [command : String]
   [root : String]
   [relative : String]
   [name : String]
-  [acc : svec.StringVector]) : ResultPackageSourceList
+  [acc : svec.StringVec]) : ResultPackageSourceList
   (if (package-source-skip-dir? name)
     (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
     (let
@@ -411,16 +423,16 @@
   [command : String]
   [root : String]
   [relative : String]
-  [entries : svec.StringVector]
+  [entries : svec.StringVec]
   [index : i64]
-  [acc : svec.StringVector]) : ResultPackageSourceList
-  (if (>= index (svec.len (& entries)))
+  [acc : svec.StringVec]) : ResultPackageSourceList
+  (if (>= index (svec.string-vec-len (& entries)))
     (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
     (match (package-source-scan-one
       command
       root
       relative
-      (svec.get (& entries) index "")
+      (svec.string-vec-get (& entries) index "")
       acc)
       [(ResultPackageSourceList.Err message)
         (ResultPackageSourceList.Err message)]
@@ -437,8 +449,8 @@
   [command : String]
   [root : String]
   [relative : String]
-  [entries : svec.StringVector]
-  [acc : svec.StringVector]) : ResultPackageSourceList
+  [entries : svec.StringVec]
+  [acc : svec.StringVec]) : ResultPackageSourceList
   (package-source-scan-entries-from command root relative entries 0 acc))
 
 (define (package-source-discover-for
@@ -472,4 +484,8 @@
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
     [root : String (struct-get source-set manifest-dir)]
-    (package-source-scan-optional-dir command root "tests" (svec.new))))
+    (package-source-scan-optional-dir
+      command
+      root
+      "tests"
+      (svec.string-vec-new))))

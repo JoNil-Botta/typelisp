@@ -4,7 +4,7 @@
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
 (import stdlib.io)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -14,8 +14,8 @@
 (import stdlib.string)
 
 (defenum SelfhostCheckConfig
-  (File String svec.StringVector)
-  (Package String bool svec.StringVector))
+  (File String svec.StringVec)
+  (Package String bool svec.StringVec))
 
 (defenum ResultSelfhostCheckConfig
   (Ok SelfhostCheckConfig)
@@ -29,7 +29,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVector]) : ResultSelfhostCheckConfig
+  [stdlib-roots : svec.StringVec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ResultSelfhostCheckConfig.Err
@@ -46,7 +46,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVector]) : ResultSelfhostCheckConfig
+  [stdlib-roots : svec.StringVec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -69,9 +69,11 @@
               manifest-path
               has-manifest
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
@@ -107,7 +109,14 @@
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args start count "" false "" false (svec.new)))
+  (selfhost-check-parse-args
+    start
+    count
+    ""
+    false
+    ""
+    false
+    (svec.string-vec-new)))
 
 (define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
@@ -123,13 +132,13 @@
 
 (define (selfhost-check-file-doctests
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (selfhost-check-doctest-report
     (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
 
 (define (selfhost-check-package-doctests
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-doctest-report
@@ -141,7 +150,7 @@
 
 (define (selfhost-check-file
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(ResultCompilerCheck.Ok _)
       (let
@@ -178,7 +187,7 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (match (package-source-discover-for "check" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin

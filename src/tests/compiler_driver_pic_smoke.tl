@@ -1,14 +1,14 @@
 ;; compiler_driver_pic_smoke.tl - Driver-level smoke for no-entry PIC images.
 (import stdlib.string)
-(import string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "../compiler_driver_core.tl")
 
-(define (compiler-driver-pic-smoke-roots) : svec.StringVector
+(define (compiler-driver-pic-smoke-roots) : svec.StringVec
   (let
-    [roots : svec.StringVector (svec.new)]
+    [roots : svec.StringVec (svec.string-vec-new)]
     (begin
-      (svec.push (&mut roots) "stdlib")
-      (svec.push (&mut roots) "../stdlib")
+      (set! roots (svec.string-vec-push roots "stdlib"))
+      (set! roots (svec.string-vec-push roots "../stdlib"))
       roots)))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool

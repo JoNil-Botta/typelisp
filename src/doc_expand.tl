@@ -2,7 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import sym_i64_env)
-(import "string_vec_core.tl" module string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "doc_render.tl")
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
@@ -735,7 +735,7 @@
 (define (doc-expanded-generated-modules-from-loaded-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]) : ResultDocExpandedModules
+  [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
   (let
     [macro-examples : DocMacroImportExampleList
       (doc-macro-import-examples-from-decls decls DocMacroImportExampleList.Nil)]
@@ -865,7 +865,7 @@
 (define (doc-expanded-generated-modules-from-source-docs
   [source-path : String]
   [docs : DocExtraction]
-  [stdlib-roots : svec.StringVector]) : ResultDocExpandedModules
+  [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
   (match docs
     [(DocExtraction.Extraction module-doc _)
       (let
@@ -889,7 +889,10 @@
 (define (doc-expanded-generated-modules-from-source-docs-default
   [source-path : String]
   [docs : DocExtraction]) : ResultDocExpandedModules
-  (doc-expanded-generated-modules-from-source-docs source-path docs (svec.new)))
+  (doc-expanded-generated-modules-from-source-docs
+    source-path
+    docs
+    (svec.string-vec-new)))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)
@@ -918,12 +921,12 @@
     "doc_expand_smoke.tl"
     (doc-expand-smoke-source)
     (sym_i64_env.sym-i64-empty)
-    (svec.new))
+    (svec.string-vec-new))
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-expanded-generated-modules-from-loaded-decls
         decls
         paths
-        (svec.new))
+        (svec.string-vec-new))
         [(ResultDocExpandedModules.Ok modules)
           (let
             [rendered : String (doc-render-module-graph-markdown modules)]

@@ -4,13 +4,13 @@
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
 (import stdlib.io)
-(import string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
 
 (defenum FmtConfig
-  (File bool svec.StringVector)
+  (File bool svec.StringVec)
   (Package bool String bool))
 
 (defenum ResultFmtConfig
@@ -98,19 +98,19 @@
 (define (fmt-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
-(define (fmt-svec-push [items : svec.StringVector] [value : String]) : svec.StringVector
+(define (fmt-svec-push [items : svec.StringVec] [value : String]) : svec.StringVec
   (let
-    [out : svec.StringVector items]
+    [out : svec.StringVec items]
     (begin
-      (svec.push (&mut out) value)
+      (set! out (svec.string-vec-push out value))
       out)))
 
 (define (fmt-config-finish
   [check : bool]
-  [paths : svec.StringVector]
+  [paths : svec.StringVec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
-  (if (svec.is-empty? (& paths))
+  (if (svec.string-vec-is-empty? (& paths))
     (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
     (if has-manifest
       (ResultFmtConfig.Err
@@ -121,7 +121,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : svec.StringVector]
+  [paths : svec.StringVec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -165,7 +165,7 @@
             has-manifest)]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (fmt-parse-args start count false (svec.new) "" false))
+  (fmt-parse-args start count false (svec.string-vec-new) "" false))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -190,13 +190,13 @@
 
 (define (fmt-files-from
   [check : bool]
-  [paths : svec.StringVector]
+  [paths : svec.StringVec]
   [index : i64]
   [status : i64]) : i64
-  (if (>= index (svec.len (& paths)))
+  (if (>= index (svec.string-vec-len (& paths)))
     status
     (let
-      [path : String (svec.get (& paths) index "")]
+      [path : String (svec.string-vec-get (& paths) index "")]
       [file-status : i64 (fmt-format-file check path)]
       (fmt-files-from
         check
@@ -206,7 +206,7 @@
           file-status
           status)))))
 
-(define (fmt-files [check : bool] [paths : svec.StringVector] [status : i64]) : i64
+(define (fmt-files [check : bool] [paths : svec.StringVec] [status : i64]) : i64
   (fmt-files-from check paths 0 status))
 
 (define (fmt-package-files-from

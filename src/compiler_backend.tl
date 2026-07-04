@@ -42932,45 +42932,96 @@ tl_memchr:
 (define (compiler-backend-peephole-owners-empty) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners "" "" "" "" "" "" "" "" "" "" "" "" "" ""))
 
+;; Dense index 0..13 for the 14 general-purpose registers owned by the register
+;; allocator, or -1 for anything else (immediates, stack slots, %rbp/%rsp/%rip,
+;; xmm/untracked registers). Register operands are a fixed tiny set, so classify
+;; them by their bytes in a single pass instead of up to 14 sequential
+;; `string.eq` calls: this is the hot dispatch behind the peephole owner map and
+;; the byte scan short-circuits the overwhelmingly common non-register operand on
+;; the first one or two bytes. The mapping is exact (same accept set, same
+;; ordering as the string-compare chains it replaces), so owner-map decisions --
+;; and therefore emitted assembly -- stay byte-identical.
+(define (compiler-backend-peephole-reg-index [reg : String]) : i64
+  (let
+    [n : i64 (string.string-length reg)]
+    (if (if (< n 3)
+      true
+      (> n 4))
+      -1
+      (let
+        [data : (Ptr u8)
+          (unsafe
+            (string-data reg))]
+        [b0 : i64 (compiler-backend-peephole-byte-at data 0)]
+        [b1 : i64 (compiler-backend-peephole-byte-at data 1)]
+        [b2 : i64 (compiler-backend-peephole-byte-at data 2)]
+        ;; every tracked register is "%r..": bail on the first mismatched byte.
+        (if (if (not (= b0 37))
+          true
+          (not (= b1 114)))
+          -1
+          (if (= n 3)
+            ;; "%r8" / "%r9"
+            (cond [(= b2 56) 6] [(= b2 57) 7] [else -1])
+            ;; n == 4: third byte selects the register family, fourth disambiguates.
+            (let
+              [b3 : i64 (compiler-backend-peephole-byte-at data 3)]
+              (cond
+                [(= b2 97)
+                  (if (= b3 120)
+                    0
+                    -1)]
+                [(= b2 99)
+                  (if (= b3 120)
+                    1
+                    -1)]
+                [(= b2 100) (cond [(= b3 120) 2] [(= b3 105) 5] [else -1])]
+                [(= b2 98)
+                  (if (= b3 120)
+                    3
+                    -1)]
+                [(= b2 115)
+                  (if (= b3 105)
+                    4
+                    -1)]
+                [(= b2 49)
+                  (cond
+                    [(= b3 48) 8]
+                    [(= b3 49) 9]
+                    [(= b3 50) 10]
+                    [(= b3 51) 11]
+                    [(= b3 52) 12]
+                    [(= b3 53) 13]
+                    [else -1])]
+                [else -1]))))))))
+
 ;; True iff `operand` is exactly one of the 14 general-purpose registers owned
 ;; by the register allocator. %rbp and %rsp are deliberately excluded.
 (define (compiler-backend-peephole-owner-reg? [operand : String]) : bool
-  (or
-    (string.eq operand "%rax")
-    (string.eq operand "%rcx")
-    (string.eq operand "%rdx")
-    (string.eq operand "%rbx")
-    (string.eq operand "%rsi")
-    (string.eq operand "%rdi")
-    (string.eq operand "%r8")
-    (string.eq operand "%r9")
-    (string.eq operand "%r10")
-    (string.eq operand "%r11")
-    (string.eq operand "%r12")
-    (string.eq operand "%r13")
-    (string.eq operand "%r14")
-    (string.eq operand "%r15")))
+  (>= (compiler-backend-peephole-reg-index operand) 0))
 
 ;; Slot currently mirrored by `reg`, or "" if unknown / `reg` is not tracked.
 (define (compiler-backend-peephole-owners-get
   [owners : CompilerBackendPeepholeOwners]
   [reg : String]) : String
-  (cond
-    [(string.eq reg "%rax") (struct-get owners rax)]
-    [(string.eq reg "%rcx") (struct-get owners rcx)]
-    [(string.eq reg "%rdx") (struct-get owners rdx)]
-    [(string.eq reg "%rbx") (struct-get owners rbx)]
-    [(string.eq reg "%rsi") (struct-get owners rsi)]
-    [(string.eq reg "%rdi") (struct-get owners rdi)]
-    [(string.eq reg "%r8") (struct-get owners r8)]
-    [(string.eq reg "%r9") (struct-get owners r9)]
-    [(string.eq reg "%r10") (struct-get owners r10)]
-    [(string.eq reg "%r11") (struct-get owners r11)]
-    [(string.eq reg "%r12") (struct-get owners r12)]
-    [(string.eq reg "%r13") (struct-get owners r13)]
-    [(string.eq reg "%r14") (struct-get owners r14)]
-    [(string.eq reg "%r15") (struct-get owners r15)]
-    [else ""]))
+  (let
+    [idx : i64 (compiler-backend-peephole-reg-index reg)]
+    (cond
+      [(= idx 0) (struct-get owners rax)]
+      [(= idx 1) (struct-get owners rcx)]
+      [(= idx 2) (struct-get owners rdx)]
+      [(= idx 3) (struct-get owners rbx)]
+      [(= idx 4) (struct-get owners rsi)]
+      [(= idx 5) (struct-get owners rdi)]
+      [(= idx 6) (struct-get owners r8)]
+      [(= idx 7) (struct-get owners r9)]
+      [(= idx 8) (struct-get owners r10)]
+      [(= idx 9) (struct-get owners r11)]
+      [(= idx 10) (struct-get owners r12)]
+      [(= idx 11) (struct-get owners r13)]
+      [(= idx 12) (struct-get owners r14)]
+      [(= idx 13) (struct-get owners r15)]
+      [else ""])))
 
 ;; The first tracked GP register whose mirrored slot equals `slot`, other than
 ;; `exclude`, or "" if none. Drives cross-register reload reuse: a redundant
@@ -42985,64 +43036,24 @@ tl_memchr:
   [exclude : String]) : String
   (if (string.eq slot "")
     ""
-    (cond
-      [(and
-          (not (string.eq exclude "%rax"))
-          (string.eq (struct-get owners rax) slot))
-        "%rax"]
-      [(and
-          (not (string.eq exclude "%rcx"))
-          (string.eq (struct-get owners rcx) slot))
-        "%rcx"]
-      [(and
-          (not (string.eq exclude "%rdx"))
-          (string.eq (struct-get owners rdx) slot))
-        "%rdx"]
-      [(and
-          (not (string.eq exclude "%rbx"))
-          (string.eq (struct-get owners rbx) slot))
-        "%rbx"]
-      [(and
-          (not (string.eq exclude "%rsi"))
-          (string.eq (struct-get owners rsi) slot))
-        "%rsi"]
-      [(and
-          (not (string.eq exclude "%rdi"))
-          (string.eq (struct-get owners rdi) slot))
-        "%rdi"]
-      [(and
-          (not (string.eq exclude "%r8"))
-          (string.eq (struct-get owners r8) slot))
-        "%r8"]
-      [(and
-          (not (string.eq exclude "%r9"))
-          (string.eq (struct-get owners r9) slot))
-        "%r9"]
-      [(and
-          (not (string.eq exclude "%r10"))
-          (string.eq (struct-get owners r10) slot))
-        "%r10"]
-      [(and
-          (not (string.eq exclude "%r11"))
-          (string.eq (struct-get owners r11) slot))
-        "%r11"]
-      [(and
-          (not (string.eq exclude "%r12"))
-          (string.eq (struct-get owners r12) slot))
-        "%r12"]
-      [(and
-          (not (string.eq exclude "%r13"))
-          (string.eq (struct-get owners r13) slot))
-        "%r13"]
-      [(and
-          (not (string.eq exclude "%r14"))
-          (string.eq (struct-get owners r14) slot))
-        "%r14"]
-      [(and
-          (not (string.eq exclude "%r15"))
-          (string.eq (struct-get owners r15) slot))
-        "%r15"]
-      [else ""])))
+    (let
+      [ex : i64 (compiler-backend-peephole-reg-index exclude)]
+      (cond
+        [(and (not (= ex 0)) (string.eq (struct-get owners rax) slot)) "%rax"]
+        [(and (not (= ex 1)) (string.eq (struct-get owners rcx) slot)) "%rcx"]
+        [(and (not (= ex 2)) (string.eq (struct-get owners rdx) slot)) "%rdx"]
+        [(and (not (= ex 3)) (string.eq (struct-get owners rbx) slot)) "%rbx"]
+        [(and (not (= ex 4)) (string.eq (struct-get owners rsi) slot)) "%rsi"]
+        [(and (not (= ex 5)) (string.eq (struct-get owners rdi) slot)) "%rdi"]
+        [(and (not (= ex 6)) (string.eq (struct-get owners r8) slot)) "%r8"]
+        [(and (not (= ex 7)) (string.eq (struct-get owners r9) slot)) "%r9"]
+        [(and (not (= ex 8)) (string.eq (struct-get owners r10) slot)) "%r10"]
+        [(and (not (= ex 9)) (string.eq (struct-get owners r11) slot)) "%r11"]
+        [(and (not (= ex 10)) (string.eq (struct-get owners r12) slot)) "%r12"]
+        [(and (not (= ex 11)) (string.eq (struct-get owners r13) slot)) "%r13"]
+        [(and (not (= ex 12)) (string.eq (struct-get owners r14) slot)) "%r14"]
+        [(and (not (= ex 13)) (string.eq (struct-get owners r15) slot)) "%r15"]
+        [else ""]))))
 
 ;; Owner map with `reg`'s slot set to `slot` ("" clears it). No-op when `reg`
 ;; is not a tracked register (e.g. an immediate or untracked register source).
@@ -43050,49 +43061,51 @@ tl_memchr:
   [owners : CompilerBackendPeepholeOwners]
   [reg : String]
   [slot : String]) : CompilerBackendPeepholeOwners
-  (CompilerBackendPeepholeOwners
-    (if (string.eq reg "%rax")
-      slot
-      (struct-get owners rax))
-    (if (string.eq reg "%rcx")
-      slot
-      (struct-get owners rcx))
-    (if (string.eq reg "%rdx")
-      slot
-      (struct-get owners rdx))
-    (if (string.eq reg "%rbx")
-      slot
-      (struct-get owners rbx))
-    (if (string.eq reg "%rsi")
-      slot
-      (struct-get owners rsi))
-    (if (string.eq reg "%rdi")
-      slot
-      (struct-get owners rdi))
-    (if (string.eq reg "%r8")
-      slot
-      (struct-get owners r8))
-    (if (string.eq reg "%r9")
-      slot
-      (struct-get owners r9))
-    (if (string.eq reg "%r10")
-      slot
-      (struct-get owners r10))
-    (if (string.eq reg "%r11")
-      slot
-      (struct-get owners r11))
-    (if (string.eq reg "%r12")
-      slot
-      (struct-get owners r12))
-    (if (string.eq reg "%r13")
-      slot
-      (struct-get owners r13))
-    (if (string.eq reg "%r14")
-      slot
-      (struct-get owners r14))
-    (if (string.eq reg "%r15")
-      slot
-      (struct-get owners r15))))
+  (let
+    [idx : i64 (compiler-backend-peephole-reg-index reg)]
+    (CompilerBackendPeepholeOwners
+      (if (= idx 0)
+        slot
+        (struct-get owners rax))
+      (if (= idx 1)
+        slot
+        (struct-get owners rcx))
+      (if (= idx 2)
+        slot
+        (struct-get owners rdx))
+      (if (= idx 3)
+        slot
+        (struct-get owners rbx))
+      (if (= idx 4)
+        slot
+        (struct-get owners rsi))
+      (if (= idx 5)
+        slot
+        (struct-get owners rdi))
+      (if (= idx 6)
+        slot
+        (struct-get owners r8))
+      (if (= idx 7)
+        slot
+        (struct-get owners r9))
+      (if (= idx 8)
+        slot
+        (struct-get owners r10))
+      (if (= idx 9)
+        slot
+        (struct-get owners r11))
+      (if (= idx 10)
+        slot
+        (struct-get owners r12))
+      (if (= idx 11)
+        slot
+        (struct-get owners r13))
+      (if (= idx 12)
+        slot
+        (struct-get owners r14))
+      (if (= idx 13)
+        slot
+        (struct-get owners r15)))))
 
 ;; Owner map with every register that mirrored `slot` reset to unknown. Used
 ;; when `slot` is written (its memory value changed) so stale mirrors are dropped.

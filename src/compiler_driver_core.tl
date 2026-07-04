@@ -8,6 +8,7 @@
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
+(import compiler_intern as ci)
 (import "compiler_load.tl")
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
@@ -36,6 +37,7 @@
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
+  (intern-state (Array ci.InternCompatState))
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
@@ -50,6 +52,8 @@
       (array.make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
+    [intern-cell : (Array ci.InternCompatState)
+      (array.make-array ci.InternCompatState 1)]
     [builtin-cell : (Array cbi.CompilerBuiltinIdsState)
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
@@ -58,12 +62,14 @@
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
+      (array-set! intern-cell 0 (ci.intern-compat-state-new))
       (array-set! builtin-cell 0 (cbi.state-new))
       (array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
+        intern-cell
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
@@ -136,6 +142,10 @@
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
+
+(define (compiler-driver-state-install-interns! [state : CompilerDriverState]) : unit
+  (ci.intern-compat-state-install!
+    (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -247,6 +257,24 @@
     (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
     (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
+(define (compiler-driver-state-capture-active-interns!
+  [state : CompilerDriverState]) : unit
+  (ci.intern-compat-state-capture-from-globals!
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-generation [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-generation
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-pool-len [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-pool-len
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-pool-data-addr
+  [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-pool-data-addr
+    (array-ref (struct-get state intern-state) 0)))
+
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
   (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
@@ -290,6 +318,7 @@
   [state : CompilerDriverState]) : unit
   (begin
     (compiler-driver-state-capture-active-pools! state)
+    (compiler-driver-state-capture-active-interns! state)
     (compiler-driver-state-capture-active-transients! state)
     (compiler-load-session-state-use! (struct-get state load-session))))
 
@@ -373,6 +402,7 @@
       (begin
         (compiler-load-session-reset-pools-with-pools! pools)
         (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
         (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
@@ -383,6 +413,7 @@
         ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (lower-arenas-release!)
+        (compiler-driver-state-capture-active-interns! state)
         (compiler-driver-state-capture-active-transients! state)))))
 
 (cfg
@@ -563,6 +594,19 @@
       [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
       [(CompilerBackendTarget.Windows)
         (compiler-driver-enable-windows-cfgs cfgs)])))
+
+(define (compiler-driver-state-target-cfgs
+  [state : CompilerDriverState]
+  [target : CompilerBackendTarget]
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (begin
+    (compiler-driver-state-install-interns! state)
+    (let
+      [target-cfgs : sym_i64_env.SymI64Env
+        (compiler-driver-target-cfgs target cfgs)]
+      (begin
+        (compiler-driver-state-capture-active-interns! state)
+        target-cfgs))))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -1508,6 +1552,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-with-runtime-with-pools
@@ -1624,6 +1669,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
@@ -1943,7 +1989,7 @@
         target
         stdlib-roots
         mode
-        (compiler-driver-target-cfgs target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs))
       target
       has-target
       mode
@@ -1969,7 +2015,7 @@
         target
         stdlib-roots
         mode
-        (compiler-driver-target-cfgs target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs))
       target
       has-target
       mode
@@ -2395,7 +2441,7 @@
       target
       stdlib-roots
       mode
-      (compiler-driver-target-cfgs target cfgs))
+      (compiler-driver-state-target-cfgs state target cfgs))
     opt-level))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg

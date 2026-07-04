@@ -3,8 +3,12 @@
 ; - level state lives inside one lexical with-arena scope
 ; - frame-only temporaries live inside a nested lexical with-arena scope
 ; - one frame result is cloned out of a first-class scratch arena with with-escape
+; - double-buffered frame arenas are reused only after phase-local values die
+; - event-driven unload destroys an atomic level arena only after users join
 (import stdlib.arena)
 (import stdlib.profile)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 
@@ -108,9 +112,62 @@
                   "level total score")
                 42)))))]
     (begin
-      (unsafe
-        (arena.destroy scratch))
+      (arena.destroy-safe! scratch)
       result)))
+
+(define (run-double-buffered-frames) : i64
+  (let
+    [frame-a : arena.Arena (arena.make)]
+    [frame-b : arena.Arena (arena.make)]
+    [phase-a0 : arena.ArenaPhase (arena.phase frame-a)]
+    [label-a0 : String (in-arena frame-a (append "frame:" (int->string 0)))]
+    [score-a0 : i64 (string-length (& label-a0))]
+    [phase-b0 : arena.ArenaPhase (arena.phase frame-b)]
+    [label-b1 : String (in-arena frame-b (append "frame:" (int->string 1)))]
+    [score-b1 : i64 (string-length (& label-b1))]
+    (begin
+      (arena.rewind-safe! phase-a0)
+      (let
+        [phase-a1 : arena.ArenaPhase (arena.phase frame-a)]
+        [label-a2 : String (in-arena frame-a (append "frame:" (int->string 2)))]
+        [score-a2 : i64 (string-length (& label-a2))]
+        (begin
+          (arena.rewind-safe! phase-b0)
+          (let
+            [phase-b1 : arena.ArenaPhase (arena.phase frame-b)]
+            [label-b3 : String
+              (in-arena frame-b (append "frame:" (int->string 3)))]
+            [score-b3 : i64 (string-length (& label-b3))]
+            [total : i64 (+ (+ score-a0 score-b1) (+ score-a2 score-b3))]
+            (begin
+              (arena.rewind-safe! phase-a1)
+              (arena.rewind-safe! phase-b1)
+              (arena.destroy-safe! frame-a)
+              (arena.destroy-safe! frame-b)
+              total)))))))
+
+(define (arena-lifetimes-join-i64 [worker : thread_i64.Handle]) : i64
+  (match (thread_i64.join worker)
+    [(thread_i64.I64JoinOk value) value]
+    [(thread_i64.I64JoinErr _) -1]))
+
+(define (run-event-driven-unload) : i64
+  (let
+    [level : arena.Arena (arena.make-atomic)]
+    [level-name : String (in-arena level (append "level:" "docks"))]
+    (match (thread_i64.spawn
+      (lambda () : i64
+        (string-length (& level-name))))
+      [(thread_i64.I64SpawnErr _) 1]
+      [(thread_i64.I64SpawnOk worker)
+        (let
+          [worker-score : i64 (arena-lifetimes-join-i64 worker)]
+          [name-score : i64 (string-length (& level-name))]
+          (begin
+            (arena.destroy-safe! level)
+            (if (and (= worker-score name-score) (= name-score 11))
+              42
+              2)))])))
 
 (define (run-game) : i64
   (let
@@ -121,7 +178,22 @@
 
 (test
   arena-lifetimes-cookbook
-  (assert-i64-eq (run-game) 42 "arena lifetime cookbook should pass"))
+  (begin
+    (assert-i64-eq (run-game) 42 "lexical arena lifetime cookbook")
+    (assert-i64-eq
+      (run-double-buffered-frames)
+      28
+      "double-buffered frame arenas")
+    (assert-i64-eq
+      (run-event-driven-unload)
+      42
+      "event-driven level unload after join")))
 
 (define (main) : i64
-  (run-game))
+  (let
+    [lexical : i64 (run-game)]
+    [double-buffered : i64 (run-double-buffered-frames)]
+    [unloaded : i64 (run-event-driven-unload)]
+    (if (and (= lexical 42) (= double-buffered 28) (= unloaded 42))
+      42
+      1)))

@@ -226,6 +226,11 @@ arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_u
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook_double_buffer_stale_reject.tl|-|use of moved value `previous`
+arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
+arena_cookbook_channel_unload_reject|check-fail|tests/safety/arena_cookbook_channel_unload_reject.tl|-|cannot prove atomic arena `level` is released after an owner-tagged value was sent to a channel
+arena_cookbook_unload_use_after_reject|check-fail|tests/safety/arena_cookbook_unload_use_after_reject.tl|-|use of moved value `name`
 arena_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
 arena_atomic_destroy_after_channel_send_reject|check-fail|tests/safety/arena_atomic_destroy_after_channel_send_reject.tl|-|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
 arena_atomic_destroy_value_use_after_reject|check-fail|tests/safety/arena_atomic_destroy_value_use_after_reject.tl|-|use of moved value `text`

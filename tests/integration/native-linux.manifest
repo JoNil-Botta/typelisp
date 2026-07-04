@@ -213,6 +213,7 @@ thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/a
 thread_safe_box_i64|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_make_atomic
 safe_threading_example|examples/safe_threading.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl
+arena_lifetimes_example|examples/arena_lifetimes.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl stdlib/test.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-

@@ -73,6 +73,57 @@
   (Miss TcTypeEnv)
   (Found AstType bool))
 
+(defenum TcTypeEnvScopedMarkerKind
+  (None)
+  (UnsafeDecl)
+  (CAbiFnptr)
+  (DefaultBoundary)
+  (Region)
+  (UnsafeContext)
+  (CleanupOwner)
+  (OrdinaryArenaOwner)
+  (AtomicArenaOwner)
+  (Other))
+
+(defstruct TcTypeEnvScopedSlot
+  (name-id i64)
+  (ty AstType)
+  (flags i64)
+  (marker-kind TcTypeEnvScopedMarkerKind)
+  (marker-kind-tag i64)
+  (scope-depth i64)
+  (generation i64))
+
+(defstruct TcTypeEnvScopedMark
+  (slot-count i64)
+  (mark-count i64)
+  (scope-depth i64)
+  (cache-generation i64))
+
+(defstruct TcTypeEnvScopedStack
+  (slots (Array TcTypeEnvScopedSlot))
+  (slot-count i64)
+  (marks (Array TcTypeEnvScopedMark))
+  (mark-count i64)
+  (scope-depth i64)
+  (cache-generation i64))
+
+(defstruct TcTypeEnvScopedSidecar
+  (persistent TcTypeEnv)
+  (stack TcTypeEnvScopedStack))
+
+(defstruct TcTypeEnvScopedSidecarMark
+  (persistent TcTypeEnv)
+  (stack-mark TcTypeEnvScopedMark))
+
+(defenum TcTypeEnvScopedLookup
+  (Missing)
+  (Found AstType bool bool TcTypeEnvScopedMarkerKind i64 i64))
+
+(defenum TcTypeEnvScopedMarkerLookup
+  (Missing)
+  (Found i64 AstType i64 i64))
+
 (defenum TcContext
   (TcContext
     AstProgram
@@ -3062,6 +3113,410 @@
         (AstType.Unit))
       name-id
       ty)))
+
+(define tc-type-env-scoped-flag-unsafe : i64
+  1)
+(define tc-type-env-scoped-flag-c-abi-fnptr : i64
+  2)
+(define tc-type-env-scoped-flag-marker : i64
+  4)
+
+(define (tc-type-env-scoped-capacity [capacity : i64]) : i64
+  (if (< capacity 1)
+    1
+    capacity))
+
+(define (tc-type-env-scoped-marker-kind-tag [kind : TcTypeEnvScopedMarkerKind]) : i64
+  (match kind
+    [(TcTypeEnvScopedMarkerKind.None) 0]
+    [(TcTypeEnvScopedMarkerKind.UnsafeDecl) 1]
+    [(TcTypeEnvScopedMarkerKind.CAbiFnptr) 2]
+    [(TcTypeEnvScopedMarkerKind.DefaultBoundary) 3]
+    [(TcTypeEnvScopedMarkerKind.Region) 4]
+    [(TcTypeEnvScopedMarkerKind.UnsafeContext) 5]
+    [(TcTypeEnvScopedMarkerKind.CleanupOwner) 6]
+    [(TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner) 7]
+    [(TcTypeEnvScopedMarkerKind.AtomicArenaOwner) 8]
+    [(TcTypeEnvScopedMarkerKind.Other) 9]))
+
+(define (tc-type-env-scoped-marker-kind-from-tag [tag : i64]) : TcTypeEnvScopedMarkerKind
+  (cond
+    [(= tag 0) TcTypeEnvScopedMarkerKind.None]
+    [(= tag 1) TcTypeEnvScopedMarkerKind.UnsafeDecl]
+    [(= tag 2) TcTypeEnvScopedMarkerKind.CAbiFnptr]
+    [(= tag 3) TcTypeEnvScopedMarkerKind.DefaultBoundary]
+    [(= tag 4) TcTypeEnvScopedMarkerKind.Region]
+    [(= tag 5) TcTypeEnvScopedMarkerKind.UnsafeContext]
+    [(= tag 6) TcTypeEnvScopedMarkerKind.CleanupOwner]
+    [(= tag 7) TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner]
+    [(= tag 8) TcTypeEnvScopedMarkerKind.AtomicArenaOwner]
+    [else TcTypeEnvScopedMarkerKind.Other]))
+
+(define (tc-type-env-scoped-marker-kind-same?
+  [left : TcTypeEnvScopedMarkerKind]
+  [right : TcTypeEnvScopedMarkerKind]) : bool
+  (=
+    (tc-type-env-scoped-marker-kind-tag left)
+    (tc-type-env-scoped-marker-kind-tag right)))
+
+(define (tc-type-env-scoped-flag? [flags : i64] [flag : i64]) : bool
+  (not (= (bit-and flags flag) 0)))
+
+(define (tc-type-env-scoped-slot-unsafe? [slot : TcTypeEnvScopedSlot]) : bool
+  (tc-type-env-scoped-flag?
+    (struct-get slot flags)
+    tc-type-env-scoped-flag-unsafe))
+
+(define (tc-type-env-scoped-slot-c-abi-fnptr? [slot : TcTypeEnvScopedSlot]) : bool
+  (tc-type-env-scoped-flag?
+    (struct-get slot flags)
+    tc-type-env-scoped-flag-c-abi-fnptr))
+
+(define (tc-type-env-scoped-slot-marker? [slot : TcTypeEnvScopedSlot]) : bool
+  (tc-type-env-scoped-flag?
+    (struct-get slot flags)
+    tc-type-env-scoped-flag-marker))
+
+(define (tc-type-env-scoped-stack-with-capacity
+  [slot-capacity : i64]
+  [mark-capacity : i64]) : TcTypeEnvScopedStack
+  (TcTypeEnvScopedStack
+    (array.make-array
+      TcTypeEnvScopedSlot
+      (tc-type-env-scoped-capacity slot-capacity))
+    0
+    (array.make-array
+      TcTypeEnvScopedMark
+      (tc-type-env-scoped-capacity mark-capacity))
+    0
+    0
+    0))
+
+(define (tc-type-env-scoped-stack-new) : TcTypeEnvScopedStack
+  (tc-type-env-scoped-stack-with-capacity 16 8))
+
+(define (tc-type-env-scoped-stack-len [stack : TcTypeEnvScopedStack]) : i64
+  (struct-get stack slot-count))
+
+(define (tc-type-env-scoped-stack-mark-count [stack : TcTypeEnvScopedStack]) : i64
+  (struct-get stack mark-count))
+
+(define (tc-type-env-scoped-stack-scope-depth [stack : TcTypeEnvScopedStack]) : i64
+  (struct-get stack scope-depth))
+
+(define (tc-type-env-scoped-stack-cache-generation
+  [stack : TcTypeEnvScopedStack]) : i64
+  (struct-get stack cache-generation))
+
+(define (tc-type-env-scoped-empty-slot) : TcTypeEnvScopedSlot
+  (TcTypeEnvScopedSlot 0 (AstType.Unit) 0 TcTypeEnvScopedMarkerKind.None 0 0 0))
+
+(define (tc-type-env-scoped-empty-mark) : TcTypeEnvScopedMark
+  (TcTypeEnvScopedMark 0 0 0 0))
+
+(define (tc-type-env-scoped-stack-reserve-slots!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [min-capacity : i64]) : unit
+  (begin
+    (while (< (array-length (struct-get stack slots)) min-capacity)
+      (array-push! (struct-get stack slots) (tc-type-env-scoped-empty-slot)))
+    unit))
+
+(define (tc-type-env-scoped-stack-reserve-marks!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [min-capacity : i64]) : unit
+  (begin
+    (while (< (array-length (struct-get stack marks)) min-capacity)
+      (array-push! (struct-get stack marks) (tc-type-env-scoped-empty-mark)))
+    unit))
+
+(define (tc-type-env-scoped-stack-push-slot!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [name-id : i64]
+  [ty : AstType]
+  [flags : i64]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
+  (let
+    [index : i64 (struct-get stack slot-count)]
+    (begin
+      (tc-type-env-scoped-stack-reserve-slots! stack (+ index 1))
+      (array-set!
+        (struct-get stack slots)
+        index
+        (TcTypeEnvScopedSlot
+          name-id
+          ty
+          flags
+          marker-kind
+          (tc-type-env-scoped-marker-kind-tag marker-kind)
+          (struct-get stack scope-depth)
+          (struct-get stack cache-generation)))
+      (set! (struct-get stack slot-count) (+ index 1)))))
+
+(define (tc-type-env-scoped-stack-bind-id!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [name-id : i64]
+  [ty : AstType]) : unit
+  (tc-type-env-scoped-stack-push-slot!
+    stack
+    name-id
+    ty
+    0
+    TcTypeEnvScopedMarkerKind.None))
+
+(define (tc-type-env-scoped-stack-bind-flags-id!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [name-id : i64]
+  [ty : AstType]
+  [flags : i64]) : unit
+  (tc-type-env-scoped-stack-push-slot!
+    stack
+    name-id
+    ty
+    flags
+    TcTypeEnvScopedMarkerKind.None))
+
+(define (tc-type-env-scoped-stack-bind-marker-id!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [name-id : i64]
+  [ty : AstType]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
+  (tc-type-env-scoped-stack-push-slot!
+    stack
+    name-id
+    ty
+    tc-type-env-scoped-flag-marker
+    marker-kind))
+
+(define (tc-type-env-scoped-clamp-count [value : i64] [current : i64]) : i64
+  (if (< value 0)
+    0
+    (if (> value current)
+      current
+      value)))
+
+(define (tc-type-env-scoped-stack-save!
+  [stack : (&mut stack TcTypeEnvScopedStack)]) : TcTypeEnvScopedMark
+  (let
+    [index : i64 (struct-get stack mark-count)]
+    [mark : TcTypeEnvScopedMark
+      (TcTypeEnvScopedMark
+        (struct-get stack slot-count)
+        index
+        (struct-get stack scope-depth)
+        (struct-get stack cache-generation))]
+    (begin
+      (tc-type-env-scoped-stack-reserve-marks! stack (+ index 1))
+      (array-set! (struct-get stack marks) index mark)
+      (set! (struct-get stack mark-count) (+ index 1))
+      (set! (struct-get stack scope-depth) (+ (struct-get stack scope-depth) 1))
+      mark)))
+
+(define (tc-type-env-scoped-stack-restore!
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [mark : TcTypeEnvScopedMark]) : unit
+  (begin
+    (set!
+      (struct-get stack slot-count)
+      (tc-type-env-scoped-clamp-count
+        (struct-get mark slot-count)
+        (struct-get stack slot-count)))
+    (set!
+      (struct-get stack mark-count)
+      (tc-type-env-scoped-clamp-count
+        (struct-get mark mark-count)
+        (struct-get stack mark-count)))
+    (set!
+      (struct-get stack scope-depth)
+      (tc-type-env-scoped-clamp-count
+        (struct-get mark scope-depth)
+        (struct-get stack scope-depth)))
+    (set!
+      (struct-get stack cache-generation)
+      (+ (struct-get stack cache-generation) 1))))
+
+(define (tc-type-env-scoped-stack-lookup-id-from
+  [stack : TcTypeEnvScopedStack]
+  [name-id : i64]
+  [index : i64]) : TcTypeEnvScopedLookup
+  (if (< index 0)
+    TcTypeEnvScopedLookup.Missing
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (if (= (struct-get slot name-id) name-id)
+        (TcTypeEnvScopedLookup.Found
+          (struct-get slot ty)
+          (tc-type-env-scoped-flag?
+            (struct-get slot flags)
+            tc-type-env-scoped-flag-unsafe)
+          (tc-type-env-scoped-flag?
+            (struct-get slot flags)
+            tc-type-env-scoped-flag-c-abi-fnptr)
+          (tc-type-env-scoped-marker-kind-from-tag
+            (struct-get slot marker-kind-tag))
+          (struct-get slot scope-depth)
+          (struct-get slot generation))
+        (tc-type-env-scoped-stack-lookup-id-from stack name-id (- index 1))))))
+
+(define (tc-type-env-scoped-stack-lookup-id
+  [stack : TcTypeEnvScopedStack]
+  [name-id : i64]) : TcTypeEnvScopedLookup
+  (tc-type-env-scoped-stack-lookup-id-from
+    stack
+    name-id
+    (- (tc-type-env-scoped-stack-len stack) 1)))
+
+(define (tc-type-env-scoped-stack-marker-lookup-from
+  [stack : TcTypeEnvScopedStack]
+  [marker-kind : TcTypeEnvScopedMarkerKind]
+  [index : i64]) : TcTypeEnvScopedMarkerLookup
+  (if (< index 0)
+    TcTypeEnvScopedMarkerLookup.Missing
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (if (and
+        (tc-type-env-scoped-flag?
+          (struct-get slot flags)
+          tc-type-env-scoped-flag-marker)
+        (=
+          (struct-get slot marker-kind-tag)
+          (tc-type-env-scoped-marker-kind-tag marker-kind)))
+        (TcTypeEnvScopedMarkerLookup.Found
+          (struct-get slot name-id)
+          (struct-get slot ty)
+          (struct-get slot scope-depth)
+          (struct-get slot generation))
+        (tc-type-env-scoped-stack-marker-lookup-from
+          stack
+          marker-kind
+          (- index 1))))))
+
+(define (tc-type-env-scoped-stack-marker-lookup
+  [stack : TcTypeEnvScopedStack]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedMarkerLookup
+  (tc-type-env-scoped-stack-marker-lookup-from
+    stack
+    marker-kind
+    (- (tc-type-env-scoped-stack-len stack) 1)))
+
+(define (tc-type-env-scoped-sidecar-new) : TcTypeEnvScopedSidecar
+  (TcTypeEnvScopedSidecar (tc-empty-env) (tc-type-env-scoped-stack-new)))
+
+(define (tc-type-env-scoped-sidecar-persistent
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
+  (struct-get sidecar persistent))
+
+(define (tc-type-env-scoped-sidecar-lookup-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]) : TcTypeEnvScopedLookup
+  (tc-type-env-scoped-stack-lookup-id (struct-get sidecar stack) name-id))
+
+(define (tc-type-env-scoped-sidecar-save!
+  [sidecar : (&mut sidecar TcTypeEnvScopedSidecar)]) : TcTypeEnvScopedMark
+  (tc-type-env-scoped-stack-save! (&mut (struct-get sidecar stack))))
+
+(define (tc-type-env-scoped-sidecar-mark
+  [sidecar : TcTypeEnvScopedSidecar]
+  [stack-mark : TcTypeEnvScopedMark]) : TcTypeEnvScopedSidecarMark
+  (TcTypeEnvScopedSidecarMark (struct-get sidecar persistent) stack-mark))
+
+(define (tc-type-env-scoped-sidecar-restore!
+  [sidecar : (&mut sidecar TcTypeEnvScopedSidecar)]
+  [mark : TcTypeEnvScopedSidecarMark]) : unit
+  (begin
+    (set! (struct-get sidecar persistent) (struct-get mark persistent))
+    (tc-type-env-scoped-stack-restore!
+      (&mut (struct-get sidecar stack))
+      (struct-get mark stack-mark))))
+
+(define (tc-type-env-scoped-sidecar-bind-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (let
+    [next : TcTypeEnvScopedSidecar sidecar]
+    (begin
+      (tc-type-env-scoped-stack-bind-id!
+        (&mut (struct-get next stack))
+        name-id
+        ty)
+      (set!
+        (struct-get next persistent)
+        (tc-bind-id (struct-get next persistent) name-id ty))
+      next)))
+
+(define (tc-type-env-scoped-sidecar-bind-unsafe-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (let
+    [next : TcTypeEnvScopedSidecar sidecar]
+    (begin
+      (tc-type-env-scoped-stack-bind-marker-id!
+        (&mut (struct-get next stack))
+        (tc-unsafe-decl-marker-id name-id)
+        (AstType.Unit)
+        TcTypeEnvScopedMarkerKind.UnsafeDecl)
+      (tc-type-env-scoped-stack-bind-flags-id!
+        (&mut (struct-get next stack))
+        name-id
+        ty
+        tc-type-env-scoped-flag-unsafe)
+      (set!
+        (struct-get next persistent)
+        (tc-bind-unsafe-id (struct-get next persistent) name-id ty))
+      next)))
+
+(define (tc-type-env-scoped-sidecar-bind-c-abi-fnptr-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (let
+    [next : TcTypeEnvScopedSidecar sidecar]
+    (begin
+      (tc-type-env-scoped-stack-bind-marker-id!
+        (&mut (struct-get next stack))
+        (tc-c-abi-fnptr-marker-id name-id)
+        (AstType.Unit)
+        TcTypeEnvScopedMarkerKind.CAbiFnptr)
+      (tc-type-env-scoped-stack-bind-flags-id!
+        (&mut (struct-get next stack))
+        name-id
+        ty
+        tc-type-env-scoped-flag-c-abi-fnptr)
+      (set!
+        (struct-get next persistent)
+        (tc-bind-c-abi-fnptr-id (struct-get next persistent) name-id ty))
+      next)))
+
+(define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (let
+    [next : TcTypeEnvScopedSidecar sidecar]
+    (begin
+      (tc-type-env-scoped-stack-bind-marker-id!
+        (&mut (struct-get next stack))
+        (tc-c-abi-fnptr-marker-id name-id)
+        (AstType.Unit)
+        TcTypeEnvScopedMarkerKind.CAbiFnptr)
+      (tc-type-env-scoped-stack-bind-marker-id!
+        (&mut (struct-get next stack))
+        (tc-unsafe-decl-marker-id name-id)
+        (AstType.Unit)
+        TcTypeEnvScopedMarkerKind.UnsafeDecl)
+      (tc-type-env-scoped-stack-bind-flags-id!
+        (&mut (struct-get next stack))
+        name-id
+        ty
+        (bit-or
+          tc-type-env-scoped-flag-unsafe
+          tc-type-env-scoped-flag-c-abi-fnptr))
+      (set!
+        (struct-get next persistent)
+        (tc-bind-unsafe-c-abi-fnptr-id (struct-get next persistent) name-id ty))
+      next)))
 
 (define (tc-c-abi-fnptr-marker-near-id?
   [env : TcTypeEnv]
@@ -13204,6 +13659,214 @@
         [(ResultTcUnit.Ok) true]
         [_ false]))))
 
+(define (tc-type-env-scoped-stack-grow-smoke?) : bool
+  (let
+    [stack : TcTypeEnvScopedStack (tc-type-env-scoped-stack-with-capacity 1 1)]
+    [a-id : i64 (tc-name-id "scoped-grow-a")]
+    [b-id : i64 (tc-name-id "scoped-grow-b")]
+    [c-id : i64 (tc-name-id "scoped-grow-c")]
+    (begin
+      (tc-type-env-scoped-stack-bind-id! (&mut stack) a-id (AstType.I64))
+      (let
+        [outer : TcTypeEnvScopedMark
+          (tc-type-env-scoped-stack-save! (&mut stack))]
+        (begin
+          (tc-type-env-scoped-stack-bind-id! (&mut stack) b-id (AstType.Bool))
+          (let
+            [inner : TcTypeEnvScopedMark
+              (tc-type-env-scoped-stack-save! (&mut stack))]
+            (begin
+              (tc-type-env-scoped-stack-bind-id!
+                (&mut stack)
+                c-id
+                (AstType.String))
+              (tc-type-env-scoped-stack-restore! (&mut stack) inner)
+              (let
+                [after-inner : bool
+                  (and
+                    (= (tc-type-env-scoped-stack-len stack) 2)
+                    (= (tc-type-env-scoped-stack-mark-count stack) 1)
+                    (= (tc-type-env-scoped-stack-scope-depth stack) 1)
+                    (match (tc-type-env-scoped-stack-lookup-id stack c-id)
+                      [(TcTypeEnvScopedLookup.Missing) true]
+                      [_ false])
+                    (match (tc-type-env-scoped-stack-lookup-id stack b-id)
+                      [(TcTypeEnvScopedLookup.Found
+                          (AstType.Bool)
+                          unsafe
+                          c-abi-fnptr
+                          _
+                          depth
+                          _)
+                        (and (not unsafe) (not c-abi-fnptr) (= depth 1))]
+                      [_ false]))]
+                (begin
+                  (tc-type-env-scoped-stack-restore! (&mut stack) outer)
+                  (and
+                    after-inner
+                    (= (tc-type-env-scoped-stack-len stack) 1)
+                    (= (tc-type-env-scoped-stack-mark-count stack) 0)
+                    (= (tc-type-env-scoped-stack-scope-depth stack) 0)
+                    (match (tc-type-env-scoped-stack-lookup-id stack b-id)
+                      [(TcTypeEnvScopedLookup.Missing) true]
+                      [_ false])
+                    (match (tc-type-env-scoped-stack-lookup-id stack a-id)
+                      [(TcTypeEnvScopedLookup.Found
+                          (AstType.I64)
+                          unsafe
+                          c-abi-fnptr
+                          marker-kind
+                          depth
+                          _)
+                        (and
+                          (not unsafe)
+                          (not c-abi-fnptr)
+                          (tc-type-env-scoped-marker-kind-same?
+                            marker-kind
+                            TcTypeEnvScopedMarkerKind.None)
+                          (= depth 0))]
+                      [_ false])))))))))))
+
+(define (tc-type-env-scoped-sidecar-smoke?) : bool
+  (let
+    [sidecar : TcTypeEnvScopedSidecar (tc-type-env-scoped-sidecar-new)]
+    [value-id : i64 (tc-name-id "scoped-value")]
+    [fn-id : i64 (tc-name-id "scoped-callback")]
+    (begin
+      (set!
+        sidecar
+        (tc-type-env-scoped-sidecar-bind-id sidecar value-id (AstType.I64)))
+      (let
+        [stack-mark : TcTypeEnvScopedMark
+          (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
+        [mark : TcTypeEnvScopedSidecarMark
+          (tc-type-env-scoped-sidecar-mark sidecar stack-mark)]
+        [generation-before : i64
+          (tc-type-env-scoped-stack-cache-generation (struct-get sidecar stack))]
+        (begin
+          (set!
+            sidecar
+            (tc-type-env-scoped-sidecar-bind-id sidecar value-id (AstType.Bool)))
+          (set!
+            sidecar
+            (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+              sidecar
+              fn-id
+              (AstType.I64)))
+          (let
+            [before-restore : bool
+              (and
+                (match (tc-type-env-scoped-sidecar-lookup-id sidecar value-id)
+                  [(TcTypeEnvScopedLookup.Found
+                      (AstType.Bool)
+                      unsafe
+                      c-abi-fnptr
+                      marker-kind
+                      depth
+                      generation)
+                    (and
+                      (not unsafe)
+                      (not c-abi-fnptr)
+                      (tc-type-env-scoped-marker-kind-same?
+                        marker-kind
+                        TcTypeEnvScopedMarkerKind.None)
+                      (= depth 1)
+                      (= generation generation-before))]
+                  [_ false])
+                (match (tc-type-env-scoped-sidecar-lookup-id sidecar fn-id)
+                  [(TcTypeEnvScopedLookup.Found
+                      (AstType.I64)
+                      unsafe
+                      c-abi-fnptr
+                      _
+                      depth
+                      generation)
+                    (and
+                      unsafe
+                      c-abi-fnptr
+                      (= depth 1)
+                      (= generation generation-before))]
+                  [_ false])
+                (match (tc-type-env-scoped-stack-marker-lookup
+                  (struct-get sidecar stack)
+                  TcTypeEnvScopedMarkerKind.UnsafeDecl)
+                  [(TcTypeEnvScopedMarkerLookup.Found
+                      marker-id
+                      (AstType.Unit)
+                      depth
+                      generation)
+                    (and
+                      (= marker-id (tc-unsafe-decl-marker-id fn-id))
+                      (= depth 1)
+                      (= generation generation-before))]
+                  [_ false])
+                (match (tc-lookup-id
+                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  value-id)
+                  [(ResultTcType.Ok (AstType.Bool)) true]
+                  [_ false])
+                (match (tc-lookup-unsafe-id
+                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  fn-id)
+                  [(ResultTcTypeUnsafe.Ok (AstType.I64) unsafe) unsafe]
+                  [_ false])
+                (tc-binding-c-abi-fnptr-id?
+                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  fn-id))]
+            (begin
+              (tc-type-env-scoped-sidecar-restore! (&mut sidecar) mark)
+              (and
+                before-restore
+                (= (tc-type-env-scoped-stack-len (struct-get sidecar stack)) 1)
+                (=
+                  (tc-type-env-scoped-stack-mark-count
+                    (struct-get sidecar stack))
+                  0)
+                (=
+                  (tc-type-env-scoped-stack-cache-generation
+                    (struct-get sidecar stack))
+                  (+ generation-before 1))
+                (match (tc-type-env-scoped-sidecar-lookup-id sidecar fn-id)
+                  [(TcTypeEnvScopedLookup.Missing) true]
+                  [_ false])
+                (match (tc-type-env-scoped-sidecar-lookup-id sidecar value-id)
+                  [(TcTypeEnvScopedLookup.Found
+                      (AstType.I64)
+                      unsafe
+                      c-abi-fnptr
+                      marker-kind
+                      depth
+                      _)
+                    (and
+                      (not unsafe)
+                      (not c-abi-fnptr)
+                      (tc-type-env-scoped-marker-kind-same?
+                        marker-kind
+                        TcTypeEnvScopedMarkerKind.None)
+                      (= depth 0))]
+                  [_ false])
+                (match (tc-lookup-id
+                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  value-id)
+                  [(ResultTcType.Ok (AstType.I64)) true]
+                  [_ false])
+                (match (tc-lookup-id
+                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  fn-id)
+                  [(ResultTcType.Err _) true]
+                  [_ false])))))))))
+
+(define (tc-type-env-scoped-stack-smoke?) : bool
+  (and
+    (tc-type-env-scoped-stack-grow-smoke?)
+    (tc-type-env-scoped-sidecar-smoke?)))
+
+(test
+  tc-type-env-scoped-stack
+  (if (tc-type-env-scoped-stack-smoke?)
+    unit
+    (io.panic "typecheck: scoped type env smoke failed")))
+
 (define (tc-type-env-walker-api-smoke?) : bool
   (let
     [lookup-base : TcTypeEnv
@@ -13284,6 +13947,7 @@
     (tc-type-env-local-cache-deep-scan-smoke?)
     (tc-type-env-local-cache-c-abi-fnptr-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
+    (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-walker-api-smoke?)))
 
 (define (tc-spmd-env-box-smoke?) : bool

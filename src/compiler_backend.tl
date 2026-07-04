@@ -14582,27 +14582,6 @@
   [elem-ty : AstType]
   [load-ty : AstType]
   [base-reg-in : String]) : ResultCompilerBackend
-  (compiler-backend-emit-load-from-gep-avoid
-    assignments
-    dst
-    base
-    offset
-    elem-ty
-    load-ty
-    base-reg-in
-    (compiler-backend-addr-scavenge-exclude)
-    0))
-
-(define (compiler-backend-emit-load-from-gep-avoid
-  [assignments : CompilerRegAssignmentList]
-  [dst : i64]
-  [base : CompilerIrValue]
-  [offset : CompilerIrValue]
-  [elem-ty : AstType]
-  [load-ty : AstType]
-  [base-reg-in : String]
-  [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
@@ -14622,7 +14601,11 @@
         [base-reg : String
           (if (string.eq base-reg-in "")
             (if (string.eq base-home "")
-              (compiler-backend-scavenge-reg dst protect protect-n "%r10")
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10")
               base-home)
             base-reg-in)]
         [addr : String (compiler-backend-base-address disp base-reg)]
@@ -14647,12 +14630,8 @@
                     dst
                     addr
                     load-ty
-                    (compiler-backend-scavenge-exclude-merge
-                      (compiler-backend-one-exclude base-reg)
-                      1
-                      protect
-                      protect-n)
-                    (+ 1 protect-n)))))]
+                    (compiler-backend-one-exclude base-reg)
+                    1))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
@@ -14684,12 +14663,8 @@
               base-home
               (compiler-backend-scavenge-reg
                 dst
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-one-exclude offset-home)
-                  1
-                  protect
-                  protect-n)
-                (+ 1 protect-n)
+                (compiler-backend-one-exclude offset-home)
+                1
                 "%r10"))
             base-reg-in)]
         [use-offset-home? : bool
@@ -14702,12 +14677,8 @@
             offset-home
             (compiler-backend-scavenge-reg
               dst
-              (compiler-backend-scavenge-exclude-merge
-                (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
-                7
-                protect
-                protect-n)
-              (+ 7 protect-n)
+              (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
+              7
               "%r8"))]
         [addr : String
           (compiler-backend-gep-index-address base-reg scale index-reg)]
@@ -14754,16 +14725,65 @@
                             dst
                             load-addr
                             load-ty
-                            (compiler-backend-scavenge-exclude-merge
-                              (compiler-backend-two-exclude base-reg index-reg)
-                              2
-                              protect
-                              protect-n)
-                            (+ 2 protect-n)))))))]
+                            (compiler-backend-two-exclude base-reg index-reg)
+                            2))))))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
+
+(define (compiler-backend-emit-load-from-gep-pair-first
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [load-ty : AstType]
+  [base-reg : String]
+  [sibling-home : String]) : ResultCompilerBackend
+  (match (compiler-backend-value-as-i64 offset)
+    [(option_i64.Some n)
+      (let
+        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [addr : String (compiler-backend-base-address disp base-reg)]
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          base
+          base-reg)
+          [(ResultCompilerBackend.Ok base-asm)
+            (ResultCompilerBackend.Ok
+              (if (compiler-backend-float-type? load-ty)
+                (string.append
+                  base-asm
+                  (compiler-backend-emit-load-float-address-to-var
+                    assignments
+                    dst
+                    addr
+                    load-ty))
+                (string.append
+                  base-asm
+                  ;; The pair head's emergency restore runs after both loads; if
+                  ;; this spilled first load borrows the sibling result home, the
+                  ;; restore clobbers the second load before its consumer.
+                  (compiler-backend-emit-load-scalar-address-to-var
+                    assignments
+                    dst
+                    addr
+                    load-ty
+                    (if (string.eq sibling-home "")
+                      (compiler-backend-one-exclude base-reg)
+                      (compiler-backend-two-exclude base-reg sibling-home))
+                    (if (string.eq sibling-home "")
+                      1
+                      2)))))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [(option_i64.None)
+      (ResultCompilerBackend.Err
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: non-immediate gep pair first load")))]))
 
 (define (compiler-backend-emit-load-from-gep-r10-live
   [assignments : CompilerRegAssignmentList]
@@ -14866,7 +14886,7 @@
             0
             1)
           "%r10"))]
-    (match (compiler-backend-emit-load-from-gep-avoid
+    (match (compiler-backend-emit-load-from-gep-pair-first
       assignments
       load-dst0
       base
@@ -14874,12 +14894,7 @@
       elem-ty0
       load-ty0
       base-reg
-      (if (string.eq dst1-home "")
-        (compiler-backend-addr-scavenge-exclude)
-        (compiler-backend-one-exclude dst1-home))
-      (if (string.eq dst1-home "")
-        0
-        1))
+      dst1-home)
       [(ResultCompilerBackend.Ok first-asm)
         (match (compiler-backend-emit-load-from-gep-r10-live
           assignments

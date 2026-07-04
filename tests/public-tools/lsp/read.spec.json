@@ -2,6 +2,7 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"form\"", "raw_contains": "(define (foo)"}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"form\"", "raw_contains": "(define (foo)"},
+    {"jsonpath_id": 3, "raw_contains": "\"error\"", "raw_contains": "No form found at position (line 10, col 0)", "raw_contains": "\"context\"", "raw_contains": "\"requestedLine\":10", "raw_contains": "\"requestedCol\":0", "raw_contains": "\"nearestFormName\":\"foo\"", "raw_contains": "\"lineText\":\"\""}
   ]
 }

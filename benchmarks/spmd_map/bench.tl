@@ -10,11 +10,11 @@
 ;# The array is kept small (fits in cache, modest memory) and the work is made
 ;# runtime-dominant by an outer repetition loop. The per-pass `r` term makes
 ;# each pass distinct so the compiler cannot hoist the kernel out of the loop,
-;# and the trip count `base-reps + (arg-count)` (arg-count is 1 with no extra
+;# and the trip count `base-reps + (io.arg-count)` (io.arg-count is 1 with no extra
 ;# arguments, matching C `argc`) keeps the result deterministic while
 ;# preventing whole-loop constant folding.
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define array-len : i64
   4096)
@@ -35,7 +35,7 @@
     [a : (Array i64) (array.make-array i64 array-len)]
     [b : (Array i64) (array.make-array i64 array-len)]
     [out : (Array i64) (array.make-array i64 array-len)]
-    [reps : i64 (+ base-reps (arg-count))]
+    [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin

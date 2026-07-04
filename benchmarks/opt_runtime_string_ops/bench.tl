@@ -1,16 +1,16 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (string-ops-round [text : String] [suffix : String] [span : i64]) : i64
   (let
-    [n : i64 (string-length text)]
-    [empty : String (substring text 0 0)]
-    [short : String (substring text 0 4)]
-    [tail : String (substring text (- n span) span)]
-    [left : String (append empty short)]
-    [right : String (append tail suffix)]
-    [joined : String (append left right)]
-    (+ (string-length joined) (string-length tail))))
+    [n : i64 (string.string-length text)]
+    [empty : String (string.substring text 0 0)]
+    [short : String (string.substring text 0 4)]
+    [tail : String (string.substring text (- n span) span)]
+    [left : String (string.append empty short)]
+    [right : String (string.append tail suffix)]
+    [joined : String (string.append left right)]
+    (+ (string.string-length joined) (string.string-length tail))))
 
 (define (string-ops-repeat [text : String] [suffix : String] [rounds : i64]) : i64
   (let
@@ -26,9 +26,9 @@
 
 (define (main) : i64
   (let
-    [text : String (arg 1)]
-    [suffix : String (arg 2)]
-    [rounds : i64 (>int (arg 3))]
+    [text : String (io.arg 1)]
+    [suffix : String (io.arg 2)]
+    [rounds : i64 (string.>int (io.arg 3))]
     (begin
-      (print (string-ops-repeat text suffix rounds))
+      (io.print (string-ops-repeat text suffix rounds))
       0)))

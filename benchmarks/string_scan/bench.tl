@@ -8,11 +8,11 @@
 ;# small non-negative code that matches C `(unsigned char)`; both programs
 ;# therefore produce the identical exit code on a given host.
 ;#
-;# The round count is `base-rounds + (arg-count)` (`arg-count` is 1 with no
+;# The round count is `base-rounds + (io.arg-count)` (`io.arg-count` is 1 with no
 ;# extra arguments, matching C `argc`), so the trip count is not a compile-time
 ;# constant. The hash accumulator is carried across rounds, so the per-round
 ;# scan is not loop-invariant and cannot be folded into a closed form.
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.string)
 
 (define scan-text : String
@@ -33,7 +33,7 @@
 (define (main) : i64
   (let
     [n : i64 (string.string-length scan-text)]
-    [rounds : i64 (+ base-rounds (arg-count))]
+    [rounds : i64 (+ base-rounds (io.arg-count))]
     [acc : i64 1]
     [r : i64 0]
     (begin

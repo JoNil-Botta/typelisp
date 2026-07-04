@@ -9,8 +9,8 @@
 ;# whole computation cannot be constant-folded. Results stay in `[0, prime)` so
 ;# the printed decimal matches the C baseline's `%lld`.
 (import stdlib.array)
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define qs-modulus : i64
   1000000007)
@@ -90,8 +90,8 @@
 
 (define (main) : i64
   (let
-    [n : i64 (>int (arg 1))]
-    [rounds : i64 (>int (arg 2))]
+    [n : i64 (string.>int (io.arg 1))]
+    [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (print (qs-bench n rounds))
+      (io.print (qs-bench n rounds))
       0)))

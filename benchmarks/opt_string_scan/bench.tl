@@ -1,17 +1,17 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (scan-once [text : String]) : i64
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     [acc : i64 0]
     (begin
       (while (< i n)
         (begin
-          (if (= (string-ref text i) 'a')
+          (if (= (string.string-ref text i) 'a')
             (set! acc (+ acc 3))
-            (if (= (string-ref text i) 'z')
+            (if (= (string.string-ref text i) 'z')
               (set! acc (+ acc 7))
               (set! acc (+ acc 1))))
           (set! i (+ i 1))))
@@ -30,8 +30,8 @@
 
 (define (main) : i64
   (let
-    [text : String (arg 1)]
-    [rounds : i64 (>int (arg 2))]
+    [text : String (io.arg 1)]
+    [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (print (scan-repeat text rounds))
+      (io.print (scan-repeat text rounds))
       0)))

@@ -19,8 +19,8 @@
 ;; self-contained. `main` evaluates `(+ 1 (* 2 3))` and returns 7: the inner
 ;; `(* 2 3)` is the nested argument, so it is evaluated first (to 6), then the
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (defenum SexprAtom
   (Int i64)
@@ -37,18 +37,18 @@
 (define (sexpr-head [s : Sexpr]) : SexprAtom
   (match s
     [(Sexpr.Cons h _) h]
-    [_ (panic "eval: car of a non-cons")]))
+    [_ (io.panic "eval: car of a non-cons")]))
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
   (match s
     [(Sexpr.Cons _ t) (box-get t)]
-    [_ (panic "eval: cdr of a non-cons")]))
+    [_ (io.panic "eval: cdr of a non-cons")]))
 
 (define (eval-atom [a : SexprAtom]) : i64
   (match a
     [(SexprAtom.Int n) n]
     [(SexprAtom.List nested) (eval-sexpr (box-get nested))]
-    [_ (panic "eval: not an evaluable atom")]))
+    [_ (io.panic "eval: not an evaluable atom")]))
 
 ;; eval-sexpr: the tree-walking interpreter. The `Cons` arm uses the nested
 ;; pattern to bind the operator symbol `name` directly from the head's `Sym`.
@@ -64,15 +64,15 @@
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
         (cond
-          [(eq name "+") (+ a b)]
-          [(eq name "-") (- a b)]
-          [(eq name "*") (* a b)]
-          [(eq name "/") (/ a b)]
-          [else (panic "eval: unknown operator")]))]
+          [(string.eq name "+") (+ a b)]
+          [(string.eq name "-") (- a b)]
+          [(string.eq name "*") (* a b)]
+          [(string.eq name "/") (/ a b)]
+          [else (io.panic "eval: unknown operator")]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested `SexprAtom.Sym` above did not match, so we land
     ;; here.
-    [_ (panic "eval: not an evaluable expression")]))
+    [_ (io.panic "eval: not an evaluable expression")]))
 
 ;; Build `(+ 1 (* 2 3))` as an Sexpr tree:
 ;;   (Sexpr.Cons (SexprAtom.Sym "+")

@@ -1,6 +1,6 @@
 (import stdlib.array)
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (fill [xs : (Array i64)] [n : i64]) : unit
   (let
@@ -23,9 +23,9 @@
 
 (define (main) : i64
   (let
-    [n : i64 (>int (arg 1))]
-    [xs : (Array i64) (array.make-array i64 (>int (arg 1)))]
+    [n : i64 (string.>int (io.arg 1))]
+    [xs : (Array i64) (array.make-array i64 (string.>int (io.arg 1)))]
     (begin
       (fill xs n)
-      (print (sum-array xs n))
+      (io.print (sum-array xs n))
       0)))

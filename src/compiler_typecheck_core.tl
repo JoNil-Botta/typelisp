@@ -2970,6 +2970,11 @@
   (array.make-array i64 262144))
 (define tc-unsafe-decl-marker-id-cache-gens : (Array i64)
   (array.make-array i64 262144))
+(define tc-marker-name-id-cache-epoch : i64
+  0)
+
+(define (tc-marker-name-id-cache-generation-token) : i64
+  (+ tc-marker-name-id-cache-epoch (intern-generation)))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
   (tc-marker-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
@@ -2978,7 +2983,7 @@
   (if (>= name-id 262144)
     (tc-unsafe-decl-marker-id-uncached name-id)
     (let
-      [gen : i64 (+ (intern-generation) 1)]
+      [gen : i64 (+ (tc-marker-name-id-cache-generation-token) 1)]
       (if (= (array-ref tc-unsafe-decl-marker-id-cache-gens name-id) gen)
         (array-ref tc-unsafe-decl-marker-id-cache name-id)
         (let
@@ -3022,7 +3027,7 @@
   (if (>= name-id 262144)
     (tc-c-abi-fnptr-marker-id-uncached name-id)
     (let
-      [gen : i64 (+ (intern-generation) 1)]
+      [gen : i64 (+ (tc-marker-name-id-cache-generation-token) 1)]
       (if (= (array-ref tc-c-abi-fnptr-marker-id-cache-gens name-id) gen)
         (array-ref tc-c-abi-fnptr-marker-id-cache name-id)
         (let
@@ -57880,6 +57885,20 @@
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin
+    (set!
+      tc-marker-name-id-cache-epoch
+      (+ tc-marker-name-id-cache-epoch 1000000))
+    (set! tc-default-boundary-id-cache-generation -1)
+    (set! tc-region-marker-id-cache-generation -1)
+    (set! tc-cleanup-owner-marker-id-cache-generation -1)
+    (set! tc-ordinary-arena-owner-marker-id-cache-generation -1)
+    (set! tc-atomic-arena-owner-marker-id-cache-generation -1)
+    (set! tc-return-type-id-cache-generation -1)
+    (set! tc-loop-target-id-cache-generation -1)
+    (set! tc-hygiene-global-boundary-id-cache-generation -1)
+    (set! tc-unsafe-marker-id-cache-generation -1)
+    (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
+    (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-marker-name-id-arena-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)

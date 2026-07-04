@@ -203,6 +203,112 @@
 (define intern-persistent-storage-enabled : bool
   false)
 
+(defstruct InternCompatState
+  (pool-slots (Array String))
+  (pool-qualified-slots (Array bool))
+  (pool-last-slash-slots (Array i64))
+  (pool-first-dot-slots (Array i64))
+  (pool-leading-dot-id-slots (Array i64))
+  (pool-module-id-slots (Array i64))
+  (pool-base-id-slots (Array i64))
+  (pool-count (Array i64))
+  (map-slots (Array InternSlot))
+  (map-ready (Array bool))
+  (reset-generation (Array i64))
+  (persistent-arena (Array i64))
+  (persistent-arena-floor-mark (Array i64))
+  (persistent-storage-enabled (Array bool)))
+
+(define (intern-compat-state-new) : InternCompatState
+  (let
+    [pool-count : (Array i64) (make-array i64 1)]
+    [map-ready : (Array bool) (make-array bool 1)]
+    [reset-generation : (Array i64) (make-array i64 1)]
+    [persistent-arena : (Array i64) (make-array i64 1)]
+    [persistent-arena-floor-mark : (Array i64) (make-array i64 1)]
+    [persistent-storage-enabled : (Array bool) (make-array bool 1)]
+    (begin
+      (array-set! pool-count 0 0)
+      (array-set! map-ready 0 false)
+      (array-set! reset-generation 0 0)
+      (array-set! persistent-arena 0 (tl_arena_make))
+      (array-set! persistent-arena-floor-mark 0 0)
+      (array-set! persistent-storage-enabled 0 false)
+      (InternCompatState
+        (make-array String 262144)
+        (make-array bool 262144)
+        (make-array i64 262144)
+        (make-array i64 262144)
+        (make-array i64 262144)
+        (make-array i64 262144)
+        (make-array i64 262144)
+        pool-count
+        (make-array InternSlot 262144)
+        map-ready
+        reset-generation
+        persistent-arena
+        persistent-arena-floor-mark
+        persistent-storage-enabled))))
+
+(define (intern-compat-state-pool-len [state : InternCompatState]) : i64
+  (array-ref (struct-get state pool-count) 0))
+
+(define (intern-compat-state-generation [state : InternCompatState]) : i64
+  (array-ref (struct-get state reset-generation) 0))
+
+(define (intern-compat-state-pool-data-addr [state : InternCompatState]) : i64
+  (cast
+    (unsafe
+      (ptr->int
+        (ptr-cast (array-data (struct-get state pool-slots)) : (Ptr u8))))
+    : i64))
+
+(define (intern-compat-state-install! [state : InternCompatState]) : unit
+  (begin
+    (set! intern-pool-slots (struct-get state pool-slots))
+    (set! intern-pool-qualified-slots (struct-get state pool-qualified-slots))
+    (set! intern-pool-last-slash-slots (struct-get state pool-last-slash-slots))
+    (set! intern-pool-first-dot-slots (struct-get state pool-first-dot-slots))
+    (set!
+      intern-pool-leading-dot-id-slots
+      (struct-get state pool-leading-dot-id-slots))
+    (set! intern-pool-module-id-slots (struct-get state pool-module-id-slots))
+    (set! intern-pool-base-id-slots (struct-get state pool-base-id-slots))
+    (set! intern-pool-count (array-ref (struct-get state pool-count) 0))
+    (set! intern-map-slots (struct-get state map-slots))
+    (set! intern-map-ready (array-ref (struct-get state map-ready) 0))
+    (set!
+      intern-reset-generation
+      (array-ref (struct-get state reset-generation) 0))
+    (set! intern-slice-cache0-ready false)
+    (set! intern-slice-cache1-ready false)
+    (set! intern-slice-cache2-ready false)
+    (set! intern-slice-cache3-ready false)
+    (set!
+      intern-persistent-arena
+      (array-ref (struct-get state persistent-arena) 0))
+    (set!
+      intern-persistent-arena-floor-mark
+      (array-ref (struct-get state persistent-arena-floor-mark) 0))
+    (set!
+      intern-persistent-storage-enabled
+      (array-ref (struct-get state persistent-storage-enabled) 0))))
+
+(define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
+  (begin
+    (array-set! (struct-get state pool-count) 0 intern-pool-count)
+    (array-set! (struct-get state map-ready) 0 intern-map-ready)
+    (array-set! (struct-get state reset-generation) 0 intern-reset-generation)
+    (array-set! (struct-get state persistent-arena) 0 intern-persistent-arena)
+    (array-set!
+      (struct-get state persistent-arena-floor-mark)
+      0
+      intern-persistent-arena-floor-mark)
+    (array-set!
+      (struct-get state persistent-storage-enabled)
+      0
+      intern-persistent-storage-enabled)))
+
 (define (intern-persistent-storage-enable!) : unit
   (set! intern-persistent-storage-enabled true))
 

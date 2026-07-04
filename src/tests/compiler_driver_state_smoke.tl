@@ -1102,6 +1102,79 @@
                 (set! ok false))
               ok)))))))
 
+(define (compiler-driver-state-smoke-interns-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (unless
+        (not
+          (=
+            (compiler-driver-state-intern-pool-data-addr state-a)
+            (compiler-driver-state-intern-pool-data-addr state-b)))
+        (set! ok false))
+      (compiler-driver-state-reset-file-state! state-a)
+      (let
+        [a-shared : i64 (intern "shared-name")]
+        [a-only : i64 (intern "state-a-only")]
+        (begin
+          (compiler-driver-state-capture-active-interns! state-a)
+          (compiler-driver-state-reset-file-state! state-b)
+          (match (intern-lookup "state-a-only")
+            [(InternLookupMissing) unit]
+            [(InternLookupFound _) (set! ok false)])
+          (let
+            [b-shared : i64 (intern "shared-name")]
+            [b-only : i64 (intern "state-b-only")]
+            (begin
+              (compiler-driver-state-capture-active-interns! state-b)
+              (unless
+                (= (compiler-driver-state-intern-pool-len state-a) 2)
+                (set! ok false))
+              (unless
+                (= (compiler-driver-state-intern-pool-len state-b) 2)
+                (set! ok false))
+              (unless (= a-shared b-shared) (set! ok false))
+              (unless (= a-only 1) (set! ok false))
+              (unless (= b-only 1) (set! ok false))
+              (compiler-driver-state-install-interns! state-a)
+              (match (intern-lookup "state-a-only")
+                [(InternLookupFound found)
+                  (unless (= found a-only) (set! ok false))]
+                [(InternLookupMissing) (set! ok false)])
+              (match (intern-lookup "state-b-only")
+                [(InternLookupMissing) unit]
+                [(InternLookupFound _) (set! ok false)])
+              (unless (= (intern "shared-name") a-shared) (set! ok false))
+              (compiler-driver-state-install-interns! state-b)
+              (match (intern-lookup "state-b-only")
+                [(InternLookupFound found)
+                  (unless (= found b-only) (set! ok false))]
+                [(InternLookupMissing) (set! ok false)])
+              (match (intern-lookup "state-a-only")
+                [(InternLookupMissing) unit]
+                [(InternLookupFound _) (set! ok false)])
+              (unless (= (intern "shared-name") b-shared) (set! ok false))
+              (let
+                [state-a-generation : i64
+                  (compiler-driver-state-intern-generation state-a)]
+                [state-b-generation : i64
+                  (compiler-driver-state-intern-generation state-b)]
+                (begin
+                  (compiler-driver-state-reset-file-state! state-b)
+                  (unless
+                    (=
+                      (compiler-driver-state-intern-generation state-a)
+                      state-a-generation)
+                    (set! ok false))
+                  (unless
+                    (>
+                      (compiler-driver-state-intern-generation state-b)
+                      state-b-generation)
+                    (set! ok false))
+                  ok)))))))))
+
 (define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1984,7 +2057,8 @@
             (CompilerBackendTarget.Linux)
             roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state-a
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         (match lowered
@@ -2039,7 +2113,8 @@
             (CompilerBackendTarget.Linux)
             stdlib-roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))
             [(ResultCompilerDriverLowered.Ok _ _ _) true]
@@ -2071,7 +2146,8 @@
             (CompilerBackendTarget.Linux)
             roots
             (CompilerBackendMode.Scalar)
-            (compiler-driver-target-cfgs
+            (compiler-driver-state-target-cfgs
+              state
               (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         [state-pools : AstNodePoolContext
@@ -2349,6 +2425,7 @@
     (unless
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
+    (unless (compiler-driver-state-smoke-interns-isolated?) (return 29))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)

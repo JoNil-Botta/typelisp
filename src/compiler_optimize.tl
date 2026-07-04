@@ -42424,11 +42424,13 @@
 ;;    Alias facts (OptAliasFacts) are threaded exactly as before; they gate
 ;;    nothing here and keep their conservative store-clears semantics.
 ;;
-;; 3. STORE-TO-LOAD FORWARDING: a classified 8-byte StorePtr binds its
-;;    (address, type) key to the stored value, so a later same-key load
-;;    becomes a Mov (the coalescer eats the copy; literal stores forward the
-;;    literal). Only 8-byte-wide types forward: sub-word IR vars are not
-;;    guaranteed high-bit-canonical, while an actual load re-canonicalizes.
+;; 3. STORE-TO-LOAD FORWARDING: a classified StorePtr binds its (address, type)
+;;    key to a canonical stored value, so a later same-key load becomes a Mov
+;;    (the coalescer eats the copy; literal stores forward the literal). 8-byte
+;;    values forward directly. Sub-word stores forward only normalized
+;;    constants or values proven to have come from a same-type load, because
+;;    arbitrary sub-word IR vars are not guaranteed high-bit-canonical while an
+;;    actual load re-canonicalizes.
 ;;
 ;; Location kinds are tracked per pointer var (OptLoadPtrKinds); the
 ;; header-typedness of gep bases comes from a per-function pre-pass
@@ -42945,6 +42947,11 @@
     [(OptLoadKey.Raw value _ _) (opt-value-is-var? value var)]
     [(OptLoadKey.Field base _ _ _) (= base var)]))
 
+(define (opt-load-key-type [key : OptLoadKey]) : AstType
+  (match key
+    [(OptLoadKey.Raw _ ty _) ty]
+    [(OptLoadKey.Field _ _ ty _) ty]))
+
 ;; Canonical key for an address value under the current pointer kinds.
 (define (opt-load-key-for-address
   [kinds : OptLoadPtrKinds]
@@ -42974,6 +42981,19 @@
       (if (opt-load-key-eq (opt-load-entry-key entry) key)
         (CompilerIrMaybeValue.Some (opt-load-entry-value entry))
         (opt-load-table-lookup (box-get rest) key))]))
+
+(define (opt-load-table-has-value-with-type?
+  [table : OptLoadTable]
+  [value : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match table
+    [(OptLoadTable.Nil) false]
+    [(OptLoadTable.Cons entry rest)
+      (if (and
+        (opt-value-eq (opt-load-entry-value entry) value)
+        (opt-type-eq (opt-load-key-type (opt-load-entry-key entry)) ty))
+        true
+        (opt-load-table-has-value-with-type? (box-get rest) value ty))]))
 
 (define (opt-load-table-remove-key-scan
   [table : OptLoadTable]
@@ -43136,6 +43156,39 @@
     [(CompilerIrValue.Var v) (opt-gvn-stable-var? sources v)]
     [_ true]))
 
+(define (opt-load-subword-forward-const
+  [value : CompilerIrValue]
+  [ty : AstType]) : CompilerIrMaybeValue
+  (match ty
+    [(AstType.F32) (CompilerIrMaybeValue.No)]
+    [_
+      (match (opt-normalize-const value ty)
+        [(OptKnownConst.SomeConst normalized normalized-ty)
+          (if (opt-type-eq normalized-ty ty)
+            (CompilerIrMaybeValue.Some normalized)
+            (CompilerIrMaybeValue.No))]
+        [(OptKnownConst.NoConst) (CompilerIrMaybeValue.No)])]))
+
+(define (opt-load-subword-store-forward-value
+  [table : OptLoadTable]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [width : i64]) : CompilerIrMaybeValue
+  (if (opt-copy-safe-source? value)
+    (if (> width 0)
+      (match (opt-load-subword-forward-const value ty)
+        [(CompilerIrMaybeValue.Some normalized)
+          (CompilerIrMaybeValue.Some normalized)]
+        [(CompilerIrMaybeValue.No)
+          (match value
+            [(CompilerIrValue.Var _)
+              (if (opt-load-table-has-value-with-type? table value ty)
+                (CompilerIrMaybeValue.Some value)
+                (CompilerIrMaybeValue.No))]
+            [_ (CompilerIrMaybeValue.No)])])
+      (CompilerIrMaybeValue.No))
+    (CompilerIrMaybeValue.No)))
+
 ;; Any instruction that is neither Load/StorePtr/CopyBytes nor a clear-all:
 ;; drop def-invalidated entries, update alias facts and pointer kinds.
 (define (opt-load-cse-state-step-other
@@ -43165,9 +43218,9 @@
         (opt-load-kinds-step kinds hs instr))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
-;; forwarded value must be a copy-safe source (no hidden global reads) and
-;; exactly 8 bytes wide: sub-word IR vars are not guaranteed canonical in
-;; their high bits, while a real load re-canonicalizes.
+;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
+;; forwarding additionally requires a normalized constant or a same-type load
+;; origin, so arbitrary non-canonical sub-word vars still reload from memory.
 (define (opt-load-cse-state-store
   ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
@@ -43192,20 +43245,26 @@
               [filtered : OptLoadTable
                 (opt-load-table-filter-store table class)]
               [key : OptLoadKey (opt-load-key-for-address kinds ptr ty)]
-              [forward? : bool
-                (and
-                  (= width 8)
-                  (opt-copy-safe-source? value)
-                  (if gated?
-                    (and
-                      (opt-load-key-gvn-stable? sources key)
-                      (opt-load-value-gvn-stable? sources value))
-                    true))]
+              [forwardable? : bool
+                (if gated?
+                  (and
+                    (opt-load-key-gvn-stable? sources key)
+                    (opt-load-value-gvn-stable? sources value))
+                  true)]
+              [forwarded : CompilerIrMaybeValue
+                (if forwardable?
+                  (if (= width 8)
+                    (if (opt-copy-safe-source? value)
+                      (CompilerIrMaybeValue.Some value)
+                      (CompilerIrMaybeValue.No))
+                    (opt-load-subword-store-forward-value table value ty width))
+                  (CompilerIrMaybeValue.No))]
               (OptLoadCseState.State
                 facts2
-                (if forward?
-                  (opt-load-table-bind filtered key value)
-                  filtered)
+                (match forwarded
+                  [(CompilerIrMaybeValue.Some forwarded-value)
+                    (opt-load-table-bind filtered key forwarded-value)]
+                  [(CompilerIrMaybeValue.No) filtered])
                 kinds))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
@@ -43782,6 +43841,49 @@
           [_ 0])
         (opt-count-mov-dst-i64-src (box-get rest) dst src))]))
 
+(define (opt-count-mov-dst-var-src
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]
+  [ty : AstType]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.Mov mov-dst mov-src mov-ty)
+            (if (and (= mov-dst dst) (opt-type-eq mov-ty ty))
+              (match mov-src
+                [(CompilerIrValue.Var value)
+                  (if (= value src)
+                    1
+                    0)]
+                [_ 0])
+              0)]
+          [_ 0])
+        (opt-count-mov-dst-var-src (box-get rest) dst src ty))]))
+
+(define (opt-count-mov-dst-bool-src
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : bool]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.Mov mov-dst mov-src mov-ty)
+            (if (and (= mov-dst dst) (opt-type-eq mov-ty (AstType.Bool)))
+              (match mov-src
+                [(CompilerIrValue.Bool value)
+                  (if (= value src)
+                    1
+                    0)]
+                [_ 0])
+              0)]
+          [_ 0])
+        (opt-count-mov-dst-bool-src (box-get rest) dst src))]))
+
 (define (opt-load-cse-positive-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Alloc 0 (AstType.I64))
@@ -43942,6 +44044,78 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
+
+;; Sub-word constant stores forward only after normalizing to the load type.
+(define (opt-load-cse-subword-const-forward-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I32))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 7)
+          (AstType.I32))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I32))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 4)
+              (AstType.Bool))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Bool true)
+                (AstType.Bool))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.Bool))
+                (CompilerIrInstrList.Nil)))))))))
+
+;; A value read by a same-type sub-word load is canonical and can be forwarded.
+(define (opt-load-cse-subword-load-forward-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I32))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I32))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            (AstType.I32))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I32))
+            (CompilerIrInstrList.Nil)))))))
+
+;; Arbitrary sub-word vars are still not known canonical and must reload.
+(define (opt-load-cse-subword-unknown-var-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I32))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 9)
+          (AstType.I32))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I32))
+          (CompilerIrInstrList.Nil))))))
 
 ;; GAP4: canonical keys -- two DISTINCT gep temps of the same (base, offset)
 ;; slot must CSE (the audit's #2343 bounds-chain miss shape).
@@ -44105,6 +44279,12 @@
           (AstType.I64)))]
     [store-forward : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-store-forward-instrs))]
+    [subword-const-forward : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-subword-const-forward-instrs))]
+    [subword-load-forward : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-subword-load-forward-instrs))]
+    [subword-unknown-var : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-subword-unknown-var-instrs))]
     [canonical-gep : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-canonical-gep-instrs))]
     [element-store : CompilerIrInstrList
@@ -44207,4 +44387,15 @@
       [(not (= (opt-count-mov-dst-instrs other-base-store 6) 0)) 30]
       [(not (= (opt-count-load-instrs same-base-disjoint) 1)) 31]
       [(not (= (opt-count-mov-dst-instrs same-base-disjoint 6) 1)) 32]
+      [(not (= (opt-count-load-instrs subword-const-forward) 0)) 33]
+      [(not (= (opt-count-mov-dst-i64-src subword-const-forward 2 7) 1)) 34]
+      [(not (= (opt-count-mov-dst-bool-src subword-const-forward 4 true) 1)) 35]
+      [(not (= (opt-count-load-instrs subword-load-forward) 1)) 36]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src subword-load-forward 3 2 (AstType.I32))
+            1))
+        37]
+      [(not (= (opt-count-load-instrs subword-unknown-var) 1)) 38]
+      [(not (= (opt-count-mov-dst-instrs subword-unknown-var 2) 0)) 39]
       [else 42])))

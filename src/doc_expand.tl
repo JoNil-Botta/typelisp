@@ -766,6 +766,59 @@
           (set! i (+ i 1))))
       found)))
 
+(define (doc-expand-fence-line-start
+  [text : String]
+  [line-start : i64]
+  [line-end : i64]) : i64
+  (let
+    [first : i64 (doc-first-nonspace text line-start line-end)]
+    (if (doc-string-prefix-at? text "```" first)
+      first
+      line-end)))
+
+(define (doc-expand-ignored-fence-line?
+  [text : String]
+  [line-start : i64]
+  [line-end : i64]) : bool
+  (let
+    [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
+    (if (< fence line-end)
+      (doc-string-contains?
+        (string.substring text fence (- line-end fence))
+        "test=ignore")
+      false)))
+
+(define (doc-expand-next-ignored-fence [text : String] [cursor : i64] [n : i64]) : i64
+  (let
+    [pos : i64 cursor]
+    [found : i64 n]
+    (begin
+      (while (and (< pos n) (= found n))
+        (let
+          [line-end : i64 (doc-line-end text pos n)]
+          (begin
+            (if (doc-expand-ignored-fence-line? text pos line-end)
+              (set! found pos)
+              unit)
+            (set! pos (doc-next-line-start text line-end n)))))
+      found)))
+
+(define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
+  (let
+    [open-end : i64 (doc-line-end text cursor n)]
+    [pos : i64 (doc-next-line-start text open-end n)]
+    [done : bool false]
+    (begin
+      (while (and (< pos n) (not done))
+        (let
+          [line-end : i64 (doc-line-end text pos n)]
+          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
+            (begin
+              (set! pos (doc-next-line-start text line-end n))
+              (set! done true))
+            (set! pos (doc-next-line-start text line-end n)))))
+      pos)))
+
 (define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
   (let
     [cursor : i64 0]
@@ -775,20 +828,24 @@
     (begin
       (while (< cursor n)
         (let
+          [ignored-fence : i64
+            (doc-expand-next-ignored-fence doc-text cursor n)]
           [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
-          (if (< start n)
-            (let
-              [end : i64 (doc-scan-form-end doc-text start n)]
-              [form : String (string.substring doc-text start (- end start))]
-              (begin
-                (set!
-                  forms-rev
-                  (doc-import-form-list-cons-unique form forms-rev))
-                (if (doc-string-prefix-at? doc-text "(import (" start)
-                  (set! has-macro true)
-                  unit)
-                (set! cursor end)))
-            (set! cursor n))))
+          (if (< ignored-fence start)
+            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
+            (if (< start n)
+              (let
+                [end : i64 (doc-scan-form-end doc-text start n)]
+                [form : String (string.substring doc-text start (- end start))]
+                (begin
+                  (set!
+                    forms-rev
+                    (doc-import-form-list-cons-unique form forms-rev))
+                  (if (doc-string-prefix-at? doc-text "(import (" start)
+                    (set! has-macro true)
+                    unit)
+                  (set! cursor end)))
+              (set! cursor n)))))
       (DocImportFormScan (doc-import-form-list-reverse forms-rev) has-macro))))
 
 (define (doc-expanded-example-source [forms : DocImportFormList]) : String
@@ -879,3 +936,25 @@
           "doc-expand: load failed: "
           (compiler-diagnostic-render (box-get diag))
           ""))]))
+
+(define (doc-expand-ignore-fence-smoke) : i64
+  (let
+    [ignored : String
+      "Before
+```lisp test=ignore name=sketch
+(import missing.format as fmt)
+(import (serialize.serialize fmt Person) as person_ser)
+```
+After"]
+    [active : String
+      "```typelisp
+(import stdlib.vector)
+(import (vector.vector i64) as ivec)
+```"]
+    [ignored-scan : DocImportFormScan (doc-import-forms-from-doc-text ignored)]
+    [active-scan : DocImportFormScan (doc-import-forms-from-doc-text active)]
+    (if (and
+      (not (struct-get ignored-scan has-macro))
+      (struct-get active-scan has-macro))
+      42
+      (io.panic "doc-expand: ignored fence import scan mismatch"))))

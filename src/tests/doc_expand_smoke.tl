@@ -2,4 +2,6 @@
 (import "../doc_expand.tl")
 
 (define (main) : i64
-  (doc-expand-smoke))
+  (begin
+    (doc-expand-ignore-fence-smoke)
+    (doc-expand-smoke)))

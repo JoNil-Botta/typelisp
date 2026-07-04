@@ -157,31 +157,34 @@
     (sym_i64_env.sym-i64-empty)
     stdlib-roots)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (match (doc-expanded-generated-modules-from-loaded-decls
-        decls
-        paths
+      (match (doc-generated-modules-from-source-paths
+        (ast-decl-path-cons input-path paths)
+        (sym_i64_env.sym-i64-empty)
         stdlib-roots)
-        [(ResultDocExpandedModules.Ok generated-modules)
-          (match (doc-generated-modules-from-source-paths
-            (ast-decl-path-cons input-path paths)
-            (sym_i64_env.sym-i64-empty)
-            stdlib-roots)
-            [(ResultDocExpandedModules.Ok source-generated-modules)
-              (begin
-                (io.write-file
-                  output-path
-                  (doc-render-loaded-markdown
-                    input-path
-                    paths
-                    (doc-module-list-append
-                      generated-modules
-                      source-generated-modules)))
-                (doc-print-wrote output-path)
-                0)]
-            [(ResultDocExpandedModules.Err message)
-              (begin
-                (io.print-error message)
-                1)])]
+        [(ResultDocExpandedModules.Ok source-generated-modules)
+          (let
+            ;; Expansion from public source docs is authoritative and errors
+            ;; above fail the command. Loaded graph expansion is best-effort:
+            ;; synthetic graph docs can combine helper declarations from many
+            ;; modules in ways normal source builds never do.
+            [generated-modules : DocModuleList
+              (match (doc-expanded-generated-modules-from-loaded-decls
+                decls
+                paths
+                stdlib-roots)
+                [(ResultDocExpandedModules.Ok modules) modules]
+                [(ResultDocExpandedModules.Err _) DocModuleList.Nil])]
+            (begin
+              (io.write-file
+                output-path
+                (doc-render-loaded-markdown
+                  input-path
+                  paths
+                  (doc-module-list-append
+                    generated-modules
+                    source-generated-modules)))
+              (doc-print-wrote output-path)
+              0))]
         [(ResultDocExpandedModules.Err message)
           (begin
             (io.print-error message)

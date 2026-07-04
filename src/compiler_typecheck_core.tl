@@ -6155,78 +6155,119 @@
 (define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
-        (ResultTcType.Err
-          (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
-          ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
-          ;; element stride, reading garbage.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcType.Ok (array-ref values index))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-id (box-get below) name-id)
-              (ResultTcType.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcType.Ok ty)
-          (tc-lookup-id (box-get rest) name-id))])))
+    (let
+      [cur : TcTypeEnv env]
+      [done : bool false]
+      [found : bool false]
+      [found-ty : AstType (AstType.Unit)]
+      (begin
+        (while (not done)
+          (match cur
+            [(TcTypeEnv.Nil) (set! done true)]
+            [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
+              (match (hashmap.i64-i64-map-get ids name-id)
+                ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value
+                ;; `AstType` is multi-word, and the raw ptr path mis-scales it.
+                [(hashmap.I64I64MapFound index)
+                  (begin
+                    (set! found-ty (array-ref values index))
+                    (set! found true)
+                    (set! done true))]
+                [(hashmap.I64I64MapMissing)
+                  (if partial
+                    (set! cur (box-get below))
+                    (set! done true))])]
+            [(TcTypeEnv.Bind key ty rest)
+              (if (= key name-id)
+                (begin
+                  (set! found-ty ty)
+                  (set! found true)
+                  (set! done true))
+                (set! cur (box-get rest)))]))
+        (if found
+          (ResultTcType.Ok found-ty)
+          (ResultTcType.Err
+            (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-id env (tc-name-id name)))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound _) true]
-        [(hashmap.I64I64MapMissing)
-          (if partial
-            (tc-name-bound-id? (box-get below) name-id)
-            false)])]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        true
-        (tc-name-bound-id? (box-get rest) name-id))]))
+  (let
+    [cur : TcTypeEnv env]
+    [done : bool false]
+    [found : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
+            (match (hashmap.i64-i64-map-get ids name-id)
+              [(hashmap.I64I64MapFound _)
+                (begin
+                  (set! found true)
+                  (set! done true))]
+              [(hashmap.I64I64MapMissing)
+                (if partial
+                  (set! cur (box-get below))
+                  (set! done true))])]
+          [(TcTypeEnv.Bind key _ rest)
+            (if (= key name-id)
+              (begin
+                (set! found true)
+                (set! done true))
+              (set! cur (box-get rest)))]))
+      found)))
 
 (define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
-    (match env
-      [(TcTypeEnv.Nil)
-        (ResultTcTypeUnsafe.Err
-          (string.append "typecheck: unbound name " (intern-str name-id)))]
-      [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-        (match (hashmap.i64-i64-map-get ids name-id)
-          ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
-          ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
-          ;; is still sound there.
-          [(hashmap.I64I64MapFound index)
-            (ResultTcTypeUnsafe.Ok
-              (array-ref values index)
-              (=
-                (unsafe
-                  (ptr-read
-                    (ptr-offset
-                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
-                      index)))
-                1))]
-          [(hashmap.I64I64MapMissing)
-            (if partial
-              (tc-lookup-unsafe-id (box-get below) name-id)
-              (ResultTcTypeUnsafe.Err
-                (string.append "typecheck: unbound name " (intern-str name-id))))])]
-      [(TcTypeEnv.Bind key ty rest)
-        (if (= key name-id)
-          (ResultTcTypeUnsafe.Ok
-            ty
-            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
-          (tc-lookup-unsafe-id (box-get rest) name-id))])))
+    (let
+      [cur : TcTypeEnv env]
+      [done : bool false]
+      [found : bool false]
+      [found-ty : AstType (AstType.Unit)]
+      [found-unsafe : bool false]
+      (begin
+        (while (not done)
+          (match cur
+            [(TcTypeEnv.Nil) (set! done true)]
+            [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
+              (match (hashmap.i64-i64-map-get ids name-id)
+                ;; #2357: AstType read MUST stay `array-ref`; the unsafe flag is
+                ;; scalar i64, so the raw ptr path remains sound for that array.
+                [(hashmap.I64I64MapFound index)
+                  (begin
+                    (set! found-ty (array-ref values index))
+                    (set!
+                      found-unsafe
+                      (=
+                        (unsafe
+                          (ptr-read
+                            (ptr-offset
+                              (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                              index)))
+                        1))
+                    (set! found true)
+                    (set! done true))]
+                [(hashmap.I64I64MapMissing)
+                  (if partial
+                    (set! cur (box-get below))
+                    (set! done true))])]
+            [(TcTypeEnv.Bind key ty rest)
+              (if (= key name-id)
+                (begin
+                  (set! found-ty ty)
+                  (set!
+                    found-unsafe
+                    (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
+                  (set! found true)
+                  (set! done true))
+                (set! cur (box-get rest)))]))
+        (if found
+          (ResultTcTypeUnsafe.Ok found-ty found-unsafe)
+          (ResultTcTypeUnsafe.Err
+            (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))

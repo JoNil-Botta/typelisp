@@ -782,15 +782,23 @@ race-free; use mutexes, channels, explicit atomics, or unsafe code with its own
 proof. A runnable safe example is
 [`examples/safe_threading.tl`](examples/safe_threading.tl).
 
-For game-style loops, the current safe pattern is lexical nesting: keep global
-state in the default program arena, enter one `(with-arena level ...)` for
-per-level state, use an inner `(with-arena frame ...)` for scalar-only per-frame
-temporaries, and use `(with-escape scratch ...)` with a first-class scratch
-arena or `(with-scratch ...)` for one-shot work when one supported frame result
-must be cloned into the level state. See
-[`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl). Double-buffered
-levels and event-driven unloads need overlapping lifetimes and remain future
-work (#2568).
+For game-style loops, choose the narrowest safe arena surface that matches the
+lifetime. Keep global state in the default program arena. Use lexical
+`(with-arena level ...)` and nested `(with-arena frame ...)` scopes when the
+state has strict stack-shaped lifetimes. Use `(with-escape scratch ...)` with a
+reusable first-class scratch arena, or `(with-scratch ...)` for one-shot work,
+when one supported result should be cloned into the enclosing state. Use
+`(in-arena owner ...)` when the result should remain owned by a first-class
+level or frame arena. For overlapping frame buffers, create two direct local
+ordinary arenas, take an `arena.phase` before filling each buffer, and call
+`arena.rewind-safe!` only after the checker can prove the previous buffer's
+values, borrows, captures, container slots, and channel sends are dead or
+released. For event-driven level unload, call `arena.destroy-safe!` only after
+all level-owned values are dead; for atomic arenas that crossed task-thread or
+channel boundaries, all checker-visible users must be joined or otherwise
+released first. The runnable cookbook in
+[`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl) covers lexical
+frame scopes, double-buffered frame arenas, and event-driven unload after join.
 
 Scoped cleanup of non-memory resources is separate. The implemented
 `(with ([name init cleanup]) body ...)` form (SPEC.md §5.19) runs cleanup

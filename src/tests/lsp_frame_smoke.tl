@@ -266,6 +266,49 @@
           decls-ok
           (struct-get cached-decls-doc decls-valid))))))
 
+(define (lsp-tool-edit-flush-ok?) : bool
+  (let
+    [dir : String "target"]
+    [path : String "target/lsp_tool_edit_flush_smoke.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [before : String "(define (foo) : i64 1)"]
+    [after : String "(define (bar) : i64 1)"]
+    [new-name : String "bar"]
+    [old-name : String "foo"]
+    [params : json.Json
+      (lsp-json-object
+        (lsp-json-member
+          "textDocument"
+          (lsp-json-object1 "uri" (json.JsonString uri))
+          (lsp-json-member
+            "oldText"
+            (json.JsonString "foo")
+            (lsp-json-member
+              "newText"
+              (json.JsonString "bar")
+              json.JsonMemberListNil))))]
+    [docs : LspDocuments (lsp-documents-new)]
+    (begin
+      (match (fs.try-mkdir-if-missing (& dir))
+        [(io.OkIoUnit) unit]
+        [(io.ErrIoUnit _) unit])
+      (io.write-file path before)
+      (set! docs (lsp-documents-set docs uri path before uri))
+      (match (lsp-save-structural-edit params docs path uri after)
+        [(LspEditSaveResult.Ok next-docs _)
+          (match (io.try-read-file (& path))
+            [(io.OkIoString disk-text)
+              (match (lsp-documents-lookup next-docs uri)
+                [(LspDocumentLookup.Found _ cached-text _)
+                  (and
+                    (string.contains (& disk-text) (& new-name))
+                    (not (string.contains (& disk-text) (& old-name)))
+                    (string.contains (& cached-text) (& new-name))
+                    (not (string.contains (& cached-text) (& old-name))))]
+                [(LspDocumentLookup.Missing) false])]
+            [(io.ErrIoString _) false])]
+        [(LspEditSaveResult.Err _ _ _) false]))))
+
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
     [first : String "(define (alpha) : i64 1)"]
@@ -306,5 +349,6 @@
         (unless (lsp-find-references-smoke-ok?) (return 11))
         (unless (lsp-document-decls-cache-empty-ok?) (return 12))
         (unless (lsp-document-disk-resync-ok?) (return 15))
+        (unless (lsp-tool-edit-flush-ok?) (return 16))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         42))))

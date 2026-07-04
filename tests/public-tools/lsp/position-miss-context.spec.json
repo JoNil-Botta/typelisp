@@ -1,0 +1,8 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"code\":-32600", "raw_contains": "No form found at position", "raw_contains": "\"data\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":22", "raw_contains": "\"lineText\":\"(define (foo) : i64 1)\"", "raw_contains": "\"nearest\"", "raw_contains": "\"name\":\"foo\"", "raw_contains": "\"kind\":\"function\"", "raw_contains": "\"range\""},
+    {"jsonpath_id": 3, "raw_contains": "\"code\":-32600", "raw_contains": "Could not extract function name at position", "raw_contains": "\"data\"", "raw_contains": "\"line\":99", "raw_contains": "\"character\":0", "raw_contains": "\"lineText\":\"\"", "raw_contains": "\"nearest\"", "raw_contains": "\"name\":\"MyStruct\"", "raw_contains": "\"kind\":\"struct\"", "raw_contains": "\"range\""}
+  ]
+}

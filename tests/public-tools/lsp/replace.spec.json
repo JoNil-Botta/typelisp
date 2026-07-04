@@ -4,6 +4,6 @@
   "message_checks": [
     {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"text\""},
     {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "(* x 2)"},
-    {"jsonpath_id": 4, "raw_contains": "\"success\":true", "raw_not_contains": "bad"}
+    {"jsonpath_id": 4, "raw_contains": "\"code\":-32600", "raw_contains": "No form found at position", "raw_contains": "\"data\"", "raw_contains": "\"line\":99", "raw_contains": "\"character\":0", "raw_contains": "\"lineText\":\"\"", "raw_contains": "\"nearest\"", "raw_contains": "\"name\":\"MyStruct\"", "raw_contains": "\"kind\":\"struct\"", "raw_not_contains": "\"success\":true", "raw_not_contains": "bad"}
   ]
 }

@@ -394,6 +394,29 @@
               (json.JsonString message))
             json.JsonMemberListNil))))))
 
+(define (lsp-write-error-with-data
+  [id : json.Json]
+  [code : i64]
+  [message : String]
+  [data : json.Json]) : unit
+  (lsp-write-json
+    (lsp-json-object
+      (lsp-json-rpc-member
+        (lsp-json-member
+          "id"
+          id
+          (lsp-json-member
+            "error"
+            (lsp-json-object
+              (lsp-json-member
+                "code"
+                (lsp-json-number code)
+                (lsp-json-member
+                  "message"
+                  (json.JsonString message)
+                  (lsp-json-member "data" data json.JsonMemberListNil))))
+            json.JsonMemberListNil))))))
+
 (define (lsp-write-parse-error [message : String]) : unit
   (lsp-write-error json.JsonNull -32700 message))
 
@@ -3831,6 +3854,167 @@
     (- (struct-get entry form-end-line) 1)
     (- (struct-get entry form-end-col) 1)))
 
+(define (lsp-line-start-offset [text : String] [line : i64]) : i64
+  (if (< line 0)
+    -1
+    (let
+      [n : i64 (string.string-length text)]
+      [i : i64 0]
+      [current-line : i64 0]
+      [start : i64 0]
+      (begin
+        (while (and (< i n) (< current-line line))
+          (begin
+            (if (= (string.string-ref text i) '\n')
+              (begin
+                (set! current-line (+ current-line 1))
+                (set! start (+ i 1)))
+              unit)
+            (set! i (+ i 1))))
+        (if (= current-line line)
+          start
+          -1)))))
+
+(define (lsp-line-end-offset [text : String] [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    (if (or (< start 0) (> start n))
+      -1
+      (let
+        [i : i64 start]
+        [done : bool false]
+        (begin
+          (while (and (< i n) (not done))
+            (if (= (string.string-ref text i) '\n')
+              (set! done true)
+              (set! i (+ i 1))))
+          i)))))
+
+(define (lsp-line-text-at [text : String] [line : i64]) : String
+  (let
+    [start : i64 (lsp-line-start-offset text line)]
+    (if (< start 0)
+      ""
+      (let
+        [end : i64 (lsp-line-end-offset text start)]
+        (if (< end start)
+          ""
+          (string.substring text start (- end start)))))))
+
+(define (lsp-position-context-offset [text : String] [line : i64] [col : i64]) : i64
+  (if (< line 0)
+    0
+    (if (< col 0)
+      (lsp-offset-at-position text line 0)
+      (lsp-offset-at-position text line col))))
+
+(define (lsp-decl-distance-from-offset
+  [text : String]
+  [entry : LspDeclEntry]
+  [offset : i64]) : i64
+  (let
+    [start : i64 (lsp-offset-from-entry-start text entry)]
+    [end : i64 (lsp-offset-from-entry-end text entry)]
+    (if (< offset start)
+      (- start offset)
+      (if (> offset end)
+        (- offset end)
+        0))))
+
+(define (lsp-nearest-decl-index
+  [text : String]
+  [decls : LspDeclList]
+  [offset : i64]) : i64
+  (let
+    [n : i64 (lsp-decl-list-len (& decls))]
+    [i : i64 0]
+    [best-index : i64 -1]
+    [best-distance : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [entry : LspDeclEntry
+            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+          [distance : i64 (lsp-decl-distance-from-offset text entry offset)]
+          (begin
+            (if (or (= best-index -1) (< distance best-distance))
+              (begin
+                (set! best-index i)
+                (set! best-distance distance))
+              unit)
+            (set! i (+ i 1)))))
+      best-index)))
+
+(define (lsp-decl-entry-range-json [entry : LspDeclEntry]) : json.Json
+  (lsp-json-object2
+    "start"
+    (lsp-position
+      (struct-get entry form-start-line)
+      (struct-get entry form-start-col))
+    "end"
+    (lsp-position
+      (struct-get entry form-end-line)
+      (struct-get entry form-end-col))))
+
+(define (lsp-decl-entry-context-json [entry : LspDeclEntry]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "kind"
+      (json.JsonString (struct-get entry kind))
+      (lsp-json-member
+        "name"
+        (json.JsonString (struct-get entry name))
+        (lsp-json-member
+          "line"
+          (lsp-json-number (- (struct-get entry name-line) 1))
+          (lsp-json-member
+            "character"
+            (lsp-json-number (- (struct-get entry name-col) 1))
+            (lsp-json-member
+              "range"
+              (lsp-decl-entry-range-json entry)
+              json.JsonMemberListNil)))))))
+
+(define (lsp-nearest-decl-context-json [text : String] [line : i64] [col : i64]) : json.Json
+  (let
+    [decls : LspDeclList (lsp-scan-decls text)]
+    [offset : i64 (lsp-position-context-offset text line col)]
+    [idx : i64 (lsp-nearest-decl-index text decls offset)]
+    (if (< idx 0)
+      json.JsonNull
+      (let
+        [entry : LspDeclEntry
+          (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp-decl-entry-context-json entry)))))
+
+(define (lsp-position-miss-data [text : String] [line : i64] [col : i64]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "line"
+      (lsp-json-number line)
+      (lsp-json-member
+        "character"
+        (lsp-json-number col)
+        (lsp-json-member
+          "lineText"
+          (json.JsonString (lsp-line-text-at text line))
+          (lsp-json-member
+            "nearest"
+            (lsp-nearest-decl-context-json text line col)
+            json.JsonMemberListNil))))))
+
+(define (lsp-write-position-miss-error
+  [id : json.Json]
+  [message : String]
+  [text : String]
+  [line : i64]
+  [col : i64]) : unit
+  (lsp-write-error-with-data
+    id
+    -32600
+    message
+    (lsp-position-miss-data text line col)))
+
 ;; Helper: resolve a structural edit target from either a position or a name param.
 (define (lsp-structural-move-name [params : json.Json] [text : String]) : String
   (let
@@ -5826,19 +6010,19 @@
   [col : i64]
   [new-text : String]) : LspEditResult
   (if (or (< line 0) (< col 0))
-    (LspEditResult.Ok text)
+    (LspEditResult.Err "No form found at position")
     (let
       [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string.string-length text))
-        (LspEditResult.Ok text)
+        (LspEditResult.Err "No form found at position")
         (let
           [form-start : i64 (lsp-find-top-level-form-at-offset text offset)]
           (if (= form-start -1)
-            (LspEditResult.Ok text)
+            (LspEditResult.Err "No form found at position")
             (let
               [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
               (if (or (= form-end -1) (<= form-end offset))
-                (LspEditResult.Ok text)
+                (LspEditResult.Err "No form found at position")
                 (LspEditResult.Ok
                   (lsp-edit-range-at-offset text form-start form-end new-text))))))))))
 
@@ -5868,7 +6052,7 @@
                         replaced)]
                     [(LspEditResult.Err message)
                       (begin
-                        (lsp-write-error id -32600 message)
+                        (lsp-write-position-miss-error id message text line col)
                         (LspHandleResult.Continue docs))]))]
               [(LspJsonText.Missing)
                 (begin
@@ -5943,33 +6127,47 @@
               [col : i64 (lsp-json-int-field-default position "character" 0)]
               (if (or (< line 0) (< col 0))
                 (begin
-                  (lsp-write-error id -32600 "No form found at position")
+                  (lsp-write-position-miss-error
+                    id
+                    "No form found at position"
+                    text
+                    line
+                    col)
                   (LspHandleResult.Continue docs))
                 (let
                   [offset : i64 (lsp-offset-at-position text line col)]
                   (if (>= offset (string.string-length text))
                     (begin
-                      (lsp-write-error id -32600 "No form found at position")
+                      (lsp-write-position-miss-error
+                        id
+                        "No form found at position"
+                        text
+                        line
+                        col)
                       (LspHandleResult.Continue docs))
                     (let
                       [form-start : i64
                         (lsp-find-top-level-form-at-offset text offset)]
                       (if (= form-start -1)
                         (begin
-                          (lsp-write-error
+                          (lsp-write-position-miss-error
                             id
-                            -32600
-                            "No form found at position")
+                            "No form found at position"
+                            text
+                            line
+                            col)
                           (LspHandleResult.Continue docs))
                         (let
                           [form-end : i64
                             (lsp-find-form-end-at-offset text form-start)]
                           (if (= form-end -1)
                             (begin
-                              (lsp-write-error
+                              (lsp-write-position-miss-error
                                 id
-                                -32600
-                                "No form found at position")
+                                "No form found at position"
+                                text
+                                line
+                                col)
                               (LspHandleResult.Continue docs))
                             (let
                               [before : String
@@ -6013,36 +6211,47 @@
                     (lsp-json-int-field-default position "character" 0)]
                   (if (or (< line 0) (< col 0))
                     (begin
-                      (lsp-write-error id -32600 "No form found at position")
+                      (lsp-write-position-miss-error
+                        id
+                        "No form found at position"
+                        text
+                        line
+                        col)
                       (LspHandleResult.Continue docs))
                     (let
                       [offset : i64 (lsp-offset-at-position text line col)]
                       (if (>= offset (string.string-length text))
                         (begin
-                          (lsp-write-error
+                          (lsp-write-position-miss-error
                             id
-                            -32600
-                            "No form found at position")
+                            "No form found at position"
+                            text
+                            line
+                            col)
                           (LspHandleResult.Continue docs))
                         (let
                           [form-start : i64
                             (lsp-find-top-level-form-at-offset text offset)]
                           (if (= form-start -1)
                             (begin
-                              (lsp-write-error
+                              (lsp-write-position-miss-error
                                 id
-                                -32600
-                                "No form found at position")
+                                "No form found at position"
+                                text
+                                line
+                                col)
                               (LspHandleResult.Continue docs))
                             (let
                               [form-end : i64
                                 (lsp-find-form-end-at-offset text form-start)]
                               (if (= form-end -1)
                                 (begin
-                                  (lsp-write-error
+                                  (lsp-write-position-miss-error
                                     id
-                                    -32600
-                                    "No form found at position")
+                                    "No form found at position"
+                                    text
+                                    line
+                                    col)
                                   (LspHandleResult.Continue docs))
                                 (let
                                   [before : String
@@ -6162,10 +6371,12 @@
               [name : String (lsp-find-and-extract-name text line col)]
               (if (= (string.string-length name) 0)
                 (begin
-                  (lsp-write-error
+                  (lsp-write-position-miss-error
                     id
-                    -32600
-                    "Could not extract function name at position")
+                    "Could not extract function name at position"
+                    text
+                    line
+                    col)
                   (LspHandleResult.Continue docs))
                 (match (lsp-json-string-field params "newBody")
                   [(LspJsonText.Ok new-body)
@@ -6248,10 +6459,12 @@
               [name : String (lsp-find-and-extract-name text line col)]
               (if (= (string.string-length name) 0)
                 (begin
-                  (lsp-write-error
+                  (lsp-write-position-miss-error
                     id
-                    -32600
-                    "Could not extract function name at position")
+                    "Could not extract function name at position"
+                    text
+                    line
+                    col)
                   (LspHandleResult.Continue docs))
                 (match (lsp-json-string-field params "oldPattern")
                   [(LspJsonText.Ok old-pattern)
@@ -6312,7 +6525,12 @@
                 (lsp-read-form-at-position text line col outer)]
               (if (= (string.string-length form-text) 0)
                 (begin
-                  (lsp-write-error id -32600 "No form found at position")
+                  (lsp-write-position-miss-error
+                    id
+                    "No form found at position"
+                    text
+                    line
+                    col)
                   (LspHandleResult.Continue docs))
                 (begin
                   (lsp-write-response
@@ -6363,12 +6581,13 @@
         (string.eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)")]
       [(LspEditResult.Err _) false])))
 
-(define (lsp-replace-form-at-position-noop-ok?) : bool
+(define (lsp-replace-form-at-position-miss-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
     (match (lsp-replace-form-at-position text 0 22 "(define (bad) : i64 0)")
-      [(LspEditResult.Ok replaced) (string.eq replaced text)]
-      [(LspEditResult.Err _) false])))
+      [(LspEditResult.Ok _) false]
+      [(LspEditResult.Err message)
+        (string.eq message "No form found at position")])))
 
 (test
   lsp-replace-form-at-position-smoke
@@ -6389,7 +6608,7 @@
     (io.panic "lsp-replace-form-at-position-nested-smoke failed")))
 
 (test
-  lsp-replace-form-at-position-noop
+  lsp-replace-form-at-position-miss
   (unless
-    (lsp-replace-form-at-position-noop-ok?)
-    (io.panic "lsp-replace-form-at-position-noop failed")))
+    (lsp-replace-form-at-position-miss-ok?)
+    (io.panic "lsp-replace-form-at-position-miss failed")))

@@ -8,7 +8,8 @@
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
-(import stdlib.hashmap)
+(cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
+(import (hashmap String i64) as ctfe_key_map)
 (import stdlib.array)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
@@ -365,20 +366,14 @@
 ;; checking membership against the old linked list was O(types^2). This hashset
 ;; keeps each `add-if-missing` O(1), so the whole build is O(types). Reset at the
 ;; start of each build (layouts then reflections run sequentially in tc-ctfe-env).
-(define ctfe-build-seen-keys : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 1))
+(define ctfe-build-seen-keys : (Box ctfe_key_map.Map)
+  (box (ctfe_key_map.with-capacity 1)))
 
 (define (ctfe-build-seen-reset!) : unit
-  (set! ctfe-build-seen-keys (hashmap.string-i64-map-with-capacity 256)))
+  (set! (box-get ctfe-build-seen-keys) (ctfe_key_map.with-capacity 256)))
 
 (define (ctfe-build-seen-add? [key : String]) : bool
-  (if (hashmap.string-i64-map-contains? ctfe-build-seen-keys key)
-    false
-    (begin
-      (set!
-        ctfe-build-seen-keys
-        (hashmap.string-i64-map-put ctfe-build-seen-keys key 1))
-      true)))
+  (ctfe_key_map.insert-if-absent? (&mut (box-get ctfe-build-seen-keys)) key 1))
 
 (define (ctfe-layout-info-list-add-if-missing
   [layouts : CtfeLayoutInfoList]
@@ -665,29 +660,29 @@
     (ctfe-hygiene-global-prefix)
     (ctfe-symbol-module-key module name)))
 
-(define ctfe-module-macro-export-keys : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 1))
+(define ctfe-module-macro-export-keys : (Box ctfe_key_map.Map)
+  (box (ctfe_key_map.with-capacity 1)))
 
 (define (ctfe-module-macro-export-key [module : String] [name : String]) : String
   (string.append module (string.append "|" name)))
 
 (define (ctfe-module-macro-export-reset!) : unit
   (set!
-    ctfe-module-macro-export-keys
-    (hashmap.string-i64-map-with-capacity 256)))
+    (box-get ctfe-module-macro-export-keys)
+    (ctfe_key_map.with-capacity 256)))
 
 (define (ctfe-module-macro-export-add! [module : String] [name : String]) : unit
-  (set!
-    ctfe-module-macro-export-keys
-    (hashmap.string-i64-map-put
-      ctfe-module-macro-export-keys
-      (ctfe-module-macro-export-key module name)
-      1)))
+  (ctfe_key_map.insert
+    (&mut (box-get ctfe-module-macro-export-keys))
+    (ctfe-module-macro-export-key module name)
+    1))
 
 (define (ctfe-module-macro-export? [module : String] [name : String]) : bool
-  (hashmap.string-i64-map-contains?
-    ctfe-module-macro-export-keys
-    (ctfe-module-macro-export-key module name)))
+  (let
+    [key : String (ctfe-module-macro-export-key module name)]
+    (ctfe_key_map.contains-borrowed?
+      (& (box-get ctfe-module-macro-export-keys))
+      (& key))))
 
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info

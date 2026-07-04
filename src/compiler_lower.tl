@@ -11285,7 +11285,9 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.GlobalAddr (lower-resolve-name state name))
+          (if (lower-borrow-place-value-reference? ctx referent-ty)
+            (CompilerIrValue.Global (lower-resolve-name state name))
+            (CompilerIrValue.GlobalAddr (lower-resolve-name state name)))
           result-ty)))))
 
 (define (lower-borrow-var-address

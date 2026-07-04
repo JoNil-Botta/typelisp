@@ -456,6 +456,7 @@
   (Tuple AstExprList)
   (TupleRef i64 i64)
   (Array AstExprList)
+  (DynArray AstExprList)
   (MakeArray AstType i64)
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
@@ -4029,6 +4030,9 @@
 (define (ast-expr-make-array [elem : AstType] [size : i64]) : i64
   (ast-node-push (AstExpr.MakeArray elem size)))
 
+(define (ast-expr-dyn-array [items : AstExprList]) : i64
+  (ast-node-push (AstExpr.DynArray items)))
+
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayRef target index)))
 
@@ -4364,6 +4368,11 @@
   [elem : AstType]
   [size : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.MakeArray elem size)))
+
+(define (ast-expr-dyn-array-with-pools
+  [pools : AstNodePoolContext]
+  [items : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.DynArray items)))
 
 (define (ast-expr-array-ref-with-pools
   [pools : AstNodePoolContext]
@@ -6264,6 +6273,8 @@
       (AstExpr.TupleRef (ast-compaction-remap-expr-id remap target) index)]
     [(AstExpr.Array items)
       (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
+    [(AstExpr.DynArray items)
+      (AstExpr.DynArray (ast-compaction-remap-expr-list remap items))]
     [(AstExpr.MakeArray elem size)
       (AstExpr.MakeArray
         (ast-compaction-remap-type remap elem)
@@ -6729,6 +6740,7 @@
     [(AstExpr.Tuple _) 10]
     [(AstExpr.TupleRef _ _) 11]
     [(AstExpr.Array _) 12]
+    [(AstExpr.DynArray _) 74]
     [(AstExpr.MakeArray _ _) 13]
     [(AstExpr.ArrayRef _ _) 14]
     [(AstExpr.ArraySet _ _ _) 15]

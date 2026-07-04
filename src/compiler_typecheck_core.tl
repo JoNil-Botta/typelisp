@@ -11329,6 +11329,8 @@
         (tc-source-expr-spmd-broadcast-scope-ok tuple allow))]
     [(AstExpr.Array exprs)
       (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+    [(AstExpr.DynArray exprs)
+      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -11684,6 +11686,7 @@
         [tuple : AstExpr (ast-node-get tuple-box)]
         (tc-source-expr-policy-ok ctx tuple))]
     [(AstExpr.Array exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExpr.DynArray exprs) (tc-source-expr-list-policy-ok ctx exprs)]
     [(AstExpr.MakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -16173,6 +16176,76 @@
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])
     (tc-expr ctx env (AstExpr.Array exprs))))
 
+(define (tc-dyn-array-literal-element-supported
+  [env : TcTypeEnv]
+  [elem-ty : AstType]) : ResultTcUnit
+  (if (tc-dyn-array-elem-supported? env elem-ty)
+    ResultTcUnit.Ok
+    (ResultTcUnit.Err
+      "typecheck: dynamic array literal element type is not supported")))
+
+(define (tc-expr-dyn-array-literal-with-elem
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [elem-ty : AstType]) : ResultTcType
+  (let
+    [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
+    (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
+      [(ResultTcUnit.Ok)
+        (match (tc-dyn-array-literal-element-supported env resolved-elem)
+          [(ResultTcUnit.Ok)
+            (match (tc-expr-list-with-expected-elements
+              ctx
+              env
+              exprs
+              resolved-elem)
+              [(ResultTcUnit.Ok)
+                (ResultTcType.Ok
+                  (tc-tag-active-region env (ast-ty-dyn-array resolved-elem)))]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+          [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
+
+(define (tc-expr-dyn-array-literal-infer
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcType
+  (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
+    [(ResultTcUnit.Ok)
+      (if (ast-expr-list-empty? (& exprs))
+        (ResultTcType.Err
+          "typecheck: cannot infer element type of empty dynamic array literal")
+        (let
+          [first : i64 (ast-expr-list-get (& exprs) 0 0)]
+          [rest : AstExprList (ast-expr-list-tail-from-ref (& exprs) 1)]
+          (match (tc-expr-id ctx env first)
+            [(ResultTcType.Ok first-ty)
+              (match (tc-dyn-array-literal-element-supported env first-ty)
+                [(ResultTcUnit.Ok)
+                  (match (tc-check-array-rest ctx env rest first-ty)
+                    [(ResultTcUnit.Ok)
+                      (ResultTcType.Ok
+                        (tc-tag-active-region env (ast-ty-dyn-array first-ty)))]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+
+(define (tc-expr-dyn-array-literal-with-expected-or-actual
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected : AstType]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx expected))
+    [(AstType.DynArray elem-ty)
+      (tc-expr-dyn-array-literal-with-elem
+        ctx
+        env
+        exprs
+        (tc-context-type-get ctx elem-ty))]
+    [_ (tc-expr-dyn-array-literal-infer ctx env exprs)]))
+
 (define (tc-expr-if-with-expected-or-actual
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -16460,6 +16533,8 @@
             (ty-node-get elem-ty)
             len)]
         [_ (tc-expr ctx env expr)])]
+    [(AstExpr.DynArray exprs)
+      (tc-expr-dyn-array-literal-with-expected-or-actual ctx env exprs expected)]
     [(AstExpr.Tuple exprs)
       (match (tc-type-strip-region expected)
         [(AstType.Tuple expected-elems)
@@ -20922,6 +20997,8 @@
         (tc-ref-closure-local-uses-ok? tuple name bound))]
     [(AstExpr.Array exprs)
       (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+    [(AstExpr.DynArray exprs)
+      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -22637,6 +22714,9 @@
     [(AstExpr.Array _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
+    [(AstExpr.DynArray _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
     [(AstExpr.Box _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
@@ -23145,6 +23225,7 @@
         (ast-node-get tuple-box)
         (ast-node-get index-box))]
     [(AstExpr.Array exprs) (tc-spmd-scan-body-no-nested-list exprs)]
+    [(AstExpr.DynArray exprs) (tc-spmd-scan-body-no-nested-list exprs)]
     [(AstExpr.MakeArray _ len-box)
       (tc-spmd-scan-body-no-nested-spmd (ast-node-get len-box))]
     [(AstExpr.ArrayRef array-box index-box)
@@ -23867,6 +23948,14 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Array exprs)
+      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+        [(ResultTcSpmdExprListInfo.Ok info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ResultTcSpmdExprListInfo.Err message)
+          (ResultTcSpmdExprInfo.Err message)])]
+    [(AstExpr.DynArray exprs)
       (match (tc-spmd-expr-list ctx env spmd-env exprs)
         [(ResultTcSpmdExprListInfo.Ok info)
           (match info
@@ -24873,6 +24962,7 @@
         [tuple : AstExpr (ast-node-get tuple-box)]
         (tc-expr-uses-free-name? tuple name bound))]
     [(AstExpr.Array exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExpr.DynArray exprs) (tc-expr-list-uses-free-name? exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -25364,6 +25454,7 @@
         [tuple : AstExpr (ast-node-get tuple-box)]
         (tc-expr-sets-free-name? tuple name bound))]
     [(AstExpr.Array exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExpr.DynArray exprs) (tc-expr-list-sets-free-name? exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -31861,6 +31952,7 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Tuple exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExpr.Array exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(AstExpr.DynArray exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExpr.Begin exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExpr.Unsafe exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExpr.Ann inner-box _)
@@ -32507,6 +32599,7 @@
                     [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [(AstExpr.DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(AstExpr.MakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -33936,6 +34029,15 @@
     [(AstExpr.TupleRef tuple _)
       (tc-comptime-purity-node-mode ctx env bound chain seen template? tuple)]
     [(AstExpr.Array exprs)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        exprs)]
+    [(AstExpr.DynArray exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
         env
@@ -37495,6 +37597,23 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Array exprs)
       (match (tc-body-type-fact-expr-list-types "move.array_list" ctx env exprs)
+        [(ResultTcTypeList.Ok types)
+          (tc-move-check-exprs-with-types
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(ResultTcTypeList.Err _)
+          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
+    [(AstExpr.DynArray exprs)
+      (match (tc-body-type-fact-expr-list-types
+        "move.dyn_array_list"
+        ctx
+        env
+        exprs)
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
@@ -41157,6 +41276,16 @@
           (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
         [(ResultTcTypeList.Err _)
           (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+    [(AstExpr.DynArray exprs)
+      (match (tc-body-type-fact-expr-list-types
+        "borrow.dyn_array_list"
+        ctx
+        env
+        exprs)
+        [(ResultTcTypeList.Ok types)
+          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+        [(ResultTcTypeList.Err _)
+          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
     [(AstExpr.MakeArray _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -43864,6 +43993,8 @@
           (macro-generated-fingerprint-expr-id-budget tuple-id next)]
         [(AstExpr.Array exprs)
           (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExpr.DynArray exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
         [(AstExpr.MakeArray _ len-id)
           (macro-generated-fingerprint-expr-id-budget len-id next)]
         [(AstExpr.ArrayRef array-id index-id)
@@ -45137,6 +45268,8 @@
       (macro-expr-list-with-head-symbol "tuple" exprs span origin)]
     [(AstExpr.Array exprs)
       (macro-expr-list-with-head-symbol "array" exprs span origin)]
+    [(AstExpr.DynArray exprs)
+      (macro-expr-list-with-head-symbol "make-array" exprs span origin)]
     [(AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol
         "quote"
@@ -46453,6 +46586,9 @@
     [(AstExpr.Array exprs)
       (ast-node-push
         (AstExpr.Array (macro-hygiene-expr-list exprs env macro-name depth)))]
+    [(AstExpr.DynArray exprs)
+      (ast-node-push
+        (AstExpr.DynArray (macro-hygiene-expr-list exprs env macro-name depth)))]
     [(AstExpr.MakeArray ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -50367,6 +50503,11 @@
           [(ResultMacroExprList.Ok nexprs)
             (ResultMacroExpr.Ok (ast-node-push (AstExpr.Array nexprs)))]
           [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+      [(AstExpr.DynArray exprs)
+        (match (macro-expand-exprs ctx env decls depth exprs)
+          [(ResultMacroExprList.Ok nexprs)
+            (ResultMacroExpr.Ok (ast-node-push (AstExpr.DynArray nexprs)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExpr.Match match-box)
         (match (box-get match-box)
           [(AstMatch.Match scrut-box arms)
@@ -51643,6 +51784,12 @@
         refs
         alias-qualified?)]
     [(AstExpr.Array exprs)
+      (macro-generated-surface-expr-list-refs
+        exprs
+        aliases
+        refs
+        alias-qualified?)]
+    [(AstExpr.DynArray exprs)
       (macro-generated-surface-expr-list-refs
         exprs
         aliases
@@ -53853,6 +54000,7 @@
         (macro-node-uses-macro? ctx decls a)
         (macro-node-uses-macro? ctx decls b))]
     [(AstExpr.Array exprs) (macro-exprs-use-macro? ctx decls exprs)]
+    [(AstExpr.DynArray exprs) (macro-exprs-use-macro? ctx decls exprs)]
     [(AstExpr.MakeArray _ len) (macro-node-uses-macro? ctx decls len)]
     [(AstExpr.ArrayRef a i)
       (or
@@ -54136,6 +54284,7 @@
         [index : AstExpr (ast-node-get index-box)]
         (or (macro-expr-might-fire? tuple) (macro-expr-might-fire? index)))]
     [(AstExpr.Array exprs) (macro-expr-list-might-fire? exprs)]
+    [(AstExpr.DynArray exprs) (macro-expr-list-might-fire? exprs)]
     [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -54576,6 +54725,8 @@
             (ast-node-get index-box)))]
       [(AstExpr.Array exprs)
         (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
+      [(AstExpr.DynArray exprs)
+        (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
       [(AstExpr.MakeArray _ len-box)
         (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get len-box))]
       [(AstExpr.ArrayRef array-box index-box)
@@ -54944,6 +55095,7 @@
     [(AstExpr.TupleRef a b)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
     [(AstExpr.Array exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? len)]
     [(AstExpr.ArrayRef a i)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? i))]

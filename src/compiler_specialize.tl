@@ -2684,6 +2684,13 @@
         [(ResultSpecExprList.Ok rewritten state2)
           (ResultSpecExpr.Ok (ast-node-push (AstExpr.Array rewritten)) state2)]
         [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+    [(AstExpr.DynArray exprs)
+      (match (spec-rewrite-expr-list exprs templates state)
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok
+            (ast-node-push (AstExpr.DynArray rewritten))
+            state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExpr.MakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -3405,6 +3412,11 @@
       (match (spec-substitute-values-expr-list exprs subs)
         [(ResultSpecSubExprList.Ok rewritten)
           (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Array rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(AstExpr.DynArray exprs)
+      (match (spec-substitute-values-expr-list exprs subs)
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.DynArray rewritten)))]
         [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExpr.MakeArray elem-ty len-box)
       (let
@@ -4394,6 +4406,11 @@
       (match (spec-substitute-types-expr-list exprs subs)
         [(ResultSpecSubExprList.Ok rewritten)
           (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Array rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(AstExpr.DynArray exprs)
+      (match (spec-substitute-types-expr-list exprs subs)
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.DynArray rewritten)))]
         [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExpr.ArrayRef array-box index-box)
       (let

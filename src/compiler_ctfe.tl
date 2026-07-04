@@ -1074,6 +1074,7 @@
     [(AstExpr.Tuple _) "tuple"]
     [(AstExpr.TupleRef _ _) "tuple-ref"]
     [(AstExpr.Array _) "array"]
+    [(AstExpr.DynArray _) "make-array"]
     [(AstExpr.MakeArray _ _) "make-array"]
     [(AstExpr.ArrayRef _ _) "array-ref"]
     [(AstExpr.ArraySet _ _ _) "array-set!"]
@@ -7587,6 +7588,14 @@
             (AstType.Expr)
             next-fuel)]
         [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+    [(AstExpr.DynArray exprs)
+      (match (ctfe-quote-expr-list exprs env fuel quasiquote)
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
+            (ctfe-ast-push env (AstExpr.DynArray quoted))
+            (AstType.Expr)
+            next-fuel)]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Begin exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
         [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
@@ -8933,6 +8942,11 @@
     [(AstExpr.Array a-items)
       (match b
         [(AstExpr.Array b-items) (ctfe-expr-list-eq-in-env env a-items b-items)]
+        [_ false])]
+    [(AstExpr.DynArray a-items)
+      (match b
+        [(AstExpr.DynArray b-items)
+          (ctfe-expr-list-eq-in-env env a-items b-items)]
         [_ false])]
     [(AstExpr.MakeArray a-ty a-size-box)
       (let

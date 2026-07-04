@@ -6152,6 +6152,34 @@
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
+    [items : (Array String) (make-array \"left\" \"right\")]
+    (array-length items)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
+    [items : (Array u8) (make-array 1 2)]
+    (array-length items)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
+    [items : (Array i64) (make-array (init) 7)]
+    (+ (array-ref items 0) (array-ref items 1))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
+    [items : (Array i64) (make-array)]
+    (array-length items)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
     [a : (Array i64) (make-array i64 0)]
     (begin
       (array-push! a 5)
@@ -6166,6 +6194,19 @@
       (if (compiler-typecheck-error-ok?
         "(define (f) : i64 (make-array i64 true))"
         "typecheck: make-array length must be integer")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (array-length (make-array)))"
+        "typecheck: cannot infer element type of empty dynamic array literal")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64
+  (let
+    [items : (Array (-> i64)) (make-array (lambda () : i64 1))]
+    (array-length items)))"
+        "typecheck: dynamic array literal element type is not supported")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

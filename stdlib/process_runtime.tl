@@ -19,6 +19,7 @@
 (module stdlib.process_runtime)
 
 (import stdlib.array)
+(import stdlib.byte_buf_core)
 
 ;: Private runtime argv list. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
@@ -398,7 +399,6 @@
         [(ProcessRuntimeUnsupported message)
           (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
 
-(cfg windows (import stdlib.byte_buf_core))
 (import stdlib.io)
 (import stdlib.string)
 
@@ -512,12 +512,9 @@
 (cfg
   windows
   (define (process-byte-builder-addr [buf : byte_buf_core.ByteBufBuilder]) : i64
-    (begin
-      (set! (struct-get buf len) (array-length (struct-get buf slots)))
-      (let
-        [bytes : (Array u8)
-          (byte_buf_core.byte-buf-builder-finish-array (& buf))]
-        (stdlib.process_runtime.process-array-u8-addr bytes)))))
+    (let
+      [bytes : (Array u8) (byte_buf_core.byte-buf-builder-finish-array (& buf))]
+      (stdlib.process_runtime.process-array-u8-addr bytes))))
 
 ;: Return the integer address of an `Array u64` backing buffer.
 (define (process-array-u64-addr [buf : (Array u64)]) : i64
@@ -587,21 +584,26 @@
   (let
     [nl : i64 (string-length name)]
     [vl : i64 (string-length value)]
-    [buf : (Array u8) (array.make-array u8 (+ (+ nl vl) 2))]
+    [buf : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity (+ (+ nl vl) 2))]
     [i : i64 0]
     (begin
       (while (< i nl)
         (begin
-          (array-set! buf i (cast (string-ref name i) : u8))
+          (byte_buf_core.byte-buf-builder-push
+            (&mut buf)
+            (cast (string-ref name i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf nl (cast 61 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut buf) (cast 61 : u8))
       (set! i 0)
       (while (< i vl)
         (begin
-          (array-set! buf (+ (+ nl 1) i) (cast (string-ref value i) : u8))
+          (byte_buf_core.byte-buf-builder-push
+            (&mut buf)
+            (cast (string-ref value i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf (+ (+ nl 1) vl) (cast 0 : u8))
-      buf)))
+      (byte_buf_core.byte-buf-builder-push (&mut buf) (cast 0 : u8))
+      (byte_buf_core.byte-buf-builder-finish-array (& buf)))))
 
 ;: Materialize the override list into an array of `NAME=VALUE` C string
 ;: addresses. The move-only `env` list is consumed exactly once here so the
@@ -1400,7 +1402,7 @@
           (let
             [byte : i64 (stdlib.process_runtime.process-byte-at ptr i)]
             (begin
-              (array-push! (struct-get block slots) (cast byte : u8))
+              (byte_buf_core.byte-buf-builder-push block (cast byte : u8))
               (if (= byte 0)
                 (set! done true)
                 (set! i (+ i 1))))))
@@ -1455,7 +1457,7 @@
                   (&mut block)
                   (cast (array-ref ov k) : i64))
                 (set! k (+ k 1))))
-            (array-push! (struct-get block slots) (cast 0 : u8))
+            (byte_buf_core.byte-buf-builder-push (&mut block) (cast 0 : u8))
             (stdlib.process_runtime.process-byte-builder-addr block)))))))
 
 ;: Close a Windows handle when it is not INVALID_HANDLE_VALUE.

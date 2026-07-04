@@ -843,8 +843,9 @@ operand must be a binding clause and the macro body receives an
 
 Macro bodies can build expression literals with `expr-bool`, `expr-int`,
 `expr-string`, and `expr-var`; `expr-struct-get` builds a field access whose
-field token is computed during macro CTFE, and `expr-struct-set` builds the
-matching field assignment expression.
+field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
+element access whose index is computed during macro CTFE, and
+`expr-struct-set` builds the matching field assignment expression.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
 `pattern-list-empty`, `pattern-list-cons`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build generated
@@ -852,21 +853,22 @@ match expressions from computed pattern names and payload bindings. Generated
 matches are still checked by the ordinary typechecker for variant resolution,
 payload arity, arm result types, and exhaustiveness after macro expansion.
 
-Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
-`expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
+Macro bodies can inspect variadic expression captures with `expr-list-length`
+and `expr-list-nth`. Dense capture lists are indexed from zero; empty lists
+therefore have length `0` and reject every `expr-list-nth` access.
 They can inspect clause captures with `expr-clause-first`,
-`expr-clause-second`, `expr-clause-list-empty?`,
-`expr-clause-list-length`, `expr-clause-list-head`,
-`expr-clause-list-tail`, and `expr-clause-list-nth`.
+`expr-clause-second`, `expr-clause-list-length`, and
+`expr-clause-list-nth`.
 `expr-clause-list->expr-list` converts a clause list back into a list of
 bracket-clause operand syntax for explicit splicing into recursive macro calls.
 They can inspect binding-clause captures with `expr-binding-clause-name`,
 `expr-binding-clause-has-type?`, `expr-binding-clause-type`,
-`expr-binding-clause-init`, `expr-binding-clause-list-empty?`,
-`expr-binding-clause-list-length`, `expr-binding-clause-list-head`,
-`expr-binding-clause-list-tail`, and `expr-binding-clause-list-nth`.
+`expr-binding-clause-init`, `expr-binding-clause-list-length`, and
+`expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back into
 bracket-clause operand syntax for explicit splicing into macro calls.
+Historical cons-list helpers such as `expr-list-head` and `expr-list-tail` are
+not part of the v1 public macro ABI.
 
 Macro bodies can inspect module strategy operands with `module-name` and
 `module-export-macro?`. `module-hook` validates that the strategy module exports
@@ -913,12 +915,12 @@ The source surface is:
   (fold-bool-and first rest))
 
 (defmacro (pick-first [arms : ExprClause ...]) : i64
-  (if (expr-clause-list-empty? arms)
+  (if (= (expr-clause-list-length arms) 0)
     (expr-int 0)
-    `(if ,(expr-clause-first (expr-clause-list-head arms))
-       ,(expr-clause-second (expr-clause-list-head arms))
-       (pick-first ,@(expr-clause-list->expr-list
-                       (expr-clause-list-tail arms))))))
+    (let [arm : ExprClause (expr-clause-list-nth arms 0)]
+      `(if ,(expr-clause-first arm)
+         ,(expr-clause-second arm)
+         ,(expr-int 0)))))
 ```
 
 The canonical binding types for those declarations are `(macro (bool bool)
@@ -1140,8 +1142,8 @@ reflection sequences are dense, length-indexed sequence wrappers over arrays
 (or an equivalent
 compiler-verified dense representation). Their public API is
 length/index/iteration-oriented. Recursive cons cells are not part of the
-public contract, even if temporary compatibility helpers keep names such as
-`expr-list-head` during migration.
+public contract; any temporary implementation bridge names from the old
+cons-list model are not part of the v1 public macro ABI.
 
 The public enum variant policy follows the dotted qualified variant direction:
 stdlib declarations should use short variant names such as `Var`, `Call`,
@@ -4564,10 +4566,10 @@ generated identifiers in comptime code, but they must not be lowered as heap
 used instead.
 
 The stdlib-owned `TypeInfo` surface in section 3.7.2.2 is the value-level form
-of this same reflection contract. Until that surface lands, the indexed
-primitives below remain the implemented selfhost v1 API. After it lands,
-primitive results and `TypeInfo` values must agree on kind strings, nominal
-identity, key generation, and diagnostics.
+of this same reflection contract. The indexed primitives below remain the
+implemented scalar v1 query API and the compiled-comptime host ABI exposes the
+same names as callbacks. Primitive results and `TypeInfo` values must agree on
+kind strings, nominal identity, key generation, and diagnostics.
 
 V1 primitive names and signatures are fixed as follows:
 
@@ -4756,8 +4758,10 @@ header callback ABI version does not match the host callback table version it
 will pass to the image.
 
 A code-bearing image exports one native entry point named `tlci_image_entry`.
-The host calls it with the target platform's ordinary integer calling
-convention:
+The host calls it with the host platform's ordinary C integer calling
+convention. A tlci image always executes on the host architecture named in the
+tlci header; code for the consumer program's runtime target remains separate
+runtime output and is not loaded through this comptime ABI:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |
@@ -4816,9 +4820,18 @@ Callback status values are fixed:
 | 3 | Native macro panic/abort |
 | 4 | Bad callback request or malformed arguments |
 
-Callback operation ids are append-only. IDs `1` through `99` are host-control
-operations; IDs `100` and above mirror the current exported
-`stdlib.comptime` helper surface. V1 assigns:
+Macro diagnostics are reported through `diagnostic` and return status `1`.
+`fuel-check` returns status `2` when the expansion has exhausted its fuel.
+Native traps, explicit native aborts, and symbolized failures call `abort` with
+status `3` and, when available, a tlci symbol-table record id/offset so the
+host diagnostic can include the image symbol name. Malformed callback ids,
+wrong arity, bad handles, and invalid scratch requests return status `4`.
+
+Callback operation ids are append-only after v1. IDs `1` through `99` are
+host-control operations; IDs `100` and above mirror the current public
+macro/comptime helper surface: `stdlib.comptime`, the pure string helpers that
+macro CTFE already admits, and the section 5.17 reflection primitives. V1
+assigns:
 
 | ID | Operation |
 | ---: | --- |
@@ -4828,59 +4841,82 @@ operations; IDs `100` and above mirror the current exported
 | 4 | `scratch-reset` |
 | 100 | `expr-bool` |
 | 101 | `expr-int` |
-| 102 | `expr-var` |
-| 103 | `string-concat` |
-| 104 | `string-append` |
-| 105 | `int->string` |
-| 106 | `expr-splice` |
-| 107 | `expr-if` |
-| 108 | `expr-type` |
-| 109 | `module-export-value?` |
-| 110 | `module-export-type?` |
-| 111 | `module-export-macro?` |
-| 112 | `module-export-value-type` |
-| 113 | `module-export-type` |
-| 114 | `module-export-macro-type` |
-| 115 | `expr-bool?` |
-| 116 | `expr-bool-value` |
-| 117 | `expr-if?` |
-| 118 | `expr-if-cond` |
-| 119 | `expr-if-then` |
-| 120 | `expr-if-else` |
-| 121 | `expr-list-empty?` |
-| 122 | `expr-list-length` |
-| 123 | `expr-list-head` |
-| 124 | `expr-list-tail` |
-| 125 | `expr-list-nth` |
-| 126 | `expr-clause-first` |
-| 127 | `expr-clause-second` |
-| 128 | `expr-clause-list-empty?` |
-| 129 | `expr-clause-list-length` |
-| 130 | `expr-clause-list-head` |
-| 131 | `expr-clause-list-tail` |
-| 132 | `expr-clause-list-nth` |
-| 133 | `expr-clause-list->expr-list` |
-| 134 | `expr-binding-clause-name` |
-| 135 | `expr-binding-clause-has-type?` |
-| 136 | `expr-binding-clause-type` |
-| 137 | `expr-binding-clause-init` |
-| 138 | `expr-binding-clause-list-empty?` |
-| 139 | `expr-binding-clause-list-length` |
-| 140 | `expr-binding-clause-list-head` |
-| 141 | `expr-binding-clause-list-tail` |
-| 142 | `expr-binding-clause-list-nth` |
-| 143 | `expr-binding-clause-list->expr-list` |
-| 144 | `module-name` |
-| 145 | `module-hook` |
-| 146 | `expr-string` |
-| 147 | `expr-struct-set` |
+| 102 | `expr-string` |
+| 103 | `expr-var` |
+| 104 | `expr-struct-get` |
+| 105 | `expr-tuple-ref` |
+| 106 | `expr-struct-set` |
+| 107 | `string-eq` / `stdlib.string.eq` |
+| 108 | `string-concat` / `stdlib.string.concat` |
+| 109 | `string-append` / `stdlib.string.append` |
+| 110 | `string-length` / `stdlib.string.string-length` |
+| 111 | `string-ref` / `stdlib.string.string-ref` |
+| 112 | `string->int` / `stdlib.string.>int` |
+| 113 | `int->string` / `stdlib.string.int->string` |
+| 114 | `expr-splice` |
+| 115 | `expr-if` |
+| 116 | `pattern-wildcard` |
+| 117 | `pattern-binding` |
+| 118 | `pattern-variant` |
+| 119 | `pattern-list-empty` |
+| 120 | `pattern-list-cons` |
+| 121 | `match-arm` |
+| 122 | `match-arm-list-empty` |
+| 123 | `match-arm-list-cons` |
+| 124 | `expr-match` |
+| 125 | `expr-type` |
+| 126 | `type-info` |
+| 127 | `module-name` |
+| 128 | `module-export-macro?` |
+| 129 | `module-hook` |
+| 130 | `type-kind` |
+| 131 | `type-key` |
+| 132 | `type-nominal-module` |
+| 133 | `type-nominal-name` |
+| 134 | `struct-field-count` |
+| 135 | `struct-field-name` |
+| 136 | `struct-field-type` |
+| 137 | `enum-variant-count` |
+| 138 | `enum-variant-name` |
+| 139 | `enum-variant-payload-count` |
+| 140 | `enum-variant-payload-type` |
+| 141 | `array-element-type` |
+| 142 | `array-length` |
+| 143 | `array-dynamic?` |
+| 144 | `tuple-element-count` |
+| 145 | `tuple-element-type` |
+| 146 | `function-param-count` |
+| 147 | `function-param-type` |
+| 148 | `function-return-type` |
+| 149 | `expr-bool?` |
+| 150 | `expr-bool-value` |
+| 151 | `expr-if?` |
+| 152 | `expr-if-cond` |
+| 153 | `expr-if-then` |
+| 154 | `expr-if-else` |
+| 155 | `expr-list-length` |
+| 156 | `expr-list-nth` |
+| 157 | `expr-clause-first` |
+| 158 | `expr-clause-second` |
+| 159 | `expr-clause-list-length` |
+| 160 | `expr-clause-list-nth` |
+| 161 | `expr-clause-list->expr-list` |
+| 162 | `expr-binding-clause-name` |
+| 163 | `expr-binding-clause-has-type?` |
+| 164 | `expr-binding-clause-type` |
+| 165 | `expr-binding-clause-init` |
+| 166 | `expr-binding-clause-list-length` |
+| 167 | `expr-binding-clause-list-nth` |
+| 168 | `expr-binding-clause-list->expr-list` |
 
-The operation catalog deliberately does not assign `TypeInfo` constructor or
-reflection helper operations yet. `TypeInfo` value shapes are public, but
-compiled macro execution still needs a focused bridge slice to decide which
-reflection helpers become ordinary stdlib calls and which bridge operations
-stay intrinsic. Those future operations must be appended without reusing the
-IDs above.
+`comptime-error` and `stdlib.comptime.error` are not separate operations; they
+call `diagnostic` and return status `1`. `type-info` returns a host-owned
+reflection value with the public `TypeInfo` shape. Compiled code that inspects
+reflection must lower to `type-info` plus the scalar reflection callbacks above
+or ordinary value code over handles returned by those callbacks; it must not use
+compiled-only helper ids. Historical cons-list migration helpers such as
+`expr-list-empty?`, `expr-list-head`, and `expr-list-tail` have no v1 callback
+ids; a v1 host must report an unknown callback id as bad request.
 
 The image fills the writable registration record before returning success. The
 v1 registration record keeps the original 48-byte header and appends the macro
@@ -4934,10 +4970,12 @@ values and assign callback, operation, macro-entry, or registration fields
 after the v1 ranges above, but they must not reinterpret the v1 offsets or
 operation ids. A v1 loader accepts larger records when the magic, ABI version,
 minimum byte size, required callback pointers, macro table/count consistency,
-and reserved-zero fields are valid, and ignores unknown tails. This section
-specifies the contract only; loading mapped pages, invoking macro entries,
-enforcing fuel, embedding stdlib tlci, and package dependency dispatch remain
-the #2657/#2658/#2659 implementation slices.
+and reserved-zero fields are valid, and ignores unknown tails. ABI version
+mismatches are diagnostics naming the unsupported callback ABI version. The
+embedded `stdlib.tlci` tier and package tlci images use this same callback
+table, entry symbol, registration record, macro-entry function shape, and
+operation catalog; stdlib is therefore the permanent CI consumer of the public
+ABI rather than a separate compiled-only path.
 
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 

@@ -1,4 +1,6 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
+(import stdlib.fs)
+(import stdlib.io)
 (import stdlib.json)
 (import stdlib.string)
 (import stdlib.vector as svec)
@@ -214,6 +216,56 @@
       (= (lsp-decl-list-len (& changed-decls)) 1)
       (struct-get cached-changed-doc decls-valid))))
 
+(define (lsp-document-disk-resync-ok?) : bool
+  (let
+    [dir : String "target"]
+    [path : String "target/lsp_disk_resync_smoke.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [stale-text : String "(define stale : i64 0)"]
+    [disk-text : String "(define fresh : i64 1)"]
+    [fresh-name : String "fresh"]
+    [params : json.Json
+      (lsp-json-object1
+        "textDocument"
+        (lsp-json-object1 "uri" (json.JsonString uri)))]
+    [docs : LspDocuments (lsp-documents-new)]
+    (begin
+      (match (fs.try-mkdir-if-missing (& dir))
+        [(io.OkIoUnit) unit]
+        [(io.ErrIoUnit _) unit])
+      (io.write-file path disk-text)
+      (set! docs (lsp-documents-set docs uri path stale-text uri))
+      (let
+        [lookup-ok : bool
+          (match (lsp-get-document params docs)
+            [(LspDocumentLookup.Found _ text _)
+              (string.contains (& text) (& fresh-name))]
+            [(LspDocumentLookup.Missing) false])]
+        [cached-doc : LspDocument
+          (lsp-documents-get (& docs) 0 (lsp-document-fallback))]
+        [cache-ok : bool
+          (and
+            (string.contains (& (struct-get cached-doc text)) (& fresh-name))
+            (not (struct-get cached-doc decls-valid)))]
+        [decls-ok : bool
+          (match (lsp-get-document-decls params docs)
+            [(LspDocumentDeclsLookup.Found _ text _ decls)
+              (let
+                [entry : LspDeclEntry
+                  (lsp-decl-list-get (& decls) 0 (lsp-decl-entry-fallback))]
+                (and
+                  (string.contains (& text) (& fresh-name))
+                  (= (lsp-decl-list-len (& decls)) 1)
+                  (string.eq (struct-get entry name) fresh-name)))]
+            [(LspDocumentDeclsLookup.Missing) false])]
+        [cached-decls-doc : LspDocument
+          (lsp-documents-get (& docs) 0 (lsp-document-fallback))]
+        (and
+          lookup-ok
+          cache-ok
+          decls-ok
+          (struct-get cached-decls-doc decls-valid))))))
+
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
     [first : String "(define (alpha) : i64 1)"]
@@ -253,5 +305,6 @@
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))
         (unless (lsp-document-decls-cache-empty-ok?) (return 12))
+        (unless (lsp-document-disk-resync-ok?) (return 15))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         42))))

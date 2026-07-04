@@ -4,18 +4,18 @@
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
 (import stdlib.io)
+(import "compiler_i64_i64_map.tl" module compiler_i64_i64_map as symbol_map)
 (import "compiler_parse_core.tl")
 (import sym_i64_env)
-(import stdlib.hashmap)
 (import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
 (defenum CompilerSymbols
   (CompilerSymbols
-    hashmap.I64I64Map
-    hashmap.I64I64Map
-    hashmap.I64I64Map
+    symbol_map.Map
+    symbol_map.Map
+    symbol_map.Map
     (Array AstDecl)
     (Array String)))
 
@@ -31,7 +31,7 @@
   (CompilerQualifiedName i64 i64))
 
 (defenum CompilerRegistries
-  (CompilerRegistries hashmap.I64I64Map hashmap.I64I64Map))
+  (CompilerRegistries symbol_map.Map symbol_map.Map))
 
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
@@ -112,41 +112,41 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
-(define (compiler-symbol-map-empty) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 256))
+(define (compiler-symbol-map-empty) : symbol_map.Map
+  (symbol_map.with-capacity 256))
 
-(define (compiler-symbol-map-lookup-id
-  [map : hashmap.I64I64Map]
-  [name-id : i64]) : option_i64.Option
-  (match (hashmap.i64-i64-map-get map name-id)
-    [(hashmap.I64I64MapFound value) (option_i64.Some value)]
-    [(hashmap.I64I64MapMissing) option_i64.None]))
+(define (compiler-symbol-map-lookup-id [map : symbol_map.Map] [name-id : i64]) : option_i64.Option
+  (match (symbol_map.get (& map) name-id)
+    [(symbol_map.LookupFound value) (option_i64.Some value)]
+    [(symbol_map.LookupMissing) option_i64.None]))
 
-(define (compiler-symbol-map-lookup [map : hashmap.I64I64Map] [name : String]) : option_i64.Option
+(define (compiler-symbol-map-lookup [map : symbol_map.Map] [name : String]) : option_i64.Option
   (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-contains-id?
-  [map : hashmap.I64I64Map]
+  [map : symbol_map.Map]
   [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
     [(option_i64.Some _) true]
     [(option_i64.None) false]))
 
-(define (compiler-symbol-map-contains?
-  [map : hashmap.I64I64Map]
-  [name : String]) : bool
+(define (compiler-symbol-map-contains? [map : symbol_map.Map] [name : String]) : bool
   (compiler-symbol-map-contains-id? map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-bind-id
-  [map : hashmap.I64I64Map]
+  [map : symbol_map.Map]
   [name-id : i64]
-  [handle : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put map name-id handle))
+  [handle : i64]) : symbol_map.Map
+  (let
+    [next : symbol_map.Map map]
+    (begin
+      (symbol_map.insert (&mut next) name-id handle)
+      next)))
 
 (define (compiler-symbol-map-bind
-  [map : hashmap.I64I64Map]
+  [map : symbol_map.Map]
   [name : String]
-  [handle : i64]) : hashmap.I64I64Map
+  [handle : i64]) : symbol_map.Map
   (compiler-symbol-map-bind-id map (compiler-symbol-name-key-id name) handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
@@ -460,12 +460,14 @@
       (match (compiler-symbol-map-lookup macros name)
         [(option_i64.Some existing)
           (if (= existing handle)
-            (match (hashmap.i64-i64-map-remove
-              macros
-              (compiler-symbol-name-key-id name))
-              [(hashmap.I64I64MapRemoveOk next-macros)
-                (CompilerSymbols values types next-macros decls owner-names)]
-              [(hashmap.I64I64MapRemoveMissing _) symbols])
+            (let
+              [next-macros : symbol_map.Map macros]
+              (match (symbol_map.remove
+                (&mut next-macros)
+                (compiler-symbol-name-key-id name))
+                [(symbol_map.RemoveOk)
+                  (CompilerSymbols values types next-macros decls owner-names)]
+                [(symbol_map.RemoveMissing) symbols]))
             symbols)]
         [(option_i64.None) symbols])]))
 

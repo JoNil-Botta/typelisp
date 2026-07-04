@@ -1789,6 +1789,14 @@
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
 
+;; The newest segment of the active node-pool chain. The pool arena's live
+;; chain is only reachable from this head (overflow segments link newest->root
+;; by `prev`), so a reset/destroy that starts from the make() root handle leaks
+;; every overflow segment. Callers releasing a grown pool arena must destroy
+;; from this head.
+(define (ast-node-pool-base-arena-handle) : i64
+  node-pool-base-arena)
+
 (define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
     unit

@@ -31,6 +31,8 @@
 ;; constants.
 ;; Imported by module name so token declarations stay behind the `token.`
 ;; qualifier instead of flattening through `lex.tl`.
+(module lex)
+
 (import compiler_intern as ci)
 (import stdlib.io)
 (import token)
@@ -812,7 +814,7 @@
                 (array-set!
                   stoks
                   count
-                  (token.SpannedToken.Spanned token.Token.LParen line col))
+                  (token.spanned-token-new token.Token.LParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -821,7 +823,7 @@
                 (array-set!
                   stoks
                   count
-                  (token.SpannedToken.Spanned token.Token.LBracket line col))
+                  (token.spanned-token-new token.Token.LBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -830,7 +832,7 @@
                 (array-set!
                   stoks
                   count
-                  (token.SpannedToken.Spanned token.Token.RParen line col))
+                  (token.spanned-token-new token.Token.RParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -839,7 +841,7 @@
                 (array-set!
                   stoks
                   count
-                  (token.SpannedToken.Spanned token.Token.RBracket line col))
+                  (token.spanned-token-new token.Token.RBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -853,7 +855,7 @@
                       (array-set!
                         stoks
                         count
-                        (token.SpannedToken.Spanned
+                        (token.spanned-token-new
                           (token.Token.Char value)
                           token-line
                           token-col))
@@ -870,7 +872,7 @@
                       (array-set!
                         stoks
                         count
-                        (token.SpannedToken.Spanned token.Token.Quote line col))
+                        (token.spanned-token-new token.Token.Quote line col))
                       (set! count (+ count 1))
                       (set! i (+ i 1))
                       (set! col (+ col 1)))]))]
@@ -879,7 +881,7 @@
                 (array-set!
                   stoks
                   count
-                  (token.SpannedToken.Spanned token.Token.Backtick line col))
+                  (token.spanned-token-new token.Token.Backtick line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -891,24 +893,21 @@
                       (array-set!
                         stoks
                         count
-                        (token.SpannedToken.Spanned
-                          token.Token.CommaAt
-                          line
-                          col))
+                        (token.spanned-token-new token.Token.CommaAt line col))
                       (set! i (+ i 2))
                       (set! col (+ col 2)))
                     (begin
                       (array-set!
                         stoks
                         count
-                        (token.SpannedToken.Spanned token.Token.Comma line col))
+                        (token.spanned-token-new token.Token.Comma line col))
                       (set! i (+ i 1))
                       (set! col (+ col 1))))
                   (begin
                     (array-set!
                       stoks
                       count
-                      (token.SpannedToken.Spanned token.Token.Comma line col))
+                      (token.spanned-token-new token.Token.Comma line col))
                     (set! i (+ i 1))
                     (set! col (+ col 1))))
                 (set! count (+ count 1)))]
@@ -923,7 +922,7 @@
                       (array-set!
                         stoks
                         count
-                        (token.SpannedToken.Spanned
+                        (token.spanned-token-new
                           (token.Token.Str
                             (unescape-string-literal src start end))
                           token-line
@@ -957,7 +956,7 @@
                         (array-set!
                           stoks
                           count
-                          (token.SpannedToken.Spanned
+                          (token.spanned-token-new
                             (token.Token.Float
                               (string.substring src i (- end i)))
                             token-line
@@ -965,7 +964,7 @@
                         (array-set!
                           stoks
                           count
-                          (token.SpannedToken.Spanned
+                          (token.spanned-token-new
                             (token.Token.Int
                               (number-int-value src i end n)
                               (number-int-source-text src i end n))
@@ -987,7 +986,7 @@
                     (array-set!
                       stoks
                       count
-                      (token.SpannedToken.Spanned
+                      (token.spanned-token-new
                         (token.Token.Sym (ci.intern-slice src i (- end i)))
                         line
                         col))
@@ -998,7 +997,7 @@
                     (array-set!
                       stoks
                       count
-                      (token.SpannedToken.Spanned
+                      (token.spanned-token-new
                         (token.Token.Sym (ci.intern ":"))
                         line
                         col))
@@ -1012,7 +1011,7 @@
                   (array-set!
                     stoks
                     count
-                    (token.SpannedToken.Spanned
+                    (token.spanned-token-new
                       (token.Token.Sym (ci.intern-slice src i (- end i)))
                       line
                       col))
@@ -1029,7 +1028,7 @@
           (array-set!
             stoks
             count
-            (token.SpannedToken.Spanned token.Token.End line col))
+            (token.spanned-token-new token.Token.End line col))
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
@@ -1093,7 +1092,7 @@
   (let
     [line : i64 (index-line src idx)]
     [col : i64 (index-col src idx)]
-    (token.SourceError message (token.SourceSpan line col line col))))
+    (token.source-error-new message (token.source-span-new line col line col))))
 
 ;; Reusable spanned-token buffer. The per-source token array is sized to the
 ;; SOURCE BYTE COUNT (a safe upper bound on the token count, since each token

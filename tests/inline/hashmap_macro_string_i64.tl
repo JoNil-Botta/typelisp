@@ -15,6 +15,20 @@
       (map_string_i64.insert (&mut m) "alpha" 10)
       (map_string_i64.insert (&mut m) "beta" 20)
       (assert-i64-eq (map_string_i64.len (& m)) 2 "insert updates len")
+      (assert-false
+        (map_string_i64.insert-if-absent? (&mut m) "alpha" 99)
+        "insert-if-absent reports existing key")
+      (assert-i64-eq
+        (map_string_i64.lookup-value-or (map_string_i64.get (& m) "alpha") -1)
+        10
+        "insert-if-absent preserves existing value")
+      (assert-true
+        (map_string_i64.insert-if-absent? (&mut m) "gamma" 30)
+        "insert-if-absent inserts missing key")
+      (assert-i64-eq
+        (map_string_i64.lookup-value-or (map_string_i64.get (& m) "gamma") -1)
+        30
+        "insert-if-absent stores missing value")
       (assert-i64-eq
         (map_string_i64.lookup-value-or (map_string_i64.get (& m) "alpha") -1)
         10

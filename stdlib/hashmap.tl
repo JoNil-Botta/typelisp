@@ -178,6 +178,14 @@
                 [key : String]
                 [value : i64]) : unit
                 (insert map key value))
+              (define (insert-if-absent?
+                [map : (&mut map Map)]
+                [key : String]
+                [value : i64]) : bool
+                (base.string-i64-map-insert-if-absent!
+                  (&mut (struct-get map inner))
+                  key
+                  value))
               (define (remove-borrowed
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
@@ -2272,6 +2280,87 @@
                 (set! (struct-get map len) (+ (struct-get map len) 1))
                 (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
               unit)))))))
+
+;: Insert `key -> value` only when `key` is absent. Returns true for a new
+;: insertion and false when the key already exists.
+(define (string-i64-map-insert-if-absent!
+  [map : (&mut map StringI64Map)]
+  [key : String]
+  [value : i64]) : bool
+  (begin
+    (if (stdlib.hashmap.string-i64-map-needs-grow-mut? map)
+      (stdlib.hashmap.string-i64-map-grow! map)
+      unit)
+    (let
+      [slots : (&mut map (Array StringI64MapSlot))
+        (stdlib.hashmap.string-i64-map-slots-mut map)]
+      [capacity : i64 (array-length slots)]
+      [hash : i64 (hash_mod.string-key (& key))]
+      (if (<= capacity 0)
+        false
+        (let
+          [cursor : i64
+            (stdlib.hashmap.string-i64-map-normalized-bucket-index
+              hash
+              capacity)]
+          [walked : i64 0]
+          [first : i64 -1]
+          (begin
+            (while (< walked capacity)
+              (match (array-ref slots cursor)
+                [(StringI64MapEmpty)
+                  (let
+                    [index : i64
+                      (if (>= first 0)
+                        first
+                        cursor)]
+                    [reused-tombstone : bool (>= first 0)]
+                    (begin
+                      (array-set!
+                        slots
+                        index
+                        (StringI64MapOccupied key value hash))
+                      (set! (struct-get map len) (+ (struct-get map len) 1))
+                      (if reused-tombstone
+                        (set!
+                          (struct-get map deleted)
+                          (- (struct-get map deleted) 1))
+                        unit)
+                      (return true)))]
+                [(StringI64MapTombstone)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (if (< first 0)
+                        (set! first cursor)
+                        unit)
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))]
+                [(StringI64MapOccupied slot-key _ slot-hash)
+                  (if (if (= slot-hash hash)
+                    (hash_mod.key-string-eq? (& slot-key) (& key))
+                    false)
+                    (return false)
+                    (let
+                      [next : i64 (+ cursor 1)]
+                      (begin
+                        (set!
+                          cursor
+                          (if (>= next capacity)
+                            0
+                            next))
+                        (set! walked (+ walked 1)))))]))
+            (if (>= first 0)
+              (begin
+                (array-set! slots first (StringI64MapOccupied key value hash))
+                (set! (struct-get map len) (+ (struct-get map len) 1))
+                (set! (struct-get map deleted) (- (struct-get map deleted) 1))
+                true)
+              false)))))))
 
 ;: Insert `key -> value`, or update the existing key to `value`.
 (define (string-i64-map-insert-or-update

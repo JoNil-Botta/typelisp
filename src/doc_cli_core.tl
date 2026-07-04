@@ -13,6 +13,7 @@
 (import "doc_render.tl")
 (import "doc_html.tl")
 (import "doc_test.tl")
+(import "doc_expand.tl")
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
@@ -100,16 +101,51 @@
             (DocModule.Module path (doc-extract-file path))
             (doc-modules-from-paths rest (sym_i64_env.sym-i64-bind seen path 1)))))]))
 
+(define (doc-generated-modules-from-source-paths
+  [paths : AstDeclPathList]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.StringVector]) : ResultDocExpandedModules
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) (ResultDocExpandedModules.Ok DocModuleList.Nil)]
+    [(AstDeclPathListStep.Cons path rest)
+      (let
+        [rest : AstDeclPathList rest]
+        (if (sym_i64_env.sym-i64-contains seen path)
+          (doc-generated-modules-from-source-paths rest seen stdlib-roots)
+          (let
+            [next-seen : sym_i64_env.SymI64Env
+              (sym_i64_env.sym-i64-bind seen path 1)]
+            [docs : DocExtraction (doc-extract-file path)]
+            (match (doc-expanded-generated-modules-from-source-docs
+              path
+              docs
+              stdlib-roots)
+              [(ResultDocExpandedModules.Ok head-modules)
+                (match (doc-generated-modules-from-source-paths
+                  rest
+                  next-seen
+                  stdlib-roots)
+                  [(ResultDocExpandedModules.Ok tail-modules)
+                    (ResultDocExpandedModules.Ok
+                      (doc-module-list-append head-modules tail-modules))]
+                  [(ResultDocExpandedModules.Err message)
+                    (ResultDocExpandedModules.Err message)])]
+              [(ResultDocExpandedModules.Err message)
+                (ResultDocExpandedModules.Err message)]))))]))
+
 (define (doc-render-loaded-markdown
   [input-path : String]
-  [paths : AstDeclPathList]) : String
+  [paths : AstDeclPathList]
+  [generated-modules : DocModuleList]) : String
   (let
     [modules : DocModuleList
       (doc-modules-from-paths
         (ast-decl-path-cons input-path paths)
         (sym_i64_env.sym-i64-empty))]
-    (if (> (doc-module-list-count modules) 1)
-      (doc-render-module-graph-markdown modules)
+    [all-modules : DocModuleList
+      (doc-module-list-append modules generated-modules)]
+    (if (> (doc-module-list-count all-modules) 1)
+      (doc-render-module-graph-markdown all-modules)
       (doc-render-markdown (doc-extract-file input-path)))))
 
 (define (doc-generate-loaded-file
@@ -120,13 +156,39 @@
     input-path
     (sym_i64_env.sym-i64-empty)
     stdlib-roots)
-    [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
-      (begin
-        (io.write-file
-          output-path
-          (doc-render-loaded-markdown input-path paths))
-        (doc-print-wrote output-path)
-        0)]
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      (match (doc-generated-modules-from-source-paths
+        (ast-decl-path-cons input-path paths)
+        (sym_i64_env.sym-i64-empty)
+        stdlib-roots)
+        [(ResultDocExpandedModules.Ok source-generated-modules)
+          (let
+            ;; Expansion from public source docs is authoritative and errors
+            ;; above fail the command. Loaded graph expansion is best-effort:
+            ;; synthetic graph docs can combine helper declarations from many
+            ;; modules in ways normal source builds never do.
+            [generated-modules : DocModuleList
+              (match (doc-expanded-generated-modules-from-loaded-decls
+                decls
+                paths
+                stdlib-roots)
+                [(ResultDocExpandedModules.Ok modules) modules]
+                [(ResultDocExpandedModules.Err _) DocModuleList.Nil])]
+            (begin
+              (io.write-file
+                output-path
+                (doc-render-loaded-markdown
+                  input-path
+                  paths
+                  (doc-module-list-append
+                    generated-modules
+                    source-generated-modules)))
+              (doc-print-wrote output-path)
+              0))]
+        [(ResultDocExpandedModules.Err message)
+          (begin
+            (io.print-error message)
+            1)])]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))

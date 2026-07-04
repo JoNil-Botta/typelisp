@@ -18,6 +18,7 @@
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
 (import stdlib.io)
+(import stdlib.arena)
 (import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
@@ -928,12 +929,15 @@
     [(CompileCliBatchEntryList.Nil) 0]
     [(CompileCliBatchEntryList.Cons input-path output-path rest)
       (let
-        ;; Each batch entry gets a destroyable scratch arena, not just a
-        ;; lexical rewind region. Rewinds intentionally retain overflow chunks
-        ;; until the owning arena is destroyed (#2441), so long batches must
-        ;; destroy the entry arena to avoid inter-entry growth.
+        ;; Each batch entry gets a destroyable scratch arena, not just a lexical
+        ;; rewind region. Keep the exact scratch handle so cleanup does not
+        ;; depend on which arena compiler driver internals leave active.
+        [home : arena.Arena (arena.current)]
+        [scratch : arena.Arena (arena.make)]
         [status : i64
-          (with-scratch
+          (begin
+            (unsafe
+              (arena.set! scratch))
             (compile-cli-run-compile-file
               state
               input-path
@@ -947,23 +951,33 @@
               backend-mode
               opt-level
               false))]
-        (if (= status 0)
-          (compile-cli-run-batch-entries
-            state
-            (box-get rest)
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "\ncompile: batch source failed: "
-                input-path
-                "\n"))
-            status)))]))
+        (begin
+          (unsafe
+            (arena.set! home))
+          ;; Clear compile state while the entry scratch arena is still mapped:
+          ;; loader/typecheck caches may hold scratch-backed nodes until reset.
+          (compiler-driver-state-reset-file-state! state)
+          (unsafe
+            (begin
+              (arena.set! home)
+              (arena.destroy scratch)))
+          (if (= status 0)
+            (compile-cli-run-batch-entries
+              state
+              (box-get rest)
+              has-target
+              target
+              stdlib-roots
+              cfgs
+              backend-mode
+              opt-level)
+            (begin
+              (io.print-error
+                (str_cat.str-cat
+                  "\ncompile: batch source failed: "
+                  input-path
+                  "\n"))
+              status))))]))
 
 (define (compile-cli-run-batch-from
   [state : CompilerDriverState]

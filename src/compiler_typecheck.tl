@@ -156,6 +156,48 @@
     (svec.new)
     (tc-prefix-default-cache-scope)))
 
+(defenum ResultCompilerDocExpand
+  (Ok AstProgram AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
+
+(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.StringVector]
+  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  (begin
+    (tc-spmd-inline-helper-stack-reset!)
+    (let
+      [generated-result : ResultGenProgramWithPaths
+        (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+      (begin
+        (ast-node-pool-context-install! pools)
+        (match generated-result
+          [(ResultGenProgramWithPaths.Ok generated generated-paths)
+            (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              generated
+              generated-paths
+              pools
+              stdlib-roots
+              (typecheck-compiler-source-language-cfgs))
+              [(ResultMacroExpand.Ok expanded expanded-paths)
+                (begin
+                  (ast-node-pool-context-capture-active! pools)
+                  (ResultCompilerDocExpand.Ok expanded expanded-paths))]
+              [(ResultMacroExpand.Err diag) (ResultCompilerDocExpand.Err diag)])]
+          [(ResultGenProgramWithPaths.Err diag)
+            (ResultCompilerDocExpand.Err diag)])))))
+
+(define (typecheck-compiler-doc-expand-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.StringVector]) : ResultCompilerDocExpand
+  (typecheck-compiler-doc-expand-program-with-paths-and-pools
+    program
+    paths
+    stdlib-roots
+    (ast-node-pool-context-capture-active)))
+
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]

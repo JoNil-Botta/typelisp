@@ -14,6 +14,17 @@
   (Nil)
   (Cons DocModule (Box DocModuleList)))
 
+(define (doc-module-list-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
+  (DocModuleList.Cons module (box rest)))
+
+(define (doc-module-list-append [left : DocModuleList] [right : DocModuleList]) : DocModuleList
+  (match left
+    [(DocModuleList.Nil) right]
+    [(DocModuleList.Cons module rest)
+      (doc-module-list-cons
+        module
+        (doc-module-list-append (box-get rest) right))]))
+
 (define (doc-module-path [module : DocModule]) : String
   (match module
     [(DocModule.Module path _) path]))

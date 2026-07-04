@@ -314,6 +314,7 @@ decision|src/package_lock_core.tl|package lockfile parser/emitter (#1993): model
 decision|src/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/doc_expand.tl|expansion-aware generated module doc extraction helper; main-less, imported by src/doc_cli_core.tl and exercised through the selfhost_main case and doc_expand smoke
 decision|src/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by src/main.tl and exercised through the selfhost_main case and public command-surface smoke
 decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
@@ -546,6 +547,17 @@ contains|(define answer : i64 42)
 contains|(define (main [argc : i64])
 contains|;: EOF unattached
 contains|Module title\nsecond module line\nlater module
+end
+
+case|selfhost_doc_expand|src/doc_expand.tl|assembly|skip|direct
+contains|_tl_doc_expanded_generated_modules_from_loaded_decls:
+contains|_tl_doc_expanded_generated_modules_from_source_docs:
+contains|_tl_doc_generated_modules_from_expanded_decls:
+contains|_tl_doc_ast_type_source:
+contains|_tl_doc_expand_smoke:
+contains|Generated module API.
+contains|Concrete generated-module import that produced this API.
+contains|doc-expand: generated module docs smoke mismatch
 end
 
 case|selfhost_doc_html|src/doc_html.tl|assembly|skip|direct

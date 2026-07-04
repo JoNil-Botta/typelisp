@@ -6,6 +6,7 @@
 ;; path to exit non-zero when findings remain. The deprecated string.concat rule
 ;; and staged migration rules are opt-in until their in-tree migrations land.
 (import stdlib.io)
+(import stdlib.arena)
 (import string_vec_core as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
@@ -2014,6 +2015,107 @@
     1
     0))
 
+(define (selfhost-lint-reset-file-state!) : unit
+  (begin
+    (tc-unused-unsafe-tracking-clear!)
+    (tc-prefix-snapshot-cache-clear!)
+    (compiler-check-reset-pools!)
+    (compiler-check-reset-interns!)
+    (compiler-typecheck-reset-file-state!)))
+
+(define selfhost-lint-expr-pool-initial-capacity : i64
+  3145728)
+(define selfhost-lint-type-pool-initial-capacity : i64
+  262144)
+
+(define (selfhost-lint-run-file-in-scratch
+  [input-path : String]
+  [stdlib-roots : svec.StringVector]
+  [enforcing : bool]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : i64
+  (let
+    ;; Keep each input file's parse/typecheck work in a destroyable arena so a
+    ;; long lint batch does not retain earlier files until process exit.
+    [home : arena.Arena (arena.current)]
+    [pool-arena : i64 (arena.tl_arena_make)]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        selfhost-lint-expr-pool-initial-capacity
+        selfhost-lint-type-pool-initial-capacity
+        pool-arena)]
+    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [scratch : arena.Arena (arena.make)]
+    [status : i64
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (selfhost-lint-file
+          input-path
+          stdlib-roots
+          enforcing
+          deprecated-string-concat
+          redundant-function-name
+          prefer-dotted-field))]
+    (begin
+      (unsafe
+        (arena.set! home))
+      ;; Reset compiler-check state while the file scratch arena is still mapped;
+      ;; typed lint rules can leave scratch-backed nodes in check/typecheck caches.
+      (selfhost-lint-reset-file-state!)
+      (ast-node-pool-context-reset-to! pools 0 0)
+      (ast-node-pool-compat-context-clear!)
+      (unsafe
+        (begin
+          (arena.set! home)
+          (arena.destroy scratch)
+          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+      status)))
+
+(define (selfhost-lint-run-file-with-package-dead-in-scratch
+  [input-path : String]
+  [stdlib-roots : svec.StringVector]
+  [enforcing : bool]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
+  [dead-decls : SelfhostLintDeadDecls]) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    [pool-arena : i64 (arena.tl_arena_make)]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        selfhost-lint-expr-pool-initial-capacity
+        selfhost-lint-type-pool-initial-capacity
+        pool-arena)]
+    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [scratch : arena.Arena (arena.make)]
+    [status : i64
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (selfhost-lint-file-with-package-dead
+          input-path
+          stdlib-roots
+          enforcing
+          deprecated-string-concat
+          redundant-function-name
+          prefer-dotted-field
+          dead-decls))]
+    (begin
+      (unsafe
+        (arena.set! home))
+      (selfhost-lint-reset-file-state!)
+      (ast-node-pool-context-reset-to! pools 0 0)
+      (ast-node-pool-compat-context-clear!)
+      (unsafe
+        (begin
+          (arena.set! home)
+          (arena.destroy scratch)
+          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+      status)))
+
 (define (selfhost-lint-file
   [input-path : String]
   [stdlib-roots : svec.StringVector]
@@ -2112,7 +2214,7 @@
             (io.print-string
               (string.append "--- " (string.append input-path "\n")))
             unit)
-          (selfhost-lint-file
+          (selfhost-lint-run-file-in-scratch
             input-path
             stdlib-roots
             enforcing
@@ -2173,7 +2275,7 @@
             (io.print-string
               (string.append "--- " (string.append input-path "\n")))
             unit)
-          (selfhost-lint-file-with-package-dead
+          (selfhost-lint-run-file-with-package-dead-in-scratch
             input-path
             stdlib-roots
             enforcing

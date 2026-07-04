@@ -4194,6 +4194,14 @@
     (set! tc-unused-unsafe-current-path "")
     (set! tc-unused-unsafe-target-path "")))
 
+(define (tc-unused-unsafe-tracking-clear!) : unit
+  (begin
+    (tc-unused-unsafe-tracking-disable!)
+    (set! tc-unused-unsafe-block-spans (array.make-array AstSourceSpan 128))
+    (set! tc-unused-unsafe-block-paths (array.make-array String 128))
+    (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+    (set! tc-unused-unsafe-block-len 0)))
+
 (define (tc-unused-unsafe-block-count) : i64
   tc-unused-unsafe-block-len)
 

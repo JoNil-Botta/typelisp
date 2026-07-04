@@ -266,6 +266,31 @@
           decls-ok
           (struct-get cached-decls-doc decls-valid))))))
 
+(define (lsp-edit-save-doc-smoke-ok?) : bool
+  (let
+    [dir : String "target"]
+    [path : String "target/lsp_edit_save_doc_smoke.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [initial : String "(define (main) : i64 1)"]
+    [updated : String "(define (main) : i64 42)"]
+    [docs : LspDocuments
+      (lsp-documents-set (lsp-documents-new) uri path initial uri)]
+    (begin
+      (match (fs.try-mkdir-if-missing (& dir))
+        [(io.OkIoUnit) unit]
+        [(io.ErrIoUnit _) unit])
+      (match (lsp-tl-save-doc docs uri path uri updated)
+        [(LspSaveResult.Ok next-docs)
+          (let
+            [disk-text : String (io.read-file path)]
+            [cached-doc : LspDocument
+              (lsp-documents-get (& next-docs) 0 (lsp-document-fallback))]
+            (and
+              (string.eq disk-text updated)
+              (string.eq (struct-get cached-doc text) updated)
+              (not (struct-get cached-doc decls-valid))))]
+        [(LspSaveResult.Err _) false]))))
+
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
     [first : String "(define (alpha) : i64 1)"]
@@ -306,5 +331,6 @@
         (unless (lsp-find-references-smoke-ok?) (return 11))
         (unless (lsp-document-decls-cache-empty-ok?) (return 12))
         (unless (lsp-document-disk-resync-ok?) (return 15))
+        (unless (lsp-edit-save-doc-smoke-ok?) (return 16))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         42))))

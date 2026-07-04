@@ -229,18 +229,19 @@ stage2_can_compile_native_windows() {
 
 echo "[ci-verify] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
-# The single compiler build of the flow: the seed bootstraps src/main.tl to
-# stage1, stage1 rebuilds it to stage2, and the stage2/stage3 fixpoint must
-# hold. Every gate below runs on the resulting stage2 compiler - the
-# branch-built full CLI - so the artifact under test is the one the bootstrap
-# just produced. Do not add per-gate compiler rebuilds here.
+# The single compiler build of the flow: the seed bootstraps src/main.tl through
+# successive stages at opt2 until the compiler's own code converges (stage3 ==
+# stage4 fixpoint). Every gate below runs on the resulting converged compiler -
+# the branch-built full CLI, handed over via the stage2 path file - so the
+# artifact under test is the one the bootstrap just produced. Do not add per-gate
+# compiler rebuilds here.
 STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
 STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
 rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE"
 TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
 TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
 export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-run_gate "bootstrap stage1->stage2->stage3 fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+run_gate "bootstrap fixpoint (stage3==stage4)" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
 if [ ! -s "$STAGE2_PATH_FILE" ]; then
     required_gate_unavailable "bootstrap fixpoint stage2 capture" \

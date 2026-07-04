@@ -1,19 +1,18 @@
 #!/usr/bin/env sh
 set -eu
 
-# check-bootstrap-fixpoint.sh - selfhost compiler stage2/stage3 fixpoint gate.
+# check-bootstrap-fixpoint.sh - selfhost compiler bootstrap fixpoint gate.
 #
-# A seed TypeLisp compiler builds the full selfhost toolchain (src/main.tl)
-# to stage1. stage1 then compiles the same source to stage2.s, stage2 repeats
-# that compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must
-# be byte-identical. The stages use the same compile flags as the stage0
-# publication build (scripts/build-stage0.sh), so the stage2 binary is the
-# branch-built full CLI and CI reuses it for every downstream gate.
+# A seed TypeLisp compiler builds the full selfhost toolchain (src/main.tl) to
+# stage1, and each stage recompiles the same source at --opt-level 2 into the
+# next. The compiler's own code converges at stage3: stage3.s and stage4.s must
+# be byte-identical. stage4 is built only to confirm that fixpoint, and is the
+# converged compiler CI reuses (via the stage2 path file) for every downstream
+# gate. Same compile flags as the stage0 publication build (build-stage0.sh).
 #
 # Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE / TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-# to persist the stage1/stage2 compiler paths for callers that want to reuse the
-# freshly bootstrapped compilers. Normal CI runs must continue through the
-# stage2/stage3 fixpoint.
+# to persist the stage1 / converged compiler paths for callers that reuse the
+# freshly bootstrapped compilers.
 #
 # refs #47.
 
@@ -123,6 +122,11 @@ STAGE2_ASM="$WORKDIR/stage2.s"
 STAGE2_OBJ="$WORKDIR/stage2.$OBJ_EXT"
 STAGE2_BIN="$WORKDIR/stage2$BIN_EXT"
 STAGE3_ASM="$WORKDIR/stage3.s"
+STAGE3_OBJ="$WORKDIR/stage3.$OBJ_EXT"
+STAGE3_BIN="$WORKDIR/stage3$BIN_EXT"
+STAGE4_ASM="$WORKDIR/stage4.s"
+STAGE4_OBJ="$WORKDIR/stage4.$OBJ_EXT"
+STAGE4_BIN="$WORKDIR/stage4$BIN_EXT"
 STAGE1_CLI_SRC="$WORKDIR/stage1_cli_smoke.tl"
 STAGE1_CLI_ASM="$WORKDIR/stage1_cli_smoke.s"
 STAGE1_CLI_DIRECT_ASM="$WORKDIR/stage1_cli_direct.s"
@@ -141,12 +145,18 @@ write_stage1_path() {
     fi
 }
 
-write_stage2_path() {
+# The compiler handed to every downstream gate is stage4. stage3 is the first
+# stage whose own code is fully converged (it reproduces itself); stage4 is built
+# only to confirm that fixpoint (stage3 == stage4) and is byte-identical to it,
+# so handing over stage4 -- which we built anyway -- is the same as handing over
+# stage3. An earlier stage still carries the unconverged seed's codegen. The env
+# var name is retained for compatibility with ci-verify.sh.
+write_bootstrap_compiler_path() {
     if [ -n "${TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE:-}" ]; then
         STAGE2_PATH_DIR=$(dirname -- "$TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE")
         mkdir -p "$STAGE2_PATH_DIR"
-        printf '%s\n' "$STAGE2_BIN" > "$TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE"
-        echo "[bootstrap] stage2 compiler: $STAGE2_BIN"
+        printf '%s\n' "$STAGE4_BIN" > "$TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE"
+        echo "[bootstrap] bootstrapped compiler handed to gates (stage4): $STAGE4_BIN"
     fi
 }
 
@@ -268,37 +278,49 @@ EOF
 # downstream gate on it.
 BOOTSTRAP_SRC=src/main.tl
 
+# opt2 bootstrap. A backend codegen fix can take two self-host rounds to fully
+# propagate from an unconverged seed, so the compiler's own code first converges
+# at stage3 (the historical opt1 gate converged at stage2). stage4 is built only
+# to confirm the fixpoint (stage3 == stage4); it is byte-identical to stage3 and
+# is what every downstream gate runs on.
 echo "[bootstrap] stage0 -> stage1.s"
-run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
+run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 check_stage1_compile_cli
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
-echo "[bootstrap] compare stage2.s and stage3.s"
-if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then
-    echo "bootstrap fixpoint mismatch: stage2.s and stage3.s differ" >&2
+assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
+
+echo "[bootstrap] stage3 -> stage4.s"
+run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+
+assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
+
+echo "[bootstrap] compare stage3.s and stage4.s"
+if ! cmp -s "$STAGE3_ASM" "$STAGE4_ASM"; then
+    echo "bootstrap fixpoint mismatch: stage3.s and stage4.s differ" >&2
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$STAGE2_ASM" "$STAGE3_ASM" >&2 || true
+        sha256sum "$STAGE3_ASM" "$STAGE4_ASM" >&2 || true
     fi
-    wc -l "$STAGE2_ASM" "$STAGE3_ASM" >&2 || true
+    wc -l "$STAGE3_ASM" "$STAGE4_ASM" >&2 || true
     if command -v diff >/dev/null 2>&1; then
-        diff -u "$STAGE2_ASM" "$STAGE3_ASM" | sed -n '1,200p' >&2 || true
+        diff -u "$STAGE3_ASM" "$STAGE4_ASM" | sed -n '1,200p' >&2 || true
     else
-        cmp -l "$STAGE2_ASM" "$STAGE3_ASM" | sed -n '1,80p' >&2 || true
+        cmp -l "$STAGE3_ASM" "$STAGE4_ASM" | sed -n '1,80p' >&2 || true
     fi
     exit 1
 fi
 
-wc -l "$STAGE2_ASM" "$STAGE3_ASM"
+wc -l "$STAGE3_ASM" "$STAGE4_ASM"
 write_stage1_path
-write_stage2_path
+write_bootstrap_compiler_path
 echo "bootstrap fixpoint check passed"

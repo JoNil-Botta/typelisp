@@ -41,8 +41,6 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
 
-ASM="$WORKDIR/cli.s"
-OBJ="$WORKDIR/cli.$NL_OBJ_EXT"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
 VERSION_STDOUT="$WORKDIR/version.stdout"
@@ -59,35 +57,44 @@ esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
-# The published stage0 is built at opt-level 2: it enables scalar register
-# allocation in the binary's own code, which makes the shipped binary both
-# smaller (.text ~127 KB / ~2.8% lower than opt1, since reg-reg movs encode in
-# 3-4 bytes vs 7-8 bytes for rbp-displacement movs) and ~14% faster to run.
-# This is orthogonal to the bootstrap fixpoint, which still compiles src/main.tl
-# at --opt-level 1 (scripts/check-bootstrap-fixpoint.sh), so downstream goldens
-# stay byte-identical. A correct opt2-built compiler emits identical opt1 output.
-echo "[build-stage0] compile src/main.tl with seed ($NL_BOOTSTRAP_TARGET)"
-if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-    "$SEED" compile src/main.tl -o "$ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-    --cfg stage0-build-version; then
-    echo "[build-stage0] seed compiler failed while compiling src/main.tl" >&2
-    echo "[build-stage0] compiler stdout:" >&2
-    sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
-    echo "[build-stage0] compiler stderr:" >&2
-    sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
-    exit 1
-fi
-cat "$COMPILE_STDOUT"
-cat "$COMPILE_STDERR" >&2
-[ -s "$ASM" ] || {
-    echo "[build-stage0] seed did not emit assembly for src/main.tl" >&2
-    exit 1
-}
-
-assemble_and_link "stage0" "$ASM" "$OBJ" "$OUT"
+# Iterate to the converged stage and publish that. The seed is the previously
+# published stage0, so a backend codegen fix can take two self-host rounds to
+# propagate; the published binary is stage4 -- byte-identical to the converged
+# stage3 (scripts/check-bootstrap-fixpoint.sh) -- not the seed's one-shot output,
+# so it never ships the seed's unconverged codegen. Built at --opt-level 2.
+STAGES=4
+PREV="$SEED"
+i=1
+while [ "$i" -le "$STAGES" ]; do
+    STAGE_ASM="$WORKDIR/stage$i.s"
+    STAGE_OBJ="$WORKDIR/stage$i.$NL_OBJ_EXT"
+    if [ "$i" -eq "$STAGES" ]; then
+        STAGE_BIN="$OUT"
+    else
+        STAGE_BIN="$WORKDIR/stage$i$NL_BIN_EXT"
+    fi
+    echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"
+    if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+        "$PREV" compile src/main.tl -o "$STAGE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib --stdlib-root src --opt-level 2 \
+        --cfg stage0-build-version; then
+        echo "[build-stage0] stage$i compiler failed while compiling src/main.tl" >&2
+        echo "[build-stage0] compiler stdout:" >&2
+        sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
+        echo "[build-stage0] compiler stderr:" >&2
+        sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
+        exit 1
+    fi
+    [ -s "$STAGE_ASM" ] || {
+        echo "[build-stage0] stage$i emitted no assembly for src/main.tl" >&2
+        exit 1
+    }
+    assemble_and_link "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
+    PREV="$STAGE_BIN"
+    i=$((i + 1))
+done
 
 if [ "$NL_HOST_OS" = linux ] && command -v strip >/dev/null 2>&1; then
     strip "$OUT"

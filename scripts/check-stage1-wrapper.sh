@@ -471,7 +471,7 @@ EOF
     printf 'bad' > "$BAD_TLCI"
     run_expect_failure inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
     assert_empty "$WORKDIR/inspect-bad-tlci.stdout"
-    assert_contains "$WORKDIR/inspect-bad-tlci.stderr" "inspect: tlci: truncated header"
+    assert_contains "$WORKDIR/inspect-bad-tlci.stderr" "inspect: $BAD_TLCI: tlci: truncated header"
     set +e
     "$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
     pkg_bin_status=$?

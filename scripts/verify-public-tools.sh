@@ -2632,11 +2632,12 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: math"
     BAD_TLCI="$WORKDIR/bad.tlci"
+    BAD_TLCI_DISPLAY=$(native_arg_path "$BAD_TLCI")
     printf 'bad' > "$BAD_TLCI"
     run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "inspect: tlci: truncated header"
+    assert_contains "$err" "inspect: $BAD_TLCI_DISPLAY: tlci: truncated header"
 fi
 
 echo "[public-tools] package tlci host-target split"

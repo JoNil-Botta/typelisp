@@ -4876,10 +4876,11 @@ operations; IDs `100` and above mirror the current exported
 | 147 | `expr-struct-set` |
 
 The operation catalog deliberately does not assign `TypeInfo` constructor or
-reflection helper operations yet. `TypeInfo` value shapes are public, but the
-remaining #2653 migration still decides which helpers become ordinary stdlib
-functions and which bridge operations stay intrinsic. Those future operations
-must be appended without reusing the IDs above.
+reflection helper operations yet. `TypeInfo` value shapes are public, but
+compiled macro execution still needs a focused bridge slice to decide which
+reflection helpers become ordinary stdlib calls and which bridge operations
+stay intrinsic. Those future operations must be appended without reusing the
+IDs above.
 
 The image fills the writable registration record before returning success. The
 v1 registration record keeps the original 48-byte header and appends the macro

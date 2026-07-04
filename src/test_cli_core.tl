@@ -10,6 +10,7 @@
 (import stdlib.arena)
 (import stdlib.process)
 (import stdlib.hashmap)
+(import (hashmap String i64) as tltest_name_map)
 (import stdlib.vector as svec)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
@@ -986,10 +987,11 @@
 (define (tltest-empty-main-decl) : AstDecl
   (tltest-main-decl (make-array InlineTest 0)))
 
-(define (tltest-reach-mark-name [names : hashmap.StringI64Map] [name : String]) : hashmap.StringI64Map
-  (if (hashmap.string-i64-map-contains? names name)
-    names
-    (hashmap.string-i64-map-put names name 1)))
+(define (tltest-reach-mark-name [names : tltest_name_map.Map] [name : String]) : tltest_name_map.Map
+  (let
+    [result : tltest_name_map.Map names]
+    [_inserted : bool (tltest_name_map.insert-if-absent? (&mut result) name 1)]
+    result))
 
 ;; The leaf of an alias-qualified source name (`io.panic` -> `panic`). Source
 ;; calls write the importing module's alias dot-form; the callee function is
@@ -1012,11 +1014,11 @@
         name))))
 
 (define (tltest-reach-mark-source-name
-  [names : hashmap.StringI64Map]
-  [name : String]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [name : String]) : tltest_name_map.Map
   (let
-    [marked : hashmap.StringI64Map (tltest-reach-mark-name names name)]
-    [with-slash-base : hashmap.StringI64Map
+    [marked : tltest_name_map.Map (tltest-reach-mark-name names name)]
+    [with-slash-base : tltest_name_map.Map
       (if (tc-name-qualified? name)
         (tltest-reach-mark-name marked (tc-qualified-name-base name))
         marked)]
@@ -1030,18 +1032,18 @@
       (tltest-reach-mark-name with-slash-base leaf))))
 
 (define (tltest-reachable-name-marked?
-  [names : hashmap.StringI64Map]
+  [names : tltest_name_map.Map]
   [name : String]) : bool
   (or
-    (hashmap.string-i64-map-contains? names name)
+    (tltest_name_map.contains? (& names) name)
     (if (tc-name-qualified? name)
-      (hashmap.string-i64-map-contains? names (tc-qualified-name-base name))
+      (tltest_name_map.contains? (& names) (tc-qualified-name-base name))
       false)
     (let
       [leaf : String (tltest-reach-name-dot-leaf name)]
       (if (string.eq leaf name)
         false
-        (hashmap.string-i64-map-contains? names leaf)))))
+        (tltest_name_map.contains? (& names) leaf)))))
 
 (define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
   (match decl
@@ -1055,13 +1057,13 @@
     [_ false]))
 
 (define (tltest-reach-mark-string-snapshot-runtime
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
   ;; so keep the TypeLisp runtime body whenever a reachable test path may
   ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name names "tl-runtime-substring"))
 
-(define (tltest-reach-mark-str-view-runtime [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+(define (tltest-reach-mark-str-view-runtime [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-name names "tl-runtime-str-view"))
 
 (define (tltest-bytes-view-from-parts-name? [name : String]) : bool
@@ -1074,7 +1076,7 @@
 
 (define (tltest-reach-mark-lowered-runtime-for-call
   [name : String]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (cond
     [(or
         (string.eq name "clone")
@@ -1089,13 +1091,13 @@
 
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-expr-list-at exprs names 0))
 
 (define (tltest-reach-mark-expr-list-at
   [exprs : AstExprList]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-expr-list-len (& exprs)))
     names
     (let
@@ -1107,13 +1109,13 @@
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-let-bindings-at (& bindings) names 0))
 
 (define (tltest-reach-mark-let-bindings-at
   [bindings : (& bindings AstLetBindingList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-let-binding-list-len bindings))
     names
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -1127,13 +1129,13 @@
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-resource-bindings-at (& bindings) names 0))
 
 (define (tltest-reach-mark-resource-bindings-at
   [bindings : (& bindings AstResourceBindingList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-resource-binding-list-len bindings))
     names
     (match (ast-resource-binding-list-get
@@ -1151,13 +1153,13 @@
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-match-arms-at (& arms) names 0))
 
 (define (tltest-reach-mark-match-arms-at
   [arms : (& arms AstMatchArmList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-match-arm-list-len arms))
     names
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -1169,7 +1171,7 @@
             (tltest-reach-mark-expr body names)
             (+ index 1)))])))
 
-(define (tltest-reach-mark-expr [expr : AstExpr] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+(define (tltest-reach-mark-expr [expr : AstExpr] [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
@@ -1189,9 +1191,8 @@
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        [called-names : hashmap.StringI64Map
-          (tltest-reach-mark-expr func names)]
-        [runtime-names : hashmap.StringI64Map
+        [called-names : tltest_name_map.Map (tltest-reach-mark-expr func names)]
+        [runtime-names : tltest_name_map.Map
           (match (ast-expr-unspan func)
             [(AstExpr.Var name)
               (tltest-reach-mark-lowered-runtime-for-call
@@ -1521,7 +1522,7 @@
 (define (tltest-reach-mark-tests-from
   [tests : (Array InlineTest)]
   [index : i64]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (if (< index 0)
     names
     (let
@@ -1535,7 +1536,7 @@
 
 (define (tltest-reach-mark-tests
   [tests : (Array InlineTest)]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
 (define (tltest-runtime-string-helper-impl-name? [name : String]) : bool
@@ -1556,7 +1557,7 @@
 
 (define (tltest-reach-mark-runtime-helper-root
   [decl : AstDecl]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
     [(AstDecl.DefFn name _ _ _ _)
       (let
@@ -1576,10 +1577,10 @@
 
 (define (tltest-reach-mark-runtime-helper-roots
   [decls : AstDeclList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
     [cur : AstDeclList decls]
-    [result : hashmap.StringI64Map names]
+    [result : tltest_name_map.Map names]
     [done : bool false]
     (begin
       (while (not done)
@@ -1593,7 +1594,7 @@
 
 (define (tltest-reach-mark-struct-cleanup
   [cleanup : AstStructCleanup]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
     [(AstStructCleanup.Fn name)
       (tltest-reach-mark-name names (intern-str name))]
@@ -1601,27 +1602,27 @@
 
 (define (tltest-reach-mark-enum-cleanup
   [cleanup : AstEnumCleanup]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
     [(AstEnumCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
     [(AstEnumCleanup.No) names]))
 
 (define (tltest-reach-mark-field-cleanup
   [cleanup : AstFieldCleanup]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
     [(AstFieldCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
     [_ names]))
 
 (define (tltest-reach-mark-field-cleanups
   [fields : AstFieldDefList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-field-cleanups-at (& fields) names 0))
 
 (define (tltest-reach-mark-field-cleanups-at
   [fields : (& fields AstFieldDefList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-field-def-list-len fields))
     names
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
@@ -1633,7 +1634,7 @@
 
 (define (tltest-reach-mark-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
     [(AstVariantPayloadCleanup.Fn name)
       (tltest-reach-mark-name names (intern-str name))]
@@ -1641,13 +1642,13 @@
 
 (define (tltest-reach-mark-variant-payload-cleanups
   [cleanups : AstVariantPayloadCleanupList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-variant-payload-cleanups-at (& cleanups) names 0))
 
 (define (tltest-reach-mark-variant-payload-cleanups-at
   [cleanups : (& cleanups AstVariantPayloadCleanupList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
     names
     (tltest-reach-mark-variant-payload-cleanups-at
@@ -1662,13 +1663,13 @@
 
 (define (tltest-reach-mark-variant-cleanups
   [variants : AstVariantDefList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-variant-cleanups-at (& variants) names 0))
 
 (define (tltest-reach-mark-variant-cleanups-at
   [variants : (& variants AstVariantDefList)]
-  [names : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
   (if (>= index (ast-variant-def-list-len variants))
     names
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
@@ -1678,7 +1679,7 @@
           (tltest-reach-mark-variant-payload-cleanups cleanups names)
           (+ index 1))])))
 
-(define (tltest-reach-mark-decl [decl : AstDecl] [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+(define (tltest-reach-mark-decl [decl : AstDecl] [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
     [(AstDecl.Def name _ expr-box)
       (let
@@ -1730,10 +1731,10 @@
 
 (define (tltest-reach-mark-decls-from
   [decls : AstDeclList]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
     [cur : AstDeclList decls]
-    [result : hashmap.StringI64Map names]
+    [result : tltest_name_map.Map names]
     [done : bool false]
     (begin
       (while (not done)
@@ -1753,37 +1754,37 @@
 (define (tltest-reach-fixed
   [decls : AstDeclList]
   [fuel : i64]
-  [names : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
     [remaining : i64 fuel]
-    [result : hashmap.StringI64Map names]
+    [result : tltest_name_map.Map names]
     [done : bool false]
     (begin
       (while (and (not done) (> remaining 0))
         (let
-          [before : i64 (hashmap.string-i64-map-len result)]
-          [next : hashmap.StringI64Map
+          [before : i64 (tltest_name_map.len (& result))]
+          [next : tltest_name_map.Map
             (tltest-reach-mark-decls-from decls result)]
           (begin
             (set! result next)
-            (if (= (hashmap.string-i64-map-len result) before)
+            (if (= (tltest_name_map.len (& result)) before)
               (set! done true)
               (set! remaining (- remaining 1))))))
       result)))
 
 (define (tltest-reachable-names
   [decls : AstDeclList]
-  [tests : (Array InlineTest)]) : hashmap.StringI64Map
+  [tests : (Array InlineTest)]) : tltest_name_map.Map
   (tltest-reach-fixed
     decls
     (tltest-decl-list-count decls)
     (tltest-reach-mark-runtime-helper-roots
       decls
-      (tltest-reach-mark-tests tests (hashmap.string-i64-map-with-capacity 64)))))
+      (tltest-reach-mark-tests tests (tltest_name_map.with-capacity 64)))))
 
 (define (tltest-reachable-runtime-decl?
   [decl : AstDecl]
-  [names : hashmap.StringI64Map]) : bool
+  [names : tltest_name_map.Map]) : bool
   (match decl
     [(AstDecl.Def name _ _)
       (let
@@ -1817,7 +1818,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [target-path : String]
-  [names : hashmap.StringI64Map]
+  [names : tltest_name_map.Map]
   [out-decls : AstDeclList]
   [out-paths : AstDeclPathList]) : InlineRuntimeDecls
   (let

@@ -1511,6 +1511,68 @@
         (tc-lookup-id type-env name-id)
         (lower-lookup-type ctx type-cache env type-env name)))))
 
+;; Growable membership set of the interned source-ids already bound into the
+;; import-alias overlay currently being built by
+;; lower-name-env-from-import-aliases-in-module-cache. That overlay starts empty
+;; and is accumulated strictly linearly (single accumulator, no branching or
+;; re-entrant overlay builds), so an O(1) hashmap presence check can stand in for
+;; the O(n) LowerNameEnv scan that lower-name-env-add-alias-if-free-id otherwise
+;; runs for every added alias -- previously O(aliases^2) per module. Only
+;; presence matters here, so a bare I64I64Map (which grows) is used rather than a
+;; fixed-capacity LowerNameCache.
+;;
+;; `valid` guards the fast path. Every alias bound through this overlay carries
+;; an interned (>=0) source id, so the set stays a complete mirror; but should a
+;; <0 (never-interned) id ever appear -- the only case lower-name-env-lookup-with-id
+;; resolves through its string-compare gate rather than the id gate -- we drop
+;; back to the exact scan for the remainder of the overlay so the Some/No result
+;; stays byte-identical to the pure linear scan.
+(define lower-alias-overlay-ids : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define lower-alias-overlay-valid : bool
+  true)
+
+(define (lower-alias-overlay-reset!) : unit
+  (begin
+    (set! lower-alias-overlay-ids (hashmap.i64-i64-map-with-capacity 16))
+    (set! lower-alias-overlay-valid true)))
+
+(define (lower-alias-overlay-contains? [source-id : i64]) : bool
+  (match (hashmap.i64-i64-map-get lower-alias-overlay-ids source-id)
+    [(hashmap.I64I64MapFound _) true]
+    [(hashmap.I64I64MapMissing) false]))
+
+(define (lower-alias-overlay-record! [source-id : i64]) : unit
+  (set!
+    lower-alias-overlay-ids
+    (hashmap.i64-i64-map-put lower-alias-overlay-ids source-id 1)))
+
+;; Seed the overlay membership set from an existing base env (the non-cache
+;; import-alias path threads aliases directly onto a full name env rather than a
+;; fresh overlay). Records every >=0 bound id; if any binding carries a <0
+;; (never-interned) id -- which lower-name-env-lookup-with-id would resolve
+;; through its string gate -- the fast path is disabled for this build so the
+;; add decision stays byte-identical to the linear scan.
+(define (lower-alias-overlay-seed-from-env! [names : LowerNameEnv]) : unit
+  (begin
+    (set! lower-alias-overlay-ids (hashmap.i64-i64-map-with-capacity 256))
+    (set! lower-alias-overlay-valid true)
+    (let
+      [cur : LowerNameEnv names]
+      (while (match cur
+        [(LowerNameEnv.Nil) false]
+        [_ true])
+        (match cur
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Bind _ bind-id _ rest)
+            (begin
+              (if (< bind-id 0)
+                (set! lower-alias-overlay-valid false)
+                (set!
+                  lower-alias-overlay-ids
+                  (hashmap.i64-i64-map-put lower-alias-overlay-ids bind-id 1)))
+              (set! cur (box-get rest)))])))))
+
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
   [source-name : String]
@@ -1544,12 +1606,28 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
-  (if (string.eq alias "")
-    (lower-name-env-add-alias-if-free-id
-      names
-      source-name
-      source-id
-      logical-name)
+  (begin
+    (when (< source-id 0) (set! lower-alias-overlay-valid false))
+    ;; Aliased import (non-empty alias): unconditional bind; keep the overlay set
+    ;; in sync so a later empty-alias dedup still sees this id as present.
+    (when
+      (not (string.eq alias ""))
+      (when lower-alias-overlay-valid (lower-alias-overlay-record! source-id))
+      (return (lower-name-env-bind-id source-name source-id logical-name names)))
+    ;; Empty alias, degraded set (a <0 id appeared): exact linear scan preserves
+    ;; the Some/No decision byte-for-byte.
+    (when
+      (not lower-alias-overlay-valid)
+      (return
+        (lower-name-env-add-alias-if-free-id
+          names
+          source-name
+          source-id
+          logical-name)))
+    ;; Fast path: O(1) membership check against the base-seeded overlay set,
+    ;; same accept decision as scanning `names`.
+    (when (lower-alias-overlay-contains? source-id) (return names))
+    (lower-alias-overlay-record! source-id)
     (lower-name-env-bind-id source-name source-id logical-name names)))
 
 (define (lower-name-env-add-import-alias-binding-base-id
@@ -1577,16 +1655,34 @@
     [source-name : String (compiler-symbol-module-key alias base-name)]
     [source-id : i64
       (compiler-symbol-module-key-id-by-id (intern alias) base-id)]
-    (if (string.eq alias "")
-      (if (and
-        dedup-base
-        (lower-name-cache-contains-local-id? base-cache source-id))
-        names
-        (lower-name-env-add-alias-if-free-id
-          names
-          source-name
-          source-id
-          logical-name))
+    (begin
+      (when (< source-id 0) (set! lower-alias-overlay-valid false))
+      ;; Aliased import (non-empty alias): unconditional bind; keep the overlay
+      ;; set in sync so a later empty-alias dedup still sees this id as present.
+      (when
+        (not (string.eq alias ""))
+        (when lower-alias-overlay-valid (lower-alias-overlay-record! source-id))
+        (return
+          (lower-name-env-bind-id source-name source-id logical-name names)))
+      ;; Empty alias already provided by the base module: nothing to add.
+      (when
+        (and
+          dedup-base
+          (lower-name-cache-contains-local-id? base-cache source-id))
+        (return names))
+      ;; Degraded set (a <0 id appeared): exact linear scan preserves the
+      ;; Some/No decision byte-for-byte.
+      (when
+        (not lower-alias-overlay-valid)
+        (return
+          (lower-name-env-add-alias-if-free-id
+            names
+            source-name
+            source-id
+            logical-name)))
+      ;; Fast path: O(1) overlay dedup, same accept decision as scanning `names`.
+      (when (lower-alias-overlay-contains? source-id) (return names))
+      (lower-alias-overlay-record! source-id)
       (lower-name-env-bind-id source-name source-id logical-name names))))
 
 (define (lower-name-env-add-module-binding
@@ -2622,6 +2718,9 @@
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 (intern module)]
     (begin
+      ;; Seed the overlay membership set from the base env so the per-alias
+      ;; "already bound?" check below is O(1) instead of an O(base) linear scan.
+      (lower-alias-overlay-seed-from-env! cur-names)
       (while (< index count)
         (let
           [decl : AstDecl
@@ -2688,6 +2787,9 @@
     [target-module-id : i64 (intern target-current-module)]
     [cur-module-id : i64 (intern current-module)]
     (begin
+      ;; Seed the overlay membership set from the base env for O(1) per-alias
+      ;; dedup instead of scanning `names` on every added alias.
+      (lower-alias-overlay-seed-from-env! cur-names)
       (while (< index count)
         (let
           [decl : AstDecl
@@ -2755,6 +2857,9 @@
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 current-module-id]
     (begin
+      ;; `names` is always a fresh (empty) overlay here, so seed the overlay
+      ;; membership set empty; it then mirrors every alias bound below.
+      (lower-alias-overlay-reset!)
       (while (< index count)
         (let
           [decl : AstDecl

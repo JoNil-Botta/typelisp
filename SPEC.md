@@ -5791,21 +5791,40 @@ The standard scratch workflows are:
   `(in-arena owner ...)`, then call `arena.rewind-safe!` when the checker can
   prove every value from that phase is dead. Call `arena.destroy-safe!` only
   when all values from the ordinary owner are dead.
+- **Safe atomic arena invalidation:** for a direct local `arena.make-atomic`
+  owner, use the same phase/destroy surface, but only after every
+  checker-visible task, channel, mutex, or other user of that owner has been
+  joined or otherwise released. Concurrent allocation safety is not reset safety.
 - **Manual unsafe arena:** use `arena.set!`, `arena.rewind`, or
   `arena.destroy` only inside `(unsafe ...)` when the caller can prove all
   invalidated heap handles are dead. This is for compiler/tool internals that
   cannot express the workflow with the two safe forms.
 
 Game-style frame/level/global lifetime layouts should use those surfaces by
-lexical nesting: default program arena for global state, one `(with-arena level
-...)` for per-level state, an inner `(with-arena frame ...)` for per-frame
-scratch that returns only scalars or outer-owned values, and `(with-escape
-scratch ...)` with a first-class scratch arena when a supported frame result
-must be cloned into the active level state; use `(with-scratch ...)` for the
-same clone-out when the scratch work is one-shot. The runnable cookbook is
-`examples/arena_lifetimes.tl`. This v1 pattern does not model overlapping level
-lifetimes, double-buffered levels, or event-driven unloads; those need the
-overlapping-lifetime work tracked by #2568.
+the shape of the lifetime:
+
+- Strictly nested global/level/frame data uses the default program arena for
+  global state, one lexical `(with-arena level ...)` for level state, and an
+  inner lexical `(with-arena frame ...)` for per-frame scratch that returns only
+  scalars or outer-owned values.
+- Reusable scratch builders use `(with-escape scratch ...)`; one-shot builders
+  use `(with-scratch ...)`. Both clone one supported result into the enclosing
+  active arena instead of letting scratch-owned values escape.
+- First-class level/frame arenas use `(in-arena owner ...)` when the resulting
+  aggregate should remain owned by that arena. A direct local ordinary owner can
+  be double-buffered by taking an `arena.phase` before a frame fill and calling
+  `arena.rewind-safe!` only after all values from the old frame phase are dead.
+- Event-driven unload uses `arena.destroy-safe!` on a direct local owner only
+  after all owner-tagged values, borrows, closure captures, container slots, and
+  users are dead or released. For atomic owners, joined/released users are part
+  of the safe proof; a message still queued in a channel blocks unload.
+
+The complete runnable cookbook is `examples/arena_lifetimes.tl`. Native
+integration runs it as `arena_lifetimes_example`, covering lexical frame scopes,
+double-buffered frame reuse with two ordinary arenas, and event-driven atomic
+level unload after a worker joins. The safety corpus rejects the matching
+mistakes: stale values after a buffer swap, longer-lived stores, closure
+captures, channel-held atomic values, and use after unload.
 
 #### Source-level scoped region (v1) — `with-arena`
 

@@ -1150,6 +1150,83 @@
       (compiler-load-string-prefix-at? source alias idx)
       (compiler-load-source-alias-after-ok? source end))))
 
+(define (compiler-load-source-qualified-alias-token-at?
+  [source : String]
+  [alias : String]
+  [idx : i64]) : bool
+  (let
+    [end : i64 (+ idx (string.string-length alias))]
+    (and
+      (compiler-load-source-name-before-ok? source idx)
+      (compiler-load-string-prefix-at? source alias idx)
+      (< end (string.string-length source))
+      (let
+        [c : char (string.string-ref source end)]
+        (or (= c '.') (= c '/'))))))
+
+(define (compiler-load-source-has-qualified-alias-token-linear-from?
+  [source : String]
+  [alias : String]
+  [start : i64]) : bool
+  (let
+    [n : i64 (string.string-length source)]
+    [alias-len : i64 (string.string-length alias)]
+    (if (= alias-len 0)
+      false
+      (let
+        [alias-first : char (string.string-ref alias 0)]
+        [idx : i64 start]
+        [found : bool false]
+        (begin
+          (while (and (not found) (<= (+ idx alias-len) n))
+            (if (and
+              (= (string.string-ref source idx) alias-first)
+              (compiler-load-source-qualified-alias-token-at? source alias idx))
+              (set! found true)
+              (set! idx (+ idx 1))))
+          found)))))
+
+(define (compiler-load-source-has-qualified-alias-token-index-from?
+  [source : String]
+  [alias : String]
+  [start : i64]) : bool
+  (if (= (string.string-length alias) 0)
+    false
+    (let
+      [alias-first : char (string.string-ref alias 0)]
+      [idx : i64 start]
+      [found : bool false]
+      [done : bool false]
+      (begin
+        (while (and (not found) (not done))
+          (begin
+            (set!
+              idx
+              (string.index-of-byte (& source) idx (cast alias-first : u8)))
+            (if (< idx 0)
+              (set! done true)
+              (if (compiler-load-source-qualified-alias-token-at?
+                source
+                alias
+                idx)
+                (set! found true)
+                (set! idx (+ idx 1))))))
+        found))))
+
+(define (compiler-load-source-has-qualified-alias-token-from?
+  [source : String]
+  [alias : String]
+  [start : i64]) : bool
+  (if (< (string.string-length source) 131072)
+    (compiler-load-source-has-qualified-alias-token-linear-from?
+      source
+      alias
+      start)
+    (compiler-load-source-has-qualified-alias-token-index-from?
+      source
+      alias
+      start)))
+
 (define (compiler-load-source-bare-alias-before-ok?
   [source : String]
   [idx : i64]) : bool
@@ -2644,6 +2721,15 @@
           (box-get rest)
           source-path))]))
 
+(define (compiler-load-record-surface-summary-if-inactive!
+  [summary : CompilerLoadSurfaceSummary]) : unit
+  (match (compiler-load-surface-summary-find-source-in
+    compiler-load-active-surface-summaries
+    (struct-get summary source-path))
+    [(CompilerLoadSomeSurfaceSummary _) unit]
+    [(CompilerLoadNoSurfaceSummary)
+      (compiler-load-record-surface-summary! summary)]))
+
 (define (compiler-load-surface-summary-find-source [source-path : String]) : CompilerLoadMaybeSurfaceSummary
   (let
     [normalized : String (compiler-load-normalize-path source-path)]
@@ -2667,6 +2753,45 @@
           compiler-load-active-surface-summaries
           normalized)))))
 
+(define (compiler-load-stdlib-surface-summary-load-with-pools
+  [path : String]
+  [stdlib-roots : svec.StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (let
+    [parse-cfgs : sym_i64_env.SymI64Env
+      (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
+    (match (if (io.file-exists? path)
+      (compiler-load-parse-file-diagnostic-session-with-pools
+        path
+        stdlib-roots
+        parse-cfgs
+        pools)
+      (match (compiler-load-embedded-stdlib-source-for-path path)
+        [(CompilerEmbeddedStdlibSomeSource source)
+          (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+            path
+            source
+            parse-cfgs
+            pools)]
+        [(CompilerEmbeddedStdlibNoSource)
+          (compiler-load-parse-file-diagnostic-escaping-with-pools
+            path
+            parse-cfgs
+            pools)]))
+      [(ResultAstProgramDiagnostic.Ok program)
+        (match (compiler-load-surface-summary-build
+          path
+          import-root
+          parse-cfgs
+          program)
+          [(ResultCompilerLoadSurfaceSummary.Ok summary)
+            (compiler-load-record-surface-summary! summary)]
+          [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
+      [(ResultAstProgramDiagnostic.Err _) unit])))
+
 (define (compiler-load-stdlib-surface-summary-ensure-with-pools
   [path : String]
   [stdlib-roots : svec.StringVec]
@@ -2677,41 +2802,13 @@
   (match (compiler-load-surface-summary-find-source path)
     [(CompilerLoadSomeSurfaceSummary _) unit]
     [(CompilerLoadNoSurfaceSummary)
-      (let
-        [parse-cfgs : sym_i64_env.SymI64Env
-          (compiler-load-stdlib-private-cfgs
-            path
-            stdlib-roots
-            expected-module
-            cfgs)]
-        (match (if (io.file-exists? path)
-          (compiler-load-parse-file-diagnostic-session-with-pools
-            path
-            stdlib-roots
-            parse-cfgs
-            pools)
-          (match (compiler-load-embedded-stdlib-source-for-path path)
-            [(CompilerEmbeddedStdlibSomeSource source)
-              (compiler-load-parse-embedded-source-diagnostic-session-with-pools
-                path
-                source
-                parse-cfgs
-                pools)]
-            [(CompilerEmbeddedStdlibNoSource)
-              (compiler-load-parse-file-diagnostic-escaping-with-pools
-                path
-                parse-cfgs
-                pools)]))
-          [(ResultAstProgramDiagnostic.Ok program)
-            (match (compiler-load-surface-summary-build
-              path
-              import-root
-              parse-cfgs
-              program)
-              [(ResultCompilerLoadSurfaceSummary.Ok summary)
-                (compiler-load-record-surface-summary! summary)]
-              [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
-          [(ResultAstProgramDiagnostic.Err _) unit]))]))
+      (compiler-load-stdlib-surface-summary-load-with-pools
+        path
+        stdlib-roots
+        expected-module
+        import-root
+        cfgs
+        pools)]))
 
 (define (compiler-load-stdlib-array-surface-summary-ensure-with-pools
   [path : String]
@@ -2721,7 +2818,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (match compiler-load-stdlib-array-surface-summary
-    [(CompilerLoadSomeSurfaceSummary _) unit]
+    [(CompilerLoadSomeSurfaceSummary summary)
+      (compiler-load-record-surface-summary-if-inactive! summary)]
     [(CompilerLoadNoSurfaceSummary)
       (compiler-load-stdlib-surface-summary-ensure-with-pools
         path
@@ -2739,7 +2837,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (match compiler-load-stdlib-result-surface-summary
-    [(CompilerLoadSomeSurfaceSummary _) unit]
+    [(CompilerLoadSomeSurfaceSummary summary)
+      (compiler-load-record-surface-summary-if-inactive! summary)]
     [(CompilerLoadNoSurfaceSummary)
       (compiler-load-stdlib-surface-summary-ensure-with-pools
         path
@@ -2748,6 +2847,21 @@
         import-root
         cfgs
         pools)]))
+
+(define (compiler-load-stdlib-result-surface-summary-refresh-with-pools
+  [path : String]
+  [stdlib-roots : svec.StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-stdlib-surface-summary-load-with-pools
+    path
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    pools))
 
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -2906,17 +3020,10 @@
   (match (compiler-load-source-for-lazy-scan importer-path)
     [(CompilerLoadNoString) true]
     [(CompilerLoadSomeString source)
-      (let
-        [start : i64 (compiler-load-source-scan-start span source)]
-        (or
-          (compiler-load-string-contains-from?
-            source
-            (string.append alias ".")
-            start)
-          (compiler-load-string-contains-from?
-            source
-            (string.append alias "/")
-            start)))]))
+      (compiler-load-source-has-qualified-alias-token-from?
+        source
+        alias
+        (compiler-load-source-scan-start span source))]))
 
 (define (compiler-load-lazy-import-preload-candidate?
   [importer-path : String]

@@ -18034,7 +18034,7 @@
 
 (define (compiler-reg-remat-table-build [func : CompilerIrFunction]) : CompilerRegRematTable
   (match func
-    [(CompilerIrFunction.Function _ _ _ vars blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (let
         [def-counts : (Array i64) (array.make-array i64 vars)]
         [candidates : (Array i64) (array.make-array i64 vars)]
@@ -18060,6 +18060,14 @@
           (compiler-reg-fill-i64-array def-counts 0)
           (compiler-reg-fill-i64-array candidates 0)
           (compiler-reg-fill-i64-array kinds 0)
+          ;; Parameters are an implicit definition at function entry (their
+          ;; incoming value). Count them so a param that is ALSO written by a
+          ;; single in-body `mov` (e.g. a tail-recursion-to-loop back edge that
+          ;; assigns a constant, `param <- #false`) is NOT mistaken for a
+          ;; single-def rematerialisable var: rematerialising it would recompute
+          ;; the constant at the loop-header use and silently drop the
+          ;; first-iteration incoming argument value.
+          (compiler-reg-param-count-defs! params def-counts)
           (compiler-reg-remat-table-record-blocks!
             table
             blocks

@@ -816,19 +816,19 @@
 ;: Number of live strings.
 (comptime-decl
   (:generated family string-vec-len "String")
-  (define (string-vec-len [v : StringVec]) : i64
+  (define (string-vec-len [v : (& v StringVec)]) : i64
     (struct-get v len)))
 
 ;: Number of slots in the backing array (the current capacity).
 (comptime-decl
   (:generated family string-vec-capacity "String")
-  (define (string-vec-capacity [v : StringVec]) : i64
+  (define (string-vec-capacity [v : (& v StringVec)]) : i64
     (array-length (struct-get v slots))))
 
 ;: True when the vector holds no live strings.
 (comptime-decl
   (:generated family string-vec-is-empty? "String")
-  (define (string-vec-is-empty? [v : StringVec]) : bool
+  (define (string-vec-is-empty? [v : (& v StringVec)]) : bool
     (<= (string-vec-len v) 0)))
 
 ;: Create an empty string vector with backing capacity `capacity`.
@@ -851,17 +851,20 @@
 ;: Read element `index`, returning `fallback` when `index` is out of range.
 (comptime-decl
   (:generated family string-vec-get "String")
-  (define (string-vec-get [v : StringVec] [index : i64] [fallback : String]) : String
+  (define (string-vec-get
+    [v : (& v StringVec)]
+    [index : i64]
+    [fallback : String]) : String
     (if (if (>= index 0)
       (< index (string-vec-len v))
       false)
-      (array-ref (string-vec-slots v) index)
+      (array-ref (struct-get v slots) index)
       fallback)))
 
 ;: Read the last live string, or `fallback` when the vector is empty.
 (comptime-decl
   (:generated family string-vec-last "String")
-  (define (string-vec-last [v : StringVec] [fallback : String]) : String
+  (define (string-vec-last [v : (& v StringVec)] [fallback : String]) : String
     (string-vec-get v (- (string-vec-len v) 1) fallback)))
 
 ;: Overwrite element `index` in place when it is within `[0, len)`.
@@ -895,11 +898,11 @@
   (:generated family string-vec-grow "String")
   (define (string-vec-grow [v : StringVec]) : StringVec
     (let
-      [n : i64 (string-vec-len v)]
+      [n : i64 (struct-get v len)]
       [bigger : (Array String)
-        (array.make-array String (* (string-vec-capacity v) 2))]
+        (array.make-array String (* (array-length (struct-get v slots)) 2))]
       (begin
-        (string-vec-copy-range bigger (string-vec-slots v) 0 n)
+        (string-vec-copy-range bigger (struct-get v slots) 0 n)
         (set! (struct-get v slots) bigger)
         v))))
 
@@ -907,10 +910,10 @@
 (comptime-decl
   (:generated family string-vec-push "String")
   (define (string-vec-push [v : StringVec] [value : String]) : StringVec
-    (if (< (string-vec-len v) (string-vec-capacity v))
+    (if (< (struct-get v len) (array-length (struct-get v slots)))
       (let
-        [slots : (Array String) (string-vec-slots v)]
-        [index : i64 (string-vec-len v)]
+        [slots : (Array String) (struct-get v slots)]
+        [index : i64 (struct-get v len)]
         (begin
           (array-set! slots index value)
           (set! (struct-get v len) (+ index 1))
@@ -921,11 +924,11 @@
 (comptime-decl
   (:generated family string-vec-pop "String")
   (define (string-vec-pop [v : StringVec]) : StringVecPop
-    (if (<= (string-vec-len v) 0)
+    (if (<= (struct-get v len) 0)
       (StringVecPopEmpty)
       (let
-        [last-index : i64 (- (string-vec-len v) 1)]
-        [value : String (array-ref (string-vec-slots v) last-index)]
+        [last-index : i64 (- (struct-get v len) 1)]
+        [value : String (array-ref (struct-get v slots) last-index)]
         (begin
           (set! (struct-get v len) last-index)
           (StringVecPopOk value v))))))
@@ -1024,14 +1027,17 @@
 ;: True when `x` is among the live strings at or after `index`.
 (comptime-decl
   (:generated family string-vec-contains-from? "String")
-  (define (string-vec-contains-from? [v : StringVec] [x : String] [index : i64]) : bool
+  (define (string-vec-contains-from?
+    [v : (& v StringVec)]
+    [x : String]
+    [index : i64]) : bool
     (if (>= index (string-vec-len v))
       false
       (if (cfg
         feature-compiler-private-string-intrinsics
-        (__tl_string_eq (array-ref (string-vec-slots v) index) x)
+        (__tl_string_eq (array-ref (struct-get v slots) index) x)
         (let
-          [candidate : String (array-ref (string-vec-slots v) index)]
+          [candidate : String (array-ref (struct-get v slots) index)]
           [n : i64 (string-length candidate)]
           [i : i64 0]
           [same : bool (= n (string-length x))]
@@ -1051,7 +1057,7 @@
 ;: True when `x` is among the live strings.
 (comptime-decl
   (:generated family string-vec-contains? "String")
-  (define (string-vec-contains? [v : StringVec] [x : String]) : bool
+  (define (string-vec-contains? [v : (& v StringVec)] [x : String]) : bool
     (string-vec-contains-from? v x 0)))
 
 ;; Inline coverage migrated from stdlib/tests/vector_api.tl (#3082).

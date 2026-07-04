@@ -1,7 +1,7 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
 (import stdlib.io)
 (import stdlib.string)
-(import string_vec_core as svec)
+(import stdlib.vector as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
@@ -76,7 +76,7 @@
   [path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
@@ -104,7 +104,7 @@
     path
     decls
     paths
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
@@ -115,7 +115,7 @@
   [prelude-decls : AstDeclList]
   [prelude-paths : AstDeclPathList]
   [loaded : ResultCompilerLoadWithPaths]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerCheck
   (match loaded
     [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths _ _)
@@ -135,7 +135,7 @@
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
   [loaded : ResultCompilerLoadWithPaths]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -166,12 +166,12 @@
     prelude-decls
     prelude-paths
     loaded
-    (svec.new)
+    (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
     [(ResultCompilerLoadWithPaths.Ok prelude-decls prelude-paths _ prelude-seen)
@@ -200,15 +200,15 @@
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-file-loaded-with-prelude
       path
-      (svec.new)
+      (svec.string-vec-new)
       (compiler-load-core-macro-prelude-with-roots-cfg
         (sym_i64_env.sym-i64-empty)
-        (svec.new)
+        (svec.string-vec-new)
         (compiler-check-language-cfgs)))))
 
 (define (compiler-check-file-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVector]) : ResultCompilerCheck
+  [stdlib-roots : svec.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -222,7 +222,7 @@
 
 (define (compiler-check-package-file-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -263,7 +263,7 @@
 (define (compiler-check-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -314,7 +314,7 @@
 
 (define (compiler-check-package-entry-file-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerCheckWithPaths
@@ -342,7 +342,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (svec.new)
+      (svec.string-vec-new)
       (compiler-check-language-cfgs))
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
@@ -357,12 +357,12 @@
             path
             source
             prelude-seen
-            (svec.new)
+            (svec.string-vec-new)
             (compiler-check-language-cfgs))
-          (svec.new)
+          (svec.string-vec-new)
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
-            (svec.new)
+            (svec.string-vec-new)
             (compiler-check-language-cfgs)))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
@@ -372,7 +372,7 @@
 (define (compiler-check-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : svec.StringVector]) : ResultCompilerCheck
+  [stdlib-roots : svec.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -446,10 +446,10 @@
               path
               (box-get decls-box)
               (ast-decl-path-list-new)
-              (svec.new)
+              (svec.string-vec-new)
               (compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
-                (svec.new)
+                (svec.string-vec-new)
                 (compiler-check-language-cfgs)))])]
       [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerCheck.Err diag)])))
 

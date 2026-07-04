@@ -2,7 +2,7 @@
 ;; the full load -> lint -> render path on an embedded source and returns 42.
 (import stdlib.io)
 (import stdlib.string)
-(import string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "../lint_driver_core.tl")
 
 (define (lint-driver-smoke-string-concat-source) : String
@@ -367,7 +367,7 @@
     (selfhost-lint-source-with-roots-and-options
       "lint_driver_smoke_test.tl"
       source
-      (svec.new)
+      (svec.string-vec-new)
       true)))
 
 (define (lint-driver-smoke-source-findings-with-redundant-function-name
@@ -375,7 +375,7 @@
   (selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
-    (svec.new)
+    (svec.string-vec-new)
     false
     true
     false))
@@ -385,7 +385,7 @@
   (selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
-    (svec.new)
+    (svec.string-vec-new)
     false
     false
     true))
@@ -469,19 +469,19 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-string-concat-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [loop-string-concat-reported : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-loop-string-concat-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [nested-string-concat-reported : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-nested-string-concat-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     (cond
       [(not (= (lint-findings-count string-concat-reported) 1)) 20]
@@ -519,19 +519,19 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect.tl"
         (lint-driver-smoke-no-effect-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [clean : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_clean.tl"
         (lint-driver-smoke-clean-no-effect-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [suppressed : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_suppressed.tl"
         (lint-driver-smoke-suppressed-no-effect-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     (cond
       [(not (= (lint-findings-count reported) 4)) 30]
@@ -551,19 +551,19 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable.tl"
         (lint-driver-smoke-unreachable-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [clean : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_clean.tl"
         (lint-driver-smoke-clean-unreachable-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [suppressed : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_suppressed.tl"
         (lint-driver-smoke-suppressed-unreachable-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     (cond
       [(not (= (lint-findings-count reported) 7)) 40]
@@ -591,13 +591,13 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding.tl"
         (lint-driver-smoke-divergence-padding-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     [clean : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding_clean.tl"
         (lint-driver-smoke-clean-divergence-source)
-        (svec.new)
+        (svec.string-vec-new)
         true)]
     (cond
       [(not (= (lint-findings-count reported) 4)) 46]
@@ -624,31 +624,31 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable.tl"
         (lint-driver-smoke-unused-variable-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [clean : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_clean.tl"
         (lint-driver-smoke-clean-unused-variable-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [shadow : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_shadow.tl"
         (lint-driver-smoke-shadow-unused-variable-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [suppressed : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_suppressed.tl"
         (lint-driver-smoke-suppressed-unused-variable-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [prefix : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_prefix.tl"
         (lint-driver-smoke-prefix-unused-variable-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [status : i64 42]
     (begin
@@ -703,37 +703,37 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe.tl"
         (lint-driver-smoke-unused-unsafe-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [required : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe.tl"
         (lint-driver-smoke-required-unsafe-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [safe-call : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe_call.tl"
         (lint-driver-smoke-unused-unsafe-call-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [required-call : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe_call.tl"
         (lint-driver-smoke-required-unsafe-call-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [nested : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_nested_unsafe.tl"
         (lint-driver-smoke-nested-unsafe-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     [suppressed : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_suppressed_unused_unsafe.tl"
         (lint-driver-smoke-suppressed-unused-unsafe-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     (cond
       [(not (= (lint-findings-count reported) 1)) 60]
@@ -772,7 +772,7 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_copy_on_update_struct.tl"
         (lint-driver-smoke-copy-on-update-struct-source)
-        (svec.new)
+        (svec.string-vec-new)
         false)]
     (cond
       [(not (= (selfhost-lint-findings-rule-count reported rule) 1)) 81]

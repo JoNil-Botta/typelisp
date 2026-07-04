@@ -19,7 +19,7 @@
 ;; compiler (#1638).
 (import stdlib.io)
 (import stdlib.arena)
-(import string_vec_core as svec)
+(import stdlib.vector as svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -75,7 +75,7 @@
     bool
     bool
     CompilerBackendTarget
-    svec.StringVector
+    svec.StringVec
     CompileCliCfgNames
     CompilerBackendMode
     i64))
@@ -85,7 +85,7 @@
     String
     bool
     CompilerBackendTarget
-    svec.StringVector
+    svec.StringVec
     CompileCliCfgNames
     CompilerBackendMode
     i64
@@ -102,12 +102,12 @@
 (defenum CompileCliAction
   (Run CompileCliConfig)
   (Batch CompileCliBatchConfig)
-  (Check String svec.StringVector)
+  (Check String svec.StringVec)
   (Help)
   (Error String))
 
 (defenum ResultCompileCliCheckConfig
-  (Ok String svec.StringVector)
+  (Ok String svec.StringVec)
   (Err String))
 
 (defenum ResultCompileCliTarget
@@ -205,7 +205,7 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
@@ -267,9 +267,11 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))
               cfgs
               emit-ir
@@ -416,7 +418,7 @@
   [batch-path : String]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -456,9 +458,11 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVector stdlib-roots]
+                [next-roots : svec.StringVec stdlib-roots]
                 (begin
-                  (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (set!
+                    next-roots
+                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                   next-roots))
               cfgs
               has-opt-level
@@ -585,7 +589,7 @@
           false
           false
           (CompilerBackendTarget.Linux)
-          (svec.new)
+          (svec.string-vec-new)
           (compile-cli-cfg-names-empty)
           false
           false
@@ -610,7 +614,7 @@
           batch-path
           false
           (CompilerBackendTarget.Linux)
-          (svec.new)
+          (svec.string-vec-new)
           (compile-cli-cfg-names-empty)
           false
           (compiler-optimize-default-level)
@@ -631,7 +635,7 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : ResultCompileCliCheckConfig
+  [stdlib-roots : svec.StringVec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
     (let
@@ -645,9 +649,11 @@
             count
             input-path
             (let
-              [next-roots : svec.StringVector stdlib-roots]
+              [next-roots : svec.StringVec stdlib-roots]
               (begin
-                (svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                (set!
+                  next-roots
+                  (svec.string-vec-push next-roots (io.arg (+ idx 1))))
                 next-roots))))
         (begin
           (io.print-error (string.append "Warning: unknown flag: " current))
@@ -667,7 +673,7 @@
       (+ input-idx 1)
       count
       (io.arg input-idx)
-      (svec.new))))
+      (svec.string-vec-new))))
 
 (define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
   (compile-cli-check-config-from
@@ -701,7 +707,7 @@
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
-  [stdlib-roots : svec.StringVector]) : i64
+  [stdlib-roots : svec.StringVec]) : i64
   (match (io.try-read-file (& input-path))
     [(io.ErrIoString _) 0]
     [(io.OkIoString source)
@@ -723,7 +729,7 @@
   ;; lint-allow: unused-variable
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
@@ -793,7 +799,7 @@
 (define (compile-cli-run-batch-inline-tests
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]) : i64
   (match entries
     [(CompileCliBatchEntryList.Nil) 0]
@@ -921,7 +927,7 @@
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
@@ -986,7 +992,7 @@
   [line : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVector]
+  [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64

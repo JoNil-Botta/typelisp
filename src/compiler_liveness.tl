@@ -1277,12 +1277,15 @@
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
-        [walk-blocks : CompilerIrBlockList
-          (compiler-ir-block-list-force-cons blocks)]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        [block-array : (Array CompilerLiveBlock)
+          (compiler-live-build-block-array seq)]
         [graph : CompilerLiveBlockGraph
-          (compiler-live-fixpoint (compiler-live-build-blocks walk-blocks))]
+          (compiler-live-fixpoint-from-array block-array)]
         (begin
-          (compiler-live-fill-instr-after-graph! walk-blocks graph)
+          (compiler-live-fill-instr-after-graph-seq!
+            seq
+            (struct-get graph blocks))
           (CompilerFunctionLiveness.Liveness
             (struct-get graph ids)
             (struct-get graph blocks))))]))
@@ -2037,3 +2040,101 @@
     (compiler-live-switch-ok?))
     42
     (io.panic "liveness: smoke mismatch")))
+
+;; Dense-array path for liveness analysis (#4316).
+;; Avoids linked-list allocation overhead in the hot self-compile path.
+(define (compiler-live-ir-block-list-to-seq [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
+  (match blocks
+    [(CompilerIrBlockList.Array seq) seq]
+    [_ (compiler-ir-block-seq-from-list blocks)]))
+
+(define (compiler-live-build-block-array [blocks : CompilerIrBlockSeq]) : (Array
+    CompilerLiveBlock)
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [out : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set!
+            out
+            i
+            (compiler-live-build-block (compiler-ir-block-seq-ref blocks i)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-live-block-graph-fill-successors-from-array!
+  [blocks : (Array CompilerLiveBlock)]
+  [ids : hashmap.StringI64Map]
+  [successors : (Array CompilerLiveIndexVec)]
+  [index : i64]) : unit
+  (if (>= index (array-length blocks))
+    unit
+    (match (array-ref blocks index)
+      [(CompilerLiveBlock.Block _ _ _ _ _ block-successors _)
+        (begin
+          (array-set!
+            successors
+            index
+            (compiler-live-label-set-to-index-vec block-successors ids))
+          (compiler-live-block-graph-fill-successors-from-array!
+            blocks
+            ids
+            successors
+            (+ index 1)))])))
+
+(define (compiler-live-block-graph-build-from-array
+  [blocks : (Array CompilerLiveBlock)]) : CompilerLiveBlockGraph
+  (let
+    [count : i64 (array-length blocks)]
+    [successors : (Array CompilerLiveIndexVec)
+      (make-array CompilerLiveIndexVec count)]
+    [ids : hashmap.StringI64Map
+      (hashmap.string-i64-map-with-capacity (+ (* count 2) 1))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (match (array-ref blocks i)
+          [(CompilerLiveBlock.Block label _ _ _ _ _ _)
+            (begin
+              (if (not (hashmap.string-i64-map-contains? ids label))
+                (set! ids (hashmap.string-i64-map-put ids label i))
+                unit))])
+        (set! i (+ i 1)))
+      (compiler-live-block-graph-fill-successors-from-array!
+        blocks
+        ids
+        successors
+        0)
+      (CompilerLiveBlockGraph ids blocks successors))))
+
+(define (compiler-live-fill-instr-after-graph-seq!
+  [ir-blocks : CompilerIrBlockSeq]
+  [blocks : (Array CompilerLiveBlock)]) : unit
+  (let
+    [count : i64
+      (compiler-live-set-min
+        (compiler-ir-block-seq-count ir-blocks)
+        (array-length blocks))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set!
+            blocks
+            i
+            (compiler-live-fill-instr-after-block
+              (compiler-ir-block-seq-ref ir-blocks i)
+              (array-ref blocks i)))
+          (set! i (+ i 1)))))))
+
+(define (compiler-live-fixpoint-from-array [blocks : (Array CompilerLiveBlock)]) : CompilerLiveBlockGraph
+  (let
+    [graph : CompilerLiveBlockGraph
+      (compiler-live-block-graph-build-from-array blocks)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (set! done (not (compiler-live-graph-update! graph))))
+      graph)))

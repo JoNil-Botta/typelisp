@@ -2529,6 +2529,28 @@
               words
               (+ index 1)))])]))
 
+(define (compiler-reg-bits-build-rows-from-array!
+  [blocks : (Array CompilerLiveBlock)]
+  [idmap : hashmap.StringI64Map]
+  [use-rows : (Array i64)]
+  [def-rows : (Array i64)]
+  [words : i64]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (array-length blocks))
+    idmap
+    (match (array-ref blocks index)
+      [(CompilerLiveBlock.Block label uses defs _ _ _ _)
+        (begin
+          (compiler-reg-set->row! uses use-rows (* index words))
+          (compiler-reg-set->row! defs def-rows (* index words))
+          (compiler-reg-bits-build-rows-from-array!
+            blocks
+            (hashmap.string-i64-map-put idmap label index)
+            use-rows
+            def-rows
+            words
+            (+ index 1)))])))
+
 (define (compiler-reg-bits-clear-row!
   [row : (Array i64)]
   [base : i64]
@@ -2815,13 +2837,12 @@
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [live-blocks : CompilerLiveBlockList
-          (compiler-live-build-blocks blocks)]
-        [count : i64 (compiler-reg-live-block-list-count live-blocks)]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        [live-blocks : (Array CompilerLiveBlock)
+          (compiler-live-build-block-array seq)]
+        [count : i64 (array-length live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
-        [arr : (Array CompilerLiveBlock)
-          (array.make-array CompilerLiveBlock count)]
         [use-rows : (Array i64) (array.make-array i64 cells)]
         [def-rows : (Array i64) (array.make-array i64 cells)]
         [live-in : (Array i64) (array.make-array i64 cells)]
@@ -2837,9 +2858,8 @@
           (compiler-reg-fill-i64-array ends -1)
           (let
             [idmap : hashmap.StringI64Map
-              (compiler-reg-bits-build-rows!
+              (compiler-reg-bits-build-rows-from-array!
                 live-blocks
-                arr
                 (hashmap.string-i64-map-with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
@@ -2848,7 +2868,7 @@
                 0)]
             (begin
               (compiler-reg-bits-fixpoint!
-                arr
+                live-blocks
                 idmap
                 count
                 words
@@ -7638,7 +7658,6 @@
         (compiler-live-set-union
           (compiler-live-set-union set (compiler-live-block-live-in block))
           (compiler-live-block-live-out block)))]))
-
 (define (compiler-reg-edge-copy-list-reverse-onto
   [copies : CompilerRegEdgeCopyList]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList

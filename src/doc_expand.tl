@@ -1,12 +1,37 @@
 ;; doc_expand.tl - Expansion-aware generated-module docs.
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 (import "string_vec_core.tl" module string_vec_core as svec)
 (import "doc_render.tl")
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
+
+(define (doc-cat2 [a : String] [b : String]) : String
+  (string.concat3 a b ""))
+
+(define (doc-cat3 [a : String] [b : String] [c : String]) : String
+  (string.concat3 a b c))
+
+(define (doc-cat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string.concat3 a b (string.concat3 c d "")))
+
+(define (doc-cat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string.concat3 a b (string.concat3 c d e)))
+
+(define (doc-cat6
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]) : String
+  (string.concat3 a b (string.concat3 c d (string.concat3 e f ""))))
 
 (defenum DocMaybeItem
   (No)
@@ -69,7 +94,7 @@
   (match forms
     [(DocImportFormList.Nil) ""]
     [(DocImportFormList.Cons form rest)
-      (str_cat.str-cat form "\n" (doc-import-form-list-source (box-get rest)))]))
+      (doc-cat3 form "\n" (doc-import-form-list-source (box-get rest)))]))
 
 (define (doc-import-alias-string [alias : AstMaybeImportAlias]) : String
   (match alias
@@ -85,7 +110,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       (if (= index 0)
         ""
         " ")
@@ -101,7 +126,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       (if (= index 0)
         ""
         " ")
@@ -113,7 +138,7 @@
     [count : i64 (ast-lifetime-list-len (& lifetimes))]
     (if (= count 0)
       ""
-      (str_cat.str-cat
+      (doc-cat3
         " (:lifetimes "
         (doc-ast-lifetime-list-source-from lifetimes 0 count)
         ")"))))
@@ -140,44 +165,39 @@
     [(AstType.Expr) "Expr"]
     [(AstType.ExprList) "ExprList"]
     [(AstType.Func args-box ret)
-      (str_cat.str-cat
+      (doc-cat5
         "(-> "
         (doc-ast-type-list-source (box-get args-box))
         " "
         (doc-ast-type-id-source ret)
         ")")]
     [(AstType.Tuple elems-box)
-      (str_cat.str-cat
-        "(Tuple "
-        (doc-ast-type-list-source (box-get elems-box))
-        ")")]
+      (doc-cat3 "(Tuple " (doc-ast-type-list-source (box-get elems-box)) ")")]
     [(AstType.Array elem size)
-      (str_cat.str-cat
+      (doc-cat5
         "(Array "
         (doc-ast-type-id-source elem)
         " "
         (string.int->string size)
         ")")]
     [(AstType.DynArray elem)
-      (str_cat.str-cat "(Array " (doc-ast-type-id-source elem) ")")]
-    [(AstType.Box elem)
-      (str_cat.str-cat "(Box " (doc-ast-type-id-source elem) ")")]
+      (doc-cat3 "(Array " (doc-ast-type-id-source elem) ")")]
+    [(AstType.Box elem) (doc-cat3 "(Box " (doc-ast-type-id-source elem) ")")]
     [(AstType.Region region elem)
-      (str_cat.str-cat "(Region " region " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5 "(Region " region " " (doc-ast-type-id-source elem) ")")]
     [(AstType.Ref lifetime elem)
-      (str_cat.str-cat "(& " lifetime " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5 "(& " lifetime " " (doc-ast-type-id-source elem) ")")]
     [(AstType.MutRef lifetime elem)
-      (str_cat.str-cat "(&mut " lifetime " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5 "(&mut " lifetime " " (doc-ast-type-id-source elem) ")")]
     [(AstType.Enum name) (intern-str name)]
     [(AstType.EnumArgs name _) (intern-str name)]
     [(AstType.Struct name) (intern-str name)]
     [(AstType.StructArgs name _) (intern-str name)]
     [(AstType.Var name) (intern-str name)]
     [(AstType.VarArgs name _) (intern-str name)]
-    [(AstType.Ptr elem)
-      (str_cat.str-cat "(Ptr " (doc-ast-type-id-source elem) ")")]
+    [(AstType.Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source elem) ")")]
     [(AstType.MutPtr elem)
-      (str_cat.str-cat "(MutPtr " (doc-ast-type-id-source elem) ")")]))
+      (doc-cat3 "(MutPtr " (doc-ast-type-id-source elem) ")")]))
 
 (define (doc-expand-escape-string-loop
   [text : String]
@@ -198,7 +218,7 @@
         text
         (+ index 1)
         count
-        (str_cat.str-cat out piece "")))))
+        (doc-cat2 out piece)))))
 
 (define (doc-expand-escape-string [text : String]) : String
   (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
@@ -213,7 +233,7 @@
         "false")]
     [(AstLiteral.Char _) "'?'"]
     [(AstLiteral.String text)
-      (str_cat.str-cat "\"" (doc-expand-escape-string text) "\"")]
+      (doc-cat3 "\"" (doc-expand-escape-string text) "\"")]
     [(AstLiteral.Unit) "unit"]))
 
 (define (doc-ast-expr-list-source-from
@@ -222,7 +242,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       " "
       (doc-ast-expr-source (ast-expr-list-get (& exprs) index 0))
       (doc-ast-expr-list-source-from exprs (+ index 1) count))))
@@ -235,13 +255,12 @@
     [(AstExpr.Literal lit) (doc-ast-literal-source lit)]
     [(AstExpr.Var name) (intern-str name)]
     [(AstExpr.Call callee args)
-      (str_cat.str-cat
+      (doc-cat4
         "("
         (doc-ast-expr-source callee)
         (doc-ast-expr-list-source args)
         ")")]
-    [(AstExpr.TypeLiteral ty)
-      (str_cat.str-cat "(type " (doc-ast-type-source ty) ")")]
+    [(AstExpr.TypeLiteral ty) (doc-cat3 "(type " (doc-ast-type-source ty) ")")]
     [(AstExpr.Ann inner _) (doc-ast-expr-source inner)]
     [(AstExpr.Spanned inner _) (doc-ast-expr-source inner)]
     [_ "..."]))
@@ -265,9 +284,9 @@
 (define (doc-macro-import-form [call-id : i64] [alias : AstMaybeImportAlias]) : String
   (match alias
     [(AstMaybeImportAlias.Some name)
-      (str_cat.str-cat "(import " (doc-ast-expr-source call-id) " as " name ")")]
+      (doc-cat5 "(import " (doc-ast-expr-source call-id) " as " name ")")]
     [(AstMaybeImportAlias.No)
-      (str_cat.str-cat "(import " (doc-ast-expr-source call-id) ")")]))
+      (doc-cat3 "(import " (doc-ast-expr-source call-id) ")")]))
 
 (define (doc-macro-import-examples-from-decl
   [decl : AstDecl]
@@ -378,12 +397,12 @@
 (define (doc-ast-maybe-type-source [maybe-ty : AstMaybeType]) : String
   (match maybe-ty
     [(AstMaybeType.No) ""]
-    [(AstMaybeType.Some ty) (str_cat.str-cat " : " (doc-ast-type-source ty) "")]))
+    [(AstMaybeType.Some ty) (doc-cat2 " : " (doc-ast-type-source ty))]))
 
 (define (doc-ast-param-source [param : AstParam]) : String
   (match param
     [(AstParam.Param name ty _)
-      (str_cat.str-cat "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
+      (doc-cat5 "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
 
 (define (doc-ast-param-list-source-from
   [params : AstParamList]
@@ -391,7 +410,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       " "
       (doc-ast-param-source
         (ast-param-list-get
@@ -406,7 +425,7 @@
 (define (doc-ast-macro-param-source [param : AstMacroParam]) : String
   (match param
     [(AstMacroParam.Param name ty _)
-      (str_cat.str-cat "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
+      (doc-cat5 "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
 
 (define (doc-ast-macro-param-list-source-from
   [params : AstMacroParamList]
@@ -414,7 +433,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       " "
       (doc-ast-macro-param-source
         (ast-macro-param-list-get
@@ -432,12 +451,7 @@
 (define (doc-ast-field-source [field : AstFieldDef]) : String
   (match field
     [(AstFieldDef.Def name ty _)
-      (str_cat.str-cat
-        "\n  ("
-        (intern-str name)
-        " "
-        (doc-ast-type-source ty)
-        ")")]))
+      (doc-cat5 "\n  (" (intern-str name) " " (doc-ast-type-source ty) ")")]))
 
 (define (doc-ast-field-list-source-from
   [fields : AstFieldDefList]
@@ -445,7 +459,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat2
       (doc-ast-field-source
         (ast-field-def-list-get
           (& fields)
@@ -462,7 +476,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat3
       " "
       (doc-ast-type-id-source (ast-type-list-get (& fields) index 0))
       (doc-ast-variant-payload-source-from fields (+ index 1) count))))
@@ -470,7 +484,7 @@
 (define (doc-ast-variant-source [variant : AstVariantDef]) : String
   (match variant
     [(AstVariantDef.Def name fields _)
-      (str_cat.str-cat
+      (doc-cat4
         "\n  ("
         (intern-str name)
         (doc-ast-variant-payload-source-from
@@ -485,7 +499,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (doc-cat2
       (doc-ast-variant-source
         (ast-variant-def-list-get
           (& variants)
@@ -503,7 +517,7 @@
     (ast-variant-def-list-len (& variants))))
 
 (define (doc-ast-define-signature [name : i64] [maybe-ty : AstMaybeType]) : String
-  (str_cat.str-cat
+  (doc-cat4
     "(define "
     (intern-str name)
     (doc-ast-maybe-type-source maybe-ty)
@@ -513,7 +527,7 @@
   [name : i64]
   [params : AstParamList]
   [ret : AstType]) : String
-  (str_cat.str-cat
+  (doc-cat6
     "(define ("
     (intern-str name)
     (doc-ast-param-list-source params)
@@ -525,7 +539,7 @@
   [name : i64]
   [params : AstMacroParamList]
   [ret : AstType]) : String
-  (str_cat.str-cat
+  (doc-cat6
     "(defmacro ("
     (intern-str name)
     (doc-ast-macro-param-list-source params)
@@ -537,7 +551,7 @@
   [name : i64]
   [lifetimes : String]
   [fields : AstFieldDefList]) : String
-  (str_cat.str-cat
+  (doc-cat5
     "(defstruct "
     (intern-str name)
     lifetimes
@@ -548,7 +562,7 @@
   [name : i64]
   [lifetimes : String]
   [variants : AstVariantDefList]) : String
-  (str_cat.str-cat
+  (doc-cat5
     "(defenum "
     (intern-str name)
     lifetimes
@@ -556,12 +570,7 @@
     ")"))
 
 (define (doc-ast-extern-signature [name : i64] [ty : AstType]) : String
-  (str_cat.str-cat
-    "(extern "
-    (intern-str name)
-    " : "
-    (doc-ast-type-source ty)
-    ")"))
+  (doc-cat5 "(extern " (intern-str name) " : " (doc-ast-type-source ty) ")"))
 
 (define (doc-ast-decl-item [decl : AstDecl]) : DocMaybeItem
   (match decl
@@ -849,10 +858,9 @@
       (DocImportFormScan (doc-import-form-list-reverse forms-rev) has-macro))))
 
 (define (doc-expanded-example-source [forms : DocImportFormList]) : String
-  (str_cat.str-cat
+  (doc-cat2
     "(module typelisp.docs.generated_examples)\n"
-    (doc-import-form-list-source forms)
-    ""))
+    (doc-import-form-list-source forms)))
 
 (define (doc-expanded-generated-modules-from-source-docs
   [source-path : String]
@@ -865,7 +873,7 @@
         (if (not (struct-get scan has-macro))
           (ResultDocExpandedModules.Ok DocModuleList.Nil)
           (match (compiler-load-source-with-paths-and-roots
-            (str_cat.str-cat source-path ".doc-examples.tl")
+            (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))
             (sym_i64_env.sym-i64-empty)
             stdlib-roots)
@@ -928,14 +936,12 @@
               42
               (io.panic "doc-expand: generated module docs smoke mismatch")))]
         [(ResultDocExpandedModules.Err message)
-          (io.panic
-            (str_cat.str-cat "doc-expand: expansion failed: " message ""))])]
+          (io.panic (doc-cat2 "doc-expand: expansion failed: " message))])]
     [(ResultCompilerLoadWithPaths.Err diag)
       (io.panic
-        (str_cat.str-cat
+        (doc-cat2
           "doc-expand: load failed: "
-          (compiler-diagnostic-render (box-get diag))
-          ""))]))
+          (compiler-diagnostic-render (box-get diag))))]))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

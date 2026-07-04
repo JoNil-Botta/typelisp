@@ -26,11 +26,51 @@
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
 (defmacro (and [args : bool ...]) : bool
-  `(core-and-from (__core-and-args ,@args) 0))
+  (match (comptime.expr-list-length args)
+    [0 (comptime.expr-bool true)]
+    [1
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        false)]
+    [2
+      `(if ,(comptime.expr-list-nth args 0)
+        (if ,(comptime.expr-list-nth args 1)
+          true
+          false)
+        false)]
+    [3
+      `(if ,(comptime.expr-list-nth args 0)
+        (if ,(comptime.expr-list-nth args 1)
+          (if ,(comptime.expr-list-nth args 2)
+            true
+            false)
+          false)
+        false)]
+    [4
+      `(if ,(comptime.expr-list-nth args 0)
+        (if ,(comptime.expr-list-nth args 1)
+          (if ,(comptime.expr-list-nth args 2)
+            (if ,(comptime.expr-list-nth args 3)
+              true
+              false)
+            false)
+          false)
+        false)]
+    [5
+      `(if ,(comptime.expr-list-nth args 0)
+        (if ,(comptime.expr-list-nth args 1)
+          (if ,(comptime.expr-list-nth args 2)
+            (if ,(comptime.expr-list-nth args 3)
+              (if ,(comptime.expr-list-nth args 4)
+                true
+                false)
+              false)
+            false)
+          false)
+        false)]
+    [_ `(core-and-from (__core-and-args ,@args) 0)]))
 
-;: Internal index step for `and`: emit the short-circuiting if-chain over the
-;: carrier's operands, read by index (`expr-list-nth`) instead of a shrinking
-;: tail. `carrier` wraps the operands in a marker call built once by `and`.
+;: Compatibility entry for the old indexed `and` expansion helper.
 (defmacro (core-and-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
   (match idx
     [(comptime.ExprInt i)
@@ -49,11 +89,51 @@
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `false`.
 (defmacro (or [args : bool ...]) : bool
-  `(core-or-from (__core-or-args ,@args) 0))
+  (match (comptime.expr-list-length args)
+    [0 (comptime.expr-bool false)]
+    [1
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        false)]
+    [2
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        (if ,(comptime.expr-list-nth args 1)
+          true
+          false))]
+    [3
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        (if ,(comptime.expr-list-nth args 1)
+          true
+          (if ,(comptime.expr-list-nth args 2)
+            true
+            false)))]
+    [4
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        (if ,(comptime.expr-list-nth args 1)
+          true
+          (if ,(comptime.expr-list-nth args 2)
+            true
+            (if ,(comptime.expr-list-nth args 3)
+              true
+              false))))]
+    [5
+      `(if ,(comptime.expr-list-nth args 0)
+        true
+        (if ,(comptime.expr-list-nth args 1)
+          true
+          (if ,(comptime.expr-list-nth args 2)
+            true
+            (if ,(comptime.expr-list-nth args 3)
+              true
+              (if ,(comptime.expr-list-nth args 4)
+                true
+                false)))))]
+    [_ `(core-or-from (__core-or-args ,@args) 0)]))
 
-;: Internal index step for `or`: emit the short-circuiting if-chain over the
-;: carrier's operands, read by index (`expr-list-nth`) instead of a shrinking
-;: tail. `carrier` wraps the operands in a marker call built once by `or`.
+;: Compatibility entry for the old indexed `or` expansion helper.
 (defmacro (core-or-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
   (match idx
     [(comptime.ExprInt i)
@@ -96,11 +176,44 @@
 ;: results are captured as `ExprClause` operands; the expanded `if` chain
 ;: performs the ordinary post-expansion bool/result typechecking.
 (defmacro (cond [arms : ExprClause ...]) : Expr
-  `(core-cond-from 0 ,@(comptime.expr-clause-list->expr-list arms)))
+  (match (comptime.expr-clause-list-length arms)
+    [0 (comptime.expr-var "core-cond-missing-else")]
+    [1
+      (match (comptime.expr-clause-list-nth arms 0)
+        [(ExprClause test result)
+          (match test
+            [(comptime.ExprVar name)
+              (if (string-eq name "else")
+                result
+                (comptime.expr-var "core-cond-missing-else"))]
+            [_ (comptime.expr-var "core-cond-missing-else")])])]
+    [2
+      (let
+        [fallback : comptime.Expr
+          (match (comptime.expr-clause-list-nth arms 1)
+            [(ExprClause test result)
+              (match test
+                [(comptime.ExprVar name)
+                  (if (string-eq name "else")
+                    result
+                    (comptime.expr-var "core-cond-missing-else"))]
+                [_ (comptime.expr-var "core-cond-missing-else")])])]
+        (match (comptime.expr-clause-list-nth arms 0)
+          [(ExprClause test result)
+            (match test
+              [(comptime.ExprVar name)
+                (if (string-eq name "else")
+                  (comptime.expr-var "core-cond-else-must-be-final")
+                  `(if ,test
+                    ,result
+                    ,fallback))]
+              [_
+                `(if ,test
+                  ,result
+                  ,fallback)])]))]
+    [_ `(core-cond-from 0 ,@(comptime.expr-clause-list->expr-list arms))]))
 
-;: Internal index step for `cond`: read clauses by index (`expr-clause-list-nth`)
-;: instead of peeling a tail. `idx` is the current clause position and the full
-;: clause list is threaded so each step can address the remaining arms.
+;: Compatibility entry for the old indexed `cond` expansion helper.
 (defmacro (core-cond-from [idx : comptime.Expr] [arms : ExprClause ...]) : Expr
   (match idx
     [(comptime.ExprInt i)

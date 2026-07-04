@@ -108,6 +108,10 @@
   (Ok String)
   (Err String))
 
+(defenum LspSaveResult
+  (Ok LspDocuments)
+  (Err String))
+
 (defenum LspFunctionList
   (Ok (Array String))
   (Err String))
@@ -3857,24 +3861,115 @@
             (set! i (+ i 1)))))
       found)))
 
+(define (lsp-tl-request-uri [params : json.Json]) : LspJsonText
+  (let
+    [key : String "textDocument"]
+    (match (json.object-get params (& key))
+      [(json.JsonFound document) (lsp-json-string-field document "uri")]
+      [(json.JsonMissing) LspJsonText.Missing])))
+
+(define (lsp-cache-string-copy [text : String]) : String
+  (if (> lsp-document-cache-arena 0)
+    (let
+      [active-arena : i64 (arena.tl_arena_current)]
+      [copied : String ""]
+      (begin
+        (unsafe
+          (arena.tl_arena_set lsp-document-cache-arena))
+        (set! copied (string.copy (& text)))
+        (unsafe
+          (arena.tl_arena_set active-arena))
+        copied))
+    (string.copy (& text))))
+
+(define (lsp-tl-save-doc
+  [docs : LspDocuments]
+  [uri : String]
+  [path : String]
+  [diagnostic-uri : String]
+  [formatted : String]) : LspSaveResult
+  (match (io.try-write-file (& path) (& formatted))
+    [(io.OkIoUnit)
+      (let
+        [cached-uri : String (lsp-cache-string-copy uri)]
+        [cached-path : String (lsp-cache-string-copy path)]
+        [cached-text : String (lsp-cache-string-copy formatted)]
+        [cached-diagnostic-uri : String (lsp-cache-string-copy diagnostic-uri)]
+        (LspSaveResult.Ok
+          (lsp-documents-set
+            docs
+            cached-uri
+            cached-path
+            cached-text
+            cached-diagnostic-uri)))]
+    [(io.ErrIoUnit message)
+      (LspSaveResult.Err
+        (lsp-str2 "Failed to write document: " (io.error-message message)))]))
+
+(define (lsp-tl-save-known-and-continue
+  [id : json.Json]
+  [docs : LspDocuments]
+  [uri : String]
+  [path : String]
+  [diagnostic-uri : String]
+  [formatted : String]) : LspHandleResult
+  (match (lsp-tl-save-doc docs uri path diagnostic-uri formatted)
+    [(LspSaveResult.Ok next-docs)
+      (begin
+        (lsp-write-response
+          id
+          (lsp-json-object2
+            "success"
+            (json.JsonBool true)
+            "text"
+            (json.JsonString formatted)))
+        (LspHandleResult.Continue next-docs))]
+    [(LspSaveResult.Err message)
+      (begin
+        (lsp-write-error id -32600 message)
+        (LspHandleResult.Continue docs))]))
+
+(define (lsp-tl-save-and-continue
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]
+  [formatted : String]) : LspHandleResult
+  (match (lsp-tl-request-uri params)
+    [(LspJsonText.Ok uri)
+      (match (lsp-documents-lookup docs uri)
+        [(LspDocumentLookup.Found path _ diagnostic-uri)
+          (lsp-tl-save-known-and-continue
+            id
+            docs
+            uri
+            path
+            diagnostic-uri
+            formatted)]
+        [(LspDocumentLookup.Missing)
+          (match (lsp-file-uri-to-path uri)
+            [(LspUriPath.Ok path)
+              (lsp-tl-save-known-and-continue id docs uri path uri formatted)]
+            [(LspUriPath.Err message)
+              (begin
+                (lsp-write-error id -32600 message)
+                (LspHandleResult.Continue docs))])])]
+    [(LspJsonText.Missing)
+      (begin
+        (lsp-write-error id -32600 "Missing uri in textDocument parameter")
+        (LspHandleResult.Continue docs))]))
+
 (define (lsp-write-structural-edit-success
   [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [result : String]) : LspHandleResult
   (let
     [formatted : String (lsp-format-edit-text result)]
-    (begin
-      (lsp-write-response
-        id
-        (lsp-json-object2
-          "success"
-          (json.JsonBool true)
-          "text"
-          (json.JsonString formatted)))
-      (LspHandleResult.Continue docs))))
+    (lsp-tl-save-and-continue id params docs formatted)))
 
 (define (lsp-structural-move-after-destination
   [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [text : String]
   [decls : LspDeclList]
@@ -3903,10 +3998,11 @@
           [dest-entry : LspDeclEntry
             (lsp-decl-list-get (& decls) dest-idx (lsp-decl-entry-fallback))]
           [result : String (lsp-move-form-after text found-entry dest-entry)]
-          (lsp-write-structural-edit-success id docs result))])))
+          (lsp-write-structural-edit-success id params docs result))])))
 
 (define (lsp-structural-move-direction
   [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [text : String]
   [decls : LspDeclList]
@@ -3963,7 +4059,7 @@
               (- (string.string-length text) second-end))]
           [result : String
             (lsp-str5 text-before second-text middle first-text text-after)]
-          (lsp-write-structural-edit-success id docs result))])))
+          (lsp-write-structural-edit-success id params docs result))])))
 
 ;; tl/move - Move a form by name or position.
 (define (lsp-handle-tl-structural-move
@@ -3982,6 +4078,7 @@
             [(LspJsonText.Ok destination)
               (lsp-structural-move-after-destination
                 id
+                params
                 docs
                 text
                 decls
@@ -3992,6 +4089,7 @@
                 [(LspJsonText.Ok direction)
                   (lsp-structural-move-direction
                     id
+                    params
                     docs
                     text
                     decls
@@ -4565,17 +4663,7 @@
                         (struct-get last-entry form-end-line)
                         (struct-get last-entry form-end-col)
                         (lsp-str2 "\n\n" new-text)))))
-                (let
-                  [formatted : String (lsp-format-edit-text result)]
-                  (begin
-                    (lsp-write-response
-                      id
-                      (lsp-json-object2
-                        "success"
-                        (json.JsonBool true)
-                        "text"
-                        (json.JsonString formatted)))
-                    (LspHandleResult.Continue docs))))))]
+                (lsp-write-structural-edit-success id params docs result))))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
@@ -4762,25 +4850,27 @@
               (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (not handled)
-            (begin
-              (let
-                [enclosing : i64 (arena.tl_arena_current)]
-                [scratch : i64 (arena.tl_arena_make)]
-                [old-cache-arena : i64 lsp-document-cache-arena]
-                (begin
-                  (set! lsp-document-cache-arena enclosing)
-                  (unsafe
-                    (arena.tl_arena_set scratch))
-                  (lsp-handle-tool-message! method message docs stdlib-roots)
-                  (let
-                    [scratch-head : i64 (arena.tl_arena_current)]
-                    (begin
-                      (unsafe
-                        (arena.tl_arena_set enclosing))
-                      (set! lsp-document-cache-arena old-cache-arena)
-                      (unsafe
-                        (arena.tl_arena_destroy scratch-head))))))
-              (set! result (LspHandleResult.Continue docs)))
+            (let
+              [enclosing : i64 (arena.tl_arena_current)]
+              [scratch : i64 (arena.tl_arena_make)]
+              [old-cache-arena : i64 lsp-document-cache-arena]
+              [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
+              (begin
+                (set! lsp-document-cache-arena enclosing)
+                (unsafe
+                  (arena.tl_arena_set scratch))
+                (set!
+                  tool-result
+                  (lsp-handle-tool-message! method message docs stdlib-roots))
+                (let
+                  [scratch-head : i64 (arena.tl_arena_current)]
+                  (begin
+                    (unsafe
+                      (arena.tl_arena_set enclosing))
+                    (set! lsp-document-cache-arena old-cache-arena)
+                    (unsafe
+                      (arena.tl_arena_destroy scratch-head))
+                    (set! result tool-result)))))
             unit)
           result))]
     [(LspJsonText.Missing) (LspHandleResult.Continue docs)]))
@@ -4833,120 +4923,81 @@
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : svec.StringVec]) : unit
+  [stdlib-roots : svec.StringVec]) : LspHandleResult
   (cond
-    [(string.eq method "tl/astDump")
-      (begin
-        (lsp-handle-tl-ast-dump id params docs)
-        unit)]
+    [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
     [(string.eq method "tl/listFunctions")
-      (begin
-        (lsp-handle-tl-list-functions id params docs)
-        unit)]
+      (lsp-handle-tl-list-functions id params docs)]
     [(string.eq method "tl/findPosition")
-      (begin
-        (lsp-handle-tl-find-position id params docs)
-        unit)]
+      (lsp-handle-tl-find-position id params docs)]
     [(string.eq method "tl/replace")
-      (begin
-        (lsp-handle-tl-structural-replace-at id params docs)
-        unit)]
+      (lsp-handle-tl-structural-replace-at id params docs)]
     [(string.eq method "tl/deleteFunction")
-      (begin
-        (lsp-handle-tl-delete-at id params docs)
-        unit)]
+      (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/move")
-      (begin
-        (lsp-handle-tl-structural-move id params docs)
-        unit)]
+      (lsp-handle-tl-structural-move id params docs)]
     [(string.eq method "tl/expandMacro")
-      (begin
-        (lsp-handle-tl-expand-macro id params docs)
-        unit)]
+      (lsp-handle-tl-expand-macro id params docs)]
     [(string.eq method "tl/check")
       (let
         [old-program-cache : bool
           (compiler-load-session-program-cache-enabled?)]
+        [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
         (begin
           (compiler-load-session-program-cache-disable!)
           (compiler-check-reset-pools!)
           (compiler-check-reset-interns!)
-          (lsp-handle-tl-check id params docs stdlib-roots)
+          (set! tool-result (lsp-handle-tl-check id params docs stdlib-roots))
           (compiler-check-reset-pools!)
           (compiler-check-reset-interns!)
           (compiler-load-session-program-cache-set-enabled! old-program-cache)
-          unit))]
+          tool-result))]
     [(string.eq method "tl/getType")
       (let
         [old-program-cache : bool
           (compiler-load-session-program-cache-enabled?)]
+        [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
         (begin
           (compiler-load-session-program-cache-disable!)
           (compiler-check-reset-pools!)
           (compiler-check-reset-interns!)
-          (lsp-handle-tl-get-type-at id params docs stdlib-roots)
+          (set!
+            tool-result
+            (lsp-handle-tl-get-type-at id params docs stdlib-roots))
           (compiler-check-reset-pools!)
           (compiler-check-reset-interns!)
           (compiler-load-session-program-cache-set-enabled! old-program-cache)
-          unit))]
+          tool-result))]
     [(string.eq method "tl/findReferences")
-      (begin
-        (lsp-handle-tl-find-references id params docs)
-        unit)]
+      (lsp-handle-tl-find-references id params docs)]
     [(string.eq method "tl/evalAtPoint")
-      (begin
-        (lsp-handle-tl-eval-at-point id params docs)
-        unit)]
+      (lsp-handle-tl-eval-at-point id params docs)]
     [(string.eq method "tl/appendFunction")
-      (begin
-        (lsp-handle-tl-append-function id params docs)
-        unit)]
+      (lsp-handle-tl-append-function id params docs)]
     [(string.eq method "tl/replaceBody")
-      (begin
-        (lsp-handle-tl-replace-body id params docs)
-        unit)]
+      (lsp-handle-tl-replace-body id params docs)]
     [(string.eq method "tl/signatureHelp")
-      (begin
-        (lsp-handle-tl-signature-help id params docs)
-        unit)]
+      (lsp-handle-tl-signature-help id params docs)]
     [(string.eq method "tl/replacePattern")
-      (begin
-        (lsp-handle-tl-replace-pattern-at id params docs)
-        unit)]
-    [(string.eq method "tl/patch")
-      (begin
-        (lsp-handle-tl-patch id params docs)
-        unit)]
+      (lsp-handle-tl-replace-pattern-at id params docs)]
+    [(string.eq method "tl/patch") (lsp-handle-tl-patch id params docs)]
     [(string.eq method "tl/projectSearch")
-      (begin
-        (lsp-handle-tl-project-search id params docs)
-        unit)]
-    [(string.eq method "tl/rename")
-      (begin
-        (lsp-handle-tl-rename id params docs)
-        unit)]
-    [(string.eq method "tl/delete")
-      (begin
-        (lsp-handle-tl-delete-at id params docs)
-        unit)]
+      (lsp-handle-tl-project-search id params docs)]
+    [(string.eq method "tl/rename") (lsp-handle-tl-rename id params docs)]
+    [(string.eq method "tl/delete") (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/insertAfter")
-      (begin
-        (lsp-handle-tl-insert-after id params docs)
-        unit)]
-    [(string.eq method "tl/read")
-      (begin
-        (lsp-handle-tl-read-form-at id params docs)
-        unit)]
+      (lsp-handle-tl-insert-after id params docs)]
+    [(string.eq method "tl/read") (lsp-handle-tl-read-form-at id params docs)]
     [else
       (begin
         (lsp-maybe-write-method-not-found message)
-        unit)]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-handle-tool-message!
   [method : String]
   [message : json.Json]
   [docs : LspDocuments]
-  [stdlib-roots : svec.StringVec]) : unit
+  [stdlib-roots : svec.StringVec]) : LspHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get message (& id-key))
@@ -4963,11 +5014,15 @@
                 docs
                 stdlib-roots)]
             [(json.JsonMissing)
-              (lsp-handle-tool-missing-params! method message id)]))]
+              (begin
+                (lsp-handle-tool-missing-params! method message id)
+                (LspHandleResult.Continue docs))]))]
       [(json.JsonMissing)
-        (if (not (lsp-known-tool-method? method))
-          (lsp-maybe-write-method-not-found message)
-          unit)])))
+        (begin
+          (if (not (lsp-known-tool-method? method))
+            (lsp-maybe-write-method-not-found message)
+            unit)
+          (LspHandleResult.Continue docs))])))
 
 (define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : svec.StringVec
   (let
@@ -5098,16 +5153,7 @@
                   (let
                     [result : String
                       (lsp-replace-all-words text old-name new-name)]
-                    [formatted : String (lsp-format-edit-text result)]
-                    (begin
-                      (lsp-write-response
-                        id
-                        (lsp-json-object2
-                          "success"
-                          (json.JsonBool true)
-                          "text"
-                          (json.JsonString formatted)))
-                      (LspHandleResult.Continue docs)))))]
+                    (lsp-write-structural-edit-success id params docs result))))]
             [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newName parameter")
@@ -5258,17 +5304,11 @@
                         (if found
                           (if (string.eq result "")
                             (LspHandleResult.Continue docs)
-                            (let
-                              [formatted : String (lsp-format-edit-text result)]
-                              (begin
-                                (lsp-write-response
-                                  id
-                                  (lsp-json-object2
-                                    "success"
-                                    (json.JsonBool true)
-                                    "text"
-                                    (json.JsonString formatted)))
-                                (LspHandleResult.Continue docs))))
+                            (lsp-write-structural-edit-success
+                              id
+                              params
+                              docs
+                              result))
                           (begin
                             (lsp-write-error id -32600 "Declaration not found")
                             (LspHandleResult.Continue docs)))))]
@@ -5595,17 +5635,7 @@
             [(LspJsonText.Ok new-text)
               (match (lsp-patch-text text old-text new-text)
                 [(LspEditResult.Ok replaced)
-                  (let
-                    [formatted : String (lsp-format-edit-text replaced)]
-                    (begin
-                      (lsp-write-response
-                        id
-                        (lsp-json-object2
-                          "success"
-                          (json.JsonBool true)
-                          "text"
-                          (json.JsonString formatted)))
-                      (LspHandleResult.Continue docs)))]
+                  (lsp-write-structural-edit-success id params docs replaced)]
                 [(LspEditResult.Err message)
                   (begin
                     (lsp-write-error id -32600 message)
@@ -5831,17 +5861,11 @@
                     (lsp-json-int-field-default position "character" 0)]
                   (match (lsp-replace-form-at-position text line col new-text)
                     [(LspEditResult.Ok replaced)
-                      (let
-                        [formatted : String (lsp-format-edit-text replaced)]
-                        (begin
-                          (lsp-write-response
-                            id
-                            (lsp-json-object2
-                              "success"
-                              (json.JsonBool true)
-                              "text"
-                              (json.JsonString formatted)))
-                          (LspHandleResult.Continue docs)))]
+                      (lsp-write-structural-edit-success
+                        id
+                        params
+                        docs
+                        replaced)]
                     [(LspEditResult.Err message)
                       (begin
                         (lsp-write-error id -32600 message)
@@ -5956,17 +5980,11 @@
                                   form-end
                                   (- (string.string-length text) form-end))]
                               [deleted : String (lsp-str2 before after)]
-                              [formatted : String
-                                (lsp-format-edit-text deleted)]
-                              (begin
-                                (lsp-write-response
-                                  id
-                                  (lsp-json-object2
-                                    "success"
-                                    (json.JsonBool true)
-                                    "text"
-                                    (json.JsonString formatted)))
-                                (LspHandleResult.Continue docs)))))))))))]
+                              (lsp-write-structural-edit-success
+                                id
+                                params
+                                docs
+                                deleted))))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
@@ -6036,17 +6054,11 @@
                                       (- (string.string-length text) form-end))]
                                   [new-doc-text : String
                                     (lsp-str4 before "\n" new-text after)]
-                                  [formatted : String
-                                    (lsp-format-edit-text new-doc-text)]
-                                  (begin
-                                    (lsp-write-response
-                                      id
-                                      (lsp-json-object2
-                                        "success"
-                                        (json.JsonBool true)
-                                        "text"
-                                        (json.JsonString formatted)))
-                                    (LspHandleResult.Continue docs)))))))))))]
+                                  (lsp-write-structural-edit-success
+                                    id
+                                    params
+                                    docs
+                                    new-doc-text))))))))))]
               [(json.JsonMissing)
                 (begin
                   (lsp-write-error id -32600 "Missing position parameter")
@@ -6163,17 +6175,11 @@
                       new-body
                       decls)
                       [(LspEditResult.Ok replaced)
-                        (let
-                          [formatted : String (lsp-format-edit-text replaced)]
-                          (begin
-                            (lsp-write-response
-                              id
-                              (lsp-json-object2
-                                "success"
-                                (json.JsonBool true)
-                                "text"
-                                (json.JsonString formatted)))
-                            (LspHandleResult.Continue docs)))]
+                        (lsp-write-structural-edit-success
+                          id
+                          params
+                          docs
+                          replaced)]
                       [(LspEditResult.Err message)
                         (begin
                           (lsp-write-error id -32600 message)
@@ -6200,17 +6206,11 @@
                         new-body
                         decls)
                         [(LspEditResult.Ok replaced)
-                          (let
-                            [formatted : String (lsp-format-edit-text replaced)]
-                            (begin
-                              (lsp-write-response
-                                id
-                                (lsp-json-object2
-                                  "success"
-                                  (json.JsonBool true)
-                                  "text"
-                                  (json.JsonString formatted)))
-                              (LspHandleResult.Continue docs)))]
+                          (lsp-write-structural-edit-success
+                            id
+                            params
+                            docs
+                            replaced)]
                         [(LspEditResult.Err message)
                           (begin
                             (lsp-write-error id -32600 message)
@@ -6264,18 +6264,11 @@
                           new-pattern
                           decls)
                           [(LspEditResult.Ok replaced)
-                            (let
-                              [formatted : String
-                                (lsp-format-edit-text replaced)]
-                              (begin
-                                (lsp-write-response
-                                  id
-                                  (lsp-json-object2
-                                    "success"
-                                    (json.JsonBool true)
-                                    "text"
-                                    (json.JsonString formatted)))
-                                (LspHandleResult.Continue docs)))]
+                            (lsp-write-structural-edit-success
+                              id
+                              params
+                              docs
+                              replaced)]
                           [(LspEditResult.Err message)
                             (begin
                               (lsp-write-error id -32600 message)

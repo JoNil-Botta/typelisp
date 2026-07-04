@@ -547,6 +547,43 @@
           (struct-get doc diagnostic-uri)))
       LspDocumentLookup.Missing)))
 
+(define (lsp-document-refresh-from-disk [docs : LspDocuments] [index : i64]) : LspDocument
+  (let
+    [doc : LspDocument
+      (lsp-documents-get (& docs) index (lsp-document-fallback))]
+    [path : String (struct-get doc path)]
+    (if (string.eq path "")
+      doc
+      (match (io.try-read-file (& path))
+        [(io.OkIoString disk-text)
+          (if (string.eq disk-text (struct-get doc text))
+            doc
+            (let
+              [updated : LspDocument
+                (LspDocument
+                  (struct-get doc uri)
+                  path
+                  disk-text
+                  (struct-get doc diagnostic-uri)
+                  (lsp-decl-list-new)
+                  false)]
+              (begin
+                (lsp-documents-set! (&mut docs) index updated)
+                updated)))]
+        [(io.ErrIoString _) doc]))))
+
+(define (lsp-documents-lookup-resynced [docs : LspDocuments] [uri : String]) : LspDocumentLookup
+  (let
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (if (>= index 0)
+      (let
+        [doc : LspDocument (lsp-document-refresh-from-disk docs index)]
+        (LspDocumentLookup.Found
+          (struct-get doc path)
+          (struct-get doc text)
+          (struct-get doc diagnostic-uri)))
+      LspDocumentLookup.Missing)))
+
 (define (lsp-documents-smoke-add [docs : LspDocuments] [uri : String]) : LspDocuments
   (lsp-documents-set docs uri uri uri uri))
 
@@ -3508,7 +3545,7 @@
     (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(LspJsonText.Ok uri) (lsp-documents-lookup docs uri)]
+          [(LspJsonText.Ok uri) (lsp-documents-lookup-resynced docs uri)]
           [(LspJsonText.Missing) LspDocumentLookup.Missing])]
       [(json.JsonMissing) LspDocumentLookup.Missing])))
 
@@ -3523,8 +3560,7 @@
               [idx : i64 (lsp-documents-find-index docs uri)]
               (if (>= idx 0)
                 (let
-                  [doc : LspDocument
-                    (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+                  [doc : LspDocument (lsp-document-refresh-from-disk docs idx)]
                   (LspDocumentDeclsLookup.Found
                     (struct-get doc path)
                     (struct-get doc text)

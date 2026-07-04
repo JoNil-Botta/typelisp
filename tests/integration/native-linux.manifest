@@ -33,6 +33,51 @@ c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|be
 c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
+# Backend/regalloc campaign fixtures recovered from llvm-inlining.
+arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl
+arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
+syscall_arg_alias|tests/integration/syscall_arg_alias.tl|42|ABCDEFGHI|-|stdlib/io.tl
+call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
+call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
+loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl
+loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
+csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
+callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
+scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+splitkit_realize_split|tests/integration/splitkit_realize_split.tl|42|-|-|stdlib/io.tl
+splitkit_realize_writeback|tests/integration/splitkit_realize_writeback.tl|42|-|-|stdlib/io.tl
+splitkit_csr_across_call|tests/integration/splitkit_csr_across_call.tl|42|-|-|stdlib/io.tl
+param_csr_home|tests/integration/param_csr_home.tl|42|-|-|stdlib/io.tl
+handle_arg_csr|tests/integration/handle_arg_csr.tl|42|-|-|stdlib/io.tl
+dead_result_store|tests/integration/dead_result_store.tl|42|-|-|stdlib/io.tl
+group_mov_coalesce|tests/integration/group_mov_coalesce.tl|42|-|-|stdlib/io.tl
+idx_copy_coalesce|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl
+call_result_rax|tests/integration/call_result_rax.tl|42|-|-|stdlib/io.tl
+gep_direct_base|tests/integration/gep_direct_base.tl|42|-|-|stdlib/io.tl
+tail_arg_reg|tests/integration/tail_arg_reg.tl|42|-|-|stdlib/io.tl
+callregion_split|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl
+callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl
+divmagic_hoist|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl
+csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
+group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
+group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
+param_shift_pin|tests/integration/param_shift_pin.tl|42|-|-|stdlib/io.tl
+handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
+param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
+dead_frame_store|tests/integration/dead_frame_store.tl|42|-|-|stdlib/io.tl
+save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
+global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
+licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_poison_enable
@@ -166,6 +211,7 @@ thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl
 thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_box_i64|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_make_atomic
 safe_threading_example|examples/safe_threading.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
@@ -216,6 +262,8 @@ register_group_phi_swap_cycle|tests/integration/register_group_phi_swap_cycle.tl
 register_group_borrowed_match|tests/integration/register_group_borrowed_match.tl|42|-|-|-
 register_group_try|tests/integration/register_group_try.tl|42|-|-|-
 register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-
+selfloop_redef_writeback|tests/integration/selfloop_redef_writeback.tl|42|-|-|-
+loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-
@@ -224,6 +272,7 @@ in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-diagnostic:typecheck: arena.phase requires a direct ordinary arena owner
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
+resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_channel_pair_thread_runtime|tests/integration/sync_channel_pair_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_channel_string_thread_runtime|tests/integration/sync_channel_string_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

@@ -44,6 +44,7 @@ loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|st
 csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
 callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+gep_pair_spill_sibling_home|tests/integration/gep_pair_spill_sibling_home.tl|42|-|-|stdlib/array.tl stdlib/string.tl
 splitkit_realize_split|tests/integration/splitkit_realize_split.tl|42|-|-|stdlib/io.tl
 splitkit_realize_writeback|tests/integration/splitkit_realize_writeback.tl|42|-|-|stdlib/io.tl
 splitkit_csr_across_call|tests/integration/splitkit_csr_across_call.tl|42|-|-|stdlib/io.tl

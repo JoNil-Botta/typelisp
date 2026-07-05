@@ -314,7 +314,7 @@ shortening. There are no destructors, no general `free`, and no garbage
 collector; heap allocation uses a backend-emitted bump allocator into the
 active arena. Scalars, raw pointers, and non-capturing function values are
 copyable; `String`, arrays, tuples, structs, enums, and capturing closures
-move in by-value positions. See [SPEC.md](SPEC.md) sections 4.6.2 and 7 for
+move in by-value positions. See [SPEC.md](SPEC.md) sections 4.7.2 and 7 for
 the precise model.
 
 `String` values are immutable at the source level; borrowing a `String`

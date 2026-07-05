@@ -1259,6 +1259,8 @@
     (unless (= (compiler-optimize-unroll-self-test) 42) (return 1))
     (unless (= (compiler-optimize-affine-self-test) 42) (return 1))
     (unless (= (compiler-optimize-affine-pipeline-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-ssa-preexisting-phi-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-licm-multi-exit-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bce-version-self-test) 42) (return 1))
     (unless
       (= (compiler-optimize-bce-version-pipeline-self-test) 42)

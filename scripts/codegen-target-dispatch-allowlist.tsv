@@ -37,7 +37,7 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	
 src/compiler_backend.tl	compiler-backend-call-register-count	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 expose different integer argument register counts.
 src/compiler_backend.tl	compiler-backend-call-float-register-count	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 expose different float argument register counts.
 src/compiler_backend.tl	compiler-backend-stack-call-arg-for-banks?	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V has separate banks while Win64 has positional argument slots.
-src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Outgoing call stack space follows target calling convention rules.
+src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
 src/compiler_backend.tl	compiler-backend-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Frame outgoing space includes Win64 shadow and stack-argument reservations.
 src/compiler_backend.tl	compiler-backend-outgoing-shadow-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Win64 requires caller shadow space and System V does not.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
@@ -93,6 +93,4 @@ src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test-only	Co
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test-only	CompilerBackendTarget[.]Windows	1	Inline backend test checks Windows runtime acceptance.
 src/compiler_backend.tl	compiler-backend-emit-param-spills-from	abi	compiler-backend-target-windows[?]	2	Parameter spill homes follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-call-args-gp-parallel?	abi	compiler-backend-target-windows[?]	1	Parallel GP call-argument moves follow Win64 register slots on Windows.
-src/compiler_backend.tl	compiler-backend-emit-c-abi-store-result-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	C ABI call result store selects the target argument register model.
-src/compiler_backend.tl	compiler-backend-emit-indirect-c-abi-store-result-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	Indirect C ABI call result store selects the target argument register model.
 src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-instruction outgoing stack space follows target calling convention rules.

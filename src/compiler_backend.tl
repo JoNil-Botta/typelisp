@@ -130,7 +130,7 @@
   (Some CompilerIrValue))
 
 ;; BackendPhiSourceTemp carries the location its saved value lives in while the
-;; cycle is being broken: "" = the %rsp stack (pushq/popq), or a register name
+;; cycle is being broken: "" = the reserved frame temp slot, or a register name
 ;; (e.g. "%r10") when the outermost cycle break scavenged a free GP register
 ;; instead of staging on the stack. The single Temp consumer reads it back from
 ;; that location.
@@ -4480,6 +4480,15 @@
 (define compiler-backend-emergency-regs : (Array String)
   (make-array String 16))
 
+;; Reserved cycle-break temp slots. These replace the old push/pop or
+;; subq/addq stack temps used by arg and phi parallel-copy cycle breaks. The
+;; slots live in the dynamic bottom-of-frame scratch area, so they do not move
+;; callee-save or local variable frame offsets.
+(define compiler-backend-cycle-temp-used-count : i64
+  0)
+(define compiler-backend-cycle-temp-base-offset : i64
+  -512)
+
 ;; True once a branch terminator has already emitted its emergency restore INLINE
 ;; (right after the flag-setting compare/test, before the conditional jumps) -- so
 ;; the per-instruction emergency-wrap must NOT append a trailing restore after the
@@ -4494,6 +4503,36 @@
 
 (define (compiler-backend-emergency-frame-extra [count : i64]) : i64
   (compiler-backend-round-up-16 (* count 8)))
+
+(define (compiler-backend-cycle-temp-max-slots) : i64
+  2)
+
+(define (compiler-backend-cycle-temp-frame-extra [count : i64]) : i64
+  (if (> count 0)
+    (compiler-backend-round-up-16 (* count 8))
+    0))
+
+(define (compiler-backend-cycle-temp-frame-extra-needed
+  [count : i64]
+  [emergency-used : bool]) : i64
+  (if (or (> count 0) emergency-used)
+    (compiler-backend-cycle-temp-frame-extra
+      (compiler-backend-cycle-temp-max-slots))
+    0))
+
+(define (compiler-backend-cycle-temp-use-slots! [count : i64]) : unit
+  (if (> count compiler-backend-cycle-temp-used-count)
+    (set! compiler-backend-cycle-temp-used-count count)
+    unit))
+
+(define (compiler-backend-cycle-temp-slot-offset [index : i64]) : i64
+  (begin
+    (compiler-backend-cycle-temp-use-slots! (+ index 1))
+    (- compiler-backend-cycle-temp-base-offset (* 8 index))))
+
+(define (compiler-backend-cycle-temp-slot [index : i64]) : String
+  (compiler-backend-frame-offset
+    (compiler-backend-cycle-temp-slot-offset index)))
 
 (define (compiler-backend-emergency-reg-offset [index : i64]) : i64
   (- compiler-backend-emergency-slot-offset (* 8 index)))
@@ -18078,35 +18117,14 @@
           program-index)
         false)]))
 
-;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
-;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
-;; this is 0 whenever every arg fits in registers.
-(define (compiler-backend-call-arg-space
+;; Stack-passed outgoing argument bytes for one call. This is the layout size,
+;; not necessarily a per-call %rsp adjustment: Linux/Win64 reserve the maximum
+;; needed outgoing area in the prologue frame.
+(define (compiler-backend-call-stack-arg-space
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [c-abi? : bool]
-  [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-call-arg-space-from
-    target
-    args
-    types
-    c-abi?
-    0
-    0
-    0
-    0
-    program-index))
-
-(define (compiler-backend-call-arg-space-from
-  [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]
-  [types : AstTypeList]
-  [c-abi? : bool]
-  [arg-index : i64]
-  [int-idx : i64]
-  [float-idx : i64]
-  [position : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (let
     [stack-count : i64
@@ -18115,41 +18133,55 @@
         args
         types
         c-abi?
-        arg-index
-        int-idx
-        float-idx
-        position
+        0
+        0
+        0
+        0
         0
         program-index)]
-    (match target
-      [(CompilerBackendTarget.Windows) 0]
-      [(CompilerBackendTarget.Linux)
-        ;; #65a-i: fold non-c-abi outgoing stack-arg space into the prologue
-        ;; frame (like Windows) -> return 0 here so the per-call sub/add
-        ;; auto-noops; the frame reserves it via instr-outgoing-stack-space.
-        ;; c-abi (aggregate-return) calls still dip per-call (their +16
-        ;; base-save region is per-call) -- that is #65a-ii.
-        (if c-abi?
-          (if (= stack-count 0)
-            0
-            (compiler-backend-round-up-16 (* stack-count 8)))
-          0)])))
+    (if (= stack-count 0)
+      0
+      (compiler-backend-round-up-16 (* stack-count 8)))))
 
-(define (compiler-backend-closure-call-arg-space
+;; Offset where a C-ABI sret base can be saved without clobbering outgoing args.
+;; Windows must skip the callee shadow space as well as stack args because the
+;; callee owns the shadow area during the call.
+(define (compiler-backend-call-stack-arg-layout-space
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-call-arg-space-from
-    target
-    args
-    types
-    false
-    0
-    1
-    0
-    1
-    program-index))
+  (+
+    (compiler-backend-outgoing-shadow-space target)
+    (compiler-backend-call-stack-arg-space
+      target
+      args
+      types
+      c-abi?
+      program-index)))
+
+;; Per-call %rsp adjustment. Outgoing stack-arg space is folded into the function
+;; frame, so normal text emission should see a zero dip.
+(define (compiler-backend-call-arg-space
+  [target : CompilerBackendTarget]
+  [_args : CompilerIrCallArgs]
+  [_types : AstTypeList]
+  [_c-abi? : bool]
+  [_program-index : CompilerBackendProgramIndex]) : i64
+  (compiler-backend-call-arg-space-from target))
+
+(define (compiler-backend-call-arg-space-from [target : CompilerBackendTarget]) : i64
+  (match target
+    [(CompilerBackendTarget.Windows) 0]
+    [(CompilerBackendTarget.Linux) 0]))
+
+(define (compiler-backend-closure-call-arg-space
+  [target : CompilerBackendTarget]
+  [_args : CompilerIrCallArgs]
+  [_types : AstTypeList]
+  [_program-index : CompilerBackendProgramIndex]) : i64
+  (compiler-backend-call-arg-space-from target))
 
 ;; #2386: number of 8-byte STACK slots a Windows call's args occupy, mirroring
 ;; emit-call-args exactly. A register-group value takes two consecutive arg slots:
@@ -18207,32 +18239,17 @@
   (compiler-backend-windows-words-stack-space
     (compiler-backend-windows-stack-word-count args types 0 0 0 program-index)))
 
-;; #65a-i: the ACTUAL System V outgoing stack-arg space for a named call (NOT
-;; zeroed like call-arg-space-from's folded non-c-abi dip). Used to size the
-;; prologue frame's reserved outgoing region so non-c-abi calls need no per-call
-;; %rsp dip. The closure (indirect) cases reuse windows-closure-stack-arg-space,
-;; whose `1 + 2*args` word bound is an ABI-generic upper bound.
+;; The actual System V outgoing stack-arg space for a named non-C-ABI call.
+;; Used to size the prologue frame's reserved outgoing region so calls need no
+;; per-call %rsp dip. The closure (indirect) cases reuse
+;; windows-closure-stack-arg-space, whose `1 + 2*args` word bound is an
+;; ABI-generic upper bound.
 (define (compiler-backend-linux-stack-arg-space
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (let
-    [stack-count : i64
-      (compiler-backend-call-stack-arg-count
-        target
-        args
-        types
-        false
-        0
-        0
-        0
-        0
-        0
-        program-index)]
-    (if (= stack-count 0)
-      0
-      (compiler-backend-round-up-16 (* stack-count 8)))))
+  (compiler-backend-call-stack-arg-space target args types false program-index))
 
 ;; Indirect (closure) calls carry no callee signature here, so size conservatively:
 ;; the leading environment pointer plus two stack words per argument is always an
@@ -18335,9 +18352,10 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [_ 0])]
     [(CompilerBackendTarget.Linux)
-      ;; #65a-i: reserve the actual non-c-abi outgoing stack-arg space in the
-      ;; prologue frame so these calls need no per-call %rsp dip. c-abi
-      ;; (aggregate-return) calls still dip per-call -> 0 here (#65a-ii).
+      ;; Reserve outgoing stack-arg space in the prologue frame so these calls
+      ;; need no per-call %rsp dip. Direct C-ABI aggregate calls use exact stack
+      ;; word counts; indirect C-ABI calls keep a conservative signature-free
+      ;; bound below.
       (match instr
         [(CompilerIrInstr.Call _ name args _)
           (compiler-backend-linux-stack-arg-space
@@ -18355,16 +18373,19 @@
             program-index)]
         [(CompilerIrInstr.CallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
-        ;; #65a-ii: reserve the c-abi outgoing args + the 16-byte result-base
-        ;; slot in the prologue frame (safe over-bound: each arg <=2 stack words)
-        ;; so these calls need no per-call %rsp dip. The emission uses the exact
-        ;; call-space for the base-save offset, which fits inside this bound.
+        ;; Reserve the C-ABI outgoing args + the 16-byte result-base slot in the
+        ;; prologue frame. The emission uses the same layout query for the
+        ;; base-save offset, so no per-call %rsp dip is needed.
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
           (match (box-get payload-box)
-            [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
+            [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
               (+
-                (compiler-backend-round-up-16
-                  (* (compiler-backend-call-args-count args) 16))
+                (compiler-backend-call-stack-arg-space
+                  target
+                  args
+                  (compiler-backend-call-param-types-index name program-index)
+                  true
+                  program-index)
                 16)])]
         [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
           (match (box-get payload-box)
@@ -18446,9 +18467,8 @@
               blocks
               0
               program-index)))]
-      ;; #65a-i: reserve the max non-c-abi outgoing stack-arg space in the frame
-      ;; so those calls need no per-call %rsp dip (mirrors Windows). c-abi
-      ;; (aggregate-return) calls still dip (they contribute 0 here).
+      ;; Reserve the max outgoing stack-arg space in the frame so calls need no
+      ;; per-call %rsp dip (mirrors Windows).
       [(CompilerBackendTarget.Linux)
         (compiler-backend-round-up-16
           (+
@@ -18531,9 +18551,9 @@
 (defenum CompilerBackendArgMoveSource
   (BackendArgMoveValue CompilerIrValue)
   (BackendArgMoveReg String)
-  ;; The register-free (stack) cycle break: the move's source value was pushed
-  ;; onto the stack and is popped into `dest` here. Behaves like a memory source
-  ;; (source-reg "" -- never blocks another move); emit-arg-move renders `popq`.
+  ;; The register-free cycle break: the move's source value was saved in the
+  ;; reserved cycle-temp frame slot and is loaded into `dest` here. Behaves like
+  ;; a memory source (source-reg "" -- never blocks another move).
   (BackendArgMoveStackPop))
 
 (defenum CompilerBackendArgMove
@@ -18681,8 +18701,8 @@
 
 ;; Redirect variant for the register-free (stack) cycle break: every move whose
 ;; source register is `oldreg` (exactly one in a permutation cycle) reads the
-;; pushed stack temp -- a `popq dest` -- instead. Mirrors arg-move-list-redirect
-;; but targets the stack slot rather than a scavenged register.
+;; reserved frame temp instead. Mirrors arg-move-list-redirect but targets the
+;; stack slot rather than a scavenged register.
 (define (compiler-backend-arg-move-list-redirect-to-stack
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]
@@ -18716,9 +18736,23 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat "    movq " r ", " dest "\n")))]
         [(BackendArgMoveStackPop)
-          (ResultCompilerBackend.Ok (str_cat.str-cat "    popq " dest "\n"))]
+          (ResultCompilerBackend.Ok
+            (str_cat.str-cat
+              "    movq "
+              (compiler-backend-cycle-temp-slot 0)
+              ", "
+              dest
+              "\n"))]
         [(BackendArgMoveValue value)
           (compiler-backend-emit-load-value-with-plan assignments value dest)])]))
+
+(define (compiler-backend-emit-arg-cycle-temp-save [srcreg : String]) : String
+  (str_cat.str-cat
+    "    movq "
+    srcreg
+    ", "
+    (compiler-backend-cycle-temp-slot 0)
+    "\n"))
 
 ;; Exclude-mask for the arg parallel-move cycle-break Temp: the pooled-register
 ;; bit of every pending move's dest arg-register AND source-register. The Temp
@@ -18747,7 +18781,7 @@
 ;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
 ;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
 ;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). "" if none,
-;; in which case the caller breaks the cycle through the stack (pushq/popq) -- a
+;; in which case the caller breaks the cycle through a reserved frame temp -- a
 ;; sound register-free swap, NOT the old raw %r11 fallback (SCAV1). In practice
 ;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
 ;; participate in a gp-parallel arg cycle nor hold a call-survivor), so "" is a
@@ -18857,16 +18891,13 @@
                           all))]
                     (if (string.eq picked "")
                       ;; No free scratch register at saturation: break the cycle
-                      ;; through the STACK -- `pushq srcreg` saves its value before
-                      ;; any move overwrites it, and its single consumer (each cycle
-                      ;; register is read exactly once) pops it back with `popq`. The
-                      ;; push/pop are balanced across the rotation (and across nested
-                      ;; breaks) and the FPO rsp-rebase compensates any frame ref in
-                      ;; the window -- the same register-free swap the phi
-                      ;; parallel-move uses when phi-temp-pick-reg finds none. This
-                      ;; replaces the old raw `movq srcreg, %r11` fallback, which was
-                      ;; neither occupancy-checked nor save/restore-wrapped and could
-                      ;; clobber a value homed in %r11 (SCAV1).
+                      ;; through the reserved frame temp. This saves `srcreg`
+                      ;; before any move overwrites it, and its single consumer
+                      ;; (each cycle register is read exactly once) reloads it from
+                      ;; the temp slot. This replaces the old raw `movq srcreg,
+                      ;; %r11` fallback, which was neither occupancy-checked nor
+                      ;; save/restore-wrapped and could clobber a value homed in
+                      ;; %r11 (SCAV1).
                       (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
                         (compiler-backend-arg-move-list-redirect-to-stack
@@ -18877,7 +18908,7 @@
                         [(ResultCompilerBackend.Ok tail)
                           (ResultCompilerBackend.Ok
                             (string.append
-                              (str_cat.str-cat "    pushq " srcreg "\n")
+                              (compiler-backend-emit-arg-cycle-temp-save srcreg)
                               tail))]
                         [(ResultCompilerBackend.Err m)
                           (ResultCompilerBackend.Err m)])
@@ -19685,11 +19716,10 @@
 ;; substitutes a NEW source afterwards -- when the substituted source shares the
 ;; dst's home (coalesced same-value class) the copy is a no-op that SELF-BLOCKS
 ;; find-unblocked (its own source reads its dst home), mis-triggering the cycle
-;; break: the temp save (`pushq <dst home>`) is emitted, the copy itself elides
-;; as same-home, and replace-source-home finds no consumer in the remaining
-;; list -- an ORPHANED push that leaks %rsp until the epilogue. Re-applying the
-;; build-time invariant after substitution removes both the dead push and the
-;; spurious block. `phi-copy-source-uses-home?` is the exact predicate the
+;; break: the temp save is emitted, the copy itself elides as same-home, and
+;; replace-source-home finds no consumer in the remaining list. Re-applying the
+;; build-time invariant after substitution removes both the dead temp save and
+;; the spurious block. `phi-copy-source-uses-home?` is the exact predicate the
 ;; blocked check uses, so everything it would self-block is dropped here.
 (define (compiler-backend-phi-copy-list-drop-same-home
   [assignments : CompilerRegAssignmentList]
@@ -19732,19 +19762,19 @@
 ;; find-unblocked drains the acyclic "trees" first, so the remaining core is a
 ;; pure PERMUTATION (each home written once and read once): every saved value has
 ;; exactly ONE consumer, and saves nest to depth 1 (after a save there is always
-;; an unblocked copy until the Temp is consumed). That makes a register-free STACK
-;; swap sound: save the cycle-entry dst on %rsp, restore it into the single Temp
-;; consumer, and keep the bracket balanced across the intervening cycle moves.
+;; an unblocked copy until the Temp is consumed). That makes a register-free
+;; frame-temp swap sound: save the cycle-entry dst in a reserved frame slot and
+;; restore it into the single Temp consumer.
 ;;
-;; #phi-temp-reg: the OUTERMOST scalar-int break upgrades that stack swap to a
-;; register swap when a free GP register exists. phi-temp-pick-reg scavenges a
+;; #phi-temp-reg: the OUTERMOST scalar-int break upgrades that frame-temp swap to
+;; a register swap when a free GP register exists. phi-temp-pick-reg scavenges a
 ;; register that is (a) FREE in the occupancy mask at the phi-copy emit point --
 ;; so it homes no live-through value -- and (b) NOT a dst-home of any copy in the
 ;; break list -- so no cycle move overwrites it while the Temp is outstanding.
 ;; The save becomes `movq dst-home, R` and the consumer's restore `movq R, home`,
-;; eliminating the pushq/popq pair. Only the outermost break uses a register
-;; (outer-active gate): any nested break -- and every float/group break -- falls
-;; back to the stack, which is LIFO-balanced and never touches R.
+;; eliminating the reserved-slot traffic. Only the outermost break uses a
+;; register (outer-active gate): any nested break -- and every float/group break
+;; -- falls back to reserved frame-temp slots and never touches R.
 (define (compiler-backend-phi-temp-home-operand
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]) : ResultCompilerBackend
@@ -19771,15 +19801,75 @@
       [(CompilerRegMaybeLocation.No)
         (ResultCompilerBackend.Ok (compiler-backend-slot var-id))])))
 
-(define (compiler-backend-emit-phi-stack-save-reg
+(define (compiler-backend-emit-phi-temp-slot-save-reg
   [operand : String]
-  [mnemonic : String]) : String
-  (str-cat "    subq $8, %rsp\n    " mnemonic " " operand ", (%rsp)\n"))
+  [mnemonic : String]
+  [slot-index : i64]) : String
+  (str-cat
+    "    "
+    mnemonic
+    " "
+    operand
+    ", "
+    (compiler-backend-cycle-temp-slot slot-index)
+    "\n"))
 
-(define (compiler-backend-emit-phi-stack-restore-reg
+(define (compiler-backend-emit-phi-temp-slot-restore-reg
   [operand : String]
-  [mnemonic : String]) : String
-  (str-cat "    " mnemonic " (%rsp), " operand "\n    addq $8, %rsp\n"))
+  [mnemonic : String]
+  [slot-index : i64]) : String
+  (str-cat
+    "    "
+    mnemonic
+    " "
+    (compiler-backend-cycle-temp-slot slot-index)
+    ", "
+    operand
+    "\n"))
+
+(define (compiler-backend-phi-temp-gp-scratch) : String
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-one-exclude "%rbp")
+    1
+    "%r10"))
+
+(define (compiler-backend-emit-phi-temp-slot-save-gp
+  [operand : String]
+  [slot-index : i64]) : String
+  (if (compiler-backend-peephole-register-operand? operand)
+    (compiler-backend-emit-phi-temp-slot-save-reg operand "movq" slot-index)
+    (let
+      [scratch : String (compiler-backend-phi-temp-gp-scratch)]
+      (compiler-backend-emergency-wrap
+        (str-cat
+          "    movq "
+          operand
+          ", "
+          scratch
+          "\n    movq "
+          scratch
+          ", "
+          (compiler-backend-cycle-temp-slot slot-index)
+          "\n")))))
+
+(define (compiler-backend-emit-phi-temp-slot-restore-gp
+  [operand : String]
+  [slot-index : i64]) : String
+  (if (compiler-backend-peephole-register-operand? operand)
+    (compiler-backend-emit-phi-temp-slot-restore-reg operand "movq" slot-index)
+    (let
+      [scratch : String (compiler-backend-phi-temp-gp-scratch)]
+      (compiler-backend-emergency-wrap
+        (str-cat
+          "    movq "
+          (compiler-backend-cycle-temp-slot slot-index)
+          ", "
+          scratch
+          "\n    movq "
+          scratch
+          ", "
+          operand
+          "\n")))))
 
 (define (compiler-backend-phi-float-temp-scratch) : String
   (let
@@ -19792,11 +19882,11 @@
   (let
     [mnemonic : String (compiler-backend-float-move ty)]
     (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-emit-phi-stack-save-reg operand mnemonic)
+      (compiler-backend-emit-phi-temp-slot-save-reg operand mnemonic 0)
       (let
         [scratch : String (compiler-backend-phi-float-temp-scratch)]
         (str-cat
-          "    subq $8, %rsp\n    "
+          "    "
           mnemonic
           " "
           operand
@@ -19806,7 +19896,9 @@
           mnemonic
           " "
           scratch
-          ", (%rsp)\n")))))
+          ", "
+          (compiler-backend-cycle-temp-slot 0)
+          "\n")))))
 
 (define (compiler-backend-emit-phi-float-temp-restore
   [operand : String]
@@ -19814,13 +19906,15 @@
   (let
     [mnemonic : String (compiler-backend-float-move ty)]
     (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-emit-phi-stack-restore-reg operand mnemonic)
+      (compiler-backend-emit-phi-temp-slot-restore-reg operand mnemonic 0)
       (let
         [scratch : String (compiler-backend-phi-float-temp-scratch)]
         (str-cat
           "    "
           mnemonic
-          " (%rsp), "
+          " "
+          (compiler-backend-cycle-temp-slot 0)
+          ", "
           scratch
           "\n    "
           mnemonic
@@ -19828,7 +19922,7 @@
           scratch
           ", "
           operand
-          "\n    addq $8, %rsp\n")))))
+          "\n")))))
 
 (define (compiler-backend-emit-phi-group-word-save
   [assignments : CompilerRegAssignmentList]
@@ -19842,9 +19936,9 @@
       (ResultCompilerBackend.Ok
         (if (compiler-backend-group-word-sse? program-index ty index)
           (if (compiler-backend-peephole-register-operand? operand)
-            (compiler-backend-emit-phi-stack-save-reg operand "movq")
-            (str-cat "    pushq " operand "\n"))
-          (str-cat "    pushq " operand "\n")))]
+            (compiler-backend-emit-phi-temp-slot-save-reg operand "movq" index)
+            (compiler-backend-emit-phi-temp-slot-save-gp operand index))
+          (compiler-backend-emit-phi-temp-slot-save-gp operand index)))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-group-word-restore
@@ -19859,9 +19953,12 @@
       (ResultCompilerBackend.Ok
         (if (compiler-backend-group-word-sse? program-index ty index)
           (if (compiler-backend-peephole-register-operand? operand)
-            (compiler-backend-emit-phi-stack-restore-reg operand "movq")
-            (str-cat "    popq " operand "\n"))
-          (str-cat "    popq " operand "\n")))]
+            (compiler-backend-emit-phi-temp-slot-restore-reg
+              operand
+              "movq"
+              index)
+            (compiler-backend-emit-phi-temp-slot-restore-gp operand index))
+          (compiler-backend-emit-phi-temp-slot-restore-gp operand index)))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-temp-save
@@ -19896,11 +19993,11 @@
         (ResultCompilerBackend.Ok
           (if (compiler-backend-float-type? ty)
             (compiler-backend-emit-phi-float-temp-save operand ty)
-            (str_cat.str-cat "    pushq " operand "\n")))]
+            (compiler-backend-emit-phi-temp-slot-save-gp operand 0)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-;; Restore reverses the word order (word1 then word0) so the int pushq/popq stay
-;; LIFO-balanced; SSE words use the same stack order.
+;; Restore reverses the word order (word1 then word0), preserving the historical
+;; group-temp order while using fixed frame slots instead of %rsp pushes.
 (define (compiler-backend-emit-phi-temp-restore
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -19933,7 +20030,7 @@
         (ResultCompilerBackend.Ok
           (if (compiler-backend-float-type? ty)
             (compiler-backend-emit-phi-float-temp-restore operand ty)
-            (str_cat.str-cat "    popq " operand "\n")))]
+            (compiler-backend-emit-phi-temp-slot-restore-gp operand 0)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; #phi-temp-reg save/restore: stage the cycle-entry dst's old value in a free GP
@@ -20070,8 +20167,8 @@
 ;; in which EVERY copy is register-swappable can stage its Temp in a scavenged
 ;; register: nothing in the cycle body ever touches that register, so it survives
 ;; intact from the save `movq` to the consumer's restore `movq` -- exactly as the
-;; stack slot did. Spilled (mem->mem), float, group, immediate, or remat copies
-;; can scavenge a bounce register and so keep using the untouchable stack slot.
+;; reserved frame temp did. Spilled (mem->mem), float, group, immediate, or remat
+;; copies can scavenge a bounce register and so keep using the frame temp.
 (define (compiler-backend-phi-copy-reg-swappable?
   [assignments : CompilerRegAssignmentList]
   [copy : CompilerBackendPhiCopy]
@@ -26808,20 +26905,15 @@
         program-index)]
     [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
     [call-space : i64
-      (compiler-backend-call-arg-space
+      (compiler-backend-call-stack-arg-layout-space
         target
         args
         param-types
         c-abi?
         program-index)]
-    [total-space : i64 (+ call-space 16)]
-    ;; #65a-ii: on Linux the args + 16-byte base-save region are reserved in the
-    ;; prologue frame (instr-outgoing-stack-space), so no per-call %rsp dip.
-    ;; Windows keeps rbp + dips per-call -> unchanged.
-    [dip : i64
-      (match target
-        [(CompilerBackendTarget.Linux) 0]
-        [(CompilerBackendTarget.Windows) total-space])]
+    ;; The args + 16-byte base-save region are reserved in the prologue frame
+    ;; (instr-outgoing-stack-space), so no per-call %rsp dip is needed.
+    [dip : i64 0]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
@@ -26918,18 +27010,15 @@
             (CompilerBackendGlobalTypeList.Nil)
             args)))]
     [call-space : i64
-      (compiler-backend-call-arg-space
+      (compiler-backend-call-stack-arg-layout-space
         target
         args
         param-types
         true
         program-index)]
-    [total-space : i64 (+ call-space 16)]
-    ;; #65a-ii: Linux folds the c-abi dip into the frame (see named variant).
-    [dip : i64
-      (match target
-        [(CompilerBackendTarget.Linux) 0]
-        [(CompilerBackendTarget.Windows) total-space])]
+    ;; Mirrors the direct C-ABI store-result path: the frame reserves this region
+    ;; and the call does not move %rsp.
+    [dip : i64 0]
     (match (compiler-backend-emit-call-args
       target
       assignments
@@ -32051,12 +32140,12 @@
 ;; prologue/epilogue and the bias fed to this pass.
 ;;
 ;; The pass PROVES rsp-constancy line by line instead of assuming it:
-;;   * `delta` tracks the in-body %rsp displacement (bytes pushed beyond the
-;;     prologue sub): pushq/popq (the phi/arg parallel-move cycle break, the
-;;     AVX-512 `pushq $1` mask dip) and `subq/addq $N, %rsp` (the c-abi
-;;     per-call outgoing dip, #65a-ii). All such windows are straight-line and
-;;     balanced within one instruction emission; a label inside a nonzero-delta
-;;     window, or a net-negative delta, fails the audit.
+;;   * `delta` tracks any in-body %rsp displacement (bytes pushed beyond the
+;;     prologue sub), such as the AVX-512 `pushq $1` mask dip or conservative
+;;     fallback emitters. All such windows are straight-line and balanced within
+;;     one instruction emission; a label inside a nonzero-delta window, or a
+;;     net-negative delta, fails the audit. C-ABI outgoing args and arg/phi
+;;     cycle temps are pre-reserved frame uses and no longer create such dips.
 ;;   * `pushq MEM` computes its address BEFORE %rsp moves; `popq MEM` AFTER --
 ;;     the delta updates are ordered accordingly.
 ;;   * `leave` and any other %rsp write (`leaq slot,%rsp` pop-restore
@@ -34010,8 +34099,22 @@
                     (set!
                       compiler-backend-identity-tail-forwarder-active
                       identity-tail-forwarder?)]
+                  [dynamic-frame-base : i64
+                    (+
+                      (compiler-backend-frame-size
+                        (compiler-backend-frame-slots-emergency-max
+                          slot-vars
+                          has-group-vars))
+                      (compiler-backend-outgoing-frame-space
+                        target
+                        emit-blocks-list
+                        program-index))]
                   [_emergency-init : unit
                     (begin
+                      (set! compiler-backend-cycle-temp-used-count 0)
+                      (set!
+                        compiler-backend-cycle-temp-base-offset
+                        (- 0 (+ dynamic-frame-base 8)))
                       (set! compiler-backend-emergency-used false)
                       (set! compiler-backend-emergency-pending false)
                       (set! compiler-backend-emergency-restore-suppressed false)
@@ -34023,14 +34126,9 @@
                           0
                           (+
                             (+
-                              (compiler-backend-frame-size
-                                (compiler-backend-frame-slots-emergency-max
-                                  slot-vars
-                                  has-group-vars))
-                              (compiler-backend-outgoing-frame-space
-                                target
-                                emit-blocks-list
-                                program-index))
+                              dynamic-frame-base
+                              (compiler-backend-cycle-temp-frame-extra
+                                (compiler-backend-cycle-temp-max-slots)))
                             8))))]
                   (match (compiler-backend-emit-blocks
                     target
@@ -34052,15 +34150,23 @@
                     use-counts)
                     [(ResultCompilerBackend.Ok body)
                       (let
+                        [dynamic-frame-extra : i64
+                          (+
+                            (compiler-backend-cycle-temp-frame-extra-needed
+                              compiler-backend-cycle-temp-used-count
+                              compiler-backend-emergency-used)
+                            (compiler-backend-emergency-frame-extra
+                              compiler-backend-emergency-used-count))]
                         [frame : i64
                           (+
                             (+
                               (compiler-backend-frame-size
-                                (if compiler-backend-emergency-used
-                                  ;; an emergency fired -> reserve the max
-                                  ;; callee-save area so the emergency slot
-                                  ;; (placed below it) is in-bounds and never
-                                  ;; overlaps an on-demand callee-save slot.
+                                (if (or
+                                  compiler-backend-emergency-used
+                                  (> compiler-backend-cycle-temp-used-count 0))
+                                  ;; A dynamic bottom-of-frame slot was used:
+                                  ;; reserve the max callee-save area so those
+                                  ;; slots never overlap on-demand CSR saves.
                                   (compiler-backend-frame-slots-emergency-max
                                     slot-vars
                                     has-group-vars)
@@ -34072,8 +34178,7 @@
                                 target
                                 emit-blocks-list
                                 program-index))
-                            (compiler-backend-emergency-frame-extra
-                              compiler-backend-emergency-used-count))]
+                            dynamic-frame-extra)]
                         [_addr-forward-done : unit
                           (begin
                             (set!
@@ -34117,11 +34222,9 @@
                               emit-blocks-list)
                             "")]
                         ;; M-G3 stage 2: attempt frame-pointer omission on the
-                        ;; Linux text path (Win64 keeps the rbp prologue: its
-                        ;; SEH unwind uses `.seh_setframe %rbp` because the
-                        ;; in-body rsp dips -- c-abi calls, cycle-break pushes
-                        ;; -- require a frame register for valid unwind info).
-                        ;; Stage-1 mode (fpo=false) elsewhere, byte-identical.
+                        ;; Linux text path. Win64 still keeps the rbp prologue
+                        ;; because SEH unwind metadata is not yet emitted for
+                        ;; the FPO shape. Stage-1 mode (fpo=false) elsewhere.
                         [fpo-attempt : bool
                           (compiler-backend-target-linux? target)]
                         ;; GAP1: push-style CSR saves ride the FPO audit --

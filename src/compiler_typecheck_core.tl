@@ -47020,18 +47020,27 @@
 ;; qualifier unchanged). Inserts stop at half load -- only memoization, never
 ;; correctness, degrades.
 (define macro-alias-cache-capacity : i64
-  4096)
+  16384)
 (define macro-alias-cache-module-keys : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-qualifier-keys : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-values : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-count : i64
   0)
 (define macro-alias-cache-generation : i64
   -1)
 (define macro-alias-cache-ready : bool
+  false)
+
+;; Eager-index state (see macro-alias-cache-build!): built records that the
+;; one-pass index ran for this generation; complete records that every aliased
+;; import fit under the half-load insert cap, making a table miss a definitive
+;; "no alias import" answer.
+(define macro-alias-cache-built : bool
+  false)
+(define macro-alias-cache-complete : bool
   false)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
@@ -47401,6 +47410,8 @@
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (intern-generation))
+        (set! macro-alias-cache-built false)
+        (set! macro-alias-cache-complete false)
         (set! macro-alias-cache-ready true)))))
 
 (define (macro-alias-cache-bucket [module-id : i64] [qualifier-id : i64]) : i64
@@ -47481,38 +47492,89 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
+;; One-pass eager index over the program's aliased imports: record every
+;; (module, alias) -> target mapping in program order (first import wins,
+;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
+;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
+;; reset at every in-pass splice rebuild, so a self-compile re-paid those
+;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
+;; hundreds of times. One pass makes every later query O(1); if the table's
+;; half-load insert cap is ever hit, complete stays false and misses fall back
+;; to the exact scan, so only memoization -- never correctness -- degrades.
+(define (macro-alias-cache-build! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 (intern "")]
+    [truncated : bool false]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+              (match maybe-alias
+                [(AstMaybeImportAlias.Some alias)
+                  (let
+                    [target-id : i64
+                      (match expected
+                        [(AstMaybeModuleName.Some target) (intern target)]
+                        [(AstMaybeModuleName.No) (intern alias)])]
+                    (if (>=
+                      (* macro-alias-cache-count 2)
+                      macro-alias-cache-capacity)
+                      (set! truncated true)
+                      (macro-alias-cache-put!
+                        cur-module-id
+                        (intern alias)
+                        target-id)))]
+                [(AstMaybeImportAlias.No) unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-complete (not truncated)))))
+
 (define (macro-import-alias-target-cached-id
   [decls : AstDeclList]
   [current-module-id : i64]
   [qualifier-id : i64]) : TcMaybeString
   (begin
     (macro-alias-cache-ensure!)
+    (if macro-alias-cache-built
+      unit
+      (macro-alias-cache-build! decls))
     (let
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
-      (if (= cached -2)
-        (let
-          [qualifier : String (intern-str qualifier-id)]
-          (match (macro-import-alias-target-ids
-            decls
-            current-module-id
-            qualifier
-            (intern ""))
-            [(TcMaybeString.Some target)
-              (let
-                [target-id : i64 (intern target)]
+      (cond
+        [(and (= cached -2) macro-alias-cache-complete)
+          ;; The eager index saw every aliased import, so a miss is a
+          ;; definitive "no alias import for this (module, qualifier)".
+          (TcMaybeString.No)]
+        [(= cached -2)
+          (let
+            [qualifier : String (intern-str qualifier-id)]
+            (match (macro-import-alias-target-ids
+              decls
+              current-module-id
+              qualifier
+              (intern ""))
+              [(TcMaybeString.Some target)
+                (let
+                  [target-id : i64 (intern target)]
+                  (begin
+                    (macro-alias-cache-put!
+                      current-module-id
+                      qualifier-id
+                      target-id)
+                    (TcMaybeString.Some target)))]
+              [(TcMaybeString.No)
                 (begin
-                  (macro-alias-cache-put!
-                    current-module-id
-                    qualifier-id
-                    target-id)
-                  (TcMaybeString.Some target)))]
-            [(TcMaybeString.No)
-              (begin
-                (macro-alias-cache-put! current-module-id qualifier-id -1)
-                (TcMaybeString.No))]))
-        (if (< cached 0)
-          (TcMaybeString.No)
-          (TcMaybeString.Some (intern-str cached)))))))
+                  (macro-alias-cache-put! current-module-id qualifier-id -1)
+                  (TcMaybeString.No))]))]
+        [(< cached 0) (TcMaybeString.No)]
+        [else (TcMaybeString.Some (intern-str cached))]))))
 
 (define (macro-import-alias-target-cached
   [decls : AstDeclList]

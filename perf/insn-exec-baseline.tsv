@@ -19,4 +19,4 @@ benchmark/typelisp/opt_quicksort	1009034952
 benchmark/c/opt_quicksort	398486841
 benchmark/typelisp/spmd_reduce	9833778016
 benchmark/c/spmd_reduce	1693929378
-self_compile/compile_cli_opt1	152770655951
+self_compile/compile_cli_opt1	153044258073

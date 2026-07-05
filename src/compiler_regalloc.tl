@@ -13560,10 +13560,10 @@
         (array-ref ends var))
       true)))
 
-;; SysV integer call-argument registers by position (mirrors
-;; compiler-backend-arg-reg in compiler_backend.tl; duplicated here because
-;; regalloc must not depend on the backend). "" past the 6 register args (the rest
-;; are stack-passed and get no physical preference).
+;; Integer call-argument registers by position (mirrors compiler-backend-arg-reg
+;; in compiler_backend.tl; duplicated here because regalloc must not depend on
+;; the backend). "" past the ABI register args (the rest are stack-passed and get
+;; no physical preference).
 (define (compiler-reg-sysv-arg-reg [pos : i64]) : String
   (cond
     [(= pos 0) "%rdi"]
@@ -13573,6 +13573,19 @@
     [(= pos 4) "%r8"]
     [(= pos 5) "%r9"]
     [else ""]))
+
+(define (compiler-reg-win64-arg-reg [pos : i64]) : String
+  (cond
+    [(= pos 0) "%rcx"]
+    [(= pos 1) "%rdx"]
+    [(= pos 2) "%r8"]
+    [(= pos 3) "%r9"]
+    [else ""]))
+
+(define (compiler-reg-abi-arg-reg [abi : CompilerRegTargetAbi] [pos : i64]) : String
+  (match abi
+    [(CompilerRegTargetAbi.Linux) (compiler-reg-sysv-arg-reg pos)]
+    [(CompilerRegTargetAbi.Windows) (compiler-reg-win64-arg-reg pos)]))
 
 (define (compiler-reg-string-list-index-of
   [regs : CompilerRegStringList]
@@ -13585,24 +13598,26 @@
         i
         (compiler-reg-string-list-index-of (box-get rest) want (+ i 1)))]))
 
-;; Greedy-integer-pool INDEX of the SysV register for integer arg position `pos`,
+;; Greedy-integer-pool INDEX of the ABI register for integer arg position `pos`,
 ;; or -1 if `pos` is not a register-passed argument. Computed by searching the
-;; live pool definition, so it stays correct if the pool order changes.
-(define (compiler-reg-greedy-arg-pool-index [pos : i64]) : i64
+;; live ABI pool definition, so it stays correct if the pool order changes.
+(define (compiler-reg-greedy-arg-pool-index-for-abi
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [pos : i64]) : i64
   (let
-    [reg : String (compiler-reg-sysv-arg-reg pos)]
+    [reg : String (compiler-reg-abi-arg-reg abi pos)]
     (if (string.eq reg "")
       -1
-      (compiler-reg-string-list-index-of
-        (compiler-reg-greedy-integer-pool)
-        reg
-        0))))
+      (compiler-reg-string-list-index-of pool reg 0))))
 
 ;; Record arg-var -> ABI-register preference (greedy-pool index) for one call
 ;; argument at integer position `pos`. Only IrValueVar args take a home; the
 ;; var is mapped to its coalesce root (parents) like the copy hints, and the first
-;; preference for a root wins. Indices past arg 5 yield -1 and are skipped.
+;; preference for a root wins. Stack-passed positions yield -1 and are skipped.
 (define (compiler-reg-arg-pref-value!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [value : CompilerIrValue]
   [pos : i64]
   [prefs : (Array i64)]
@@ -13610,7 +13625,7 @@
   (match value
     [(CompilerIrValue.Var v)
       (let
-        [idx : i64 (compiler-reg-greedy-arg-pool-index pos)]
+        [idx : i64 (compiler-reg-greedy-arg-pool-index-for-abi abi pool pos)]
         (if (< idx 0)
           unit
           (let
@@ -13632,6 +13647,8 @@
     [_ unit]))
 
 (define (compiler-reg-arg-pref-array!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [values : (Array CompilerIrValue)]
   [i : i64]
   [prefs : (Array i64)]
@@ -13639,50 +13656,60 @@
   (if (>= i (array-length values))
     unit
     (begin
-      (compiler-reg-arg-pref-value! (array-ref values i) i prefs parents)
-      (compiler-reg-arg-pref-array! values (+ i 1) prefs parents))))
+      (compiler-reg-arg-pref-value!
+        abi
+        pool
+        (array-ref values i)
+        i
+        prefs
+        parents)
+      (compiler-reg-arg-pref-array! abi pool values (+ i 1) prefs parents))))
 
 (define (compiler-reg-arg-pref-args!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [args : CompilerIrCallArgs]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match args
     [(CompilerIrCallArgs.Nil) unit]
     [(CompilerIrCallArgs.One a)
-      (compiler-reg-arg-pref-value! a 0 prefs parents)]
+      (compiler-reg-arg-pref-value! abi pool a 0 prefs parents)]
     [(CompilerIrCallArgs.Two a b)
       (begin
-        (compiler-reg-arg-pref-value! a 0 prefs parents)
-        (compiler-reg-arg-pref-value! b 1 prefs parents))]
+        (compiler-reg-arg-pref-value! abi pool a 0 prefs parents)
+        (compiler-reg-arg-pref-value! abi pool b 1 prefs parents))]
     [(CompilerIrCallArgs.Array values)
-      (compiler-reg-arg-pref-array! values 0 prefs parents)]))
+      (compiler-reg-arg-pref-array! abi pool values 0 prefs parents)]))
 
-;; Outgoing call instructions whose integer args are marshalled through the SysV
-;; arg registers. The callee/function-pointer operand of the indirect forms is NOT
-;; an argument and is left without a preference. (Syscalls use a different register
+;; Outgoing call instructions whose integer args are marshalled through ABI arg
+;; registers. The callee/function-pointer operand of the indirect forms is NOT an
+;; argument and is left without a preference. (Syscalls use a different register
 ;; convention and are intentionally omitted.)
 (define (compiler-reg-arg-pref-instr!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [instr : CompilerIrInstr]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
     [(CompilerIrInstr.Call _ _ args _)
-      (compiler-reg-arg-pref-args! args prefs parents)]
+      (compiler-reg-arg-pref-args! abi pool args prefs parents)]
     ;; Indirect/closure calls: arg vars are ineligible (see
     ;; compiler-reg-call-arg-vars-instr-seq-scalar) so no arg-reg preference
     ;; applies; the base-0 pref was also wrong for the closure base-1 marshalling.
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
-          (compiler-reg-arg-pref-args! args prefs parents)])]
+          (compiler-reg-arg-pref-args! abi pool args prefs parents)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
-          (compiler-reg-arg-pref-args! args prefs parents)])]
+          (compiler-reg-arg-pref-args! abi pool args prefs parents)])]
     [(CompilerIrInstr.TailCall _ args _)
-      (compiler-reg-arg-pref-args! args prefs parents)]
+      (compiler-reg-arg-pref-args! abi pool args prefs parents)]
     [(CompilerIrInstr.TailCallIndirect _ args _)
-      (compiler-reg-arg-pref-args! args prefs parents)]
+      (compiler-reg-arg-pref-args! abi pool args prefs parents)]
     [_ unit]))
 
 ;; M-C (part 2): call-result %rax preference. The backend stores a scalar call
@@ -13787,6 +13814,8 @@
         parents)]))
 
 (define (compiler-reg-arg-pref-seq!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [instrs : CompilerIrInstrSeq]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
@@ -13797,11 +13826,18 @@
     (begin
       (while (< index count)
         (begin
-          (compiler-reg-arg-pref-instr! (array-ref slots index) prefs parents)
+          (compiler-reg-arg-pref-instr!
+            abi
+            pool
+            (array-ref slots index)
+            prefs
+            parents)
           (set! index (+ index 1))))
       unit)))
 
 (define (compiler-reg-arg-pref-blocks!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
   [blocks : CompilerIrBlockList]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
@@ -13811,16 +13847,18 @@
       (begin
         (match block
           [(CompilerIrBlock.Block _ instrs)
-            (compiler-reg-arg-pref-seq! instrs prefs parents)])
-        (compiler-reg-arg-pref-blocks! (box-get rest) prefs parents))]
+            (compiler-reg-arg-pref-seq! abi pool instrs prefs parents)])
+        (compiler-reg-arg-pref-blocks! abi pool (box-get rest) prefs parents))]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-arg-pref-blocks!
+        abi
+        pool
         (compiler-ir-block-seq-to-list seq)
         prefs
         parents)]))
 
 ;; Build the per-root physical-register preference array: each outgoing call-arg
-;; var biased toward the SysV register it is marshalled into. Indexed by coalesce
+;; var biased toward the ABI register it is marshalled into. Indexed by coalesce
 ;; root (like copy hints); -1 = no preference.
 (define (compiler-reg-function-arg-prefs
   [abi : CompilerRegTargetAbi]
@@ -13830,31 +13868,22 @@
   (let
     [prefs : (Array i64) (array.make-array i64 n)]
     [parents : (Array i64) (struct-get coalesce parents)]
+    [pool : CompilerRegStringList
+      (compiler-reg-greedy-integer-pool-for-abi abi)]
     (begin
       (compiler-reg-fill-i64-array prefs -1)
-      ;; The arg->ABI-register preference is keyed on the SysV arg-register map
-      ;; (compiler-reg-greedy-arg-pool-index). On Win64 the arg registers differ
-      ;; (rcx/rdx/r8/r9) AND %rsi/%rdi are callee-saved, so the SysV bias is both
-      ;; wrong and counterproductive there; skip it (empty preference) on Win64
-      ;; until a Win64 arg-coalescing pass lands. SysV is unchanged.
-      (match abi
-        [(CompilerRegTargetAbi.Linux)
-          (match func
-            [(CompilerIrFunction.Function _ _ _ _ blocks)
-              (begin
-                (compiler-reg-arg-pref-blocks! blocks prefs parents)
-                ;; M-C (part 2): call-result %rax bias fills roots the arg walk
-                ;; left unbiased. The pool index is looked up from the live pool
-                ;; definition so it tracks any pool reorder (SysV: index 0).
-                (compiler-reg-result-pref-blocks!
-                  blocks
-                  (compiler-reg-string-list-index-of
-                    (compiler-reg-greedy-integer-pool)
-                    "%rax"
-                    0)
-                  prefs
-                  parents))])]
-        [(CompilerRegTargetAbi.Windows) unit])
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (begin
+            (compiler-reg-arg-pref-blocks! abi pool blocks prefs parents)
+            ;; M-C (part 2): call-result %rax bias fills roots the arg walk
+            ;; left unbiased. The pool index is looked up from the live ABI pool
+            ;; definition so it tracks any pool reorder (both ABIs: index 0).
+            (compiler-reg-result-pref-blocks!
+              blocks
+              (compiler-reg-string-list-index-of pool "%rax" 0)
+              prefs
+              parents))])
       prefs)))
 
 (define (compiler-reg-greedy-state
@@ -14748,11 +14777,12 @@
         (array-length (struct-get interval-index starts))
         func)]
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
-    ;; var biased toward the SysV register it will be marshalled into, so the
-    ;; backend's `movq <home>, %rdi` becomes an elided self-move. Indexed by
+    ;; var biased toward the target register it will be marshalled into, so the
+    ;; backend's `movq <home>, <arg-reg>` becomes an elided self-move. Indexed by
     ;; coalesce root, like copy-hints. Only the scalar-opt2 integer greedy consumes
     ;; it; the SIMD-integer and float->XMM greedy calls pass an empty array (their
-    ;; pools are not the SysV integer pool, so a pool-index preference is moot).
+    ;; pools are not the ABI-specific scalar integer pool, so a pool-index
+    ;; preference is moot).
     [arg-prefs : (Array i64)
       (compiler-reg-function-arg-prefs
         abi
@@ -20532,6 +20562,73 @@
 
 (cfg
   test
+  (define (compiler-reg-test-identity-coalesce [n : i64]) : CompilerRegCoalesceMap
+    (let
+      [parents : (Array i64) (array.make-array i64 n)]
+      [sizes : (Array i64) (array.make-array i64 n)]
+      (begin
+        (compiler-reg-coalesce-map-init! parents sizes 0)
+        (CompilerRegCoalesceMap parents)))))
+
+(cfg
+  test
+  (define (compiler-reg-win64-arg-result-pref-function) : CompilerIrFunction
+    (let
+      [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 5)]
+      (begin
+        (array-set! args 0 (CompilerIrValue.Var 0))
+        (array-set! args 1 (CompilerIrValue.Var 1))
+        (array-set! args 2 (CompilerIrValue.Var 2))
+        (array-set! args 3 (CompilerIrValue.Var 3))
+        (array-set! args 4 (CompilerIrValue.Var 4))
+        (CompilerIrFunction.Function
+          "win64_arg_result_pref"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          6
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  5
+                  "callee"
+                  (CompilerIrCallArgs.Array args)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-win64-arg-result-prefs-ok?) : bool
+    (let
+      [pool : CompilerRegStringList
+        (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)]
+      [prefs : (Array i64)
+        (compiler-reg-function-arg-prefs
+          CompilerRegTargetAbi.Windows
+          (compiler-reg-win64-arg-result-pref-function)
+          (compiler-reg-test-identity-coalesce 6)
+          6)]
+      (and
+        (=
+          (array-ref prefs 0)
+          (compiler-reg-string-list-index-of pool "%rcx" 0))
+        (=
+          (array-ref prefs 1)
+          (compiler-reg-string-list-index-of pool "%rdx" 0))
+        (= (array-ref prefs 2) (compiler-reg-string-list-index-of pool "%r8" 0))
+        (= (array-ref prefs 3) (compiler-reg-string-list-index-of pool "%r9" 0))
+        (= (array-ref prefs 4) -1)
+        (=
+          (array-ref prefs 5)
+          (compiler-reg-string-list-index-of pool "%rax" 0))))))
+
+(cfg
+  test
   ;; M-A (RC1): a clobber-point function no longer stack-homes its params. The
   ;; scalar param cannot keep its ABI pin (the call clobbers %rdi) but becomes
   ;; an ordinary greedy candidate restricted to callee-saved homes: it wins the
@@ -24485,6 +24582,7 @@
     (compiler-reg-scalar-handle-call-arg-ok?)
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+    (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
     (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
     (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)

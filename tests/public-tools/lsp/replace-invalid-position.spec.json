@@ -1,0 +1,8 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"error\"", "raw_contains": "-32600", "raw_contains": "Edited document is not valid TypeLisp source", "raw_contains": "unterminated list", "raw_contains": "(define (foo) : i64 42", "raw_not_contains": "\"success\":true"},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "(define (foo) : i64 1)", "raw_not_contains": "42"}
+  ]
+}

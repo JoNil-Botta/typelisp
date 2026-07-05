@@ -1,0 +1,7 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"forms\"", "raw_contains": "\"name\":\"let\"", "raw_contains": "\"name\":\"match\"", "raw_contains": "\"name\":\"Ok\""}
+  ]
+}

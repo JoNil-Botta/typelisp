@@ -2816,7 +2816,20 @@
 ;; unconditional scan. Generation stamps avoid clearing the array between
 ;; builds; the array never grows, so out-of-range ids (>= capacity)
 ;; conservatively report "maybe" and take the exact scan.
+;;
+;; The bound-slots twin is the EXACT complement for the guard's other verdict:
+;; it is stamped only by binds that provably join the accumulated top-env spine
+;; (the seeded base env and tc-bind-alias-id-if-free's own binds -- never the
+;; transient inference binds that make the bloom conservative). A stamped id is
+;; therefore definitely bound, so the guard can skip without the O(spine) scan.
+;; Self-compiles repeat enum-variant names (Ok/Err/None/Nil/...) across
+;; hundreds of enums; every repeat after the first used to rescan the whole
+;; spine from the head down to the first binding. Ids that are bloom-marked but
+;; not bound-stamped (e.g. spine binds made outside the alias binder) still
+;; take the exact scan, so results are identical either way.
 (define tc-topenv-membership-slots : (Array i64)
+  (array.make-array i64 262144))
+(define tc-topenv-membership-bound-slots : (Array i64)
   (array.make-array i64 262144))
 (define tc-topenv-membership-gen : i64
   0)
@@ -2827,6 +2840,24 @@
   (if (and (>= name-id 0) (< name-id 262144))
     (array-set! tc-topenv-membership-slots name-id tc-topenv-membership-gen)
     unit))
+
+(define (tc-topenv-membership-mark-bound! [name-id : i64]) : unit
+  (if (and tc-topenv-membership-active (and (>= name-id 0) (< name-id 262144)))
+    (array-set!
+      tc-topenv-membership-bound-slots
+      name-id
+      tc-topenv-membership-gen)
+    unit))
+
+;; True when the id is PROVABLY bound in the accumulated top-env spine (stamped
+;; by a spine-joining bind this generation); false means "unknown", not
+;; "unbound".
+(define (tc-topenv-membership-bound? [name-id : i64]) : bool
+  (if (and (>= name-id 0) (< name-id 262144))
+    (=
+      (array-ref tc-topenv-membership-bound-slots name-id)
+      tc-topenv-membership-gen)
+    false))
 
 ;; True when the id MIGHT be in the env (marked this generation, or out of
 ;; range); false only when it is provably absent.
@@ -2842,6 +2873,7 @@
     [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (begin
         (tc-topenv-membership-mark! key)
+        (tc-topenv-membership-mark-bound! key)
         (tc-topenv-membership-seed! rest-env))]))
 
 (define (tc-topenv-membership-begin! [env : TcTypeEnv]) : unit
@@ -4110,10 +4142,18 @@
     tc-topenv-membership-active
     (not (tc-topenv-membership-maybe? name-id)))
     ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
-    (tc-bind-id env name-id ty)
-    (if (tc-name-bound-id? env name-id)
+    (begin
+      (tc-topenv-membership-mark-bound! name-id)
+      (tc-bind-id env name-id ty))
+    (if (and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
+      ;; Provably bound by an earlier spine-joining bind this build: skip
+      ;; without the O(spine) scan (the scan would find that binding).
       env
-      (tc-bind-id env name-id ty))))
+      (if (tc-name-bound-id? env name-id)
+        env
+        (begin
+          (tc-topenv-membership-mark-bound! name-id)
+          (tc-bind-id env name-id ty))))))
 
 (define (tc-module-name-id [module : String] [name-id : i64]) : i64
   (if (= (string.string-length module) 0)

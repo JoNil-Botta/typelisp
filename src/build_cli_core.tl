@@ -163,6 +163,9 @@
   (Ok BuildResolvedPkgDeps)
   (Err String))
 
+;; This remains a recursive list intentionally: it is a DFS call stack used
+;; only for cycle diagnostics, where push/pop follows recursion depth rather
+;; than append-heavy builder behavior.
 (defenum BuildPackagePathList
   (Nil)
   (Cons String (Box BuildPackagePathList)))
@@ -1384,7 +1387,7 @@
               (ResultBuildPackageLockState.Ok
                 (BuildPackageLockState path (struct-get lock entries) true))])])
       (ResultBuildPackageLockState.Ok
-        (BuildPackageLockState path PackageLockEntryList.Nil false)))))
+        (BuildPackageLockState path (package-lock-entry-list-new) false)))))
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
@@ -2037,7 +2040,7 @@
   [dep : CompilerPkgDep]) : ResultBuildPkgDep
   (match (build-package-resolve-dep-with-lock
     manifest-dir
-    PackageLockEntryList.Nil
+    (package-lock-entry-list-new)
     (BuildPackageLockPolicy.Default)
     dep)
     [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
@@ -2066,12 +2069,19 @@
 (define (build-package-lock-list-contains-all?
   [haystack : PackageLockEntryList]
   [needles : PackageLockEntryList]) : bool
-  (match needles
-    [(PackageLockEntryList.Nil) true]
-    [(PackageLockEntryList.Cons entry rest)
-      (and
-        (build-package-lock-list-has-exact-entry? haystack entry)
-        (build-package-lock-list-contains-all? haystack (box-get rest)))]))
+  (build-package-lock-list-contains-all-from haystack (& needles) 0))
+
+(define (build-package-lock-list-contains-all-from
+  [haystack : PackageLockEntryList]
+  [needles : (& needles PackageLockEntryList)]
+  [index : i64]) : bool
+  (if (>= index (package-lock-entry-list-count-ref needles))
+    true
+    (and
+      (build-package-lock-list-has-exact-entry?
+        haystack
+        (package-lock-entry-list-get needles index))
+      (build-package-lock-list-contains-all-from haystack needles (+ index 1)))))
 
 (define (build-package-lock-list-eq?
   [left : PackageLockEntryList]
@@ -2121,7 +2131,10 @@
   (match deps
     [(CompilerPkgDepNil)
       (ResultBuildResolvedPkgDeps.Ok
-        (BuildResolvedPkgDeps CompilerPkgDepNil PackageLockEntryList.Nil false))]
+        (BuildResolvedPkgDeps
+          CompilerPkgDepNil
+          (package-lock-entry-list-new)
+          false))]
     [(CompilerPkgDepCons dep rest)
       (match (build-package-resolve-dep-with-lock
         manifest-dir

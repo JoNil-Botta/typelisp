@@ -15451,6 +15451,147 @@
               unit)
             (compiler-reg-color-var-tys (box-get rest) tys))])]))
 
+(define (compiler-reg-vector-elem-size [ty : AstType]) : i64
+  (match ty
+    [(AstType.I8) 1]
+    [(AstType.U8) 1]
+    [(AstType.Bool) 1]
+    [(AstType.I16) 2]
+    [(AstType.U16) 2]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F32) 4]
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
+    [(AstType.F64) 8]
+    [_ 8]))
+
+(define (compiler-reg-vector-stack-words-for-shape
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (let
+    [bytes : i64 (* lanes (compiler-reg-vector-elem-size elem-ty))]
+    (if (<= bytes 0)
+      1
+      (/ (+ bytes 7) 8))))
+
+(define (compiler-reg-vector-stack-words-set!
+  [words : (Array i64)]
+  [var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]) : unit
+  (if (or (< var 0) (>= var (array-length words)))
+    unit
+    (let
+      [next : i64 (compiler-reg-vector-stack-words-for-shape lanes elem-ty)]
+      [old : i64 (array-ref words var)]
+      (if (> next old)
+        (array-set! words var next)
+        unit))))
+
+(define (compiler-reg-vector-stack-words-instr!
+  [instr : CompilerIrInstr]
+  [words : (Array i64)]) : unit
+  (match instr
+    [(CompilerIrInstr.LaneId dst lanes elem-ty)
+      (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
+    [(CompilerIrInstr.Splat dst _ lanes elem-ty)
+      (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ lanes elem-ty)
+          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ lanes elem-ty)
+          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
+    [(CompilerIrInstr.VectorLoad dst _ _ lanes elem-ty)
+      (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ lanes elem-ty)
+          (match elem-ty
+            [(AstType.Bool) unit]
+            [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
+    [_ unit]))
+
+(define (compiler-reg-vector-stack-words-seq!
+  [instrs : CompilerIrInstrSeq]
+  [words : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-vector-stack-words-instr! (array-ref slots index) words)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-vector-stack-words-blocks!
+  [blocks : CompilerIrBlockList]
+  [words : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-reg-vector-stack-words-seq! instrs words)])
+        (compiler-reg-vector-stack-words-blocks! (box-get rest) words))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        (while (< index (compiler-ir-block-seq-count seq))
+          (begin
+            (match (compiler-ir-block-seq-ref seq index)
+              [(CompilerIrBlock.Block _ instrs)
+                (compiler-reg-vector-stack-words-seq! instrs words)])
+            (set! index (+ index 1)))))]))
+
+(define (compiler-reg-vector-stack-extra-slots
+  [words : (Array i64)]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (array-length words))
+    acc
+    (let
+      [w : i64 (array-ref words index)]
+      (compiler-reg-vector-stack-extra-slots
+        words
+        (+ index 1)
+        (if (> w 1)
+          (+ acc (- w 1))
+          acc)))))
+
+(define (compiler-reg-vector-stack-words-for-var
+  [words : (Array i64)]
+  [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length words)))
+    1
+    (let
+      [w : i64 (array-ref words var)]
+      (if (> w 1)
+        w
+        1))))
+
+(define (compiler-reg-color-reserve-private-range!
+  [slot-ends : (Array i64)]
+  [next : i64]
+  [words : i64]) : i64
+  (let
+    [size : i64
+      (if (> words 1)
+        words
+        1)]
+    [slot : i64 (compiler-reg-color-next-free-range slot-ends next size 0)]
+    (begin
+      (compiler-reg-color-set-range-ends!
+        slot-ends
+        slot
+        size
+        9223372036854775807)
+      slot)))
+
 ;; Sorted insert by (start, var): deterministic processing order.
 ;; In-place heapsort of an interval array by (start, var) -- deterministic
 ;; total order, O(n log n), no allocation beyond the array itself (the
@@ -16950,7 +17091,15 @@
       [(CompilerRegIntervalList.Nil) CompilerRegColoring.None]
       [(CompilerRegIntervalList.Cons _ _)
         (let
-          [slots : i64 (+ vars 4)]
+          [vector-stack-words : (Array i64) (array.make-array i64 vars)]
+          [_vector-stack-words : unit
+            (compiler-reg-vector-stack-words-blocks! blocks vector-stack-words)]
+          [slots : i64
+            (+
+              (+
+                vars
+                (compiler-reg-vector-stack-extra-slots vector-stack-words 0 0))
+              8)]
           [slot-ends : (Array i64) (array.make-array i64 slots)]
           [assignments : CompilerRegAssignmentList
             (compiler-reg-plan-assignments plan)]
@@ -17060,13 +17209,18 @@
                           (begin
                             (if (< (array-ref remap root) 0)
                               (let
+                                [words : i64
+                                  (compiler-reg-vector-stack-words-for-var
+                                    vector-stack-words
+                                    root)]
                                 [slot : i64
-                                  (compiler-reg-color-next-free-slot
+                                  (compiler-reg-color-reserve-private-range!
                                     slot-ends
-                                    next)]
+                                    next
+                                    words)]
                                 (begin
-                                  (array-set! remap root slot)
-                                  (set! next (+ slot 1))))
+                                  (array-set! remap root (+ slot (- words 1)))
+                                  (set! next (+ slot words))))
                               unit)
                             (array-set! remap i (array-ref remap root)))
                           (match (compiler-reg-assignment-index-lookup
@@ -17076,23 +17230,33 @@
                               (match location
                                 [(CompilerRegLocation.Spill _)
                                   (let
+                                    [words : i64
+                                      (compiler-reg-vector-stack-words-for-var
+                                        vector-stack-words
+                                        i)]
                                     [slot : i64
-                                      (compiler-reg-color-next-free-slot
+                                      (compiler-reg-color-reserve-private-range!
                                         slot-ends
-                                        next)]
+                                        next
+                                        words)]
                                     (begin
-                                      (array-set! remap i slot)
-                                      (set! next (+ slot 1))))]
+                                      (array-set! remap i (+ slot (- words 1)))
+                                      (set! next (+ slot words))))]
                                 [_ unit])]
                             [(CompilerRegMaybeLocation.No)
                               (let
+                                [words : i64
+                                  (compiler-reg-vector-stack-words-for-var
+                                    vector-stack-words
+                                    i)]
                                 [slot : i64
-                                  (compiler-reg-color-next-free-slot
+                                  (compiler-reg-color-reserve-private-range!
                                     slot-ends
-                                    next)]
+                                    next
+                                    words)]
                                 (begin
-                                  (array-set! remap i slot)
-                                  (set! next (+ slot 1))))]))))
+                                  (array-set! remap i (+ slot (- words 1)))
+                                  (set! next (+ slot words))))]))))
                     (set! i (+ i 1))))
                 next))]
           [_renumbered
@@ -24679,6 +24843,60 @@
         (not (= (array-ref remap 0) 1)))]
     [(CompilerRegColoring.None) false]))
 
+(define (compiler-reg-color-vector-stack-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "vector_stack_slots"
+    CompilerIrParamList.Nil
+    (AstType.Unit)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.VectorLoad
+            0
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 0)
+            4
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.VectorLoad
+              1
+              (CompilerIrValue.I64 0)
+              (CompilerIrValue.I64 0)
+              8
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+              CompilerIrInstrList.Nil))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-color-vector-stack-slots-ok?) : bool
+  (match (compiler-reg-color-vector-stack-function)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
+      (match (compiler-reg-color-stack-slots
+        (CompilerRegPlan.Plan
+          CompilerRegAssignmentList.Nil
+          (compiler-live-set-empty)
+          (compiler-reg-interval-cons
+            (CompilerRegInterval.Interval 0 0 2)
+            (compiler-reg-interval-cons
+              (CompilerRegInterval.Interval 1 1 3)
+              CompilerRegIntervalList.Nil))
+          CompilerRegVarTypeList.Nil
+          (compiler-reg-call-split-empty)
+          (compiler-reg-split-plan-empty))
+        (compiler-live-set-empty)
+        params
+        blocks
+        vars)
+        [(CompilerRegColoring.Remap remap slots)
+          (and
+            (= (array-ref remap 0) 3)
+            (= (array-ref remap 1) 11)
+            (= slots 12))]
+        [(CompilerRegColoring.None) false])]))
+
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
     [(CompilerIrFunction.Function _ params _ vars blocks)
@@ -24805,6 +25023,7 @@
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)
     (compiler-reg-color-spill-param-pins-ok?)
+    (compiler-reg-color-vector-stack-slots-ok?)
     (compiler-reg-color-storage-ranges-ok?)))
 
 (define (compiler-regalloc-self-test) : i64

@@ -9432,41 +9432,188 @@
     (= (intern-qualified-base-id lookup-id) (tc-name-id base))
     (tc-stdlib-string-module-name? (intern-qualified-module lookup-id))))
 
+;; --- per-epoch module -> decl-position index ----------------------------------
+;; tc-module-local-env-list and tc-decl-list-module-imports-stdlib-string? both
+;; filter the whole-program decl list down to one module by scanning every
+;; declaration and tracking (module NAME) markers, re-paying O(program) AstDecl
+;; copies per query. This CSR index maps module ids to program-order decl
+;; positions (module markers excluded); consumers keep their own per-decl match
+;; arms, so they process exactly the subsequence the full scan would have. The
+;; program view changes at in-pass splice rebuilds, so validity is stamped by
+;; (len, offset, intern generation) and dropped by macro-alias-derived-cache-
+;; reset! (the same per-splice/per-program boundary as the alias caches); a
+;; single-decl splice that preserves the list length also preserves every
+;; module's positions (memo markers never add or remove module markers), so
+;; the stamp is sufficient. Backing storage lives in a dedicated arena (the
+;; tc-hygiene-module-env-cache-arena idiom) because queries run while
+;; transient scratch arenas are active.
+(define tc-module-decl-index-ready : bool
+  false)
+(define tc-module-decl-index-decl-count : i64
+  -1)
+(define tc-module-decl-index-decl-offset : i64
+  -1)
+(define tc-module-decl-index-generation : i64
+  -1)
+(define tc-module-decl-index-arena : i64
+  0)
+(define tc-module-decl-index-modules : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define tc-module-decl-index-starts : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-decl-index-ends : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-decl-index-positions : (Array i64)
+  (array.make-array i64 0))
+
+(define (tc-module-decl-index-reset!) : unit
+  (begin
+    (set! tc-module-decl-index-ready false)
+    (set! tc-module-decl-index-decl-count -1)
+    (set! tc-module-decl-index-decl-offset -1)
+    ;; The stale array/map globals are never read while ready is false (every
+    ;; consumer goes through ensure!), so destroying their arena here is safe.
+    (if (= tc-module-decl-index-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy tc-module-decl-index-arena))
+        (set! tc-module-decl-index-arena 0)))))
+
+(define (tc-module-decl-index-ensure! [decls : AstDeclList]) : unit
+  (if (and
+    tc-module-decl-index-ready
+    (= tc-module-decl-index-decl-count (struct-get decls len))
+    (= tc-module-decl-index-decl-offset (struct-get decls offset))
+    (= tc-module-decl-index-generation (intern-generation)))
+    unit
+    (let
+      [count : i64 (struct-get decls len)]
+      [decl-offset : i64 (struct-get decls offset)]
+      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [empty-module-id : i64 (intern "")]
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [_make-arena : unit
+        (if (= tc-module-decl-index-arena 0)
+          (set! tc-module-decl-index-arena (arena.tl_arena_make))
+          unit)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set tc-module-decl-index-arena))]
+      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [module-count : i64 0]
+      [counts : (Array i64) (array.make-array i64 (+ count 1))]
+      [starts : (Array i64) (array.make-array i64 (+ count 1))]
+      [ends : (Array i64) (array.make-array i64 (+ count 1))]
+      [positions : (Array i64) (array.make-array i64 (+ count 1))]
+      [cur-module-id : i64 empty-module-id]
+      [i : i64 0]
+      [running : i64 0]
+      (begin
+        ;; Pass 1: assign a dense slot per module id and count its decls.
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (let
+                  [slot : i64
+                    (match (hashmap.i64-i64-map-get modules cur-module-id)
+                      [(hashmap.I64I64MapFound found-slot) found-slot]
+                      [(hashmap.I64I64MapMissing)
+                        (let
+                          [new-slot : i64 module-count]
+                          (begin
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                new-slot))
+                            (set! module-count (+ module-count 1))
+                            new-slot))])]
+                  (array-set! counts slot (+ (array-ref counts slot) 1)))])
+            (set! i (+ i 1))))
+        ;; Prefix sums: starts fixed, ends double as fill cursors below.
+        (set! i 0)
+        (while (< i module-count)
+          (begin
+            (array-set! starts i running)
+            (array-set! ends i running)
+            (set! running (+ running (array-ref counts i)))
+            (set! i (+ i 1))))
+        ;; Pass 2: fill program-order positions per module slot.
+        (set! cur-module-id empty-module-id)
+        (set! i 0)
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (hashmap.i64-i64-map-get modules cur-module-id)
+                  [(hashmap.I64I64MapFound slot)
+                    (let
+                      [cursor : i64 (array-ref ends slot)]
+                      (begin
+                        (array-set! positions cursor i)
+                        (array-set! ends slot (+ cursor 1))))]
+                  [(hashmap.I64I64MapMissing) unit])])
+            (set! i (+ i 1))))
+        (set! tc-module-decl-index-modules modules)
+        (set! tc-module-decl-index-starts starts)
+        (set! tc-module-decl-index-ends ends)
+        (set! tc-module-decl-index-positions positions)
+        (set! tc-module-decl-index-decl-count count)
+        (set! tc-module-decl-index-decl-offset decl-offset)
+        (set! tc-module-decl-index-generation (intern-generation))
+        ;; The arena head advances as it grows; re-capture it so reset!
+        ;; destroys the whole chain, then restore the caller's arena.
+        (set! tc-module-decl-index-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set prev-arena))
+        (set! tc-module-decl-index-ready true)))))
+
+;; Dense slot for a module id, or -1 when the module owns no declarations.
+(define (tc-module-decl-index-slot [module-id : i64]) : i64
+  (match (hashmap.i64-i64-map-get tc-module-decl-index-modules module-id)
+    [(hashmap.I64I64MapFound slot) slot]
+    [(hashmap.I64I64MapMissing) -1]))
+
 (define (tc-decl-list-module-imports-stdlib-string?
   [decls : AstDeclList]
   [target-module-id : i64]
   [current-module-id : i64]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest-box)
+  (let
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
+    [_unused-module-id : i64 current-module-id]
+    [slot : i64 (tc-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      false
       (let
-        [rest : AstDeclList rest-box]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-decl-list-module-imports-stdlib-string?
-              rest
-              target-module-id
-              next-module)]
-          [(AstDecl.Import
-              (AstImportSpec.Spec
-                _
-                _
-                (AstMaybeModuleName.Some import-module)
-                _
-                _))
-            (if (and
-              (= current-module-id target-module-id)
-              (tc-stdlib-string-module-name? import-module))
-              true
-              (tc-decl-list-module-imports-stdlib-string?
-                rest
-                target-module-id
-                current-module-id))]
-          [_
-            (tc-decl-list-module-imports-stdlib-string?
-              rest
-              target-module-id
-              current-module-id)]))]))
+        [j : i64 (array-ref tc-module-decl-index-starts slot)]
+        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< j end))
+            (begin
+              (match (array-ref
+                (struct-get decls slots)
+                (+
+                  (struct-get decls offset)
+                  (array-ref tc-module-decl-index-positions j)))
+                [(AstDecl.Import
+                    (AstImportSpec.Spec
+                      _
+                      _
+                      (AstMaybeModuleName.Some import-module)
+                      _
+                      _))
+                  (if (tc-stdlib-string-module-name? import-module)
+                    (set! found true)
+                    unit)]
+                [_ unit])
+              (set! j (+ j 1))))
+          found)))))
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (match ctx
@@ -16304,32 +16451,45 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [target-module : String]
-  [module : String]) : ResultTcEnv
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (ResultTcEnv.Ok env)]
-    [(AstDeclListStep.Cons decl rest)
+  [_module : String]) : ResultTcEnv
+  (let
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
+    [slot : i64 (tc-module-decl-index-slot (intern target-module))]
+    (if (< slot 0)
+      (ResultTcEnv.Ok env)
       (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-module-local-env-list
-              ctx
-              rest
-              env
-              target-module
-              (intern-str next-module))]
-          [_
-            (if (string.eq module target-module)
-              (match (tc-module-local-env-add-decl ctx env target-module decl)
-                [(ResultTcEnv.Ok next-env)
-                  (tc-module-local-env-list
-                    ctx
-                    rest
-                    next-env
-                    target-module
-                    module)]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])
-              (tc-module-local-env-list ctx rest env target-module module))]))]))
+        [j : i64 (array-ref tc-module-decl-index-starts slot)]
+        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [cur-env : TcTypeEnv env]
+        [message : String ""]
+        [ok : bool true]
+        (begin
+          (while (and ok (< j end))
+            (let
+              [decl : AstDecl
+                (array-ref
+                  (struct-get decls slots)
+                  (+
+                    (struct-get decls offset)
+                    (array-ref tc-module-decl-index-positions j)))]
+              (begin
+                (match decl
+                  [(AstDecl.Module _) unit]
+                  [_
+                    (match (tc-module-local-env-add-decl
+                      ctx
+                      cur-env
+                      target-module
+                      decl)
+                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                      [(ResultTcEnv.Err step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])])
+                (set! j (+ j 1)))))
+          (if ok
+            (ResultTcEnv.Ok cur-env)
+            (ResultTcEnv.Err message)))))))
 
 (define (tc-module-local-env
   [ctx : TcContext]
@@ -47077,6 +47237,7 @@
 ;; the intern generation gate additionally covers intern-reset! boundaries.
 (define (macro-alias-derived-cache-reset!) : unit
   (begin
+    (tc-module-decl-index-reset!)
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)

@@ -124,6 +124,14 @@
   (Ok (Array String))
   (Err String))
 
+(defenum LspPathParam
+  (Ok json.JsonList)
+  (Err String))
+
+(defenum LspPathLookup
+  (Found i64 i64 String)
+  (Err String))
+
 (defenum LspValidationResult
   (Valid)
   (Invalid i64 i64 String String))
@@ -5304,8 +5312,10 @@
   (or
     (string.eq method "tl/astDump")
     (string.eq method "tl/listFunctions")
+    (string.eq method "tl/listNested")
     (string.eq method "tl/find")
     (string.eq method "tl/findPosition")
+    (string.eq method "tl/findPath")
     (string.eq method "tl/replace")
     (string.eq method "tl/deleteFunction")
     (string.eq method "tl/move")
@@ -5355,9 +5365,12 @@
     [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
     [(string.eq method "tl/listFunctions")
       (lsp-handle-tl-list-functions id params docs)]
+    [(string.eq method "tl/listNested")
+      (lsp-handle-tl-list-nested id params docs)]
     [(string.eq method "tl/find") (lsp-handle-tl-find id params docs)]
     [(string.eq method "tl/findPosition")
       (lsp-handle-tl-find-position id params docs)]
+    [(string.eq method "tl/findPath") (lsp-handle-tl-find-path id params docs)]
     [(string.eq method "tl/replace")
       (lsp-handle-tl-structural-replace-at id params docs)]
     [(string.eq method "tl/deleteFunction")
@@ -6298,9 +6311,43 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
         [(LspJsonText.Ok new-text)
-          (match (lsp-json-string-field params "name")
-            [(LspJsonText.Ok name)
-              (if (= (string.string-length name) 0)
+          (if (lsp-json-has-field? params "path")
+            (match (lsp-json-path-field params)
+              [(LspPathParam.Ok path-items)
+                (lsp-write-structural-edit-result
+                  id
+                  params
+                  docs
+                  (lsp-replace-form-by-path-with-decls
+                    text
+                    path-items
+                    new-text
+                    decls))]
+              [(LspPathParam.Err message)
+                (begin
+                  (lsp-write-error id -32600 message)
+                  (LspHandleResult.Continue docs))])
+            (match (lsp-json-string-field params "name")
+              [(LspJsonText.Ok name)
+                (if (= (string.string-length name) 0)
+                  (lsp-write-structural-edit-result
+                    id
+                    params
+                    docs
+                    (lsp-replace-form-at-position-from-params
+                      text
+                      params
+                      new-text))
+                  (lsp-write-structural-edit-result
+                    id
+                    params
+                    docs
+                    (lsp-structural-replace-text-with-decls
+                      text
+                      name
+                      new-text
+                      decls)))]
+              [(LspJsonText.Missing)
                 (lsp-write-structural-edit-result
                   id
                   params
@@ -6308,22 +6355,7 @@
                   (lsp-replace-form-at-position-from-params
                     text
                     params
-                    new-text))
-                (lsp-write-structural-edit-result
-                  id
-                  params
-                  docs
-                  (lsp-structural-replace-text-with-decls
-                    text
-                    name
-                    new-text
-                    decls)))]
-            [(LspJsonText.Missing)
-              (lsp-write-structural-edit-result
-                id
-                params
-                docs
-                (lsp-replace-form-at-position-from-params text params new-text))])]
+                    new-text))]))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
@@ -6414,6 +6446,472 @@
       (lsp-form-text-by-entry
         text
         (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))))))
+
+(define (lsp-json-has-field? [value : json.Json] [key : String]) : bool
+  (match (json.object-get value (& key))
+    [(json.JsonFound _) true]
+    [(json.JsonMissing) false]))
+
+(define (lsp-json-list-append [left : json.JsonList] [right : json.JsonList]) : json.JsonList
+  (match left
+    [(json.JsonListNil) right]
+    [(json.JsonListCons first rest)
+      (lsp-json-list-cons first (lsp-json-list-append (box-get rest) right))]))
+
+(define (lsp-json-list-all-strings? [items : json.JsonList]) : bool
+  (match items
+    [(json.JsonListNil) true]
+    [(json.JsonListCons first rest)
+      (match first
+        [(json.JsonString _) (lsp-json-list-all-strings? (box-get rest))]
+        [_ false])]))
+
+(define (lsp-json-path-field [params : json.Json]) : LspPathParam
+  (let
+    [key : String "path"]
+    (match (json.object-get params (& key))
+      [(json.JsonFound value)
+        (match value
+          [(json.JsonArray items)
+            (let
+              [path-items : json.JsonList (box-get items)]
+              (match path-items
+                [(json.JsonListNil) (LspPathParam.Err "path must not be empty")]
+                [_
+                  (if (lsp-json-list-all-strings? path-items)
+                    (LspPathParam.Ok path-items)
+                    (LspPathParam.Err "path entries must be strings"))]))]
+          [_ (LspPathParam.Err "path must be an array")])]
+      [(json.JsonMissing) (LspPathParam.Err "Missing path parameter")])))
+
+(define (lsp-json-path-single-name [path : json.JsonList]) : String
+  (match path
+    [(json.JsonListCons first rest)
+      (match (box-get rest)
+        [(json.JsonListNil)
+          (match first
+            [(json.JsonString name) name]
+            [_ ""])]
+        [_ ""])]
+    [(json.JsonListNil) ""]))
+
+(define (lsp-form-head-name-at [text : String] [start : i64] [end : i64]) : String
+  (let
+    [n0 : i64 (string.string-length text)]
+    [limit : i64
+      (if (> end n0)
+        n0
+        end)]
+    (if (or
+      (< start 0)
+      (>= start limit)
+      (not (= (string.string-ref text start) (string.string-ref "(" 0))))
+      ""
+      (let
+        [head-start : i64 (lsp-skip-space text (+ start 1) limit)]
+        [head-end : i64 0]
+        (begin
+          (set! head-end (lsp-scan-ident text head-start limit))
+          (if (> head-end head-start)
+            (lsp-symbol-base
+              (string.substring text head-start (- head-end head-start)))
+            ""))))))
+
+(define (lsp-nested-kind-for-head [head : String]) : String
+  (cond
+    [(or
+        (string.eq head "define")
+        (string.eq head "defmacro")
+        (string.eq head "defstruct")
+        (string.eq head "defenum")
+        (string.eq head "defdispatch")
+        (string.eq head "extern"))
+      "declaration"]
+    [(or (string.eq head "let") (string.eq head "let*")) "binding"]
+    [(or
+        (string.eq head "if")
+        (string.eq head "match")
+        (string.eq head "cond")
+        (string.eq head "while")
+        (string.eq head "begin"))
+      "control"]
+    [else "expression"]))
+
+(define (lsp-offset-position-json [text : String] [off : i64]) : json.Json
+  (let
+    [lc : LspLineCol (lsp-line-col-at-offset text off)]
+    (lsp-json-object2
+      "line"
+      (lsp-json-number (- (struct-get lc line) 1))
+      "character"
+      (lsp-json-number (- (struct-get lc col) 1)))))
+
+(define (lsp-offset-range-json [text : String] [start : i64] [end : i64]) : json.Json
+  (lsp-json-object2
+    "start"
+    (lsp-offset-position-json text start)
+    "end"
+    (lsp-offset-position-json text end)))
+
+(define (lsp-nested-form-json [text : String] [start : i64] [end : i64]) : json.Json
+  (let
+    [name : String (lsp-form-head-name-at text start end)]
+    [lc : LspLineCol (lsp-line-col-at-offset text start)]
+    (lsp-json-object
+      (lsp-json-member
+        "name"
+        (json.JsonString name)
+        (lsp-json-member
+          "kind"
+          (json.JsonString (lsp-nested-kind-for-head name))
+          (lsp-json-member
+            "line"
+            (lsp-json-number (- (struct-get lc line) 1))
+            (lsp-json-member
+              "character"
+              (lsp-json-number (- (struct-get lc col) 1))
+              (lsp-json-member
+                "type"
+                (json.JsonString "s-expression")
+                (lsp-json-member
+                  "range"
+                  (lsp-offset-range-json text start end)
+                  (lsp-json-member
+                    "text"
+                    (json.JsonString
+                      (string.substring text start (- end start)))
+                    json.JsonMemberListNil))))))))))
+
+(define (lsp-path-result-json
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [name : String]) : json.Json
+  (let
+    [lc : LspLineCol (lsp-line-col-at-offset text start)]
+    (lsp-json-object
+      (lsp-json-member
+        "success"
+        (json.JsonBool true)
+        (lsp-json-member
+          "name"
+          (json.JsonString name)
+          (lsp-json-member
+            "kind"
+            (json.JsonString (lsp-nested-kind-for-head name))
+            (lsp-json-member
+              "line"
+              (lsp-json-number (- (struct-get lc line) 1))
+              (lsp-json-member
+                "character"
+                (lsp-json-number (- (struct-get lc col) 1))
+                (lsp-json-member
+                  "position"
+                  (lsp-offset-position-json text start)
+                  (lsp-json-member
+                    "range"
+                    (lsp-offset-range-json text start end)
+                    (lsp-json-member
+                      "text"
+                      (json.JsonString
+                        (string.substring text start (- end start)))
+                      json.JsonMemberListNil)))))))))))
+
+(define (lsp-list-nested-forms-in-range
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [depth : i64]
+  [max-depth : i64]) : json.JsonList
+  (let
+    [n : i64 (string.string-length text)]
+    [limit : i64
+      (if (> end n)
+        n
+        end)]
+    [i : i64 (+ start 1)]
+    [acc : json.JsonList json.JsonListNil]
+    (begin
+      (while (and (< i limit) (<= depth max-depth))
+        (let
+          [c : char (string.string-ref text i)]
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i limit))]
+            [(= c '\'')
+              (set! i (lsp-skip-apostrophe-char-literal text i limit))]
+            [(= c '"') (set! i (lsp-skip-string text i limit))]
+            [(= c '(')
+              (let
+                [child-end0 : i64 (lsp-skip-paren-group text i limit)]
+                [child-end : i64
+                  (if (> child-end0 limit)
+                    limit
+                    child-end0)]
+                [name : String ""]
+                [child-items : json.JsonList json.JsonListNil]
+                (if (<= child-end i)
+                  (set! i limit)
+                  (begin
+                    (set! name (lsp-form-head-name-at text i child-end))
+                    (if (< depth max-depth)
+                      (set!
+                        child-items
+                        (lsp-list-nested-forms-in-range
+                          text
+                          i
+                          child-end
+                          (+ depth 1)
+                          max-depth))
+                      unit)
+                    (if (> (string.string-length name) 0)
+                      (set!
+                        acc
+                        (lsp-json-list-append
+                          acc
+                          (lsp-json-list-cons
+                            (lsp-nested-form-json text i child-end)
+                            child-items)))
+                      (set! acc (lsp-json-list-append acc child-items)))
+                    (set! i child-end))))]
+            [else (set! i (+ i 1))])))
+      acc)))
+
+(define (lsp-find-nested-form-by-head
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [needle : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [limit : i64
+      (if (> end n)
+        n
+        end)]
+    [i : i64 (+ start 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< i limit) (= found -1))
+        (let
+          [c : char (string.string-ref text i)]
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i limit))]
+            [(= c '\'')
+              (set! i (lsp-skip-apostrophe-char-literal text i limit))]
+            [(= c '"') (set! i (lsp-skip-string text i limit))]
+            [(= c '(')
+              (let
+                [head : String
+                  (lsp-form-head-name-at
+                    text
+                    i
+                    (lsp-skip-paren-group text i limit))]
+                (if (string.eq head needle)
+                  (set! found i)
+                  (set! i (+ i 1))))]
+            [else (set! i (+ i 1))])))
+      found)))
+
+(define (lsp-lookup-form-path-tail
+  [text : String]
+  [path : json.JsonList]
+  [start : i64]
+  [end : i64]) : LspPathLookup
+  (match path
+    [(json.JsonListNil)
+      (LspPathLookup.Found start end (lsp-form-head-name-at text start end))]
+    [(json.JsonListCons first rest)
+      (match first
+        [(json.JsonString name)
+          (let
+            [child-start : i64
+              (lsp-find-nested-form-by-head text start end name)]
+            (if (= child-start -1)
+              (LspPathLookup.Err (lsp-str2 "Path segment not found: " name))
+              (let
+                [child-end : i64 (lsp-skip-paren-group text child-start end)]
+                (if (<= child-end child-start)
+                  (LspPathLookup.Err "Path target range is invalid")
+                  (lsp-lookup-form-path-tail
+                    text
+                    (box-get rest)
+                    child-start
+                    child-end)))))]
+        [_ (LspPathLookup.Err "path entries must be strings")])]))
+
+(define (lsp-lookup-form-path
+  [text : String]
+  [decls : LspDeclList]
+  [path : json.JsonList]) : LspPathLookup
+  (match path
+    [(json.JsonListNil) (LspPathLookup.Err "path must not be empty")]
+    [(json.JsonListCons first rest)
+      (match first
+        [(json.JsonString name)
+          (let
+            [idx : i64 (lsp-decl-list-find-name decls name)]
+            (if (= idx -1)
+              (LspPathLookup.Err "Declaration not found")
+              (let
+                [entry : LspDeclEntry
+                  (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+                [start : i64 (lsp-offset-from-entry-start text entry)]
+                [end : i64 (lsp-offset-from-entry-end text entry)]
+                (if (or
+                  (< start 0)
+                  (<= end start)
+                  (> end (string.string-length text)))
+                  (LspPathLookup.Err "Declaration range is invalid")
+                  (match (box-get rest)
+                    [(json.JsonListNil) (LspPathLookup.Found start end name)]
+                    [_
+                      (lsp-lookup-form-path-tail text (box-get rest) start end)])))))]
+        [_ (LspPathLookup.Err "path entries must be strings")])]))
+
+(define (lsp-replace-form-by-path-with-decls
+  [text : String]
+  [path : json.JsonList]
+  [new-text : String]
+  [decls : LspDeclList]) : LspEditResult
+  (if (not (lsp-text-is-valid-forms new-text))
+    (LspEditResult.Err
+      (lsp-str2
+        "newText is not valid form(s): "
+        (lsp-validate-forms-error new-text)))
+    (match (lsp-lookup-form-path text decls path)
+      [(LspPathLookup.Found start end _)
+        (LspEditResult.Ok (lsp-edit-range-at-offset text start end new-text))]
+      [(LspPathLookup.Err message) (LspEditResult.Err message)])))
+
+(define (lsp-generic-form-body-start [text : String] [start : i64] [end : i64]) : i64
+  (let
+    [head-start : i64 (lsp-skip-space text (+ start 1) end)]
+    [head-end : i64 (lsp-scan-ident text head-start end)]
+    (lsp-skip-space text head-end end)))
+
+(define (lsp-replace-body-by-path-with-decls
+  [text : String]
+  [path : json.JsonList]
+  [new-body : String]
+  [decls : LspDeclList]) : LspEditResult
+  (let
+    [single-name : String (lsp-json-path-single-name path)]
+    (if (> (string.string-length single-name) 0)
+      (lsp-replace-body-text-with-decls text single-name new-body decls)
+      (if (not (lsp-text-is-valid-forms new-body))
+        (LspEditResult.Err
+          (lsp-str2
+            "newBody is not a valid form: "
+            (lsp-validate-forms-error new-body)))
+        (match (lsp-lookup-form-path text decls path)
+          [(LspPathLookup.Found start end _)
+            (let
+              [body-start : i64 (lsp-generic-form-body-start text start end)]
+              [body-end : i64 (- end 1)]
+              (if (or (< body-start 0) (< body-end body-start))
+                (LspEditResult.Err "Path target range is invalid")
+                (LspEditResult.Ok
+                  (lsp-edit-range-at-offset text body-start body-end new-body))))]
+          [(LspPathLookup.Err message) (LspEditResult.Err message)])))))
+
+(define (lsp-list-nested-result-json
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [max-depth : i64]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "success"
+      (json.JsonBool true)
+      (lsp-json-member
+        "root"
+        (lsp-nested-form-json text start end)
+        (lsp-json-member
+          "forms"
+          (lsp-json-array
+            (if (< max-depth 1)
+              json.JsonListNil
+              (lsp-list-nested-forms-in-range text start end 1 max-depth)))
+          json.JsonMemberListNil)))))
+
+(define (lsp-handle-tl-list-nested
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(LspDocumentLookup.Found path text _)
+      (let
+        [pos-key : String "position"]
+        (match (json.object-get params (& pos-key))
+          [(json.JsonFound position)
+            (let
+              [line : i64 (lsp-json-int-field-default position "line" 0)]
+              [col : i64 (lsp-json-int-field-default position "character" 0)]
+              [depth : i64 (lsp-json-int-field-default params "depth" 2)]
+              [safe-depth : i64
+                (if (< depth 0)
+                  0
+                  depth)]
+              [offset : i64 (lsp-offset-at-position text line col)]
+              [form-start : i64 (lsp-find-form-at-offset text offset)]
+              (if (= form-start -1)
+                (begin
+                  (lsp-write-error id -32600 "No form found at position")
+                  (LspHandleResult.Continue docs))
+                (let
+                  [form-end : i64
+                    (lsp-skip-paren-group
+                      text
+                      form-start
+                      (string.string-length text))]
+                  (if (<= form-end form-start)
+                    (begin
+                      (lsp-write-error id -32600 "No form found at position")
+                      (LspHandleResult.Continue docs))
+                    (begin
+                      (lsp-write-response
+                        id
+                        (lsp-list-nested-result-json
+                          text
+                          form-start
+                          form-end
+                          safe-depth))
+                      (LspHandleResult.Continue docs))))))]
+          [(json.JsonMissing)
+            (begin
+              (lsp-write-error id -32600 "Missing position parameter")
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspHandleResult.Continue docs))]))
+
+(define (lsp-handle-tl-find-path
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document-decls params docs)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
+      (match (lsp-json-path-field params)
+        [(LspPathParam.Ok path-items)
+          (match (lsp-lookup-form-path text decls path-items)
+            [(LspPathLookup.Found start end name)
+              (begin
+                (lsp-write-response
+                  id
+                  (lsp-path-result-json text start end name))
+                (LspHandleResult.Continue docs))]
+            [(LspPathLookup.Err message)
+              (begin
+                (lsp-write-error id -32600 message)
+                (LspHandleResult.Continue docs))])]
+        [(LspPathParam.Err message)
+          (begin
+            (lsp-write-error id -32600 message)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentDeclsLookup.Missing)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-delete-form-at-position [text : String] [line : i64] [col : i64]) : LspEditResult
   (if (or (< line 0) (< col 0))
@@ -6685,15 +7183,31 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newBody")
         [(LspJsonText.Ok new-body)
-          (let
-            [name : String (lsp-structural-move-name params text)]
-            (if (= (string.string-length name) 0)
-              (lsp-write-missing-structural-name-error id params docs)
-              (lsp-write-structural-edit-result
-                id
-                params
-                docs
-                (lsp-replace-body-text-with-decls text name new-body decls))))]
+          (if (lsp-json-has-field? params "path")
+            (match (lsp-json-path-field params)
+              [(LspPathParam.Ok path-items)
+                (lsp-write-structural-edit-result
+                  id
+                  params
+                  docs
+                  (lsp-replace-body-by-path-with-decls
+                    text
+                    path-items
+                    new-body
+                    decls))]
+              [(LspPathParam.Err message)
+                (begin
+                  (lsp-write-error id -32600 message)
+                  (LspHandleResult.Continue docs))])
+            (let
+              [name : String (lsp-structural-move-name params text)]
+              (if (= (string.string-length name) 0)
+                (lsp-write-missing-structural-name-error id params docs)
+                (lsp-write-structural-edit-result
+                  id
+                  params
+                  docs
+                  (lsp-replace-body-text-with-decls text name new-body decls)))))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newBody parameter")
@@ -6878,20 +7392,32 @@
       [(string.eq method "tl/replace")
         (match (lsp-json-string-field params "newText")
           [(LspJsonText.Ok new-text)
-            (match (lsp-json-string-field params "name")
-              [(LspJsonText.Ok name)
-                (if (= (string.string-length name) 0)
+            (if (lsp-json-has-field? params "path")
+              (match (lsp-json-path-field params)
+                [(LspPathParam.Ok path-items)
+                  (lsp-replace-form-by-path-with-decls
+                    text
+                    path-items
+                    new-text
+                    decls)]
+                [(LspPathParam.Err message) (LspEditResult.Err message)])
+              (match (lsp-json-string-field params "name")
+                [(LspJsonText.Ok name)
+                  (if (= (string.string-length name) 0)
+                    (lsp-replace-form-at-position-from-params
+                      text
+                      params
+                      new-text)
+                    (lsp-structural-replace-text-with-decls
+                      text
+                      name
+                      new-text
+                      decls))]
+                [(LspJsonText.Missing)
                   (lsp-replace-form-at-position-from-params
                     text
                     params
-                    new-text)
-                  (lsp-structural-replace-text-with-decls
-                    text
-                    name
-                    new-text
-                    decls))]
-              [(LspJsonText.Missing)
-                (lsp-replace-form-at-position-from-params text params new-text)])]
+                    new-text)]))]
           [(LspJsonText.Missing)
             (LspEditResult.Err "Missing newText parameter")])]
       [(or
@@ -6915,11 +7441,20 @@
       [(string.eq method "tl/replaceBody")
         (match (lsp-json-string-field params "newBody")
           [(LspJsonText.Ok new-body)
-            (let
-              [name : String (lsp-structural-move-name params text)]
-              (if (= (string.string-length name) 0)
-                (LspEditResult.Err "Missing name or position parameter")
-                (lsp-replace-body-text-with-decls text name new-body decls)))]
+            (if (lsp-json-has-field? params "path")
+              (match (lsp-json-path-field params)
+                [(LspPathParam.Ok path-items)
+                  (lsp-replace-body-by-path-with-decls
+                    text
+                    path-items
+                    new-body
+                    decls)]
+                [(LspPathParam.Err message) (LspEditResult.Err message)])
+              (let
+                [name : String (lsp-structural-move-name params text)]
+                (if (= (string.string-length name) 0)
+                  (LspEditResult.Err "Missing name or position parameter")
+                  (lsp-replace-body-text-with-decls text name new-body decls))))]
           [(LspJsonText.Missing)
             (LspEditResult.Err "Missing newBody parameter")])]
       [(string.eq method "tl/replacePattern")
@@ -7192,6 +7727,89 @@
         (string.eq replaced "(define (foo) : i64 1)\n(define (bar) : i64 4)")]
       [(LspEditResult.Err _) false])))
 
+(define (lsp-test-path1 [a : String]) : json.JsonList
+  (lsp-json-list-cons (json.JsonString a) json.JsonListNil))
+
+(define (lsp-test-path3 [a : String] [b : String] [c : String]) : json.JsonList
+  (lsp-json-list-cons
+    (json.JsonString a)
+    (lsp-json-list-cons
+      (json.JsonString b)
+      (lsp-json-list-cons (json.JsonString c) json.JsonListNil))))
+
+(define (lsp-test-path4 [a : String] [b : String] [c : String] [d : String]) : json.JsonList
+  (lsp-json-list-cons
+    (json.JsonString a)
+    (lsp-json-list-cons
+      (json.JsonString b)
+      (lsp-json-list-cons
+        (json.JsonString c)
+        (lsp-json-list-cons (json.JsonString d) json.JsonListNil)))))
+
+(define (lsp-nested-path-test-text) : String
+  "(define (foo [x : i64]) : i64
+  (let [value : i64 1]
+    (match x
+      [(Ok value) value]
+      [_ value])))")
+
+(define (lsp-find-path-nested-smoke-ok?) : bool
+  (let
+    [text : String (lsp-nested-path-test-text)]
+    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [path : json.JsonList (lsp-test-path4 "foo" "let" "match" "Ok")]
+    [needle : String "(Ok value)"]
+    (match (lsp-lookup-form-path text decls path)
+      [(LspPathLookup.Found start end name)
+        (let
+          [form-text : String (string.substring text start (- end start))]
+          (and (string.eq name "Ok") (string.contains (& form-text) (& needle))))]
+      [(LspPathLookup.Err _) false])))
+
+(define (lsp-replace-form-by-path-smoke-ok?) : bool
+  (let
+    [text : String (lsp-nested-path-test-text)]
+    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [path : json.JsonList (lsp-test-path3 "foo" "let" "match")]
+    [new-text : String "(+ x 1)"]
+    [old-match : String "(match x"]
+    (match (lsp-replace-form-by-path-with-decls text path new-text decls)
+      [(LspEditResult.Ok replaced)
+        (and
+          (string.contains (& replaced) (& new-text))
+          (not (string.contains (& replaced) (& old-match))))]
+      [(LspEditResult.Err _) false])))
+
+(define (lsp-replace-body-by-path-smoke-ok?) : bool
+  (let
+    [text : String (lsp-nested-path-test-text)]
+    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [path : json.JsonList (lsp-test-path1 "foo")]
+    [new-body : String "(+ x 2)"]
+    [old-match : String "(match x"]
+    (match (lsp-replace-body-by-path-with-decls text path new-body decls)
+      [(LspEditResult.Ok replaced)
+        (and
+          (string.contains (& replaced) (& new-body))
+          (not (string.contains (& replaced) (& old-match))))]
+      [(LspEditResult.Err _) false])))
+
+(define (lsp-list-nested-forms-smoke-ok?) : bool
+  (let
+    [text : String (lsp-nested-path-test-text)]
+    [end : i64 (lsp-skip-paren-group text 0 (string.string-length text))]
+    [rendered : String
+      (json.stringify (lsp-list-nested-result-json text 0 end 4))]
+    [success-needle : String "\"success\":true"]
+    [let-needle : String "\"name\":\"let\""]
+    [match-needle : String "\"name\":\"match\""]
+    [ok-needle : String "\"name\":\"Ok\""]
+    (and
+      (string.contains (& rendered) (& success-needle))
+      (string.contains (& rendered) (& let-needle))
+      (string.contains (& rendered) (& match-needle))
+      (string.contains (& rendered) (& ok-needle)))))
+
 (test
   lsp-replace-form-at-position-smoke
   (unless
@@ -7245,3 +7863,27 @@
   (unless
     (lsp-replace-pattern-by-name-smoke-ok?)
     (io.panic "lsp-replace-pattern-by-name-smoke failed")))
+
+(test
+  lsp-find-path-nested-smoke
+  (unless
+    (lsp-find-path-nested-smoke-ok?)
+    (io.panic "lsp-find-path-nested-smoke failed")))
+
+(test
+  lsp-replace-form-by-path-smoke
+  (unless
+    (lsp-replace-form-by-path-smoke-ok?)
+    (io.panic "lsp-replace-form-by-path-smoke failed")))
+
+(test
+  lsp-replace-body-by-path-smoke
+  (unless
+    (lsp-replace-body-by-path-smoke-ok?)
+    (io.panic "lsp-replace-body-by-path-smoke failed")))
+
+(test
+  lsp-list-nested-forms-smoke
+  (unless
+    (lsp-list-nested-forms-smoke-ok?)
+    (io.panic "lsp-list-nested-forms-smoke failed")))

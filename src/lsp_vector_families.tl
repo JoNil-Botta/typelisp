@@ -72,13 +72,19 @@
           (array-set! (struct-get decls slots) index value)
           (set! (struct-get decls len) (+ index 1)))))))
 
+(defenum LspCheckCache
+  (LspCheckCacheInvalid)
+  (LspCheckCacheOk)
+  (LspCheckCacheErr String))
+
 (defstruct LspDocument
   (uri String)
   (path String)
   (text String)
   (diagnostic-uri String)
   (decls LspDeclList)
-  (decls-valid bool))
+  (decls-valid bool)
+  (check-cache LspCheckCache))
 
 (import (vector LspDocument) as lsp_document_vec)
 

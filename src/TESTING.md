@@ -365,38 +365,11 @@ assembly, and the host-action gates (public `build`/`run`/package behavior,
 chooser smoke, `doc`, `test`, fmt/lint, REPL/LSP public tools) run the same
 stage2 binary directly on both Linux and Windows.
 
-### Staged backend primitives (#1114)
+### Runtime-gap markers
 
 The gate runs every check with a freshly bootstrapped stage2 compiler, so
-source-only selfhost changes should not need a staging marker just because the
-published `stage0-latest` artifact lags `main`.
-`requires-stage0-symbol` covers the narrower case of a backend/runtime
-primitive that the *published* stage0 (the seed/Windows-driving compiler) cannot
-emit yet, even though the in-tree `src/compiler_backend.tl` source already
-implements it. The marker lets such a row land before the next stage0 republish
-catches up.
-
-Mark a test that exercises such a staged symbol so the gate skips it
-only when the build failure mentions that symbol:
-
-- `scripts/verify-stdlib.sh`: add a sixth manifest field
-  `requires-stage0-symbol:<name>` to the runnable test row, e.g.
-  `stdlib/tests/foo_api.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
-- `scripts/verify-inline-tests.sh`: add a directive comment near the top of the
-  inline-test file: `;; requires-stage0-symbol: tl_foo`.
-- `scripts/verify-doc-tests.sh`: add the same directive comment near the top of
-  a documented `.tl` file whose doctests import a staged primitive.
-- `scripts/verify-integration.sh`: add an optional seventh manifest field to
-  the native integration row, e.g.
-  `foo_runtime|tests/integration/foo_runtime.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
-  Use a comma-separated marker when one row may fail on any of several staged
-  symbols.
-
-A marked test is skipped **only** when its build fails and `<name>` appears in
-the build/typecheck output (the undefined-symbol signal); any other build
-failure still fails the gate, and unmarked tests are unaffected. Once the
-published stage0 provides the symbol, the marked test builds and runs
-normally (with a "drop the marker" notice from the manifest-based verifiers).
+source-only selfhost changes always run: there is no "skip until the published
+stage0 catches up" mechanism, and a test that fails to build fails the gate.
 
 For a stdlib runnable fixture with a narrowed runtime-only blocker, use
 `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` as the sixth
@@ -405,13 +378,6 @@ For a stdlib runnable fixture with a narrowed runtime-only blocker, use
 builds, exits with the wrong status, and stderr contains the tracked substring.
 If the row starts passing on that host, the verifier reports that the marker
 should be removed.
-
-Workflow: introduce the primitive in `src/compiler_backend.tl` plus the
-marked stdlib, inline, or native integration coverage in one PR when the
-published stage0 cannot emit the primitive yet, then drop the
-`requires-stage0-symbol` marker once a stage0 republish carries it. For
-Windows-only staging, drop the marker after the published Windows stage0 path can
-build the marked row normally.
 
 For new selfhost tests:
 

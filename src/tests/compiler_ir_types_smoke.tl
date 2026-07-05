@@ -12,6 +12,35 @@
     [(CompilerIrFunctionList.Nil) false]
     [(CompilerIrFunctionList.Array _) false]))
 
+(define (compiler-ir-smoke-function-list-name-at?
+  [functions : CompilerIrFunctionList]
+  [index : i64]
+  [want : String]) : bool
+  (match (compiler-ir-function-list-force-cons functions)
+    [(CompilerIrFunctionList.Cons func rest)
+      (if (= index 0)
+        (match func
+          [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])
+        (compiler-ir-smoke-function-list-name-at?
+          (box-get rest)
+          (- index 1)
+          want))]
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Array _) false]))
+
+(define (compiler-ir-smoke-block-list-label-at?
+  [blocks : CompilerIrBlockList]
+  [index : i64]
+  [want : String]) : bool
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(CompilerIrBlockList.Cons block rest)
+      (if (= index 0)
+        (match block
+          [(CompilerIrBlock.Block label _) (string.eq label want)])
+        (compiler-ir-smoke-block-list-label-at? (box-get rest) (- index 1) want))]
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Array _) false]))
+
 (define (compiler-ir-smoke-function-list-compact-kind?
   [functions : CompilerIrFunctionList]) : bool
   (match functions
@@ -71,6 +100,84 @@
       (= (compiler-ir-summary-blocks summary) 2)
       (= (compiler-ir-summary-instructions summary) 4))))
 
+(define (compiler-ir-smoke-reversed-compaction-ok?) : bool
+  (let
+    [first-block : CompilerIrBlock
+      (compiler-ir-block "first" CompilerIrInstrList.Nil)]
+    [second-block : CompilerIrBlock
+      (compiler-ir-block "second" CompilerIrInstrList.Nil)]
+    [third-block : CompilerIrBlock
+      (compiler-ir-block "third" CompilerIrInstrList.Nil)]
+    [reversed-blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        third-block
+        (compiler-ir-block-cons
+          second-block
+          (compiler-ir-block-cons first-block CompilerIrBlockList.Nil)))]
+    [compact-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-compact-reversed reversed-blocks)]
+    [array-reversed-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-compact-reversed compact-blocks)]
+    [first-func : CompilerIrFunction
+      (CompilerIrFunction.Function
+        "first-func"
+        CompilerIrParamList.Nil
+        (AstType.Unit)
+        0
+        compact-blocks)]
+    [second-func : CompilerIrFunction
+      (CompilerIrFunction.Function
+        "second-func"
+        CompilerIrParamList.Nil
+        (AstType.Unit)
+        0
+        compact-blocks)]
+    [third-func : CompilerIrFunction
+      (CompilerIrFunction.Function
+        "third-func"
+        CompilerIrParamList.Nil
+        (AstType.Unit)
+        0
+        compact-blocks)]
+    [reversed-functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        third-func
+        (compiler-ir-function-cons
+          second-func
+          (compiler-ir-function-cons first-func CompilerIrFunctionList.Nil)))]
+    [compact-functions : CompilerIrFunctionList
+      (compiler-ir-function-list-compact-reversed reversed-functions)]
+    [array-reversed-functions : CompilerIrFunctionList
+      (compiler-ir-function-list-compact-reversed compact-functions)]
+    (and
+      (= (compiler-ir-block-list-count compact-blocks) 3)
+      (compiler-ir-smoke-block-list-label-at? compact-blocks 0 "first")
+      (compiler-ir-smoke-block-list-label-at? compact-blocks 1 "second")
+      (compiler-ir-smoke-block-list-label-at? compact-blocks 2 "third")
+      (compiler-ir-smoke-block-list-label-at? array-reversed-blocks 0 "third")
+      (compiler-ir-smoke-block-list-label-at? array-reversed-blocks 2 "first")
+      (= (compiler-ir-function-list-count compact-functions) 3)
+      (compiler-ir-smoke-function-list-name-at?
+        compact-functions
+        0
+        "first-func")
+      (compiler-ir-smoke-function-list-name-at?
+        compact-functions
+        1
+        "second-func")
+      (compiler-ir-smoke-function-list-name-at?
+        compact-functions
+        2
+        "third-func")
+      (compiler-ir-smoke-function-list-name-at?
+        array-reversed-functions
+        0
+        "third-func")
+      (compiler-ir-smoke-function-list-name-at?
+        array-reversed-functions
+        2
+        "first-func"))))
+
 (define (compiler-ir-smoke-spmd-call-shape-ok?) : bool
   (let
     [args : CompilerIrSpmdCallArgList
@@ -122,5 +229,6 @@
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
-    (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 2))
+    (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
+    (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
     (compiler-ir-effect-self-test)))

@@ -561,12 +561,46 @@
             (array-set! slots (+ index i) (array-ref (struct-get seq slots) i))
             (set! i (+ i 1)))))]))
 
+(define (compiler-ir-block-list-fill-array-reversed
+  [blocks : CompilerIrBlockList]
+  [slots : (Array CompilerIrBlock)]
+  [index : i64]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (array-set! slots index block)
+        (compiler-ir-block-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        [write : i64 index]
+        [src : (Array CompilerIrBlock) (struct-get seq slots)]
+        (while (< i n)
+          (begin
+            (array-set! slots write (array-ref src i))
+            (set! write (- write 1))
+            (set! i (+ i 1)))))]))
+
 (define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
     [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array blocks slots 0)
+      (CompilerIrBlockSeq slots count))))
+
+(define (compiler-ir-block-seq-from-reversed-list
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
+  (let
+    [count : i64 (compiler-ir-block-list-count-cons blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    (begin
+      (compiler-ir-block-list-fill-array-reversed blocks slots (- count 1))
       (CompilerIrBlockSeq slots count))))
 
 (define (compiler-ir-block-seq-to-list-rev
@@ -605,6 +639,9 @@
   (match blocks
     [(CompilerIrBlockList.Array _) blocks]
     [_ (CompilerIrBlockList.Array (compiler-ir-block-seq-from-list blocks))]))
+
+(define (compiler-ir-block-list-compact-reversed [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (CompilerIrBlockList.Array (compiler-ir-block-seq-from-reversed-list blocks)))
 
 (define (compiler-ir-function-block-list [func : CompilerIrFunction]) : CompilerIrBlockList
   (match func
@@ -659,6 +696,31 @@
             (array-set! slots (+ index i) (array-ref src i))
             (set! i (+ i 1)))))]))
 
+(define (compiler-ir-function-list-fill-array-reversed
+  [functions : CompilerIrFunctionList]
+  [slots : (Array CompilerIrFunction)]
+  [index : i64]) : unit
+  (match functions
+    [(CompilerIrFunctionList.Nil) unit]
+    [(CompilerIrFunctionList.Cons func rest)
+      (begin
+        (array-set! slots index func)
+        (compiler-ir-function-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrFunctionList.Array seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        [write : i64 index]
+        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        (while (< i n)
+          (begin
+            (array-set! slots write (array-ref src i))
+            (set! write (- write 1))
+            (set! i (+ i 1)))))]))
+
 (define (compiler-ir-function-seq-from-list
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
   (let
@@ -667,6 +729,19 @@
       (array.make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-list-fill-array functions slots 0)
+      (CompilerIrFunctionSeq slots count))))
+
+(define (compiler-ir-function-seq-from-reversed-list
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
+  (let
+    [count : i64 (compiler-ir-function-list-count-cons functions)]
+    [slots : (Array CompilerIrFunction)
+      (array.make-array CompilerIrFunction count)]
+    (begin
+      (compiler-ir-function-list-fill-array-reversed
+        functions
+        slots
+        (- count 1))
       (CompilerIrFunctionSeq slots count))))
 
 (define (compiler-ir-function-seq-to-list-rev
@@ -711,6 +786,11 @@
     [_
       (CompilerIrFunctionList.Array
         (compiler-ir-function-seq-from-list functions))]))
+
+(define (compiler-ir-function-list-compact-reversed
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (CompilerIrFunctionList.Array
+    (compiler-ir-function-seq-from-reversed-list functions)))
 
 (define (compiler-ir-global-cons
   [global : CompilerIrGlobal]

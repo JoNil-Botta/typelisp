@@ -116,6 +116,18 @@
   (persistent TcTypeEnv)
   (stack-mark TcTypeEnvScopedMark))
 
+(defstruct TcTypeEnvScopedCarrier
+  (env TcTypeEnv)
+  (sidecar TcTypeEnvScopedSidecar))
+
+(defstruct TcTypeEnvScopedCarrierMark
+  (env TcTypeEnv)
+  (sidecar-mark TcTypeEnvScopedSidecarMark))
+
+(defstruct TcTypeEnvScopedCarrierSave
+  (carrier TcTypeEnvScopedCarrier)
+  (mark TcTypeEnvScopedCarrierMark))
+
 (defenum TcTypeEnvScopedLookup
   (Missing)
   (Found AstType bool bool TcTypeEnvScopedMarkerKind i64 i64))
@@ -3409,8 +3421,11 @@
     marker-kind
     (- (tc-type-env-scoped-stack-len stack) 1)))
 
+(define (tc-type-env-scoped-sidecar-from-env [env : TcTypeEnv]) : TcTypeEnvScopedSidecar
+  (TcTypeEnvScopedSidecar env (tc-type-env-scoped-stack-new)))
+
 (define (tc-type-env-scoped-sidecar-new) : TcTypeEnvScopedSidecar
-  (TcTypeEnvScopedSidecar (tc-empty-env) (tc-type-env-scoped-stack-new)))
+  (tc-type-env-scoped-sidecar-from-env (tc-empty-env)))
 
 (define (tc-type-env-scoped-sidecar-persistent
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
@@ -3454,6 +3469,118 @@
         (struct-get next persistent)
         (tc-bind-id (struct-get next persistent) name-id ty))
       next)))
+
+(define (tc-type-env-scoped-sidecar-bind
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name : String]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-id sidecar (tc-name-id name) ty))
+
+(define (tc-type-env-scoped-sidecar-bind-marker-id
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name-id : i64]
+  [ty : AstType]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedSidecar
+  (let
+    [next : TcTypeEnvScopedSidecar sidecar]
+    (begin
+      (tc-type-env-scoped-stack-bind-marker-id!
+        (&mut (struct-get next stack))
+        name-id
+        ty
+        marker-kind)
+      (set!
+        (struct-get next persistent)
+        (tc-bind-id (struct-get next persistent) name-id ty))
+      next)))
+
+(define (tc-type-env-scoped-sidecar-bind-marker
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name : String]
+  [ty : AstType]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-name-id name)
+    ty
+    marker-kind))
+
+(define (tc-type-env-scoped-sidecar-enter-unsafe
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-unsafe-marker-id)
+    (AstType.Unit)
+    TcTypeEnvScopedMarkerKind.UnsafeContext))
+
+(define (tc-type-env-scoped-sidecar-bind-return-type
+  [sidecar : TcTypeEnvScopedSidecar]
+  [ty : AstType]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-return-type-id)
+    ty
+    TcTypeEnvScopedMarkerKind.Other))
+
+(define (tc-type-env-scoped-sidecar-enter-loop-target
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-loop-target-id)
+    (AstType.Unit)
+    TcTypeEnvScopedMarkerKind.Other))
+
+(define (tc-type-env-scoped-sidecar-clear-loop-target
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-loop-target-id)
+    (AstType.Never)
+    TcTypeEnvScopedMarkerKind.Other))
+
+(define (tc-type-env-scoped-sidecar-bind-default-boundary
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-default-boundary-id)
+    (AstType.Unit)
+    TcTypeEnvScopedMarkerKind.DefaultBoundary))
+
+(define (tc-type-env-scoped-sidecar-push-region
+  [sidecar : TcTypeEnvScopedSidecar]
+  [region : String]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-region-marker-id)
+    (AstType.Var (intern region))
+    TcTypeEnvScopedMarkerKind.Region))
+
+(define (tc-type-env-scoped-sidecar-bind-cleanup-owner
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name : String]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-cleanup-owner-marker-id)
+    (AstType.Var (intern name))
+    TcTypeEnvScopedMarkerKind.CleanupOwner))
+
+(define (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name : String]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-ordinary-arena-owner-marker-id)
+    (AstType.Var (intern name))
+    TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner))
+
+(define (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
+  [sidecar : TcTypeEnvScopedSidecar]
+  [name : String]) : TcTypeEnvScopedSidecar
+  (tc-type-env-scoped-sidecar-bind-marker-id
+    sidecar
+    (tc-atomic-arena-owner-marker-id)
+    (AstType.Var (intern name))
+    TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-id
   [sidecar : TcTypeEnvScopedSidecar]
@@ -3527,6 +3654,207 @@
         (struct-get next persistent)
         (tc-bind-unsafe-c-abi-fnptr-id (struct-get next persistent) name-id ty))
       next)))
+
+(define (tc-type-env-scoped-carrier-from-env [env : TcTypeEnv]) : TcTypeEnvScopedCarrier
+  (TcTypeEnvScopedCarrier env (tc-type-env-scoped-sidecar-from-env env)))
+
+(define (tc-type-env-scoped-carrier-new) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-from-env (tc-empty-env)))
+
+(define (tc-type-env-scoped-carrier-env [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnv
+  (struct-get carrier env))
+
+(define (tc-type-env-scoped-carrier-sidecar [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedSidecar
+  (struct-get carrier sidecar))
+
+(define (tc-type-env-scoped-carrier-with-sidecar
+  [_carrier : TcTypeEnvScopedCarrier]
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
+  (TcTypeEnvScopedCarrier
+    (tc-type-env-scoped-sidecar-persistent sidecar)
+    sidecar))
+
+(define (tc-type-env-scoped-carrier-save [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
+  (let
+    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    [stack-mark : TcTypeEnvScopedMark
+      (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
+    (TcTypeEnvScopedCarrierSave
+      (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar)
+      (TcTypeEnvScopedCarrierMark
+        (struct-get carrier env)
+        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)))))
+
+(define (tc-type-env-scoped-carrier-restore
+  [carrier : TcTypeEnvScopedCarrier]
+  [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
+  (let
+    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    (begin
+      (tc-type-env-scoped-sidecar-restore!
+        (&mut sidecar)
+        (struct-get mark sidecar-mark))
+      (TcTypeEnvScopedCarrier (struct-get mark env) sidecar))))
+
+(define (tc-type-env-scoped-carrier-bind-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-id (struct-get carrier sidecar) name-id ty)))
+
+(define (tc-type-env-scoped-carrier-bind
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-bind-id carrier (tc-name-id name) ty))
+
+(define (tc-type-env-scoped-carrier-bind-marker-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-marker-id
+      (struct-get carrier sidecar)
+      name-id
+      ty
+      marker-kind)))
+
+(define (tc-type-env-scoped-carrier-enter-unsafe
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-enter-unsafe (struct-get carrier sidecar))))
+
+(define (tc-type-env-scoped-carrier-bind-return-type
+  [carrier : TcTypeEnvScopedCarrier]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-return-type
+      (struct-get carrier sidecar)
+      ty)))
+
+(define (tc-type-env-scoped-carrier-enter-loop-target
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-enter-loop-target (struct-get carrier sidecar))))
+
+(define (tc-type-env-scoped-carrier-clear-loop-target
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-clear-loop-target (struct-get carrier sidecar))))
+
+(define (tc-type-env-scoped-carrier-bind-default-boundary
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-default-boundary
+      (struct-get carrier sidecar))))
+
+(define (tc-type-env-scoped-carrier-push-region
+  [carrier : TcTypeEnvScopedCarrier]
+  [region : String]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-push-region (struct-get carrier sidecar) region)))
+
+(define (tc-type-env-scoped-carrier-bind-cleanup-owner
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-cleanup-owner
+      (struct-get carrier sidecar)
+      name)))
+
+(define (tc-type-env-scoped-carrier-bind-ordinary-arena-owner
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
+      (struct-get carrier sidecar)
+      name)))
+
+(define (tc-type-env-scoped-carrier-bind-atomic-arena-owner
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
+      (struct-get carrier sidecar)
+      name)))
+
+(define (tc-type-env-scoped-carrier-bind-unsafe-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-unsafe-id
+      (struct-get carrier sidecar)
+      name-id
+      ty)))
+
+(define (tc-type-env-scoped-carrier-bind-c-abi-fnptr-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-c-abi-fnptr-id
+      (struct-get carrier sidecar)
+      name-id
+      ty)))
+
+(define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-with-sidecar
+    carrier
+    (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+      (struct-get carrier sidecar)
+      name-id
+      ty)))
+
+(define (tc-type-env-scoped-carrier-marker-type
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : AstMaybeType
+  (match (tc-type-env-scoped-sidecar-lookup-id
+    (struct-get carrier sidecar)
+    name-id)
+    [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (AstMaybeType.Some ty)]
+    [(TcTypeEnvScopedLookup.Missing)
+      (tc-env-marker-type (struct-get carrier env) name-id)]))
+
+(define (tc-type-env-scoped-carrier-in-unsafe?
+  [carrier : TcTypeEnvScopedCarrier]) : bool
+  (match (tc-type-env-scoped-carrier-marker-type carrier (tc-unsafe-marker-id))
+    [(AstMaybeType.Some _) true]
+    [(AstMaybeType.No) false]))
+
+(define (tc-type-env-scoped-carrier-current-return-type
+  [carrier : TcTypeEnvScopedCarrier]) : ResultTcType
+  (match (tc-type-env-scoped-carrier-marker-type carrier (tc-return-type-id))
+    [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
+    [(AstMaybeType.No)
+      (ResultTcType.Err
+        "typecheck: try requires enclosing Result-like function")]))
+
+(define (tc-type-env-scoped-carrier-active-region
+  [carrier : TcTypeEnvScopedCarrier]) : TcMaybeString
+  (match (tc-type-env-scoped-carrier-marker-type carrier (tc-region-marker-id))
+    [(AstMaybeType.Some (AstType.Var region))
+      (TcMaybeString.Some (intern-str region))]
+    [(AstMaybeType.Some _) (tc-active-region (struct-get carrier env))]
+    [(AstMaybeType.No) (TcMaybeString.No)]))
 
 (define (tc-c-abi-fnptr-marker-near-id?
   [env : TcTypeEnv]
@@ -13869,10 +14197,209 @@
                   [(ResultTcType.Err _) true]
                   [_ false])))))))))
 
+(define (tc-type-env-scoped-carrier-bind-many
+  [carrier : TcTypeEnvScopedCarrier]
+  [count : i64]) : TcTypeEnvScopedCarrier
+  (let
+    [i : i64 0]
+    [out : TcTypeEnvScopedCarrier carrier]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (tc-type-env-scoped-carrier-bind
+              out
+              (string.append "carrier-local" (string.int->string i))
+              (AstType.I64)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (tc-type-env-scoped-carrier-region-matches-env?
+  [carrier : TcTypeEnvScopedCarrier]) : bool
+  (match (tc-type-env-scoped-carrier-active-region carrier)
+    [(TcMaybeString.Some sidecar-region)
+      (match (tc-active-region (tc-type-env-scoped-carrier-env carrier))
+        [(TcMaybeString.Some env-region) (string.eq sidecar-region env-region)]
+        [_ false])]
+    [(TcMaybeString.No)
+      (match (tc-active-region (tc-type-env-scoped-carrier-env carrier))
+        [(TcMaybeString.No) true]
+        [_ false])]))
+
+(define (tc-type-env-scoped-carrier-return-matches-env?
+  [carrier : TcTypeEnvScopedCarrier]) : bool
+  (match (tc-type-env-scoped-carrier-current-return-type carrier)
+    [(ResultTcType.Ok carrier-ty)
+      (match (tc-current-return-type (tc-type-env-scoped-carrier-env carrier))
+        [(ResultTcType.Ok env-ty) (tc-type-eq carrier-ty env-ty)]
+        [_ false])]
+    [(ResultTcType.Err _)
+      (match (tc-current-return-type (tc-type-env-scoped-carrier-env carrier))
+        [(ResultTcType.Err _) true]
+        [_ false])]))
+
+(define (tc-type-env-scoped-carrier-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache (tc-push-region (tc-empty-env) "cached-base"))]
+    [carrier : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-from-env base)]
+    [fn-id : i64 (tc-name-id "carrier-callback")]
+    [callback-ty : AstType (tc-fn0 (AstType.I64))]
+    (begin
+      (set! carrier (tc-type-env-scoped-carrier-bind-default-boundary carrier))
+      (set! carrier (tc-type-env-scoped-carrier-push-region carrier "outer"))
+      (set! carrier (tc-type-env-scoped-carrier-enter-unsafe carrier))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-return-type carrier (AstType.I64)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-cleanup-owner carrier "resource"))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind carrier "resource" (AstType.String)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-ordinary-arena-owner carrier "arena"))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind carrier "arena" (AstType.I64)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-atomic-arena-owner carrier "atomic"))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind carrier "atomic" (AstType.I64)))
+      (let
+        [outer-save : TcTypeEnvScopedCarrierSave
+          (tc-type-env-scoped-carrier-save carrier)]
+        [outer-mark : TcTypeEnvScopedCarrierMark (struct-get outer-save mark)]
+        (begin
+          (set! carrier (struct-get outer-save carrier))
+          (set!
+            carrier
+            (tc-type-env-scoped-carrier-push-region carrier "inner"))
+          (set!
+            carrier
+            (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+              carrier
+              fn-id
+              callback-ty))
+          (let
+            [deep : TcTypeEnvScopedCarrier
+              (tc-type-env-scoped-carrier-bind-many
+                carrier
+                (+ (* (tc-local-cache-threshold) 2) 8))]
+            [before-restore : bool
+              (and
+                (tc-type-env-scoped-carrier-region-matches-env? deep)
+                (tc-type-env-scoped-carrier-return-matches-env? deep)
+                (tc-type-env-scoped-carrier-in-unsafe? deep)
+                (tc-in-unsafe? (tc-type-env-scoped-carrier-env deep))
+                (match (tc-type-env-scoped-carrier-active-region deep)
+                  [(TcMaybeString.Some region) (string.eq region "inner")]
+                  [_ false])
+                (tc-cleanup-owner-active?
+                  (tc-type-env-scoped-carrier-env deep)
+                  "resource")
+                (tc-ordinary-arena-owner-active?
+                  (tc-type-env-scoped-carrier-env deep)
+                  "arena")
+                (tc-atomic-arena-owner-active?
+                  (tc-type-env-scoped-carrier-env deep)
+                  "atomic")
+                (tc-binding-unsafe-id?
+                  (tc-type-env-scoped-carrier-env deep)
+                  fn-id)
+                (tc-binding-c-abi-fnptr-id?
+                  (tc-type-env-scoped-carrier-env deep)
+                  fn-id)
+                (match (tc-type-env-scoped-sidecar-lookup-id
+                  (tc-type-env-scoped-carrier-sidecar deep)
+                  fn-id)
+                  [(TcTypeEnvScopedLookup.Found
+                      (AstType.Func _ _)
+                      unsafe
+                      c-abi-fnptr
+                      _
+                      _
+                      _)
+                    (and unsafe c-abi-fnptr)]
+                  [_ false])
+                (match (tc-type-env-scoped-stack-marker-lookup
+                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  TcTypeEnvScopedMarkerKind.DefaultBoundary)
+                  [(TcTypeEnvScopedMarkerLookup.Found
+                      marker-id
+                      (AstType.Unit)
+                      _
+                      _)
+                    (= marker-id (tc-default-boundary-id))]
+                  [_ false])
+                (match (tc-type-env-scoped-stack-marker-lookup
+                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  TcTypeEnvScopedMarkerKind.CleanupOwner)
+                  [(TcTypeEnvScopedMarkerLookup.Found
+                      marker-id
+                      (AstType.Var owner)
+                      _
+                      _)
+                    (and
+                      (= marker-id (tc-cleanup-owner-marker-id))
+                      (string.eq (intern-str owner) "resource"))]
+                  [_ false])
+                (match (tc-type-env-scoped-stack-marker-lookup
+                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner)
+                  [(TcTypeEnvScopedMarkerLookup.Found
+                      marker-id
+                      (AstType.Var owner)
+                      _
+                      _)
+                    (and
+                      (= marker-id (tc-ordinary-arena-owner-marker-id))
+                      (string.eq (intern-str owner) "arena"))]
+                  [_ false])
+                (match (tc-type-env-scoped-stack-marker-lookup
+                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  TcTypeEnvScopedMarkerKind.AtomicArenaOwner)
+                  [(TcTypeEnvScopedMarkerLookup.Found
+                      marker-id
+                      (AstType.Var owner)
+                      _
+                      _)
+                    (and
+                      (= marker-id (tc-atomic-arena-owner-marker-id))
+                      (string.eq (intern-str owner) "atomic"))]
+                  [_ false]))]
+            (begin
+              (set!
+                carrier
+                (tc-type-env-scoped-carrier-restore carrier outer-mark))
+              (and
+                before-restore
+                (tc-type-env-scoped-carrier-region-matches-env? carrier)
+                (tc-type-env-scoped-carrier-return-matches-env? carrier)
+                (match (tc-type-env-scoped-carrier-active-region carrier)
+                  [(TcMaybeString.Some region) (string.eq region "outer")]
+                  [_ false])
+                (match (tc-type-env-scoped-sidecar-lookup-id
+                  (tc-type-env-scoped-carrier-sidecar carrier)
+                  fn-id)
+                  [(TcTypeEnvScopedLookup.Missing) true]
+                  [_ false])
+                (not
+                  (tc-binding-c-abi-fnptr-id?
+                    (tc-type-env-scoped-carrier-env carrier)
+                    fn-id))))))))))
+
 (define (tc-type-env-scoped-stack-smoke?) : bool
   (and
     (tc-type-env-scoped-stack-grow-smoke?)
-    (tc-type-env-scoped-sidecar-smoke?)))
+    (tc-type-env-scoped-sidecar-smoke?)
+    (tc-type-env-scoped-carrier-smoke?)))
 
 (test
   tc-type-env-scoped-stack
@@ -57743,10 +58270,12 @@
   [body-box : i64]) : ResultTcUnit
   (let
     [body : AstExpr (ast-node-get body-box)]
-    [env : TcTypeEnv
-      (tc-bind-return-type
-        (tc-bind-params ctx global-env params)
+    [carrier : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-bind-return-type
+        (tc-type-env-scoped-carrier-from-env
+          (tc-bind-params ctx global-env params))
         (tc-resolve-type ctx ret))]
+    [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     (begin
       (tc-body-type-facts-start-recording!)
       (match (tc-expr-with-expected-or-actual-id

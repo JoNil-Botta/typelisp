@@ -1,7 +1,7 @@
 ;; module_macro_generated_vector_import.tl - generated module bodies can import
 ;; generated vector modules through an inner module-macro import.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defstruct Pair
   (value i64))
@@ -32,18 +32,21 @@
 
 (test
   generated-module-body-imports-vector-module-macro
-  (assert-i64-eq (user.score 7 0) 42 "generated module imported vector macro"))
+  (test.assert-i64-eq
+    (user.score 7 0)
+    42
+    "generated module imported vector macro"))
 
 (test
   generated-module-body-imports-string-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (string-user.score "alpha" "fallback")
     42
     "generated module imported string vector macro"))
 
 (test
   generated-module-body-imports-struct-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated module imported struct vector macro"))

@@ -1,4 +1,3 @@
-(import "stdlib/io.tl")
 (import stdlib.array)
 
 ;; FORCING TEST for GAP6a: fold a register-homed comparand into the fused

@@ -1,7 +1,9 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
+; Retained for #2454 path-import compatibility: the integration manifest copies
+; these src modules into local dependency names before compiling this fixture.
 (import "sym_i64_env_core.tl")
 (import "compiler_intern.tl")
 (import stdlib.option)
@@ -10,12 +12,12 @@
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit
   (begin
     (if (= got want)
-      (print-string "PASS: ")
+      (io.print-string "PASS: ")
       (begin
-        (print-string "FAIL: ")
-        (panic msg)))
-    (print-string msg)
-    (print-string "\n")))
+        (io.print-string "FAIL: ")
+        (io.panic msg)))
+    (io.print-string msg)
+    (io.print-string "\n")))
 
 (define (check-true [got : bool] [msg : String]) : unit
   (check-equal
@@ -91,12 +93,12 @@
     ; Substring-built key lookup
     (let
       [e : SymI64Env (sym-i64-bind (sym-i64-empty) "hello" 99)]
-      [key : String (substring "hello world" 0 5)]
+      [key : String (string.substring "hello world" 0 5)]
       (check-true (sym-i64-contains e key) "substring-key-hit"))
     ; String-append-built key lookup
     (let
       [e : SymI64Env (sym-i64-bind (sym-i64-empty) "foobar" 77)]
-      [key : String (append "foo" "bar")]
+      [key : String (string.append "foo" "bar")]
       (check-true (sym-i64-contains e key) "append-key-hit"))
     ; Multi-bind chain
     (let
@@ -137,5 +139,5 @@
             [(option_i64.None) 0])
           88
           "id-key-value")))
-    (print-string "All sym-i64-env tests passed.\n")
+    (io.print-string "All sym-i64-env tests passed.\n")
     0))

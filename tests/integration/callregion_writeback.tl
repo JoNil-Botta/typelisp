@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; CORRECTNESS TEST for M-G2b's write-back path. w loses the CSR competition
 ;; (6 refs/iteration vs 7+ for acc/i/a/b/c) and its call-free region right
@@ -75,9 +75,9 @@
 
 (define (main) : i64
   (let
-    ;; w0 = 5 when run without args (arg-count = 1); (arg-count) blocks
+    ;; w0 = 5 when run without args (io.arg-count = 1); (io.arg-count) blocks
     ;; constant folding.
-    [w0 : i64 (+ 4 (arg-count))]
+    [w0 : i64 (+ 4 (io.arg-count))]
     [r : i64 (wb w0 1)]
     ;; per iteration t (0..59): a_t = 1+t, b_t = 2+t, c_t = 3+t;
     ;; w_{t+1} = w_t + t, w_0 = 5 -> w_t = 5 + t(t-1)/2;

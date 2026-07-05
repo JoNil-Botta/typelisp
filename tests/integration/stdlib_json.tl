@@ -1,7 +1,7 @@
 ;; stdlib_json.tl - Integration witness for canonical stdlib JSON support.
 (import stdlib.array)
 (import stdlib.json)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (json-test-name [doc : json.Json]) : bool
   (let
@@ -9,7 +9,7 @@
     (match (json.object-get doc (& key))
       [(json.JsonFound value)
         (match value
-          [(json.JsonString text) (eq text "tl")]
+          [(json.JsonString text) (string.eq text "tl")]
           [_ false])]
       [(json.JsonMissing) false])))
 
@@ -29,17 +29,17 @@
     (match (json.object-get doc (& key))
       [(json.JsonFound value)
         (match value
-          [(json.JsonString text) (eq text "a\nb")]
+          [(json.JsonString text) (string.eq text "a\nb")]
           [_ false])]
       [(json.JsonMissing) false])))
 
 (define (json-test-stringify [doc : json.Json]) : bool
-  (eq
+  (string.eq
     (json.stringify doc)
     "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"escaped\":\"a\\nb\"}"))
 
 (define (json-test-string-escapes) : bool
-  (eq (json.stringify (json.JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
+  (string.eq (json.stringify (json.JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
 
 (define (json-test-invalid) : bool
   (let
@@ -57,7 +57,7 @@
 
 (define (json-test-float-render) : bool
   (match (json.f64->number-text 0.125)
-    [(json.OkJsonNumberText text) (eq text "0.125")]
+    [(json.OkJsonNumberText text) (string.eq text "0.125")]
     [(json.ErrJsonNumberText _) false]))
 
 (define (json-test-i64-parse) : bool

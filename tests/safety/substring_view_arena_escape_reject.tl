@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (bad [seed : (& outer str)]) : (& outer str)
   (begin
@@ -6,8 +6,8 @@
     (with-arena
       phase
       (let
-        [text : String (int->string 42)]
-        (substring-view (& phase text) 0 1)))))
+        [text : String (string.int->string 42)]
+        (string.substring-view (& phase text) 0 1)))))
 
 (define (main) : i64
   (let

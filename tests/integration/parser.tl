@@ -42,7 +42,7 @@
 ;; parallel pair of generated `i64` vectors - a tag vector (the Token kind, via
 ;; `token-tag`) and a value vector (the integer payload of `Token.Int`, else 0) -
 ;; so the cursor is a plain `i64` index the helpers advance.
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
@@ -142,7 +142,7 @@
 (define (expect [tags : (& tags i64vec.Vec)] [cur : (Array i64 1)] [want : i64]) : unit
   (if (= (current-tag tags cur) want)
     (advance cur)
-    (panic "parser: unexpected token")))
+    (io.panic "parser: unexpected token")))
 
 ;; ---- Recursive descent. ----
 ;; Each parse routine reads the token stream through the shared `cur` cursor and
@@ -175,7 +175,7 @@
             (begin
               (expect tags cur (tag-rparen))
               inner)))
-        (panic "parser: expected an integer or '('")
+        (io.panic "parser: expected an integer or '('")
         ;; Compatibility-style dead code; builtin `panic` can now satisfy
         ;; the `Expr` result directly.
         ))))

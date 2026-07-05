@@ -1,7 +1,7 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (main) : i64
   (begin
-    (print 42)
-    (print-bool false)
+    (io.print 42)
+    (io.print-bool false)
     0))

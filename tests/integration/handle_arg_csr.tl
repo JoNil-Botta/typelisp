@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-A2: HANDLE args of direct calls become register-eligible.
 ;; `sum-args` passes its handle param `xs : (Array i64)` as an argument to a
@@ -33,7 +33,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [xs : (Array i64) (make-array i64 n)]
     [i : i64 0]
     (begin

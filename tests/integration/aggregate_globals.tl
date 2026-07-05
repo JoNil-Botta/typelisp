@@ -1,6 +1,7 @@
 ; refs #331: aggregate globals are initialized through hidden runtime
 ; initializer functions, whose returned pointers are stored before main.
-(import "stdlib/string.tl")
+;; lint-allow: unused-import
+(import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -45,14 +46,14 @@
     (clobber-pair-stack 24)
     (+
       (+
-        (+ (string-length greeting) (length cells))
+        (+ (string.string-length greeting) (length cells))
         (+ (struct-get pair x) (struct-get pair y)))
       (+
         (match choice
           [(option_i64.Some n) n]
           [(option_i64.None) 0])
         (+
-          (string-length (struct-get nested label))
+          (string.string-length (struct-get nested label))
           (match (struct-get nested choice)
             [(option_i64.Some n) n]
             [(option_i64.None) 0]))))))

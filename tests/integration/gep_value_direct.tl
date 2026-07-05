@@ -1,4 +1,3 @@
-(import "stdlib/io.tl")
 (import stdlib.string)
 
 ;; FORCING TEST for GAP6b: a variable-index GEP used AS A VALUE (an address

@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; MUST-INVALIDATE stress for GAP4 (alias-granular load CSE / store-to-load
@@ -40,14 +40,14 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 5)]
+    [n : i64 (+ (io.arg-count) 5)]
     [xs : (Array i64) (array.make-array i64 2)]
     [zs : (Array i64) (array.make-array i64 (+ n 1))]
     (begin
       (array-set! xs 0 10)
       (array-set! xs 1 20)
       (let
-        ;; n = 6 (arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
+        ;; n = 6 (io.arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
         ;; r1 = xs[0] + xs[1] = 16 + 20 = 36. A stale cached xs[0] gives 30.
         [r1 : i64 (alias-poke xs xs n)]
         ;; zs len 7, zero-init; reads i=0..6 see writes from earlier

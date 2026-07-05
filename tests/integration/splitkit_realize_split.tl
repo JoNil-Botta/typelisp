@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; SplitKit M3 FORCING TEST -- realized register-piece split (read-only sub-range).
 ;;
@@ -19,7 +19,7 @@
 ;;
 ;; SOUNDNESS GUARD: if the realization reloads the wrong slot, remaps the wrong
 ;; reads, or homes the value in a register a call clobbers, the sum is wrong ->
-;; exit 1. Inputs derive from (arg-count) so nothing constant-folds; `expected`
+;; exit 1. Inputs derive from (io.arg-count) so nothing constant-folds; `expected`
 ;; is a straight-line closed form.
 (define (clobber [x : i64]) : i64
   (if (<= x 0)
@@ -71,7 +71,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (split_hot n)]
     ;; n=1: a..h = 2..9, sum = 44. Per iteration: 3*44 + clobber(i) + 5*44
     ;; = 132 + (i+1) + 220 = 353 + i. Sum over i=0..3 = 353+354+355+356 = 1418.

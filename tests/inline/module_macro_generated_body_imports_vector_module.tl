@@ -1,6 +1,6 @@
 ;; module_macro_generated_body_imports_vector_module.tl - generated module
 ;; bodies can import stdlib.vector and then instantiate `(vector T)`.
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defmacro (vector-user) : Module
   `(begin
@@ -22,7 +22,7 @@
 
 (test
   generated-module-body-imports-vector-module
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score (user.make 42))
     42
     "generated module body imports vector module"))

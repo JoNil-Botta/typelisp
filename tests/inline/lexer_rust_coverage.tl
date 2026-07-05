@@ -1,13 +1,15 @@
-;; lexer_rust_coverage.tl â€” TypeLisp-owned coverage for src/lexer.rs inline
+;; lexer_rust_coverage.tl ???????? TypeLisp-owned coverage for src/lexer.rs inline
 ;; unit tests (refs #1071).
 ;;
 ;; This file exercises the remaining Rust test assertions that are not yet
 ;; mirrored by src/lex.tl self-tests, using the (test ...) inline harness
 ;; from #947 so the CI verification script picks them up automatically.
+;; Retained for #2454 path-import compatibility: this fixture intentionally uses
+;; flat names from compiler source imports to mirror the old Rust test surface.
 (import "../../src/lex.tl")
 (import "../../src/token.tl")
 (import stdlib.io)
-(import "../../stdlib/string.tl")
+(import stdlib.string)
 
 (define (lexer-assert-true [condition : bool] [message : String]) : unit
   (if condition
@@ -42,13 +44,13 @@
             (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 1)) "define")
+            (if (string.eq (token.sym (array-ref toks 1)) "define")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 2)) "x")
+            (if (string.eq (token.sym (array-ref toks 2)) "x")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 3)) (token.tag-int))
@@ -82,19 +84,19 @@
             (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 1)) "->")
+            (if (string.eq (token.sym (array-ref toks 1)) "->")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 2)) "i64")
+            (if (string.eq (token.sym (array-ref toks 2)) "i64")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 3)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 3)) "i64")
+            (if (string.eq (token.sym (array-ref toks 3)) "i64")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 4)) (token.tag-rparen))
@@ -121,8 +123,8 @@
               (=
                 (token.sym-id (array-ref toks 1))
                 (token.sym-id (array-ref toks 3))))
-            (eq (token.sym (array-ref toks 1)) "x")
-            (eq (token.sym (array-ref toks 3)) "y"))
+            (string.eq (token.sym (array-ref toks 1)) "x")
+            (string.eq (token.sym (array-ref toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
       [(ResultTokens.Err e) (lexer-assert-true false e)])))
 
@@ -194,7 +196,7 @@
           [haystack : String msg]
           [needle : String "unexpected character"]
           (lexer-assert-bool-eq
-            (contains (& haystack) (& needle))
+            (string.contains (& haystack) (& needle))
             true
             "legacy escaped char literal should be rejected"))])))
 
@@ -245,7 +247,7 @@
           [haystack : String msg]
           [needle : String "unknown character escape"]
           (lexer-assert-bool-eq
-            (contains (& haystack) (& needle))
+            (string.contains (& haystack) (& needle))
             true
             "apostrophe unknown escape should error"))])))
 
@@ -257,7 +259,7 @@
         (and
           (= (token.tag (array-ref toks 0)) (token.tag-quote))
           (= (token.tag (array-ref toks 1)) (token.tag-sym))
-          (eq (token.sym (array-ref toks 1)) "form")
+          (string.eq (token.sym (array-ref toks 1)) "form")
           (= (token.tag (array-ref toks 2)) (token.tag-end)))
         "apostrophe quote should still quote forms")]
     [(ResultTokens.Err msg) (lexer-assert-true false msg)]))
@@ -278,13 +280,13 @@
             (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 1)) "=")
+            (if (string.eq (token.sym (array-ref toks 1)) "=")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (eq (token.sym (array-ref toks 2)) "c")
+            (if (string.eq (token.sym (array-ref toks 2)) "c")
               unit
               (set! ok false))
             (if (= (token.tag (array-ref toks 3)) (token.tag-char))
@@ -411,7 +413,7 @@
           [haystack : String msg]
           [needle : String "unexpected character"]
           (lexer-assert-bool-eq
-            (contains (& haystack) (& needle))
+            (string.contains (& haystack) (& needle))
             true
             "legacy named char literal should be rejected"))])))
 

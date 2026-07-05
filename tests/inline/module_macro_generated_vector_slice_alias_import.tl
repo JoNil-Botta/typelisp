@@ -1,7 +1,7 @@
 ;; module_macro_generated_vector_slice_alias_import.tl - generated module bodies
 ;; can import generated slice modules through an alias while the slice body
 ;; imports the matching `(vector T)` module.
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.vector)
 (import stdlib.vector_slice as vs)
 
@@ -34,14 +34,14 @@
 
 (test
   generated-module-body-imports-vector-slice-alias-module-macro-i64
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score 7 0)
     42
     "generated body imports aliased slice module macro"))
 
 (test
   generated-module-body-imports-vector-slice-alias-module-macro-struct
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated body imports aliased slice module macro struct"))

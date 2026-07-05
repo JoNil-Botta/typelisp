@@ -1,4 +1,4 @@
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defstruct Wide
   (a i64)
@@ -55,14 +55,14 @@
 
 (test
   aggregate-sret-stack-args
-  (assert-i64-eq
+  (test.assert-i64-eq
     (wide-sum (make-wide-stack-sret 1 2 3 4 5 6))
     21
     "hidden sret pointer should survive spilled stack arguments"))
 
 (test
   aggregate-enum-sret-stack-args
-  (assert-i64-eq
+  (test.assert-i64-eq
     (status-score (make-status-stack-sret 1 2 3 4 5 6))
     30
     "aggregate enum sret should preserve nested struct payload"))
@@ -70,18 +70,18 @@
 (test
   aggregate-enum-match-direct-return
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (status-score (match-direct-status (Build 10)))
       41
       "direct aggregate enum return from match arm should be safe")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (status-score (match-direct-status Fallback))
       99
       "fallback aggregate enum match arm should be safe")))
 
 (test
   aggregate-local-adjacent-scalars
-  (assert-i64-eq
+  (test.assert-i64-eq
     (adjacent-aggregate-local-score 10)
     48
     "aggregate enum local should not overwrite adjacent scalar locals"))

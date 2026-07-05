@@ -1,4 +1,4 @@
-(import "stdlib/vector.tl")
+(import stdlib.vector)
 (import (vector String) as sv)
 
 (define (main) : i64

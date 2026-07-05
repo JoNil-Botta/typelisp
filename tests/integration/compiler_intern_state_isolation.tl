@@ -1,6 +1,6 @@
-(import "compiler_intern_state.tl")
+(import compiler_intern_state)
 
 (define (main) : i64
-  (if (intern-state-isolation-tests-ok?)
+  (if (compiler_intern_state.intern-state-isolation-tests-ok?)
     42
     1))

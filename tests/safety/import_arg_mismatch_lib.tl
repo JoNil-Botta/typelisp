@@ -1,3 +1,5 @@
+(module import_arg_mismatch_lib)
+
 (define (takes-i64 [x : i64]) : i64
   x)
 

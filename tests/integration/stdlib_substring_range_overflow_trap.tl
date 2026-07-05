@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length (substring "abcdef" 1 9223372036854775807)))
+  (string-length (string.substring "abcdef" 1 9223372036854775807)))

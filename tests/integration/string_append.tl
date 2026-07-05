@@ -3,23 +3,23 @@
 ;; `(string-concat a b)` : (-> String String String) allocates a fresh heap
 ;; String holding `a`'s bytes followed by `b`'s bytes. This covers empty,
 ;; left-empty, right-empty, short, and long concatenations and exits 0.
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (main) : i64
   (begin
-    (print-string "[")
-    (print-string (append "" ""))
-    (print-string "]\n")
-    (print-string (append "" "right"))
-    (print-string "\n")
-    (print-string (append "left" ""))
-    (print-string "\n")
-    (print-string (append "foo" "bar"))
-    (print-string "\n")
-    (print-string
-      (concat
+    (io.print-string "[")
+    (io.print-string (string.append "" ""))
+    (io.print-string "]\n")
+    (io.print-string (string.append "" "right"))
+    (io.print-string "\n")
+    (io.print-string (string.append "left" ""))
+    (io.print-string "\n")
+    (io.print-string (string.append "foo" "bar"))
+    (io.print-string "\n")
+    (io.print-string
+      (string.concat
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
-    (print-string "\n")
+    (io.print-string "\n")
     0))

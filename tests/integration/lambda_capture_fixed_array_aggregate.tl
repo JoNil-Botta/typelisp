@@ -2,7 +2,8 @@
 ; (#631). Returned closures read after the creator frame has gone away, so each
 ; case only passes if capture snapshots fixed-array storage and rewrites nested
 ; aggregate handles onto the heap.
-(import "stdlib/string.tl")
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (defstruct Point
   (x i64)
@@ -19,8 +20,8 @@
     [names : (Array String 2) (array "hello" "world!")]
     (lambda () : i64
       (+
-        (string-length (array-ref names 0))
-        (string-length (array-ref names 1))))))
+        (string.string-length (array-ref names 0))
+        (string.string-length (array-ref names 1))))))
 
 (define (case-string-array) : bool
   (= ((make-string-array-reader)) 11))
@@ -46,12 +47,12 @@
       (array (array "ab" "c") (array "def" "ghij"))]
     (lambda () : i64
       (+
-        (string-length (array-ref (array-ref grid 0) 0))
+        (string.string-length (array-ref (array-ref grid 0) 0))
         (+
-          (string-length (array-ref (array-ref grid 0) 1))
+          (string.string-length (array-ref (array-ref grid 0) 1))
           (+
-            (string-length (array-ref (array-ref grid 1) 0))
-            (string-length (array-ref (array-ref grid 1) 1))))))))
+            (string.string-length (array-ref (array-ref grid 1) 0))
+            (string.string-length (array-ref (array-ref grid 1) 1))))))))
 
 (define (case-nested-array) : bool
   (= ((make-nested-array-reader)) 10))
@@ -84,8 +85,8 @@
     [names : Names (Names (array "four" "letters"))]
     (lambda () : i64
       (+
-        (string-length (array-ref (struct-get names items) 0))
-        (string-length (array-ref (struct-get names items) 1))))))
+        (string.string-length (array-ref (struct-get names items) 0))
+        (string.string-length (array-ref (struct-get names items) 1))))))
 
 (define (case-aggregate-array-field) : bool
   (= ((make-names-reader)) 11))

@@ -1,6 +1,6 @@
 ;; module_macro_generated_imported_aggregate_vector_import.tl - generated module
 ;; bodies can instantiate stdlib vectors over definition-site imported types.
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.json)
 (import stdlib.vector)
 
@@ -17,4 +17,7 @@
 
 (test
   generated-module-imported-aggregate-vector
-  (assert-i64-eq (user.score) 0 "generated module imported aggregate vector"))
+  (test.assert-i64-eq
+    (user.score)
+    0
+    "generated module imported aggregate vector"))

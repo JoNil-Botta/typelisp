@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; ALIASING STRESS for M-E descriptor-load hoisting.
@@ -19,7 +19,7 @@
 ;;    iteration), so it must NOT be hoisted: a wrong hoist reads one inner
 ;;    array's length for all iterations and the checksum breaks.
 ;;
-;; Both bounds/values feed from (arg-count) so nothing constant-folds.
+;; Both bounds/values feed from (io.arg-count) so nothing constant-folds.
 (define (rotate-sum [xs : (Array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
@@ -53,7 +53,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 5)]
+    [n : i64 (+ (io.arg-count) 5)]
     [xs : (Array i64) (array.make-array i64 n)]
     [a : (Array i64) (array.make-array i64 2)]
     [b : (Array i64) (array.make-array i64 3)]

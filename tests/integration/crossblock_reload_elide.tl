@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for CFG-aware cross-block reload-elision (carry the peephole's
 ;; reg->slot owner map across a NON-jump-target label, reset at every
@@ -18,7 +18,7 @@
 ;;     and keep the carry reloads. A wrong carry across the merge would read a
 ;;     stale/clobbered register from the wrong predecessor and corrupt `acc`.
 ;;
-;; Inputs flow from (arg-count) so the optimizer cannot constant-fold the calls
+;; Inputs flow from (io.arg-count) so the optimizer cannot constant-fold the calls
 ;; (which would delete the cross-block live ranges this test depends on).
 ;; Self-recursive `touch` is not leaf-inlined, so the clobbering call survives.
 ;; touch(x) = x for x >= 0; clobbers caller-saved registers around each call.
@@ -60,7 +60,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [d0 : i64 (dispatch 0 n (+ n 1) (+ n 2) (+ n 3) (+ n 4) (+ n 5))]
     [d3 : i64 (dispatch 3 n (+ n 1) (+ n 2) (+ n 3) (+ n 4) (+ n 5))]
     [ac : i64 (accumulate (+ n 3))]

@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; Reconstruction-correctness guard for a bounds-checked array summed through a
 ;; loop-INVARIANT base pointer (`items`) under register pressure, plus the forcing
@@ -17,7 +17,7 @@
 ;; assertion here.
 ;;
 ;; For now this guards CORRECTNESS: if anything mis-reconstructs the sum, exit 1.
-;; The loop bound and seed come from (arg-count) so the optimizer cannot
+;; The loop bound and seed come from (io.arg-count) so the optimizer cannot
 ;; constant-fold the loop, and `expected` is recomputed from a straight-line closed
 ;; form (no loop) -- a reconstruction guard the pointer-heavy self-host fixpoint
 ;; cannot provide.
@@ -43,7 +43,7 @@
 
 (define (main) : i64
   (let
-    [ac : i64 (arg-count)]
+    [ac : i64 (io.arg-count)]
     [n : i64 (+ ac 4)]
     [seed : i64 ac]
     [items : (Array i64) (make-array i64 n)]

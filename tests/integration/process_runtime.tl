@@ -1,9 +1,9 @@
-(import "stdlib/io.tl")
-(import "stdlib/env.tl")
+(import stdlib.io)
+(import stdlib.env)
 (import stdlib.process)
 (import stdlib.process_borrowed)
-(import "stdlib/string.tl")
-(import "stdlib/test.tl")
+(import stdlib.string)
+(import stdlib.test)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
@@ -11,7 +11,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (define (assert-process-output-result
   [result : process.ResultProcessOutput]
@@ -21,7 +21,7 @@
   (match result
     [(process.OkProcessOutput output)
       (begin
-        (assert-i64-eq
+        (test.assert-i64-eq
           (process.output-status output)
           expected-status
           "process output status")
@@ -33,13 +33,13 @@
           (process.output-stderr output)
           expected-stderr
           "process output stderr"))]
-    [(process.ErrProcessOutput error) (panic (process.error-message error))]))
+    [(process.ErrProcessOutput error) (io.panic (process.error-message error))]))
 
 (define (assert-process-spawn-failed [result : process.ResultProcessOutput]) : unit
   (match result
     [(process.ErrProcessOutput error)
       (begin
-        (assert-true
+        (test.assert-true
           (process.error-spawn-failed? error)
           "process missing executable spawn failed")
         (assert-owned-string-eq
@@ -47,19 +47,19 @@
           "process: spawn failed"
           "process spawn failed message"))]
     [(process.OkProcessOutput _)
-      (panic "process missing executable should fail")]))
+      (io.panic "process missing executable should fail")]))
 
 (define (assert-process-child-result [result : process.ResultProcessChild]) : process.ProcessChild
   (match result
     [(process.OkProcessChild child) child]
-    [(process.ErrProcessChild error) (panic (process.error-message error))]))
+    [(process.ErrProcessChild error) (io.panic (process.error-message error))]))
 
 (define (assert-process-child-spawn-failed
   [result : process.ResultProcessChild]) : unit
   (match result
     [(process.ErrProcessChild error)
       (begin
-        (assert-true
+        (test.assert-true
           (process.error-spawn-failed? error)
           "process async missing executable spawn failed")
         (assert-owned-string-eq
@@ -67,27 +67,28 @@
           "process: spawn failed"
           "process async spawn failed message"))]
     [(process.OkProcessChild _)
-      (panic "process async missing executable should fail")]))
+      (io.panic "process async missing executable should fail")]))
 
 (define (assert-process-child-unsupported [result : process.ResultProcessChild]) : unit
   (match result
     [(process.ErrProcessChild error)
       (begin
-        (assert-true
+        (test.assert-true
           (process.error-unsupported? error)
           "process async unsupported")
         (assert-owned-string-eq
           (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async unsupported message"))]
-    [(process.OkProcessChild _) (panic "process async should be unsupported")]))
+    [(process.OkProcessChild _)
+      (io.panic "process async should be unsupported")]))
 
 (define (assert-process-output-unsupported
   [result : process.ResultProcessOutput]) : unit
   (match result
     [(process.ErrProcessOutput error)
       (begin
-        (assert-true
+        (test.assert-true
           (process.error-unsupported? error)
           "process async wait unsupported")
         (assert-owned-string-eq
@@ -95,7 +96,7 @@
           "process: async child handles are not supported by this runtime"
           "process async wait unsupported message"))]
     [(process.OkProcessOutput _)
-      (panic "process async wait should be unsupported")]))
+      (io.panic "process async wait should be unsupported")]))
 
 (define (windows-process-command) : process.ProcessCommand
   (process.command
@@ -148,9 +149,9 @@
   (let
     [args : (process_borrowed.ProcessBorrowedStringList argv)
       (process_borrowed.args-append
-        (process_borrowed.args-single (substring-view (& argv) 0 2))
+        (process_borrowed.args-single (string.substring-view (& argv) 0 2))
         (process_borrowed.args-single
-          (substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
+          (string.substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
     (process_borrowed.output (process_borrowed.command (& exe) args))))
 
 (define (windows-missing-command) : process.ProcessCommand
@@ -196,10 +197,10 @@
   (let
     [args : (process_borrowed.ProcessBorrowedStringList argv)
       (process_borrowed.args-append
-        (process_borrowed.args-single (substring-view (& argv) 0 5))
+        (process_borrowed.args-single (string.substring-view (& argv) 0 5))
         (process_borrowed.args-append
-          (process_borrowed.args-single (substring-view (& argv) 5 8))
-          (process_borrowed.args-single (substring-view (& argv) 13 4))))]
+          (process_borrowed.args-single (string.substring-view (& argv) 5 8))
+          (process_borrowed.args-single (string.substring-view (& argv) 13 4))))]
     (process_borrowed.output (process_borrowed.command (& exe) args))))
 
 (define (linux-async-process-command [text : String]) : process.ProcessCommand
@@ -217,7 +218,7 @@
   (process.command "/definitely-missing-typelisp" (process.args-empty)))
 
 (define (main) : i64
-  (if (eq (path-separator) ";")
+  (if (string.eq (env.path-separator) ";")
     (begin
       (assert-process-output-result
         (process.output (windows-process-command))

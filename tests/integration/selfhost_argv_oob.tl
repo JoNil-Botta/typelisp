@@ -1,5 +1,7 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length (arg 99)))
+  (string.string-length (io.arg 99)))

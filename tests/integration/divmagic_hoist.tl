@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-F (loop-hoisted divmod magic constants + imm32 divisor
 ;; folding). Two call-free loops whose `%`/`/` by constant strength-reduce to
@@ -47,9 +47,9 @@
 
 (define (main) : i64
   (let
-    ;; n = 100 when run without args (arg-count = 1); (arg-count) blocks
+    ;; n = 100 when run without args (io.arg-count = 1); (io.arg-count) blocks
     ;; constant folding of both loops.
-    [n : i64 (+ 99 (arg-count))]
+    [n : i64 (+ 99 (io.arg-count))]
     [m : i64 (modsum n 1)]
     [d : i64 (digitsum m 1)]
     ;; acc after 100 iterations = 926242213; its digit sum = 31.

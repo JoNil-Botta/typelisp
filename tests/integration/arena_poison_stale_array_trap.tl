@@ -1,6 +1,6 @@
 (import stdlib.array)
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_arena_poison_enable) : unit)
 
@@ -8,7 +8,7 @@
   (begin
     (tl_arena_poison_enable)
     (let
-      [seed : String (append "seed" "arena")]
+      [seed : String (string.append "seed" "arena")]
       [base : i64 (string-length seed)]
       [mark : arena.ArenaMark (arena.mark)]
       ;; lint-allow: single-element-array-cell

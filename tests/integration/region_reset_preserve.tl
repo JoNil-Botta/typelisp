@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_region_mark) : u64)
 (extern (tl_region_reset [arg0 : u64]) : unit)
@@ -25,12 +25,12 @@
   (let
     [m : u64 (tl_region_mark)]
     (begin
-      (append "tmp" (int->string n))
+      (string.append "tmp" (string.int->string n))
       (tl_region_reset m))))
 
 (define (main) : i64
   (let
-    [s : String (append "a" "b")]
+    [s : String (string.append "a" "b")]
     [arr : (Array i64) (array.make-array i64 2)]
     [box : Box (make-box 7)]
     [pair : Pair (make-pair 5 6)]
@@ -38,7 +38,7 @@
     (begin
       (array-set! arr 0 20)
       (array-set! arr 1 22)
-      (append "temporary" (int->string 99))
+      (string.append "temporary" (string.int->string 99))
       (tl_region_reset m)
       (cycle 1)
       (cycle 2)

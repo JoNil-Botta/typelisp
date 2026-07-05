@@ -1,3 +1,5 @@
+;; Retained for #2454 path-import compatibility: the helper module name is
+;; intentionally dotted and does not map to this same-directory source path.
 (import "struct_match_pattern_geom.tl" module struct.match.geom as geom)
 
 (defstruct Point

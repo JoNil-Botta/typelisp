@@ -1,6 +1,6 @@
 ;: SPEC safe-code contract: region-tagged aggregate handles cannot escape the
 ;: arena that owns them.
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : String
-  (with-arena phase (int->string 41)))
+  (with-arena phase (string.int->string 41)))

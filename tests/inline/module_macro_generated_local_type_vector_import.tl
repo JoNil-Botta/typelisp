@@ -1,7 +1,7 @@
 ;; module_macro_generated_local_type_vector_import.tl - generated module bodies
 ;; can use a locally generated type in a later `(vector T)` import.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defmacro (vector-user) : Module
   `(begin
@@ -22,7 +22,7 @@
 
 (test
   generated-module-local-type-vector-import
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score (user.make 42))
     42
     "generated module local type vector"))

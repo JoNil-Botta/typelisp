@@ -1,5 +1,7 @@
 (import stdlib.serialize)
-(import "serialize_missing_object_hook_format.tl" module serialize_missing_object_hook_format as bad)
+
+;; lint-allow: unused-import
+(import serialize_missing_object_hook_format as bad)
 
 (defstruct Sample
   (name String))

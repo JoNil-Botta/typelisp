@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-G3 stage 2 (frame-pointer omission + %rbp as the 6th
 ;; callee-saved pool register). Mirrors callregion_split's PRE-stage-2 shape:
@@ -59,9 +59,9 @@
 
 (define (main) : i64
   (let
-    ;; v = 10 when run without args (arg-count = 1); (arg-count) blocks
+    ;; v = 10 when run without args (io.arg-count = 1); (io.arg-count) blocks
     ;; constant folding of the whole loop.
-    [v : i64 (+ 9 (arg-count))]
+    [v : i64 (+ 9 (io.arg-count))]
     [r : i64 (churn6 v 1)]
     ;; per iteration t (0..99, a_t = 1+t, b_t = 2+t, c_t = 3+t, probe6(t) = t):
     ;;   t + (1+2t) + (2+2t) + (2+2t) + (4+2t) + (3+2t) + (6+2t)

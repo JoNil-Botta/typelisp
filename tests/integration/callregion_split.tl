@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-G2b (per-call-region split via the widened caller-saved
 ;; call-spanning rescue). The churn loop keeps SEVEN values live across the
@@ -67,9 +67,9 @@
 
 (define (main) : i64
   (let
-    ;; v = 10 when run without args (arg-count = 1); (arg-count) blocks
+    ;; v = 10 when run without args (io.arg-count = 1); (io.arg-count) blocks
     ;; constant folding of the whole loop.
-    [v : i64 (+ 9 (arg-count))]
+    [v : i64 (+ 9 (io.arg-count))]
     [r : i64 (churn v 1)]
     ;; per iteration t (0..99, a_t = 1+t, b_t = 2+t, c_t = 3+t, d_t = 4+t,
     ;; probe(t) = t):

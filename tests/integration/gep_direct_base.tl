@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; FORCING TEST for M-C2 (part 3): direct register-homed gep-load base.
@@ -40,7 +40,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 5)]
+    [n : i64 (+ (io.arg-count) 5)]
     [xs : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin

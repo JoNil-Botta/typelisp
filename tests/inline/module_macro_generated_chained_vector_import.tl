@@ -1,8 +1,8 @@
 ;; module_macro_generated_chained_vector_import.tl - generated module bodies can
 ;; pass captured tuple type operands through another module macro that imports
 ;; stdlib `(vector T)`.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defmacro (tuple-vector-box [T : type]) : Module
   (let
@@ -38,7 +38,7 @@
 
 (test
   generated-module-body-chained-imports-tuple-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score (tuple 7 8) (tuple 0 0))
     42
     "generated module chained tuple vector import"))

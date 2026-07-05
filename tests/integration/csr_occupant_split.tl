@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING / SOUNDNESS test for the callee-saved OCCUPANT split (LLVM
 ;; tryRegionSplit): free a callee-saved register (CSR) for a call-spanning value
@@ -29,7 +29,7 @@
 ;;
 ;; CORRECTNESS GUARD: `occ(n) = 18*n + 338` in closed form (each phase's
 ;; contribution summed by hand), a reconstruction guard the pointer-heavy
-;; self-host fixpoint cannot provide. Seeded from (arg-count) so the optimizer
+;; self-host fixpoint cannot provide. Seeded from (io.arg-count) so the optimizer
 ;; cannot constant-fold the calls/holes away.
 ;; Recursive on purpose: the opt-2 leaf-inliner would inline a trivial leaf and
 ;; delete the call, defeating the call-spanning shape. A self-recursive function
@@ -64,7 +64,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (occ n)]
     [expected : i64 (+ (* 18 n) 338)]
     (if (= r expected)

@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length (substring "abcdef" 7 0)))
+  (string-length (string.substring "abcdef" 7 0)))

@@ -1,10 +1,11 @@
-;; enum_string_payload.tl — an enum variant carrying a String payload is
+;; enum_string_payload.tl ??? an enum variant carrying a String payload is
 ;; constructed, returned across a function boundary (heap-promoted), and its
 ;; payload bound back out in a `match` arm. This is the construct/return/match
 ;; capability a real lexer needs for identifier/keyword tokens (`TIdent`,
 ;; refs #27); arrays of such tokens and building an identifier substring from
 ;; the source remain separate gaps.
-(import "stdlib/string.tl")
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (defenum Token
   (Ident String)
@@ -19,7 +20,7 @@
 ;; measure it. The `TEnd` arm proves the dispatch is by tag.
 (define (ident-length [t : Token]) : i64
   (match t
-    [(Token.Ident s) (string-length s)]
+    [(Token.Ident s) (string.string-length s)]
     [(Token.End) 0]))
 
 ;; (TIdent "hello") -> bind "hello" -> length 5.

@@ -1,7 +1,7 @@
 ;; module_macro_generated_body_imports_param_vector_module.tl - generated module
 ;; bodies can import stdlib.vector locally and then instantiate `(vector T)`
 ;; using the enclosing module macro's type parameter.
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defstruct Pair
   (value i64))
@@ -31,14 +31,14 @@
 
 (test
   generated-module-body-imports-param-vector-module-macro-i64
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score 7 0)
     42
     "generated module body imports param vector macro i64"))
 
 (test
   generated-module-body-imports-param-vector-module-macro-struct
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated module body imports param vector macro struct"))

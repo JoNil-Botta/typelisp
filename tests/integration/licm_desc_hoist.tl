@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; FORCING TEST for M-E: loop-invariant descriptor-load hoisting.
@@ -30,7 +30,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 7)]
+    [n : i64 (+ (io.arg-count) 7)]
     [xs : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin

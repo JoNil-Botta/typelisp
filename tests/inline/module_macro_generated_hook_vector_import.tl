@@ -1,6 +1,6 @@
 ;; module_macro_generated_hook_vector_import.tl - generated module bodies can
 ;; import stdlib `(vector T)` through a module hook macro value.
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.comptime)
 (import stdlib.vector)
 
@@ -32,14 +32,14 @@
 
 (test
   generated-module-body-imports-hooked-vector-module-macro-i64
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score 7 0)
     42
     "generated module hooked vector import i64"))
 
 (test
   generated-module-body-imports-hooked-vector-module-macro-struct
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated module hooked vector import struct"))

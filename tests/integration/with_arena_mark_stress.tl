@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_region_mark) : u64)
 
@@ -7,10 +7,10 @@
     scratch
     (let
       [prefix : String "arena:"]
-      [suffix : String (int->string n)]
-      [left : String (append (& prefix) (& suffix))]
+      [suffix : String (string.int->string n)]
+      [left : String (string.append (& prefix) (& suffix))]
       [tail : String ":tail"]
-      [right : String (append (& left) (& tail))]
+      [right : String (string.append (& left) (& tail))]
       (string-length right))))
 
 (define (scoped-loop [n : i64] [acc : i64]) : i64
@@ -20,7 +20,7 @@
 
 (define (main) : i64
   (let
-    [anchor : String (append "keep" "alive")]
+    [anchor : String (string.append "keep" "alive")]
     [before : u64 (tl_region_mark)]
     [total : i64 (scoped-loop 2000 0)]
     [after : u64 (tl_region_mark)]

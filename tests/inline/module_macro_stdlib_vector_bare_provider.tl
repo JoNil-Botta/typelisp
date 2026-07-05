@@ -2,7 +2,7 @@
 ;; module macros whose generated bodies flat-import generated stdlib vectors.
 (module tests.module_macro_stdlib_vector_bare_provider)
 
-(import "stdlib/vector.tl")
+(import stdlib.vector)
 
 (defmacro (vector-user [T : type]) : Module
   (let

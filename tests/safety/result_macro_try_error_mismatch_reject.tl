@@ -1,5 +1,4 @@
 ;: Generated result modules reject try propagation when error payloads differ.
-(import "stdlib/string.tl")
 (import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (import (result i64 i64) as result_i64_i64)

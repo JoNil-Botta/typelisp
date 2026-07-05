@@ -1,4 +1,7 @@
 (import stdlib.arena as real_arena)
+
+;; Retained for #2454 path-import compatibility: the helper module name is a
+;; shadowing fixture and does not map to this same-directory source path.
 (import "thread_spawn_i64_shadowed_atomic_arena_lib.tl" module shadow_arena as arena)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)

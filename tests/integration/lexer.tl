@@ -26,8 +26,8 @@
 ;; Deferred - current language gaps, recorded as self-hosting signal:
 ;;   - Digit and whitespace classification compares each char's `i64` code
 ;;     point against ASCII constants.
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 (import stdlib.vector)
 
 (defenum Token
@@ -96,7 +96,7 @@
     [(= c '/') Token.Slash]
     [(= c '(') Token.LParen]
     [(= c ')') Token.RParen]
-    [else (panic "lexer: unexpected character")]))
+    [else (io.panic "lexer: unexpected character")]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
@@ -111,7 +111,7 @@
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(Token.Ident text)` token.
 (define (ident-token [src : String] [start : i64] [end : i64]) : Token
-  (Token.Ident (substring src start (- end start))))
+  (Token.Ident (string.substring src start (- end start))))
 
 ;; Length of the String payload of a `Token.Ident` token (0 for any other token):
 ;; projects the payload back out of the enum in a `match` arm, the way a parser

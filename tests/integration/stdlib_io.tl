@@ -4,9 +4,8 @@
 ;; every helper behaves as expected. Scratch files live under the gitignored
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
-(import "stdlib/string.tl")
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.string)
+(import stdlib.io)
 
 (define io-smoke-path : String
   "target/stdlib_io_smoke_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
@@ -18,11 +17,11 @@
 (define (read-result-score [result : ResultIoString]) : i64
   (match result
     [(OkIoString value)
-      (if (eq value "alpha")
+      (if (string.eq value "alpha")
         1
         100)]
     [(ErrIoString error)
-      (if (error-not-found? error)
+      (if (io.error-not-found? error)
         2
         200)]))
 
@@ -30,7 +29,7 @@
   (match result
     [(OkIoUnit) 3]
     [(ErrIoUnit error)
-      (if (error-invalid-path? error)
+      (if (io.error-invalid-path? error)
         4
         5)]))
 
@@ -43,26 +42,26 @@
     [(ErrIoBool _) 400]))
 
 (define (test-try-read-file [path : String]) : ResultIoString
-  (try-read-file (& path)))
+  (io.try-read-file (& path)))
 
 (define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (try-write-file (& path) (& contents)))
+  (io.try-write-file (& path) (& contents)))
 
 (define (test-try-file-exists? [path : String]) : ResultIoBool
-  (try-file-exists? (& path)))
+  (io.try-file-exists? (& path)))
 
 (define (test-read-file-or [path : String] [fallback : String]) : String
-  (read-file-or (& path) fallback))
+  (io.read-file-or (& path) fallback))
 
 (define (test-append-file [path : String] [contents : String]) : unit
-  (append-file (& path) (& contents)))
+  (io.append-file (& path) (& contents)))
 
 (define (test-file-nonempty? [path : String]) : bool
-  (file-nonempty? (& path)))
+  (io.file-nonempty? (& path)))
 
 (define (main) : i64
   (begin
-    (write-file io-smoke-path "alpha")
+    (io.write-file io-smoke-path "alpha")
     (unless
       (= (read-result-score (test-try-read-file io-smoke-path)) 1)
       (return 80))
@@ -83,10 +82,14 @@
     (unless
       (= (bool-result-score (test-try-file-exists? io-absent-path)) 7)
       (return 55))
-    (unless (eq (test-read-file-or io-smoke-path "MISS") "alpha") (return 50))
-    (unless (eq (test-read-file-or io-absent-path "MISS") "MISS") (return 40))
+    (unless
+      (string.eq (test-read-file-or io-smoke-path "MISS") "alpha")
+      (return 50))
+    (unless
+      (string.eq (test-read-file-or io-absent-path "MISS") "MISS")
+      (return 40))
     (test-append-file io-smoke-path "-beta")
-    (unless (eq (read-file io-smoke-path) "alpha-beta") (return 30))
+    (unless (string.eq (io.read-file io-smoke-path) "alpha-beta") (return 30))
     (unless (test-file-nonempty? io-smoke-path) (return 20))
     (when (test-file-nonempty? io-absent-path) (return 10))
     42))

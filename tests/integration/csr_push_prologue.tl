@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP1 (push-style CSR prologue saves). Two shapes:
 ;;
@@ -59,9 +59,9 @@
 
 (define (main) : i64
   (let
-    ;; v = 10 when run without args (arg-count = 1); (arg-count) blocks
+    ;; v = 10 when run without args (io.arg-count = 1); (io.arg-count) blocks
     ;; constant folding of both call trees.
-    [v : i64 (+ 9 (arg-count))]
+    [v : i64 (+ 9 (io.arg-count))]
     [r : i64 (churn3 v 1)]
     ;; per iteration t (0..49, probe3(t) = t, a_t = 1+t):
     ;;   t + (1+t)*t + 10t = t^2 + 12t

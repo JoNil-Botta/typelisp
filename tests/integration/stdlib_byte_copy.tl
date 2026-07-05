@@ -1,6 +1,6 @@
 (import stdlib.array)
-(import "stdlib/string.tl")
-(import "stdlib/test.tl")
+(import stdlib.string)
+(import stdlib.test)
 
 (define (byte-copy-u8 [value : i64]) : u8
   (cast value : u8))
@@ -37,7 +37,7 @@
   [index : i64]
   [expected : i64]
   [message : String]) : unit
-  (assert-i64-eq (cast (array-ref items index) : i64) expected message))
+  (test.assert-i64-eq (cast (array-ref items index) : i64) expected message))
 
 (define (byte-copy-assert-range
   [items : (Array u8)]
@@ -74,7 +74,7 @@
     (begin
       (byte-copy-fill! src 4 10)
       (byte-copy-fill-constant! dst 4 77)
-      (str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 2 0)
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 2 0)
       (byte-copy-assert-constant-range
         dst
         0
@@ -92,7 +92,7 @@
     (begin
       (byte-copy-fill! src 20 20)
       (byte-copy-fill-constant! dst 20 99)
-      (str-copy-bytes-into (byte-copy-source-at src-base 1) dst-base 3 n)
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 1) dst-base 3 n)
       (byte-copy-assert-at dst 2 99 "unaligned prefix remains")
       (byte-copy-assert-range dst 3 n 21 "unaligned copy payload")
       (byte-copy-assert-at dst 14 99 "unaligned suffix remains"))))
@@ -106,7 +106,7 @@
     (begin
       (byte-copy-fill! src 12 40)
       (byte-copy-fill-constant! dst 12 88)
-      (str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 1 n)
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 1 n)
       (byte-copy-assert-at dst 0 88 "tail prefix remains")
       (byte-copy-assert-range dst 1 n 40 "tail copy payload")
       (byte-copy-assert-at dst (+ n 1) 88 "tail suffix remains"))))
@@ -129,7 +129,7 @@
     (begin
       (byte-copy-fill! src 96 3)
       (byte-copy-fill-constant! dst 96 55)
-      (str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 5 n)
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 5 n)
       (byte-copy-assert-at dst 4 55 "medium prefix remains")
       (byte-copy-assert-range dst 5 n 3 "medium dynamic copy payload")
       (byte-copy-assert-at dst (+ 5 n) 55 "medium suffix remains"))))
@@ -140,7 +140,7 @@
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 20 0)
-      (str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
+      (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
       (byte-copy-assert-range buf 0 3 0 "overlap prefix remains")
       (byte-copy-assert-range buf 3 10 0 "overlap copied payload")
       (byte-copy-assert-at buf 13 13 "overlap suffix remains"))))

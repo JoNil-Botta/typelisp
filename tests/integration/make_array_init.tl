@@ -1,5 +1,7 @@
 (import stdlib.array)
-(import "stdlib/string.tl")
+
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (defstruct Point
   (x i64)
@@ -48,7 +50,7 @@
     [int-score : i64 (+ (array-length ints) (array-ref ints 2))]
     [flag-score : i64 (score-bool (not (array-ref flags 0)))]
     [char-score : i64 (score-bool (= (array-ref chars 0) (init : char)))]
-    [text-score : i64 (string-length (array-ref texts 1))]
+    [text-score : i64 (string.string-length (array-ref texts 1))]
     [point-score-value : i64 (point-score (array-ref points 1))]
     [maybe-score-value : i64 (maybe-score (array-ref maybes 1))]
     [bag-score-value : i64 (bag-score bags)]

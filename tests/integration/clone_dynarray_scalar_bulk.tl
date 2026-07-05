@@ -1,6 +1,6 @@
 (import stdlib.array)
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (defstruct Pair
   (left i64)
@@ -70,8 +70,8 @@
       (let
         [items : (Array String) (array.make-array String 2)]
         (begin
-          (array-set! items 0 (append "s" "0"))
-          (array-set! items 1 (append "s" "1"))
+          (array-set! items 0 (string.append "s" "0"))
+          (array-set! items 1 (string.append "s" "1"))
           (unsafe
             (arena.set! home))
           (let
@@ -79,7 +79,9 @@
             (begin
               (unsafe
                 (arena.destroy scratch))
-              (and (eq (array-ref copy 0) "s0") (eq (array-ref copy 1) "s1")))))))))
+              (and
+                (string.eq (array-ref copy 0) "s0")
+                (string.eq (array-ref copy 1) "s1")))))))))
 
 (define (main) : i64
   (let

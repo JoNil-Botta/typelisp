@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; SINGLE-BLOCK call-spanning rescue PROBE (#79 Stage B finding).
 ;; `spanning` is one straight-line block (no control flow): 8 values a..h are
@@ -57,7 +57,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (spanning n)]
     ;; n=1: a..h = 2..9, each sum = 44; k = clobber(1) = 2; r = 2 + 4*44 = 178
     (if (= r 178)

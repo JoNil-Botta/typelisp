@@ -1,7 +1,8 @@
 ;; refs #2356/#2608: a lifetime-parameterized enum carrying a borrowed str
 ;; payload is returned by value, survives unrelated stack churn, and projects
 ;; the borrowed payload from the correct inline slot.
-(import "stdlib/string.tl")
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (defenum BorrowedChoice
   (:lifetimes text)
@@ -22,7 +23,7 @@
 
 (define (borrowed-choice-score [choice : (BorrowedChoice text)]) : i64
   (match choice
-    [(BorrowedChoiceText value bonus) (+ (string-length value) bonus)]
+    [(BorrowedChoiceText value bonus) (+ (string.string-length value) bonus)]
     [(BorrowedChoiceEmpty) 0]))
 
 (define (roundtrip-borrowed-choice [text : (& text str)]) : i64

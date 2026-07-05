@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-A (RC1): parameters become ordinary greedy candidates with
 ;; CALLEE-SAVED-only homes. `param-loop` has a REAL call in the loop (recursive
@@ -35,7 +35,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [xs : (Array i64) (make-array i64 n)]
     [i : i64 0]
     (begin

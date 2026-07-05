@@ -5,10 +5,10 @@
 ;; operand divides by `n`, so a non-short-circuiting compiler would trap on the
 ;; n=0 calls; correct short-circuiting skips them and the program returns 42.
 ;;
-;; `(- (arg-count) 1)` is a runtime-opaque zero (arg-count is 1 with no extra
+;; `(- (io.arg-count) 1)` is a runtime-opaque zero (io.arg-count is 1 with no extra
 ;; arguments), which keeps the optimizer from constant-folding the guarded
 ;; division at compile time.
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (sc-and [n : i64]) : bool
   (and (!= n 0) (= (/ 100 n) 100)))
@@ -18,7 +18,7 @@
 
 (define (main) : i64
   (let
-    [zero : i64 (- (arg-count) 1)]
+    [zero : i64 (- (io.arg-count) 1)]
     (if (sc-and zero)
       1
       (if (sc-or zero)

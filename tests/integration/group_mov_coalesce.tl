@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-B part 2: stack-homed register-group Mov coalescing.
 ;; `Op` is a two-word register-group enum (tag + payload). The match scrutinee
@@ -44,7 +44,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [ops : (Array Op) (make-array Op n)]
     [i : i64 0]
     (begin

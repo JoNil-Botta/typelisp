@@ -1,6 +1,4 @@
 ;; compile_profile_layout_spec.tl - Fixture for layout/spec compile-profile rows.
-(import "stdlib/comptime.tl")
-
 (defstruct ProfileInner
   (a i32)
   (b i64)

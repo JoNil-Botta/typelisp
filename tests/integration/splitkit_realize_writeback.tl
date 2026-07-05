@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; SplitKit M3 FORCING TEST -- realized register-piece split WITH write-back.
 ;;
@@ -68,7 +68,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (wb_hot n)]
     ;; n=1: a..h = 2..9, sum44 = 44. w starts at 101.
     ;; Each iteration (i=0..3):

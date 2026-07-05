@@ -1,6 +1,8 @@
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
-(import "stdlib/string.tl")
+
+;; lint-allow: unused-import
+(import stdlib.string)
 
 (define (main) : i64
   (let

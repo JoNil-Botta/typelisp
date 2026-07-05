@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-C part 2: call-result %rax preference. `spin` calls the
 ;; (recursive, so never inlined) `bump` in a loop; the result `r` feeds pure
@@ -28,7 +28,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [r : i64 (spin n)]
     ;; n = 4 (no args): bump(i) = i+1 for i >= 0, so r = 3*(1+2+3+4) = 30.
     (if (= r 30)

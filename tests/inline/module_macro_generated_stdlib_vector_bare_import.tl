@@ -1,7 +1,7 @@
 ;; module_macro_generated_stdlib_vector_bare_import.tl - generated module bodies
 ;; can use the bare `(import (vector T))` module-macro import surface.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defstruct Pair
   (value i64))
@@ -33,21 +33,21 @@
 
 (test
   generated-module-body-bare-imports-stdlib-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score 7 0)
     42
     "generated module bare-imported stdlib vector macro"))
 
 (test
   generated-module-body-bare-imports-stdlib-string-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (string-user.score "alpha" "fallback")
     42
     "generated module bare-imported stdlib string vector macro"))
 
 (test
   generated-module-body-bare-imports-stdlib-struct-vector-module-macro
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated module bare-imported stdlib struct vector macro"))

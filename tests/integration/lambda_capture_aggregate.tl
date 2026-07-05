@@ -2,7 +2,9 @@
 ; Each case reads a scalar out of a captured aggregate so the test exercises
 ; capture (not aggregate returns); `main` yields 42 only if every case holds.
 (import stdlib.array)
-(import "stdlib/string.tl")
+
+;; lint-allow: unused-import
+(import stdlib.string)
 
 ; A String captured and used while the creator scope is still live.
 (define (case-string-immediate) : bool
@@ -10,7 +12,7 @@
     [s : String "hello"]
     [f : (-> i64)
       (lambda () : i64
-        (string-length s))]
+        (string.string-length s))]
     (= (f) 5)))
 
 ; A String literal captured by a closure that OUTLIVES the frame that created
@@ -54,7 +56,7 @@
     [s : String "ab"]
     (=
       ((lambda () : i64
-          (+ n (string-length s))))
+          (+ n (string.string-length s))))
       42)))
 
 (define (main) : i64

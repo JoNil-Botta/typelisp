@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; Forces arg-register SWAP/cycle marshalling. A caller passes its own params to
 ;; the callee in swapped (2-cycle), rotated (3-cycle), and fully reversed
@@ -10,7 +10,7 @@
 ;; covers positions 4-5 (%r8/%r9), exercised only when SysV eligibility extends
 ;; past 4 args.
 ;;
-;; Values come from (arg-count) so the optimizer cannot constant-fold the calls
+;; Values come from (io.arg-count) so the optimizer cannot constant-fold the calls
 ;; away and must emit the real call + marshalling. This passes both before the
 ;; register-eligibility change (args marshalled from memory) and after (args
 ;; marshalled from registers through the parallel-move solver) -- a regression
@@ -62,7 +62,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r2 : i64 (swap2-caller (* n 50) (* n 8))]
     [r3 : i64 (swap3-caller (* n 1) (* n 2) (* n 3))]
     [r6 : i64 (rev6-caller (* n 1) (* n 2) (* n 3) (* n 4) (* n 5) (* n 6))]

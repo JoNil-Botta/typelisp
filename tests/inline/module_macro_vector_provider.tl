@@ -1,7 +1,7 @@
 ;; module_macro_vector_provider.tl - helper module for generated vector imports.
 (module tests.module_macro_vector_provider)
 
-(import "stdlib/vector.tl")
+(import stdlib.vector)
 
 (defmacro (vector-user [T : type]) : Module
   (let

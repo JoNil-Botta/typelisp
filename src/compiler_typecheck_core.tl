@@ -1844,10 +1844,49 @@
 
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-decls-shared : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decls-expanded : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-share-gate-open : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
-      (set! compiler-tc-macro-generated-module-memo-hits 0))))
+      (set! compiler-tc-macro-generated-module-memo-hits 0)
+      (set! compiler-tc-macro-walk-decls-shared 0)
+      (set! compiler-tc-macro-walk-decls-expanded 0)
+      (set! compiler-tc-macro-walk-share-gate-open 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-walk-decl-shared) : unit
+    (set!
+      compiler-tc-macro-walk-decls-shared
+      (+ compiler-tc-macro-walk-decls-shared 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-walk-decl-expanded) : unit
+    (set!
+      compiler-tc-macro-walk-decls-expanded
+      (+ compiler-tc-macro-walk-decls-expanded 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-walk-share-gate [open : bool]) : unit
+    (if open
+      (set!
+        compiler-tc-macro-walk-share-gate-open
+        (+ compiler-tc-macro-walk-share-gate-open 1))
+      unit)))
 
 (cfg
   compile-profile
@@ -2338,6 +2377,15 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decls_shared"
+        compiler-tc-macro-walk-decls-shared)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decls_expanded"
+        compiler-tc-macro-walk-decls-expanded)
+      (compiler-tc-macro-counter-profile-line
+        "walk_share_gate_open"
+        compiler-tc-macro-walk-share-gate-open)
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -53261,6 +53309,9 @@
                       ;; the installed pools. A non-module value decl never
                       ;; changes the active module, so `cur-module` is unchanged.
                       (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-macro-profile-note-walk-decl-shared))
                         (set!
                           out-rev
                           (ast-decl-list-prepend-builder decl out-rev))
@@ -53272,32 +53323,36 @@
                         (set! cur-decls rest)
                         (set! cur-paths rest-paths))]
                     [else
-                      (match (macro-expand-decl-with-path
-                        cur-ctx
-                        cur-top-env
-                        cur-orig-decls
-                        cur-module
-                        decl
-                        decl-path)
-                        [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
-                          (begin
-                            (set!
-                              out-rev
-                              (macro-decl-list-reverse-into expanded out-rev))
-                            (set!
-                              out-paths-rev
-                              (macro-decl-path-list-reverse-into
-                                expanded-paths
-                                out-paths-rev))
-                            (set!
-                              cur-module
-                              (macro-decls-final-module expanded cur-module))
-                            (set! cur-decls rest)
-                            (set! cur-paths rest-paths))]
-                        [(ResultMacroDeclExpansion.Err diag)
-                          (begin
-                            (set! result (ResultMacroDeclsWithPaths.Err diag))
-                            (set! done true))])])]))]))
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-macro-profile-note-walk-decl-expanded))
+                        (match (macro-expand-decl-with-path
+                          cur-ctx
+                          cur-top-env
+                          cur-orig-decls
+                          cur-module
+                          decl
+                          decl-path)
+                          [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
+                            (begin
+                              (set!
+                                out-rev
+                                (macro-decl-list-reverse-into expanded out-rev))
+                              (set!
+                                out-paths-rev
+                                (macro-decl-path-list-reverse-into
+                                  expanded-paths
+                                  out-paths-rev))
+                              (set!
+                                cur-module
+                                (macro-decls-final-module expanded cur-module))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths))]
+                          [(ResultMacroDeclExpansion.Err diag)
+                            (begin
+                              (set! result (ResultMacroDeclsWithPaths.Err diag))
+                              (set! done true))]))])]))]))
       result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
@@ -53516,6 +53571,10 @@
                                     (cfg
                                       compile-profile
                                       (compiler-tc-profile-start))
+                                    (cfg
+                                      compile-profile
+                                      (compiler-tc-macro-profile-note-walk-share-gate
+                                        (not has-expr-type-macros)))
                                     (match (macro-expand-decls
                                       ctx
                                       top-env

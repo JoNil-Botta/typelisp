@@ -20,6 +20,7 @@ SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
+SELF_COMPILE_ONLY=0
 SEED_ARG=
 
 usage() {
@@ -32,6 +33,11 @@ Options:
   --runs N             Cachegrind runs per metric (default: 1)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
   --benchmarks-only    Measure benchmark cases only, not self_compile
+  --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
+                       with --update-baseline, rewrites only that row and
+                       preserves every benchmark row (benchmark/c rows depend
+                       on the local clang; benchmark/typelisp rows are
+                       deterministic and unaffected by a self-compile ratchet)
   --output DIR         Work directory (default: target/instruction-count-check)
   -h, --help           Show this help
 
@@ -81,6 +87,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --benchmarks-only)
             BENCHMARKS_ONLY=1
+            shift
+            ;;
+        --self-compile-only)
+            SELF_COMPILE_ONLY=1
             shift
             ;;
         --output)
@@ -146,6 +156,11 @@ case "$BASELINE" in
         ;;
 esac
 
+if [ "$BENCHMARKS_ONLY" -eq 1 ] && [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
+    echo "--benchmarks-only and --self-compile-only are mutually exclusive" >&2
+    exit 2
+fi
+
 case "$(uname -s)" in
     Linux*) ;;
     *)
@@ -190,6 +205,9 @@ if [ "$BENCHMARKS" != "$DEFAULT_BENCHMARKS" ]; then
 fi
 if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
     update_command="$update_command --benchmarks-only"
+fi
+if [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
+    update_command="$update_command --self-compile-only"
 fi
 if [ "$WORKDIR" != "$DEFAULT_WORKDIR" ]; then
     update_command="$update_command --output $WORKDIR"
@@ -236,6 +254,8 @@ echo "[ir-check] measure instruction-count subset"
 measure_args=
 if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
     measure_args="--benchmarks-only"
+elif [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
+    measure_args="--self-compile-only"
 fi
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     scripts/measure-instruction-counts.sh \
@@ -253,10 +273,40 @@ NR == 1 { next }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
     mkdir -p "$(dirname -- "$BASELINE")"
-    {
-        printf 'name\tir_count\n'
-        cat "$CURRENT"
-    } > "$BASELINE"
+    if [ "$SELF_COMPILE_ONLY" -eq 1 ] && [ -f "$BASELINE" ]; then
+        # Rewrite only the self_compile row. benchmark/typelisp rows are
+        # deterministic and out of scope for a self-compile ratchet;
+        # benchmark/c rows depend on the local clang version and must not
+        # absorb its noise.
+        awk -F '\t' '
+        BEGIN { OFS = "\t" }
+        NR == FNR {
+            if (NF >= 2 && $1 != "name") {
+                current[$1] = $2
+            }
+            next
+        }
+        $1 in current {
+            print $1, current[$1]
+            seen[$1] = 1
+            next
+        }
+        { print }
+        END {
+            for (name in current) {
+                if (!(name in seen)) {
+                    print name, current[name]
+                }
+            }
+        }
+        ' "$CURRENT" "$BASELINE" > "$BASELINE.tmp"
+        mv "$BASELINE.tmp" "$BASELINE"
+    else
+        {
+            printf 'name\tir_count\n'
+            cat "$CURRENT"
+        } > "$BASELINE"
+    fi
     echo "[ir-check] baseline updated: $BASELINE"
     cat "$BASELINE"
     exit 0
@@ -268,7 +318,9 @@ if [ ! -f "$BASELINE" ]; then
     exit 1
 fi
 
-if awk -F '\t' -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" '
+if awk -F '\t' \
+    -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
+    -v self_compile_only="$SELF_COMPILE_ONLY" '
 function signed(n,    s) {
     s = sprintf("%.0f", n)
     if (n > 0) {
@@ -296,6 +348,9 @@ NR == FNR {
         next
     }
     if (NF < 2) {
+        next
+    }
+    if (self_compile_only == 1 && $1 != "self_compile/compile_cli_opt1") {
         next
     }
     baseline[$1] = $2

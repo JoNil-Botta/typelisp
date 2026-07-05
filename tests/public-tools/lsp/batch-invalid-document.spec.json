@@ -1,0 +1,7 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"failedIndex\":1", "raw_contains": "\"partialText\"", "raw_contains": "Edited document is invalid", "raw_contains": "unterminated list", "raw_contains": "(define (foo) : i64 42)", "raw_not_contains": "\"success\":true"}
+  ]
+}

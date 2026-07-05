@@ -2590,19 +2590,35 @@
         [(LspValidationResult.Valid) true]
         [(LspValidationResult.Invalid _ _ _ _) false]))))
 
+(define (lsp-validation-message
+  [line : i64]
+  [col : i64]
+  [msg : String]
+  [ctx : String]) : String
+  (lsp-str7
+    msg
+    " at line "
+    (string.int->string line)
+    ", col "
+    (string.int->string col)
+    " | "
+    ctx))
+
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String
   (match (lsp-validate-forms-result text)
     [(LspValidationResult.Valid) ""]
     [(LspValidationResult.Invalid line col msg ctx)
-      (lsp-str7
-        msg
-        " at line "
-        (string.int->string line)
-        ", col "
-        (string.int->string col)
-        " | "
-        ctx)]))
+      (lsp-validation-message line col msg ctx)]))
+
+(define (lsp-validate-edited-document [text : String]) : LspEditResult
+  (match (lsp-validate-forms-result text)
+    [(LspValidationResult.Valid) (LspEditResult.Ok text)]
+    [(LspValidationResult.Invalid line col msg ctx)
+      (LspEditResult.Err
+        (lsp-str2
+          "Edited document is invalid: "
+          (lsp-validation-message line col msg ctx)))]))
 
 ;; Extract the line at position (1-based line)
 (define (lsp-line-at [text : String] [line1 : i64]) : String
@@ -4319,7 +4335,13 @@
   [result : String]) : LspHandleResult
   (let
     [formatted : String (lsp-format-edit-text result)]
-    (lsp-tl-save-and-continue id params docs formatted)))
+    (match (lsp-validate-edited-document formatted)
+      [(LspEditResult.Ok checked)
+        (lsp-tl-save-and-continue id params docs checked)]
+      [(LspEditResult.Err message)
+        (begin
+          (lsp-write-error id -32600 message)
+          (LspHandleResult.Continue docs))])))
 
 (define (lsp-write-position-context-error-from-params
   [id : json.Json]
@@ -6984,9 +7006,12 @@
     [(LspJsonText.Ok method)
       (match (lsp-batch-apply-edit method operation text)
         [(LspEditResult.Ok next-text)
-          (LspBatchOpResult.Ok
-            next-text
-            (lsp-batch-operation-result index method))]
+          (match (lsp-validate-edited-document next-text)
+            [(LspEditResult.Ok checked-text)
+              (LspBatchOpResult.Ok
+                checked-text
+                (lsp-batch-operation-result index method))]
+            [(LspEditResult.Err message) (LspBatchOpResult.Err message)])]
         [(LspEditResult.Err message)
           (LspBatchOpResult.Err
             (lsp-batch-contextual-error-message operation text message))])]
@@ -7053,21 +7078,34 @@
                         (let
                           [formatted : String
                             (lsp-format-edit-text edited-text)]
-                          (match (lsp-tl-save-doc
-                            docs
-                            uri
-                            path
-                            diagnostic-uri
-                            formatted)
-                            [(LspSaveResult.Ok next-docs)
+                          (match (lsp-validate-edited-document formatted)
+                            [(LspEditResult.Ok checked-formatted)
+                              (match (lsp-tl-save-doc
+                                docs
+                                uri
+                                path
+                                diagnostic-uri
+                                checked-formatted)
+                                [(LspSaveResult.Ok next-docs)
+                                  (begin
+                                    (lsp-write-response
+                                      id
+                                      (lsp-batch-success-json
+                                        checked-formatted
+                                        results))
+                                    (LspHandleResult.Continue next-docs))]
+                                [(LspSaveResult.Err message)
+                                  (begin
+                                    (lsp-write-error id -32600 message)
+                                    (LspHandleResult.Continue docs))])]
+                            [(LspEditResult.Err message)
                               (begin
                                 (lsp-write-response
                                   id
-                                  (lsp-batch-success-json formatted results))
-                                (LspHandleResult.Continue next-docs))]
-                            [(LspSaveResult.Err message)
-                              (begin
-                                (lsp-write-error id -32600 message)
+                                  (lsp-batch-failure-json
+                                    message
+                                    -1
+                                    edited-text))
                                 (LspHandleResult.Continue docs))]))]
                       [(LspBatchRunResult.Err message failed-index partial-text)
                         (begin

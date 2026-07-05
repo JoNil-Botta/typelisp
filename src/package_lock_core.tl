@@ -15,9 +15,9 @@
   (pin-value String)
   (commit String))
 
-(defenum PackageLockEntryList
-  (Nil)
-  (Cons PackageLockEntry (Box PackageLockEntryList)))
+(defstruct PackageLockEntryList
+  (slots (Array PackageLockEntry))
+  (len i64))
 
 (defstruct PackageLockFile
   (version String)
@@ -110,47 +110,149 @@
           (set! ok false)))
       (= i n))))
 
+(define (package-lock-entry-list-with-capacity [capacity : i64]) : PackageLockEntryList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (PackageLockEntryList (make-array PackageLockEntry cap) 0)))
+
+(define (package-lock-entry-list-new) : PackageLockEntryList
+  (package-lock-entry-list-with-capacity 4))
+
+(define (package-lock-entry-list-fallback) : PackageLockEntry
+  (PackageLockEntry "" "" (PackageCachePinKind.Rev) "" ""))
+
+(define (package-lock-entry-list-count-ref
+  [entries : (& entries PackageLockEntryList)]) : i64
+  (struct-get entries len))
+
 (define (package-lock-entry-list-count [entries : PackageLockEntryList]) : i64
-  (match entries
-    [(PackageLockEntryList.Nil) 0]
-    [(PackageLockEntryList.Cons _ rest)
-      (+ 1 (package-lock-entry-list-count (box-get rest)))]))
+  (package-lock-entry-list-count-ref (& entries)))
+
+(define (package-lock-entry-list-get
+  [entries : (& entries PackageLockEntryList)]
+  [index : i64]) : PackageLockEntry
+  (if (if (>= index 0)
+    (< index (struct-get entries len))
+    false)
+    (array-ref (struct-get entries slots) index)
+    (package-lock-entry-list-fallback)))
+
+(define (package-lock-entry-list-lookup-from
+  [entries : (& entries PackageLockEntryList)]
+  [alias : String]
+  [index : i64]) : PackageLockMaybeEntry
+  (if (>= index (struct-get entries len))
+    (PackageLockMaybeEntry.No)
+    (let
+      [entry : PackageLockEntry (package-lock-entry-list-get entries index)]
+      (if (string.eq (struct-get entry alias) alias)
+        (PackageLockMaybeEntry.Some entry)
+        (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
 (define (package-lock-entry-list-lookup
   [entries : PackageLockEntryList]
   [alias : String]) : PackageLockMaybeEntry
-  (match entries
-    [(PackageLockEntryList.Nil) (PackageLockMaybeEntry.No)]
-    [(PackageLockEntryList.Cons entry rest)
-      (if (string.eq (struct-get entry alias) alias)
-        (PackageLockMaybeEntry.Some entry)
-        (package-lock-entry-list-lookup (box-get rest) alias))]))
+  (package-lock-entry-list-lookup-from (& entries) alias 0))
+
+(define (package-lock-entry-list-insert-position
+  [entries : (& entries PackageLockEntryList)]
+  [alias : String]
+  [index : i64]) : i64
+  (if (>= index (struct-get entries len))
+    index
+    (let
+      [head : PackageLockEntry (package-lock-entry-list-get entries index)]
+      (if (string.eq (struct-get head alias) alias)
+        -1
+        (if (package-lock-string-less? alias (struct-get head alias))
+          index
+          (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
+
+(define (package-lock-entry-list-copy-range!
+  [dst : (&mut dst (Array PackageLockEntry))]
+  [src : (& src (Array PackageLockEntry))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (package-lock-entry-list-grow!
+  [entries : (&mut entries PackageLockEntryList)]) : unit
+  (let
+    [count : i64 (struct-get entries len)]
+    [old-cap : i64 (array-length (struct-get entries slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array PackageLockEntry) (make-array PackageLockEntry new-cap)]
+    (begin
+      (package-lock-entry-list-copy-range!
+        (&mut bigger)
+        (& (struct-get entries slots))
+        0
+        count)
+      (set! (struct-get entries slots) bigger))))
+
+(define (package-lock-entry-list-push-placeholder!
+  [entries : (&mut entries PackageLockEntryList)]) : unit
+  (begin
+    (if (< (struct-get entries len) (array-length (struct-get entries slots)))
+      unit
+      (package-lock-entry-list-grow! entries))
+    (let
+      [index : i64 (struct-get entries len)]
+      (begin
+        (array-set!
+          (struct-get entries slots)
+          index
+          (package-lock-entry-list-fallback))
+        (set! (struct-get entries len) (+ index 1))))))
+
+(define (package-lock-entry-list-insert-at!
+  [entries : (&mut entries PackageLockEntryList)]
+  [entry : PackageLockEntry]
+  [index : i64]) : unit
+  (begin
+    (package-lock-entry-list-push-placeholder! entries)
+    (let
+      [write : i64 (- (struct-get entries len) 1)]
+      (begin
+        (while (> write index)
+          (begin
+            (array-set!
+              (struct-get entries slots)
+              write
+              (array-ref (struct-get entries slots) (- write 1)))
+            (set! write (- write 1))))
+        (array-set! (struct-get entries slots) index entry)))))
 
 (define (package-lock-entry-list-insert
   [entries : PackageLockEntryList]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
-  (match entries
-    [(PackageLockEntryList.Nil)
-      (ResultPackageLockEntryList.Ok
-        (PackageLockEntryList.Cons entry (box PackageLockEntryList.Nil)))]
-    [(PackageLockEntryList.Cons head rest)
-      (if (string.eq (struct-get head alias) (struct-get entry alias))
-        (ResultPackageLockEntryList.Err
-          (string.concat3
-            "package-lock: duplicate dependency alias `"
-            (struct-get entry alias)
-            "`"))
-        (if (package-lock-string-less?
+  (let
+    [next : PackageLockEntryList entries]
+    [index : i64
+      (package-lock-entry-list-insert-position
+        (& next)
+        (struct-get entry alias)
+        0)]
+    (if (< index 0)
+      (ResultPackageLockEntryList.Err
+        (string.concat3
+          "package-lock: duplicate dependency alias `"
           (struct-get entry alias)
-          (struct-get head alias))
-          (ResultPackageLockEntryList.Ok
-            (PackageLockEntryList.Cons entry (box entries)))
-          (match (package-lock-entry-list-insert (box-get rest) entry)
-            [(ResultPackageLockEntryList.Err message)
-              (ResultPackageLockEntryList.Err message)]
-            [(ResultPackageLockEntryList.Ok next)
-              (ResultPackageLockEntryList.Ok
-                (PackageLockEntryList.Cons head (box next)))])))]))
+          "`"))
+      (begin
+        (package-lock-entry-list-insert-at! (&mut next) entry index)
+        (ResultPackageLockEntryList.Ok next)))))
 
 (define (package-lock-field-string-value [ftail : Sexpr] [fname : String]) : ResultPackageLockString
   (match ftail
@@ -463,7 +565,7 @@
                       "package-lock: duplicate field `dependencies`")
                     (match (package-lock-dependencies-entries
                       (box-get ftail)
-                      (PackageLockEntryList.Nil))
+                      (package-lock-entry-list-new))
                       [(ResultPackageLockEntryList.Err message)
                         (ResultPackageLockFile.Err message)]
                       [(ResultPackageLockEntryList.Ok parsed)
@@ -491,7 +593,7 @@
               (box-get rest)
               ""
               false
-              (PackageLockEntryList.Nil)
+              (package-lock-entry-list-new)
               false)
             (ResultPackageLockFile.Err
               (string.concat3 "expected `typelisp-lock` form, got `" name "`")))]
@@ -590,13 +692,17 @@
               "commit"
               (struct-get entry commit))))))))
 
+(define (package-lock-emit-entries-from
+  [entries : (& entries PackageLockEntryList)]
+  [index : i64]) : String
+  (if (>= index (struct-get entries len))
+    ""
+    (string.append
+      (package-lock-emit-entry (package-lock-entry-list-get entries index))
+      (package-lock-emit-entries-from entries (+ index 1)))))
+
 (define (package-lock-emit-entries [entries : PackageLockEntryList]) : String
-  (match entries
-    [(PackageLockEntryList.Nil) ""]
-    [(PackageLockEntryList.Cons entry rest)
-      (string.append
-        (package-lock-emit-entry entry)
-        (package-lock-emit-entries (box-get rest)))]))
+  (package-lock-emit-entries-from (& entries) 0))
 
 (define (package-lock-emit [lock : PackageLockFile]) : String
   (string.append

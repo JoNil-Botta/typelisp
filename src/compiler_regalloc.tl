@@ -2529,6 +2529,28 @@
               words
               (+ index 1)))])]))
 
+(define (compiler-reg-bits-build-rows-from-array!
+  [blocks : (Array CompilerLiveBlock)]
+  [idmap : hashmap.StringI64Map]
+  [use-rows : (Array i64)]
+  [def-rows : (Array i64)]
+  [words : i64]
+  [index : i64]) : hashmap.StringI64Map
+  (if (>= index (array-length blocks))
+    idmap
+    (match (array-ref blocks index)
+      [(CompilerLiveBlock.Block label uses defs _ _ _ _)
+        (begin
+          (compiler-reg-set->row! uses use-rows (* index words))
+          (compiler-reg-set->row! defs def-rows (* index words))
+          (compiler-reg-bits-build-rows-from-array!
+            blocks
+            (hashmap.string-i64-map-put idmap label index)
+            use-rows
+            def-rows
+            words
+            (+ index 1)))])))
+
 (define (compiler-reg-bits-clear-row!
   [row : (Array i64)]
   [base : i64]
@@ -2815,13 +2837,12 @@
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [live-blocks : CompilerLiveBlockList
-          (compiler-live-build-blocks blocks)]
-        [count : i64 (compiler-reg-live-block-list-count live-blocks)]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        [live-blocks : (Array CompilerLiveBlock)
+          (compiler-live-build-block-array seq)]
+        [count : i64 (array-length live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
-        [arr : (Array CompilerLiveBlock)
-          (array.make-array CompilerLiveBlock count)]
         [use-rows : (Array i64) (array.make-array i64 cells)]
         [def-rows : (Array i64) (array.make-array i64 cells)]
         [live-in : (Array i64) (array.make-array i64 cells)]
@@ -2837,9 +2858,8 @@
           (compiler-reg-fill-i64-array ends -1)
           (let
             [idmap : hashmap.StringI64Map
-              (compiler-reg-bits-build-rows!
+              (compiler-reg-bits-build-rows-from-array!
                 live-blocks
-                arr
                 (hashmap.string-i64-map-with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
@@ -2848,7 +2868,7 @@
                 0)]
             (begin
               (compiler-reg-bits-fixpoint!
-                arr
+                live-blocks
                 idmap
                 count
                 words
@@ -7018,10 +7038,23 @@
             (hashmap.string-i64-map-put ids label index)
             (+ index 1))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-reg-loop-depth-block-ids
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        index)]))
+      (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
+
+(define (compiler-reg-loop-depth-block-ids-seq
+  [seq : CompilerIrBlockSeq]
+  [ids : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
+  (let
+    [count : i64 (compiler-ir-block-seq-count seq)]
+    [i : i64 index]
+    [out : hashmap.StringI64Map ids]
+    (begin
+      (while (< i count)
+        (match (compiler-ir-block-seq-ref seq i)
+          [(CompilerIrBlock.Block label _)
+            (set! out (hashmap.string-i64-map-put out label i))])
+        (set! i (+ i 1)))
+      out)))
 
 (define (compiler-reg-loop-depth-record-succ!
   [loop-ends : (Array i64)]
@@ -7073,11 +7106,24 @@
           loop-ends
           (+ index 1)))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-reg-loop-depth-record-blocks!
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        loop-ends
-        index)]))
+      (compiler-reg-loop-depth-record-blocks-seq! seq ids loop-ends index)]))
+
+(define (compiler-reg-loop-depth-record-blocks-seq!
+  [seq : CompilerIrBlockSeq]
+  [ids : hashmap.StringI64Map]
+  [loop-ends : (Array i64)]
+  [index : i64]) : unit
+  (let
+    [count : i64 (compiler-ir-block-seq-count seq)]
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (compiler-reg-loop-depth-record-succs!
+          loop-ends
+          ids
+          i
+          (compiler-live-block-successors (compiler-ir-block-seq-ref seq i)))
+        (set! i (+ i 1))))))
 
 (define (compiler-reg-loop-depth-bump-range!
   [depths : (Array i64)]
@@ -7433,6 +7479,25 @@
         flags
         vals)]))
 
+(define (compiler-reg-collect-remat-seq-from!
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [def-counts : (Array i64)]
+  [flags : (Array i64)]
+  [vals : (Array CompilerIrValue)]) : unit
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (compiler-ir-block-seq-ref blocks index)
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
+      (compiler-reg-collect-remat-seq-from!
+        blocks
+        (+ index 1)
+        def-counts
+        flags
+        vals))))
+
 ;; Post-allocation rewrite: a singleton (non-coalesced) rematerialisable var that
 ;; the allocator chose to SPILL is converted to CompilerRegLocation.Remat instead -- its
 ;; uses recompute the value and its def store is dropped (backend). Coalesced
@@ -7457,11 +7522,15 @@
       (compiler-reg-remat-init-vals! vals vars)
       (match func
         [(CompilerIrFunction.Function _ _ _ _ blocks)
-          (compiler-reg-collect-remat-blocks!
-            (compiler-ir-block-list-force-cons blocks)
-            def-counts
-            flags
-            vals)])
+          (match blocks
+            [(CompilerIrBlockList.Array seq)
+              (compiler-reg-collect-remat-seq-from! seq 0 def-counts flags vals)]
+            [_
+              (compiler-reg-collect-remat-blocks!
+                (compiler-ir-block-list-force-cons blocks)
+                def-counts
+                flags
+                vals)])])
       (while (< v vars)
         (begin
           ;; Skip vars the call-spanning saver shadows: those keep a real slot to
@@ -8908,6 +8977,22 @@
       (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
       loop-ends)))
 
+(define (compiler-reg-preheader-loop-ends-seq
+  [seq : CompilerIrBlockSeq]
+  [count : i64]) : (Array i64)
+  (let
+    [loop-ends : (Array i64) (array.make-array i64 count)]
+    [ids : hashmap.StringI64Map
+      (compiler-reg-loop-depth-block-ids-seq
+        seq
+        (hashmap.string-i64-map-with-capacity
+          (compiler-reg-bits-map-capacity count))
+        0)]
+    (begin
+      (compiler-reg-fill-i64-array loop-ends (- 0 1))
+      (compiler-reg-loop-depth-record-blocks-seq! seq ids loop-ends 0)
+      loop-ends)))
+
 ;; Scan all blocks for predecessors of header `h` (succ contains h-label) that
 ;; lie OUTSIDE the natural-loop range [h..le]. Returns the single such index,
 ;; -1 if none, or -2 if more than one (multi-entry -- not this slice).
@@ -9155,22 +9240,20 @@
   [blocks : CompilerIrBlockList]
   [header-label : String]) : CompilerIrBlockList
   (let
-    [cons-blocks : CompilerIrBlockList
-      (compiler-ir-block-list-force-cons blocks)]
-    [count : i64 (compiler-ir-block-list-count cons-blocks)]
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64 (compiler-ir-block-seq-count seq)]
     (if (<= count 1)
       blocks
       (let
-        [orig : (Array CompilerIrBlock)
-          (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+        [orig : (Array CompilerIrBlock) (struct-get seq slots)]
         [ids : hashmap.StringI64Map
-          (compiler-reg-loop-depth-block-ids
-            cons-blocks
+          (compiler-reg-loop-depth-block-ids-seq
+            seq
             (hashmap.string-i64-map-with-capacity
               (compiler-reg-bits-map-capacity count))
             0)]
         [loop-ends : (Array i64)
-          (compiler-reg-preheader-loop-ends cons-blocks count)]
+          (compiler-reg-preheader-loop-ends-seq seq count)]
         [header-pred : (Array i64) (array.make-array i64 count)]
         (begin
           (compiler-reg-fill-i64-array header-pred (- 0 1))
@@ -9191,7 +9274,7 @@
                       orig
                       ids
                       header-pred
-                      cons-blocks
+                      blocks
                       0))
                   blocks))]
             [(hashmap.StringI64MapMissing) blocks]))))))
@@ -10026,10 +10109,8 @@
   [parents : (Array i64)]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (let
-    [cons-blocks : CompilerIrBlockList
-      (compiler-ir-block-list-force-cons blocks)]
-    [block-array : (Array CompilerIrBlock)
-      (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+    [block-array : (Array CompilerIrBlock) (struct-get seq slots)]
     [count : i64 (array-length block-array)]
     (if (<= count 1)
       (CompilerRegLoopSplitCandidate.NoCandidate)
@@ -10037,7 +10118,7 @@
         func
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
-        (compiler-reg-preheader-loop-ends cons-blocks count)
+        (compiler-reg-preheader-loop-ends-seq seq count)
         (compiler-reg-edge-copy-pred-counts ids live-blocks)
         depths
         0
@@ -10944,9 +11025,7 @@
   [n : i64]
   [buckets : (Array CompilerRegCallRegionStatList)]) : unit
   (let
-    [seq : CompilerIrBlockSeq
-      (compiler-ir-block-seq-from-list
-        (compiler-ir-block-list-force-cons blocks))]
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
     [nblocks : i64 (struct-get seq len)]
     [cur-region : (Array i64)
@@ -18030,9 +18109,7 @@
         [extra-types : CompilerRegVarTypeList CompilerRegVarTypeList.Nil]
         [cursor : i64 0]
         [point : i64 0]
-        [seq : CompilerIrBlockSeq
-          (compiler-ir-block-seq-from-list
-            (compiler-ir-block-list-force-cons blocks))]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
         [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
         [nblocks : i64 (struct-get seq len)]
         [out-rev : CompilerIrBlockList CompilerIrBlockList.Nil]

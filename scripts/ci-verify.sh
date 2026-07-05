@@ -295,36 +295,35 @@ run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verif
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
 run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness
 run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
-        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
-fi
+run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+    scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/verify-stdlib.sh
+run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
+run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
+run_with_compiler "$STAGE2_BIN" "stage2 SPMD lane identity" scripts/verify-spmd-lane-identity.sh
+run_with_compiler "$STAGE2_BIN" "stage2 SPMD broadcast" scripts/verify-spmd-broadcast.sh
+DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
+export DOC_SITE_OUT
+run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
+unset DOC_SITE_OUT
 
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 CLI host-action smoke" scripts/check-stage1-wrapper.sh
     run_with_compiler "$STAGE2_BIN" "stage2 stdlib documentation" scripts/verify-stdlib-docs.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
-    if command -v valgrind >/dev/null 2>&1; then
-        run_with_compiler "$STAGE2_BIN" "Linux instruction-count baseline" \
-            env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
-    else
-        echo "[ci-verify] SKIP Linux instruction-count baseline: valgrind not found"
+    if ! command -v valgrind >/dev/null 2>&1; then
+        required_gate_unavailable "Linux instruction-count baseline" \
+            "valgrind is required on Linux; install valgrind rather than skipping this gate"
     fi
-    DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
-    export DOC_SITE_OUT
-    run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
-    unset DOC_SITE_OUT
+    run_with_compiler "$STAGE2_BIN" "Linux instruction-count baseline" \
+        env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
-    echo "[ci-verify] Linux-only GNU as/ld gates are not Windows-applicable:"
-    echo "[ci-verify]   host-action smoke, comptime specialization smoke,"
-    echo "[ci-verify]   stdlib documentation, stdlib selfhost verifier,"
-    echo "[ci-verify]   SPMD SIMD comparison, instruction counts, docs Pages build path,"
-    echo "[ci-verify]   native link generated programs, selfhost external compiler corpus"
+    echo "[ci-verify] Linux-only gates not applicable on Windows:"
+    echo "[ci-verify]   host-action smoke (as/ld), stdlib documentation (doc target"
+    echo "[ci-verify]   selection), instruction counts (valgrind), native link"
+    echo "[ci-verify]   generated programs (Linux linker inputs)"
 fi
 
 echo

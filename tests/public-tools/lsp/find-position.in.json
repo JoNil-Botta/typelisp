@@ -4,6 +4,8 @@
   {"jsonrpc":"2.0","id":2,"method":"tl/findPosition","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"foo","kind":"function"}},
   {"jsonrpc":"2.0","id":3,"method":"tl/findPosition","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"MyStruct","kind":"struct"}},
   {"jsonrpc":"2.0","id":4,"method":"tl/findPosition","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"foo","kind":"enum"}},
-  {"jsonrpc":"2.0","id":5,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","id":5,"method":"tl/findPosition","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"foz","kind":"function"}},
+  {"jsonrpc":"2.0","id":6,"method":"tl/findPosition","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"zzz","kind":"function"}},
+  {"jsonrpc":"2.0","id":7,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

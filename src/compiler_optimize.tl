@@ -22124,6 +22124,429 @@
         frame
         (opt-loop-bce-blocks summaries params blocks))]))
 
+;; --- affine chain folding (codegen phase 6) ----------------------------------
+;;
+;; Collapse chained affine 64-bit integer arithmetic. With wrapping semantics
+;; (SPEC: i64/u64 `+`/`-`/`*` wrap modulo 2^64),
+;;   (x*C1 + K1)*C2 + K2  ==  x*(C1*C2) + (K1*C2 + K2)
+;; so the x4 unroller's chained `acc = acc*A + K` copies fold back into ONE
+;; mul+add per group, and chained counter increments `((i+1)+1)+1` fold into
+;; parallel `i+2`/`i+3` offsets off the group counter. The pass is one forward
+;; walk per block over the freshly rebuilt post-fold instruction sequence,
+;; mutating it in place:
+;;  * every var defined by `Add/Sub (Var x) (I64 k)` or `Mul (Var x) (I64 c)`
+;;    (either operand order for Add/Mul) at 64-bit integer type gets an affine
+;;    record; records are bound fully resolved (add-of-add and mul-of-mul are
+;;    rewritten at bind time), so lookups never chase chains.
+;;  * add-of-add and mul-of-mul rewrite only the CURRENT instruction and keep
+;;    its value bit-identical, so they need no use-count gate.
+;;  * add-of-mul-of-add is the recurrence composition: for
+;;    `v = Mul(x, C2); dst = Add(v, K2)` with `x = Add(u, K1)`, rewrite v IN
+;;    PLACE (at its recorded index) to `Mul(u', C')` and dst to
+;;    `Add(v, K1*C2 + K2)`, where (u', C') resolves u through a mul record.
+;;    Rewriting v changes v's VALUE (from (u+K1)*C2 to u*C2), so this arm is
+;;    gated on uses(v) == 1 -- the current Add is that single use, and the
+;;    gate also guarantees no OTHER record was derived from v.
+;;  * The use counts are collected once per function and then kept EXACT:
+;;    every rewrite that retargets an operand from one var to another also
+;;    moves that use in the count array, so a later single-use consult never
+;;    sees a stale count.
+;;  * Records are invalidated when their key or base var is redefined
+;;    (pre-SSA multi-def safety); a record whose base would be its own key
+;;    (`i = i + 1`) is never bound. The env resets past a small cap so
+;;    pathological blocks stay linear.
+;; Runs only in the opt2 fixpoint pipeline (after fold, before loop BCE); the
+;; intermediates orphaned by the rewrites are dropped by the pipeline's DCE.
+(defenum OptAffineRec
+  (No)
+  ;; var == base + k
+  (AddC i64 i64)
+  ;; var == base * c, defined at instruction index idx of the current block
+  (MulC i64 i64 i64))
+
+(defenum OptAffineEnv
+  (Nil)
+  (Cons i64 OptAffineRec (Box OptAffineEnv)))
+
+(defenum OptAffineStep
+  (Result OptAffineEnv i64))
+
+(defenum OptAffineOperands
+  (No)
+  (Some i64 i64))
+
+(define (opt-affine-env-cap) : i64
+  64)
+
+(define (opt-affine-64bit-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [_ false]))
+
+;; Split a commutative (Var, I64) operand pair in either order.
+(define (opt-affine-var-const [lhs : CompilerIrValue] [rhs : CompilerIrValue]) : OptAffineOperands
+  (match lhs
+    [(CompilerIrValue.Var v)
+      (match rhs
+        [(CompilerIrValue.I64 k) (OptAffineOperands.Some v k)]
+        [_ (OptAffineOperands.No)])]
+    [(CompilerIrValue.I64 k)
+      (match rhs
+        [(CompilerIrValue.Var v) (OptAffineOperands.Some v k)]
+        [_ (OptAffineOperands.No)])]
+    [_ (OptAffineOperands.No)]))
+
+(define (opt-affine-env-lookup [env : OptAffineEnv] [var : i64]) : OptAffineRec
+  (match env
+    [(OptAffineEnv.Nil) (OptAffineRec.No)]
+    [(OptAffineEnv.Cons key rec rest)
+      (if (= key var)
+        rec
+        (opt-affine-env-lookup (box-get rest) var))]))
+
+(define (opt-affine-rec-mentions? [rec : OptAffineRec] [var : i64]) : bool
+  (match rec
+    [(OptAffineRec.No) true]
+    [(OptAffineRec.AddC base _) (= base var)]
+    [(OptAffineRec.MulC base _ _) (= base var)]))
+
+;; Drop every record keyed by `var` or derived from it (its base): both
+;; describe the var's PREVIOUS value once it is redefined.
+(define (opt-affine-env-purge [env : OptAffineEnv] [var : i64]) : OptAffineEnv
+  (match env
+    [(OptAffineEnv.Nil) (OptAffineEnv.Nil)]
+    [(OptAffineEnv.Cons key rec rest)
+      (let
+        [tail : OptAffineEnv (opt-affine-env-purge (box-get rest) var)]
+        (if (or (= key var) (opt-affine-rec-mentions? rec var))
+          tail
+          (OptAffineEnv.Cons key rec (box tail))))]))
+
+;; Bind after the dst's def: purge stale records first, skip self-referential
+;; records, and reset the env past the cap so blocks stay linear.
+(define (opt-affine-env-bind-def
+  [env : OptAffineEnv]
+  [binds : i64]
+  [dst : i64]
+  [rec : OptAffineRec]) : OptAffineStep
+  (let
+    [purged : OptAffineEnv (opt-affine-env-purge env dst)]
+    (match rec
+      [(OptAffineRec.No) (OptAffineStep.Result purged binds)]
+      [_
+        (if (opt-affine-rec-mentions? rec dst)
+          (OptAffineStep.Result purged binds)
+          (if (>= binds (opt-affine-env-cap))
+            (OptAffineStep.Result (OptAffineEnv.Nil) 0)
+            (OptAffineStep.Result
+              (OptAffineEnv.Cons dst rec (box purged))
+              (+ binds 1))))])))
+
+(define (opt-affine-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length uses)))
+    (array-ref uses var)
+    0))
+
+;; Rewrites retarget one operand from `from` to `to`; keeping the counts exact
+;; is what makes the single-use gate sound against earlier rewrites.
+(define (opt-affine-use-retarget! [uses : (Array i64)] [from : i64] [to : i64]) : unit
+  (begin
+    (if (and (>= from 0) (< from (array-length uses)))
+      (array-set! uses from (- (array-ref uses from) 1))
+      unit)
+    (if (and (>= to 0) (< to (array-length uses)))
+      (array-set! uses to (+ (array-ref uses to) 1))
+      unit)))
+
+;; The 64-bit element type of the (recorded, hence 64-bit BinOp) instruction
+;; at `index`; I64 is only a defensive fallback.
+(define (opt-affine-instr-ty [instrs : CompilerIrInstrSeq] [index : i64]) : AstType
+  (match (compiler-ir-instr-seq-ref instrs index)
+    [(CompilerIrInstr.BinOp _ _ _ _ ty) ty]
+    [_ (AstType.I64)]))
+
+;; `dst = src + k` (Add, or Sub with k already negated; `emit-add?` keeps a
+;; no-rewrite Sub in Sub form while its record is still additive).
+(define (opt-affine-add-step
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [index : i64]
+  [env : OptAffineEnv]
+  [binds : i64]
+  [dst : i64]
+  [src : i64]
+  [k : i64]
+  [ty : AstType]) : OptAffineStep
+  (match (opt-affine-env-lookup env src)
+    [(OptAffineRec.AddC base k1)
+      ;; add-of-add: dst == base + (k1 + k), bit-identical.
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          index
+          (CompilerIrInstr.BinOp
+            dst
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var base)
+            (CompilerIrValue.I64 (+ k1 k))
+            ty))
+        (opt-affine-use-retarget! uses src base)
+        (opt-affine-env-bind-def
+          env
+          binds
+          dst
+          (OptAffineRec.AddC base (+ k1 k))))]
+    [(OptAffineRec.MulC mbase c vidx)
+      ;; add-of-mul-of-add: the recurrence composition (see the pass comment).
+      (match (opt-affine-env-lookup env mbase)
+        [(OptAffineRec.AddC u k1)
+          (if (= (opt-affine-use-count uses src) 1)
+            (let
+              ;; Resolve u through a mul record so the rewritten mul's base
+              ;; stays fully resolved (mul-of-mul composes here).
+              [vty : AstType (opt-affine-instr-ty instrs vidx)]
+              [ubase : i64
+                (match (opt-affine-env-lookup env u)
+                  [(OptAffineRec.MulC t _ _) t]
+                  [_ u])]
+              [uc : i64
+                (match (opt-affine-env-lookup env u)
+                  [(OptAffineRec.MulC _ c0 _) (* c0 c)]
+                  [_ c])]
+              (begin
+                (compiler-ir-instr-seq-set!
+                  instrs
+                  vidx
+                  (CompilerIrInstr.BinOp
+                    src
+                    (CompilerIrBinOp.Mul)
+                    (CompilerIrValue.Var ubase)
+                    (CompilerIrValue.I64 uc)
+                    vty))
+                (opt-affine-use-retarget! uses mbase ubase)
+                (compiler-ir-instr-seq-set!
+                  instrs
+                  index
+                  (CompilerIrInstr.BinOp
+                    dst
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var src)
+                    (CompilerIrValue.I64 (+ (* k1 c) k))
+                    ty))
+                (match (opt-affine-env-bind-def
+                  env
+                  binds
+                  src
+                  (OptAffineRec.MulC ubase uc vidx))
+                  [(OptAffineStep.Result env-v binds-v)
+                    (opt-affine-env-bind-def
+                      env-v
+                      binds-v
+                      dst
+                      (OptAffineRec.AddC src (+ (* k1 c) k)))])))
+            (opt-affine-env-bind-def env binds dst (OptAffineRec.AddC src k)))]
+        [_ (opt-affine-env-bind-def env binds dst (OptAffineRec.AddC src k))])]
+    [(OptAffineRec.No)
+      (opt-affine-env-bind-def env binds dst (OptAffineRec.AddC src k))]))
+
+;; `dst = src * c`.
+(define (opt-affine-mul-step
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [index : i64]
+  [env : OptAffineEnv]
+  [binds : i64]
+  [dst : i64]
+  [src : i64]
+  [c : i64]
+  [ty : AstType]) : OptAffineStep
+  (match (opt-affine-env-lookup env src)
+    [(OptAffineRec.MulC base c1 _)
+      ;; mul-of-mul: dst == base * (c1 * c), bit-identical.
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          index
+          (CompilerIrInstr.BinOp
+            dst
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var base)
+            (CompilerIrValue.I64 (* c1 c))
+            ty))
+        (opt-affine-use-retarget! uses src base)
+        (opt-affine-env-bind-def
+          env
+          binds
+          dst
+          (OptAffineRec.MulC base (* c1 c) index)))]
+    [_ (opt-affine-env-bind-def env binds dst (OptAffineRec.MulC src c index))]))
+
+(define (opt-affine-instr-step
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [index : i64]
+  [env : OptAffineEnv]
+  [binds : i64]) : OptAffineStep
+  (let
+    [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+    (match instr
+      [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+        (if (opt-affine-64bit-type? ty)
+          (match op
+            [(CompilerIrBinOp.Add)
+              (match (opt-affine-var-const lhs rhs)
+                [(OptAffineOperands.Some src k)
+                  (opt-affine-add-step instrs uses index env binds dst src k ty)]
+                [(OptAffineOperands.No)
+                  (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])]
+            [(CompilerIrBinOp.Sub)
+              ;; Only `Var - I64` is additive; the negation wraps like the op.
+              (match lhs
+                [(CompilerIrValue.Var src)
+                  (match rhs
+                    [(CompilerIrValue.I64 k)
+                      (opt-affine-add-step
+                        instrs
+                        uses
+                        index
+                        env
+                        binds
+                        dst
+                        src
+                        (- 0 k)
+                        ty)]
+                    [_
+                      (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])]
+                [_ (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])]
+            [(CompilerIrBinOp.Mul)
+              (match (opt-affine-var-const lhs rhs)
+                [(OptAffineOperands.Some src c)
+                  (opt-affine-mul-step instrs uses index env binds dst src c ty)]
+                [(OptAffineOperands.No)
+                  (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])]
+            [_ (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])
+          (opt-affine-env-bind-def env binds dst (OptAffineRec.No)))]
+      [(CompilerIrInstr.Mov dst src ty)
+        ;; A register copy is a zero-offset affine link: tracking it (resolved
+        ;; through the source's own additive record, exactly like an add binds)
+        ;; keeps chains foldable even when the unroller's loop-carried
+        ;; writeback Movs survive into the body. Record-only -- the Mov
+        ;; instruction itself is never rewritten.
+        (if (opt-affine-64bit-type? ty)
+          (match src
+            [(CompilerIrValue.Var v)
+              (match (opt-affine-env-lookup env v)
+                [(OptAffineRec.AddC base k1)
+                  (opt-affine-env-bind-def
+                    env
+                    binds
+                    dst
+                    (OptAffineRec.AddC base k1))]
+                [_
+                  (opt-affine-env-bind-def
+                    env
+                    binds
+                    dst
+                    (OptAffineRec.AddC v 0))])]
+            [_ (opt-affine-env-bind-def env binds dst (OptAffineRec.No))])
+          (opt-affine-env-bind-def env binds dst (OptAffineRec.No)))]
+      [_
+        (let
+          [dst : i64 (opt-gvn-instr-dst instr)]
+          (if (< dst 0)
+            (OptAffineStep.Result env binds)
+            (opt-affine-env-bind-def env binds dst (OptAffineRec.No))))])))
+
+(define (opt-affine-fold-step!
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [index : i64]
+  [env : OptAffineEnv]
+  [binds : i64]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (match (opt-affine-instr-step instrs uses index env binds)
+      [(OptAffineStep.Result next-env next-binds)
+        (opt-affine-fold-step! instrs uses (+ index 1) next-env next-binds)])))
+
+;; Cheap prescan: the pass only pays for blocks with at least two foldable
+;; affine candidates (the minimum for any chain).
+(define (opt-affine-instr-candidate? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (if (opt-affine-64bit-type? ty)
+        (match op
+          [(CompilerIrBinOp.Add)
+            (match (opt-affine-var-const lhs rhs)
+              [(OptAffineOperands.Some _ _) true]
+              [(OptAffineOperands.No) false])]
+          [(CompilerIrBinOp.Sub)
+            (match (opt-affine-var-const lhs rhs)
+              [(OptAffineOperands.Some _ _) true]
+              [(OptAffineOperands.No) false])]
+          [(CompilerIrBinOp.Mul)
+            (match (opt-affine-var-const lhs rhs)
+              [(OptAffineOperands.Some _ _) true]
+              [(OptAffineOperands.No) false])]
+          [_ false])
+        false)]
+    [_ false]))
+
+(define (opt-affine-seq-candidate-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [seen : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-affine-instr-candidate? (compiler-ir-instr-seq-ref instrs index))
+      (if (>= (+ seen 1) 2)
+        true
+        (opt-affine-seq-candidate-from? instrs (+ index 1) (+ seen 1)))
+      (opt-affine-seq-candidate-from? instrs (+ index 1) seen))))
+
+(define (opt-affine-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (opt-affine-seq-candidate-from? instrs 0 0)]))
+
+(define (opt-affine-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-affine-block-candidate? block)
+        true
+        (opt-affine-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-affine-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-affine-fold-blocks-walk!
+  [uses : (Array i64)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (if (opt-affine-seq-candidate-from? instrs 0 0)
+              (opt-affine-fold-step! instrs uses 0 (OptAffineEnv.Nil) 0)
+              unit)])
+        (opt-affine-fold-blocks-walk! uses (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-affine-fold-blocks-walk! uses (compiler-ir-block-seq-to-list seq))]))
+
+;; Entry: rewrites the (freshly fold-rebuilt, exclusively owned) blocks in
+;; place and returns them; a function with no two-candidate block is untouched.
+(define (opt-affine-fold-blocks [frame : i64] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (if (opt-affine-blocks-have-candidate? blocks)
+    (begin
+      (opt-affine-fold-blocks-walk!
+        (opt-collect-blocks-uses-array frame blocks)
+        blocks)
+      blocks)
+    blocks))
+
 (define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -23791,10 +24214,17 @@
               compile-profile
               (compiler-opt-profile-pass-finish "fold" name _t-fold)
               unit)]
+          [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
+          [affine : CompilerIrBlockList (opt-affine-fold-blocks frame folded)]
+          [_p-affine : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish "affine" name _t-affine)
+              unit)]
           [loop-bce : CompilerIrBlockList
             (if (struct-get summaries enabled)
-              (opt-loop-bce-blocks summaries params folded)
-              folded)]
+              (opt-loop-bce-blocks summaries params affine)
+              affine)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
             (opt-aggregate-stack-promote-function
@@ -24171,8 +24601,17 @@
                             _t-unroll)
                           unit)]
                       [unroll-frame : i64 (opt-function-frame unrolled)]
+                      ;; Affine chain folding must see the unroller's output
+                      ;; INSIDE the same pipeline iteration: a lowered while
+                      ;; loop spends iteration 1 on SSA+rotation and unrolls in
+                      ;; iteration 2 (the fixpoint cap), so the fold-position
+                      ;; run above never sees the fresh copies. The pass only
+                      ;; rewrites instructions in place (no CFG change), so the
+                      ;; unroll context stays valid for the passes below.
                       [unroll-blocks : CompilerIrBlockList
-                        (opt-function-blocks unrolled)]
+                        (opt-affine-fold-blocks
+                          (opt-function-frame unrolled)
+                          (opt-function-blocks unrolled))]
                       ;; Cross-block global value numbering + copy propagation
                       ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
@@ -43049,6 +43488,464 @@
       [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 8) 3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count nonunit) 3)) 4]
+      [else 42])))
+
+;; --- affine chain folding self-test -------------------------------------------
+;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
+;; collapse so the last pair reads `x*125` and `+93`, and a counter chain
+;; `((x+1)+1)-? ` must rebase every link onto x. Negative: a two-use mul stays.
+(define (opt-affine-test-instr [instrs : CompilerIrInstrList] [index : i64]) : CompilerIrInstr
+  (match instrs
+    [(CompilerIrInstrList.Nil)
+      (CompilerIrInstr.Return (CompilerIrMaybeValue.No))]
+    [(CompilerIrInstrList.Cons instr rest)
+      (if (<= index 0)
+        instr
+        (opt-affine-test-instr (box-get rest) (- index 1)))]))
+
+(define (opt-affine-test-binop-shape?
+  [block : CompilerIrBlock]
+  [index : i64]
+  [want-dst : i64]
+  [want-mul : bool]
+  [want-src : i64]
+  [want-const : i64]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.BinOp dst op lhs rhs _)
+          (and
+            (= dst want-dst)
+            (match op
+              [(CompilerIrBinOp.Mul) want-mul]
+              [(CompilerIrBinOp.Add) (not want-mul)]
+              [_ false])
+            (match lhs
+              [(CompilerIrValue.Var v) (= v want-src)]
+              [_ false])
+            (match rhs
+              [(CompilerIrValue.I64 k) (= k want-const)]
+              [_ false]))]
+        [_ false])]))
+
+(define (opt-affine-test-first-block [blocks : CompilerIrBlockList]) : CompilerIrBlock
+  (match blocks
+    [(CompilerIrBlockList.Cons block _) block]
+    [_ (compiler-ir-block "missing" (CompilerIrInstrList.Nil))]))
+
+(define (opt-affine-lcg-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Mul)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 5)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            3
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 3)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Mul)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 5)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 3)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  6
+                  (CompilerIrBinOp.Mul)
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.I64 5)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    7
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 6)
+                    (CompilerIrValue.I64 3)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                    (CompilerIrInstrList.Nil)))))))))
+    (CompilerIrBlockList.Nil)))
+
+(define (opt-affine-counter-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          1
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            2
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              3
+              (CompilerIrBinOp.Sub)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 5)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+              (CompilerIrInstrList.Nil))))))
+    (CompilerIrBlockList.Nil)))
+
+;; Var 4 (the mul) feeds TWO adds, so the value-changing pair rewrite must not
+;; fire: the mul and both adds stay exactly as written.
+(define (opt-affine-two-use-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 3)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            4
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              5
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.I64 7)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                6
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 9)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  7
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.Var 6)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                  (CompilerIrInstrList.Nil))))))))
+    (CompilerIrBlockList.Nil)))
+
+;; Full-pipeline integration fixture: `while (i < n) { acc = acc*5 + 3; i++ }`
+;; in SSA form. After optimize-function the x4 unroller versions the loop and
+;; the affine pass must collapse the four chained pairs so the unrolled body
+;; multiplies by 5^4 = 625 exactly once.
+(define (opt-affine-lcg-loop-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "body"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            2
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.I64 0)
+              "entry"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 5)
+                "body"
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              3
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 1)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 7)
+                  "body"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                6
+                (CompilerIrBinOp.Mul)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.I64 5)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  7
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 6)
+                  (CompilerIrValue.I64 3)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    5
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      8
+                      (CompilerIrBinOp.Lt)
+                      (CompilerIrValue.Var 5)
+                      (CompilerIrValue.Var 0)
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var 8)
+                        "body"
+                        "exit")
+                      (CompilerIrInstrList.Nil)))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+(define (opt-affine-test-seq-count-mul
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-affine-test-seq-count-mul
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.BinOp _ op _ _ _)
+            (match op
+              [(CompilerIrBinOp.Mul) 1]
+              [_ 0])]
+          [_ 0])))))
+
+(define (opt-affine-test-seq-has-mul-by?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [want : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp _ op _ rhs _)
+        (match op
+          [(CompilerIrBinOp.Mul)
+            (match rhs
+              [(CompilerIrValue.I64 k)
+                (if (= k want)
+                  true
+                  (opt-affine-test-seq-has-mul-by? instrs (+ index 1) want))]
+              [_ (opt-affine-test-seq-has-mul-by? instrs (+ index 1) want)])]
+          [_ (opt-affine-test-seq-has-mul-by? instrs (+ index 1) want)])]
+      [_ (opt-affine-test-seq-has-mul-by? instrs (+ index 1) want)])))
+
+;; The same recurrence as lowering emits it: a top-tested pre-SSA while loop
+;; with Mov writebacks, entering the pipeline before SSA/rotation/unroll.
+(define (opt-affine-lcg-while-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            3
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "body" "exit")
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Mul)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.I64 5)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 3)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 5) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    6
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      2
+                      (CompilerIrValue.Var 6)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "header")
+                      (CompilerIrInstrList.Nil))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                7
+                (CompilerIrBinOp.BitAnd)
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 255)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                (CompilerIrInstrList.Nil))))
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-affine-test-blocks-have-mul-by?
+  [blocks : CompilerIrBlockList]
+  [want : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-affine-test-seq-has-mul-by? instrs 0 want)
+            true
+            (opt-affine-test-blocks-have-mul-by? (box-get rest) want))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-affine-test-blocks-have-mul-by?
+        (compiler-ir-block-seq-to-list seq)
+        want)]))
+
+(define (opt-affine-pipeline-check
+  [optimized : CompilerIrFunction]
+  [fail-missing : i64]
+  [fail-mul : i64]
+  [fail-count : i64]) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    (match (opt-cfg-find-block blocks "body__unroll_body")
+      [(OptMaybeBlock.No) fail-missing]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (cond
+              ;; the four chained *5 collapse into one *625 ...
+              [(not (opt-affine-test-seq-has-mul-by? instrs 0 625)) fail-mul]
+              ;; ... and DCE drops the orphaned intermediate pairs.
+              [(> (opt-affine-test-seq-count-mul instrs 0 0) 1) fail-count]
+              [else 42])])])))
+
+(define (compiler-optimize-affine-pipeline-self-test) : i64
+  (let
+    [ssa-result : i64
+      (opt-affine-pipeline-check
+        (optimize-function
+          (CompilerIrFunction.Function
+            "affine_loop_fixture"
+            (opt-unroll-test-params)
+            (AstType.I64)
+            9
+            (opt-affine-lcg-loop-blocks)))
+        1
+        2
+        3)]
+    [while-result : i64
+      (opt-affine-pipeline-check
+        (optimize-function
+          (CompilerIrFunction.Function
+            "affine_while_fixture"
+            (opt-unroll-test-params)
+            (AstType.I64)
+            8
+            (opt-affine-lcg-while-blocks)))
+        4
+        5
+        6)]
+    (if (= ssa-result 42)
+      while-result
+      ssa-result)))
+
+(define (compiler-optimize-affine-self-test) : i64
+  (let
+    [lcg : CompilerIrBlockList
+      (opt-affine-fold-blocks 16 (opt-affine-lcg-test-blocks))]
+    [lcg-block : CompilerIrBlock (opt-affine-test-first-block lcg)]
+    [counter : CompilerIrBlockList
+      (opt-affine-fold-blocks 16 (opt-affine-counter-test-blocks))]
+    [counter-block : CompilerIrBlock (opt-affine-test-first-block counter)]
+    [two-use : CompilerIrBlockList
+      (opt-affine-fold-blocks 16 (opt-affine-two-use-test-blocks))]
+    [two-use-block : CompilerIrBlock (opt-affine-test-first-block two-use)]
+    (cond
+      ;; ((x*5+3)*5+3)*5+3 == x*125 + 93: the second pair reads x*25 + 18 ...
+      [(not (opt-affine-test-binop-shape? lcg-block 2 4 true 0 25)) 1]
+      [(not (opt-affine-test-binop-shape? lcg-block 3 5 false 4 18)) 2]
+      ;; ... and the last pair reads x*125 + 93.
+      [(not (opt-affine-test-binop-shape? lcg-block 4 6 true 0 125)) 3]
+      [(not (opt-affine-test-binop-shape? lcg-block 5 7 false 6 93)) 4]
+      ;; (x+1)+1 rebases to x+2; the Sub then folds to x-3 (emitted as Add).
+      [(not (opt-affine-test-binop-shape? counter-block 1 2 false 0 2)) 5]
+      [(not (opt-affine-test-binop-shape? counter-block 2 3 false 0 (- 0 3))) 6]
+      ;; two-use mul: v4 = (x+3)*5 must stay untouched ...
+      [(not (opt-affine-test-binop-shape? two-use-block 1 4 true 2 5)) 7]
+      ;; ... and both adds keep reading it.
+      [(not (opt-affine-test-binop-shape? two-use-block 2 5 false 4 7)) 8]
+      [(not (opt-affine-test-binop-shape? two-use-block 3 6 false 4 9)) 9]
       [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList

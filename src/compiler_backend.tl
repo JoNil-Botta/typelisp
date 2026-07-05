@@ -33728,8 +33728,7 @@
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
-        [blocks : CompilerIrBlockList
-          raw-blocks]
+        [blocks : CompilerIrBlockList raw-blocks]
         [walk-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic

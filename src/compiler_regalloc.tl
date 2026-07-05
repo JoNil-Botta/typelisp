@@ -7004,15 +7004,14 @@
   (let
     [count : i64 (compiler-ir-block-seq-count seq)]
     [i : i64 index]
-    (begin
-      (while (< i count)
-        (begin
-          (compiler-reg-loop-depth-record-succs!
-            loop-ends
-            ids
-            i
-            (compiler-live-block-successors (compiler-ir-block-seq-ref seq i)))
-          (set! i (+ i 1)))))))
+    (while (< i count)
+      (begin
+        (compiler-reg-loop-depth-record-succs!
+          loop-ends
+          ids
+          i
+          (compiler-live-block-successors (compiler-ir-block-seq-ref seq i)))
+        (set! i (+ i 1))))))
 
 (define (compiler-reg-loop-depth-bump-range!
   [depths : (Array i64)]
@@ -7708,6 +7707,7 @@
         (compiler-live-set-union
           (compiler-live-set-union set (compiler-live-block-live-in block))
           (compiler-live-block-live-out block)))]))
+
 (define (compiler-reg-edge-copy-list-reverse-onto
   [copies : CompilerRegEdgeCopyList]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
@@ -9133,8 +9133,7 @@
     (if (<= count 1)
       blocks
       (let
-        [orig : (Array CompilerIrBlock)
-          (struct-get seq slots)]
+        [orig : (Array CompilerIrBlock) (struct-get seq slots)]
         [ids : hashmap.StringI64Map
           (compiler-reg-loop-depth-block-ids-seq
             seq
@@ -9999,8 +9998,7 @@
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (let
     [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-    [block-array : (Array CompilerIrBlock)
-      (struct-get seq slots)]
+    [block-array : (Array CompilerIrBlock) (struct-get seq slots)]
     [count : i64 (array-length block-array)]
     (if (<= count 1)
       (CompilerRegLoopSplitCandidate.NoCandidate)
@@ -10915,8 +10913,7 @@
   [n : i64]
   [buckets : (Array CompilerRegCallRegionStatList)]) : unit
   (let
-    [seq : CompilerIrBlockSeq
-      (compiler-live-ir-block-list-to-seq blocks)]
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
     [nblocks : i64 (struct-get seq len)]
     [cur-region : (Array i64)
@@ -17806,8 +17803,7 @@
         [extra-types : CompilerRegVarTypeList CompilerRegVarTypeList.Nil]
         [cursor : i64 0]
         [point : i64 0]
-        [seq : CompilerIrBlockSeq
-          (compiler-live-ir-block-list-to-seq blocks)]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
         [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
         [nblocks : i64 (struct-get seq len)]
         [out-rev : CompilerIrBlockList CompilerIrBlockList.Nil]

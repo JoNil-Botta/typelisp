@@ -2097,10 +2097,9 @@
       (while (< i count)
         (match (array-ref blocks i)
           [(CompilerLiveBlock.Block label _ _ _ _ _ _)
-            (begin
-              (if (not (hashmap.string-i64-map-contains? ids label))
-                (set! ids (hashmap.string-i64-map-put ids label i))
-                unit))])
+            (if (not (hashmap.string-i64-map-contains? ids label))
+              (set! ids (hashmap.string-i64-map-put ids label i))
+              unit)])
         (set! i (+ i 1)))
       (compiler-live-block-graph-fill-successors-from-array!
         blocks
@@ -2118,16 +2117,15 @@
         (compiler-ir-block-seq-count ir-blocks)
         (array-length blocks))]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set!
-            blocks
-            i
-            (compiler-live-fill-instr-after-block
-              (compiler-ir-block-seq-ref ir-blocks i)
-              (array-ref blocks i)))
-          (set! i (+ i 1)))))))
+    (while (< i count)
+      (begin
+        (array-set!
+          blocks
+          i
+          (compiler-live-fill-instr-after-block
+            (compiler-ir-block-seq-ref ir-blocks i)
+            (array-ref blocks i)))
+        (set! i (+ i 1))))))
 
 (define (compiler-live-fixpoint-from-array [blocks : (Array CompilerLiveBlock)]) : CompilerLiveBlockGraph
   (let

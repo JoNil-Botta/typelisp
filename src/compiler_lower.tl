@@ -7917,6 +7917,21 @@
         (box-get inner-box))]
     [_ used]))
 
+;; A synthesized clone$<T> helper (compiler_clone.tl). Clone helpers are
+;; generated as the exact transitive closure the reachable clone-roots need and
+;; reference one another through `(clone x)` forms the AST reachability walk does
+;; not resolve to names, so a reachable helper's callees would otherwise be
+;; dropped (undefined-symbol link error). Keep every synthesized helper.
+(define (lower-decl-is-clone-helper? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefFn name _ _ _ _)
+      (lower-name-has-clone-prefix? (intern-str name))]
+    [(AstDecl.Unsafe inner-box)
+      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [_ false]))
+
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -7925,18 +7940,22 @@
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [decl : AstDecl]) : bool
-  (match (lower-function-logical-name-from-decl
-    entry-path
-    decl-path
-    module
-    decl)
-    [(TcMaybeString.Some logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        all-functions
-        reachable
-        dispatch-variants
-        logical-name)]
-    [(TcMaybeString.No) true]))
+  (if (lower-decl-is-clone-helper? decl)
+    ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
+    ;; exactly the clone$<T> closure the reachable code needs, so keep them all.
+    true
+    (match (lower-function-logical-name-from-decl
+      entry-path
+      decl-path
+      module
+      decl)
+      [(TcMaybeString.Some logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          all-functions
+          reachable
+          dispatch-variants
+          logical-name)]
+      [(TcMaybeString.No) true])))
 
 (define (lower-used-types-add-type-decl-name
   [pools : AstNodePoolContext]
@@ -44677,6 +44696,14 @@
                           entry-path
                           LowerNameEnv.Nil))])
                   names)]
+              ;; P4/C4.1-C4.2: the reachability gate has moved AFTER typecheck
+              ;; (see below) so typecheck stays complete and whole-program while
+              ;; lower/optimize/codegen are still gated on reachability. This
+              ;; up-front prune is retained ONLY to scope clone-root discovery to
+              ;; the reachable set (so we synthesize exactly the clone$<T> helpers
+              ;; the emitted code needs, matching pre-P4 behavior); the FULL
+              ;; specialized program is what actually flows into clone-augment and
+              ;; typecheck below.
               (match (lower-prune-unreachable-functions-with-clone-roots
                 pools
                 entry-path
@@ -44684,7 +44711,7 @@
                 specialized-paths
                 prune-names
                 (CloneNameList.Nil))
-                [(LowerPrunedProgram.Program base-program base-paths)
+                [(LowerPrunedProgram.Program reach-program reach-paths)
                   (begin
                     (cfg
                       compile-profile
@@ -44694,8 +44721,8 @@
                       [clone-pools : AstNodePoolContext pools]
                       (match (lower-reachable-clone-roots
                         clone-pools
-                        base-program
-                        base-paths
+                        reach-program
+                        reach-paths
                         prune-names)
                         [(ResultLowerCloneRoots.Ok clone-roots)
                           (begin
@@ -44704,17 +44731,22 @@
                               (compiler-lower-profile-finish "clone_roots"))
                             (cfg compile-profile (compiler-lower-profile-start))
                             (let
+                              ;; P4/C4.2: clone-augment the FULL specialized
+                              ;; program (not the reachable subset) so typecheck
+                              ;; sees every declaration; clone-roots was scoped to
+                              ;; the reachable set above so only the needed
+                              ;; clone$<T> helpers are synthesized.
                               [checked-compaction : AstProgramCompaction
                                 (if lower-checked-dest-pools-active
                                   (clone-augment-program-with-roots-from-pools
                                     clone-pools
                                     lower-checked-dest-pools-context
-                                    base-program
+                                    specialized
                                     clone-roots)
                                   (AstProgramCompaction
                                     (clone-augment-program-with-roots-and-pools
                                       clone-pools
-                                      base-program
+                                      specialized
                                       clone-roots)
                                     clone-pools))]
                               [checked-program : AstProgram
@@ -44738,9 +44770,9 @@
                               [checked-paths : AstDeclPathList
                                 (if lower-checked-dest-pools-active
                                   (lower-copy-paths-into-pools
-                                    base-paths
+                                    specialized-paths
                                     checked-pools)
-                                  base-paths)]
+                                  specialized-paths)]
                               [escaped-names : LowerNameEnv
                                 (if (and
                                   lower-checked-dest-pools-active
@@ -44815,12 +44847,30 @@
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-start))
-                                      (match (lower-compiler-program-checked-with-names-mode
-                                        ctx
-                                        top-env
+                                      ;; P4/C4.2: the whole program was typechecked
+                                      ;; above; run the reachability gate NOW so
+                                      ;; unreachable decls produce no native code
+                                      ;; while every decl is still fully typechecked.
+                                      ;; clone-roots is seeded so the synthesized
+                                      ;; clone$<T> helpers survive the prune; any
+                                      ;; clone helper reachable only from dead code
+                                      ;; is later dropped by the IR-level DCE.
+                                      (match (match (lower-prune-unreachable-functions-with-clone-roots
+                                        checked-pools
+                                        checked-entry-path
                                         checked-program
-                                        lower-names
-                                        mode)
+                                        checked-paths
+                                        checked-names
+                                        clone-roots)
+                                        [(LowerPrunedProgram.Program
+                                            pruned-program
+                                            _pruned-paths)
+                                          (lower-compiler-program-checked-with-names-mode
+                                            ctx
+                                            top-env
+                                            pruned-program
+                                            lower-names
+                                            mode)])
                                         [(ResultCompilerLower.Ok ir spans)
                                           (begin
                                             (cfg

@@ -19,6 +19,7 @@ compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|4
 compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
 compile_profile_generated_import|tests/integration/compile_profile_generated_import.tl|42|-|-|stdlib/string.tl
 compile_profile_generated_import_inert|tests/integration/compile_profile_generated_import_inert.tl|42|-|-|compile_profile_generated_import_inert_dep.tl
+compile_profile_cross_file_single_compilation|tests/integration/compile_profile_cross_file_single_compilation.tl|42|-|-|compile_profile_cross_file_single_compilation_a.tl compile_profile_cross_file_single_compilation_b.tl compile_profile_cross_file_single_compilation_c.tl
 compile_profile_named_vector_decls|tests/integration/compile_profile_named_vector_decls.tl|42|-|-|stdlib/vector.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-

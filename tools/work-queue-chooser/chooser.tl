@@ -635,7 +635,7 @@
                       (string.append "Error: " message)]))]
               [(random.OkSystemSeed seed)
                 (match (random.weighted-index
-                  (stdlib.random.seed seed)
+                  (random.seed seed)
                   (cand-weights cands))
                   [(random.ErrRandomWeightedIndex message)
                     (ChooserResult.Err (string.append "Error: " message))]

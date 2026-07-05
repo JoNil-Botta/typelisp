@@ -23,7 +23,7 @@
 
 (define (borrowed-choice-score [choice : (BorrowedChoice text)]) : i64
   (match choice
-    [(BorrowedChoiceText value bonus) (+ (string-length value) bonus)]
+    [(BorrowedChoiceText value bonus) (+ (string.string-length value) bonus)]
     [(BorrowedChoiceEmpty) 0]))
 
 (define (roundtrip-borrowed-choice [text : (& text str)]) : i64

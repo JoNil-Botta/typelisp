@@ -14,7 +14,7 @@
   (let
     [l : Label (Label 38 "abcd")]
     (lambda () : i64
-      (+ (struct-get l id) (string-length (struct-get l name))))))
+      (+ (struct-get l id) (string.string-length (struct-get l name))))))
 
 (define (case-struct-string) : bool
   (= ((make-label-reader)) 42))
@@ -46,8 +46,8 @@
     (lambda () : i64
       (match w
         [(WrappedLabel l)
-          (+ (struct-get l id) (string-length (struct-get l name)))]
-        [(WrappedText s) (string-length s)]
+          (+ (struct-get l id) (string.string-length (struct-get l name)))]
+        [(WrappedText s) (string.string-length s)]
         [(WrappedNumber n) n]))))
 
 (define (make-wrapped-text-reader) : (-> i64)
@@ -56,8 +56,8 @@
     (lambda () : i64
       (match w
         [(WrappedLabel l)
-          (+ (struct-get l id) (string-length (struct-get l name)))]
-        [(WrappedText s) (string-length s)]
+          (+ (struct-get l id) (string.string-length (struct-get l name)))]
+        [(WrappedText s) (string.string-length s)]
         [(WrappedNumber n) n]))))
 
 (define (case-enum-nested) : bool

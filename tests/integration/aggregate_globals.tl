@@ -46,14 +46,14 @@
     (clobber-pair-stack 24)
     (+
       (+
-        (+ (string-length greeting) (length cells))
+        (+ (string.string-length greeting) (length cells))
         (+ (struct-get pair x) (struct-get pair y)))
       (+
         (match choice
           [(option_i64.Some n) n]
           [(option_i64.None) 0])
         (+
-          (string-length (struct-get nested label))
+          (string.string-length (struct-get nested label))
           (match (struct-get nested choice)
             [(option_i64.Some n) n]
             [(option_i64.None) 0]))))))

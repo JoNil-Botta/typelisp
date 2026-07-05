@@ -23,13 +23,13 @@
 
 (define (choice-length [choice : (RefChoice text)]) : i64
   (match choice
-    [(RefChoiceBorrowed value) (string-length value)]
-    [(RefChoiceOwned value) (string-length value)]))
+    [(RefChoiceBorrowed value) (string.string-length value)]
+    [(RefChoiceOwned value) (string.string-length value)]))
 
 (define (box-length [item : (RefBox text)]) : i64
   (if (struct-get item is-owned)
-    (string-length (struct-get item owned))
-    (string-length (struct-get item borrowed))))
+    (string.string-length (struct-get item owned))
+    (string.string-length (struct-get item borrowed))))
 
 ; A parameterized enum holding a borrowed reference, captured and read while
 ; the borrow source is still live.

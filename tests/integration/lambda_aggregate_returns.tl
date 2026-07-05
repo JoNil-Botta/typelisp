@@ -25,7 +25,7 @@
       (lambda () : Pair
         (Pair 1 13))]
     (+
-      (string-length (mk-string))
+      (string.string-length (mk-string))
       (+
         (match (mk-enum)
           [(BoxI n) n])

@@ -25,7 +25,7 @@
   (array-ref a 1))
 
 (define (text-len [text : (& text str)]) : i64
-  (string-length text))
+  (string.string-length text))
 
 (define (ref-score [_n : (& n i64)]) : i64
   2)
@@ -44,7 +44,7 @@
     (let
       [_n : i64 (text-len text)]
       unit)
-    (string-length text)))
+    (string.string-length text)))
 
 (define (main) : i64
   (let

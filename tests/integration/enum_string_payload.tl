@@ -20,7 +20,7 @@
 ;; measure it. The `TEnd` arm proves the dispatch is by tag.
 (define (ident-length [t : Token]) : i64
   (match t
-    [(Token.Ident s) (string-length s)]
+    [(Token.Ident s) (string.string-length s)]
     [(Token.End) 0]))
 
 ;; (TIdent "hello") -> bind "hello" -> length 5.

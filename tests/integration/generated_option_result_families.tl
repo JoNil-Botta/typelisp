@@ -82,7 +82,7 @@
 (define (result-string-score [value : result_i64_string.Result]) : i64
   (match value
     [(result_i64_string.Ok n) n]
-    [(result_i64_string.Err text) (string-length text)]))
+    [(result_i64_string.Err text) (string.string-length text)]))
 
 (define (payload-score [value : result_payload_status.Result]) : i64
   (match value
@@ -109,14 +109,14 @@
 (define (nested-score [value : result_nested.Result]) : i64
   (match value
     [(result_nested.Ok inner) (result-string-score inner)]
-    [(result_nested.Err text) (string-length text)]))
+    [(result_nested.Err text) (string.string-length text)]))
 
 (define (main) : i64
   (let
     [option-some : i64 (option-string-some-score)]
     [option-none : i64 (option-string-none-score)]
     [option-string-fallback : i64
-      (string-length (option_string.value-or (option_string.none) "abc"))]
+      (string.string-length (option_string.value-or (option_string.none) "abc"))]
     [option-try-some : i64 (option_i64.value-or (read-option-plus true) 0)]
     [option-try-none : i64 (option_i64.value-or (read-option-plus false) 11)]
     [option-duplicate : i64 (option-duplicate-import-score (option_i64.some 5))]

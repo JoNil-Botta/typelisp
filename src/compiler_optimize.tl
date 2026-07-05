@@ -17816,6 +17816,289 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-gvn-blocks-with-context (opt-cfg-context-build blocks) params blocks))
 
+;; --- dominated redundant bounds-check elimination ----------------------------
+;;
+;; The block-local pass (#930) drops duplicate checks within one basic block,
+;; but consecutive accesses to the same index usually sit in different blocks
+;; (each check's not-taken abort path splits the flow), so read-then-write
+;; pairs like a swap re-check the same `(index, length)` several times per
+;; iteration. This pass walks the dominator tree carrying `(index, length)`
+;; facts: a BoundsCheck whose exact pair was already checked at a DOMINATING
+;; point is removable -- the dominating check either aborted or proved the pair
+;; in range, and BoundsCheck is a mid-block trap-or-continue, so reaching any
+;; dominated point means every check in the dominating prefix passed. A fact is
+;; recorded only when both values are literals or single-source vars
+;; (opt-gvn-value-stable?), so recorded pairs can never be redefined and no
+;; invalidation is needed: stores and calls cannot change an SSA var's value.
+;; PRECONDITION: the caller must have verified the function (defs dominate
+;; uses). In a fallback non-SSA function a textually-single-def var inside a
+;; loop takes a new value each iteration and loop-carried uses precede the
+;; redefinition, so "one def instruction" does not imply "one value" there.
+;; Runs right after GVN/load-GVN so identical index casts and length loads
+;; have been unified into shared vars first. Facts flow down the dominator
+;; tree as an immutable list, so sibling subtrees are isolated by construction.
+(defenum OptBoundsDomWalk
+  (Walk CompilerIrInstrList OptBoundsFacts))
+
+;; GVN rewrites a dominated duplicate expression (e.g. the per-access
+;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
+;; propagation cannot forward that copy into a check in a later block (its env
+;; resets per block). Canonicalize check operands through a function-wide
+;; copy map restricted to single-source vars on both sides: such a Mov is its
+;; dst's unique definition and its source never changes, so dst and source
+;; denote the same runtime value everywhere and comparing canonical values is
+;; exact. The chase is bounded defensively; chains are Mov-of-Mov artifacts
+;; and stay short.
+;; A 64-bit integer-to-integer cast is a bit-preserving reinterpret (the #930
+;; argument): the unsigned bounds comparison is identical on either side, so
+;; the canonical value for dedup purposes is the pre-cast source.
+(define (opt-bounds-dom-reinterpret-cast? [from-ty : AstType] [to-ty : AstType]) : bool
+  (and
+    (opt-integer-type? from-ty)
+    (opt-integer-type? to-ty)
+    (= (opt-int-width from-ty) 64)
+    (= (opt-int-width to-ty) 64)))
+
+(define (opt-bounds-dom-copies-add-instr
+  [sources : hashmap.I64I64Map]
+  [copies : hashmap.I64I64Map]
+  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  (match instr
+    [(CompilerIrInstr.Mov dst src _)
+      (match src
+        [(CompilerIrValue.Var s)
+          (if (and
+            (opt-gvn-stable-var? sources dst)
+            (opt-gvn-stable-var? sources s))
+            (hashmap.i64-i64-map-put copies dst s)
+            copies)]
+        [_ copies])]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (match src
+        [(CompilerIrValue.Var s)
+          (if (and
+            (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+            (opt-gvn-stable-var? sources dst)
+            (opt-gvn-stable-var? sources s))
+            (hashmap.i64-i64-map-put copies dst s)
+            copies)]
+        [_ copies])]
+    [_ copies]))
+
+(define (opt-bounds-dom-copies-add-blocks
+  [sources : hashmap.I64I64Map]
+  [copies : hashmap.I64I64Map]
+  [blocks : CompilerIrBlockList]) : hashmap.I64I64Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) copies]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            [i : i64 0]
+            [acc : hashmap.I64I64Map copies]
+            (begin
+              (while (< i count)
+                (begin
+                  (set!
+                    acc
+                    (opt-bounds-dom-copies-add-instr
+                      sources
+                      acc
+                      (compiler-ir-instr-seq-ref instrs i)))
+                  (set! i (+ i 1))))
+              (opt-bounds-dom-copies-add-blocks sources acc (box-get rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-copies-add-blocks
+        sources
+        copies
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bounds-dom-resolve
+  [copies : hashmap.I64I64Map]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(CompilerIrValue.Var id)
+      (let
+        [cur : i64 id]
+        [hops : i64 0]
+        (begin
+          (while (< hops 8)
+            (match (hashmap.i64-i64-map-get copies cur)
+              [(hashmap.I64I64MapFound next)
+                (begin
+                  (set! cur next)
+                  (set! hops (+ hops 1)))]
+              [(hashmap.I64I64MapMissing) (set! hops 8)]))
+          (if (= cur id)
+            value
+            (CompilerIrValue.Var cur))))]
+    [_ value]))
+
+(define (opt-bounds-dom-instrs-from
+  [facts : OptBoundsFacts]
+  [sources : hashmap.I64I64Map]
+  [copies : hashmap.I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptBoundsDomWalk
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BoundsCheck idx len _)
+          (let
+            [cidx : CompilerIrValue (opt-bounds-dom-resolve copies idx)]
+            [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
+            (if (opt-bounds-contains facts cidx clen)
+              (opt-bounds-dom-instrs-from
+                facts
+                sources
+                copies
+                instrs
+                (+ index 1))
+              (let
+                [next-facts : OptBoundsFacts
+                  (if (and
+                    (opt-gvn-value-stable? sources cidx)
+                    (opt-gvn-value-stable? sources clen))
+                    (opt-bounds-add facts cidx clen)
+                    facts)]
+                (match (opt-bounds-dom-instrs-from
+                  next-facts
+                  sources
+                  copies
+                  instrs
+                  (+ index 1))
+                  [(OptBoundsDomWalk.Walk tail out-facts)
+                    (OptBoundsDomWalk.Walk
+                      (compiler-ir-instr-cons instr tail)
+                      out-facts)]))))]
+        [_
+          (match (opt-bounds-dom-instrs-from
+            facts
+            sources
+            copies
+            instrs
+            (+ index 1))
+            [(OptBoundsDomWalk.Walk tail out-facts)
+              (OptBoundsDomWalk.Walk
+                (compiler-ir-instr-cons instr tail)
+                out-facts)])]))))
+
+(define (opt-bounds-dom-rewrite-id
+  [context : OptCfgContext]
+  [children : OptCfgCsr]
+  [sources : hashmap.I64I64Map]
+  [copies : hashmap.I64I64Map]
+  [facts : OptBoundsFacts]
+  [blocks : CompilerIrBlockList]
+  [out : (Array OptGvnBlockResult)]
+  [id : i64]) : unit
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (and (>= id 0) (< id count))
+      (let
+        [label : String (array-ref (struct-get index labels) id)]
+        (match (opt-cfg-find-block blocks label)
+          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(CompilerIrBlock.Block _ instrs)
+                (match (opt-bounds-dom-instrs-from
+                  facts
+                  sources
+                  copies
+                  instrs
+                  0)
+                  [(OptBoundsDomWalk.Walk rewritten out-facts)
+                    (begin
+                      (array-set!
+                        out
+                        id
+                        (OptGvnBlockResult.SomeBlock
+                          (compiler-ir-block label rewritten)))
+                      (opt-bounds-dom-rewrite-children
+                        context
+                        children
+                        sources
+                        copies
+                        out-facts
+                        blocks
+                        out
+                        id))])])]))
+      unit)))
+
+(define (opt-bounds-dom-rewrite-children
+  [context : OptCfgContext]
+  [children : OptCfgCsr]
+  [sources : hashmap.I64I64Map]
+  [copies : hashmap.I64I64Map]
+  [facts : OptBoundsFacts]
+  [blocks : CompilerIrBlockList]
+  [out : (Array OptGvnBlockResult)]
+  [parent-id : i64]) : unit
+  (let
+    [offsets : (Array i64) (struct-get children offsets)]
+    [edges : (Array i64) (struct-get children edges)]
+    [edge : i64 (array-ref offsets parent-id)]
+    [end : i64 (array-ref offsets (+ parent-id 1))]
+    (begin
+      (while (< edge end)
+        (begin
+          (opt-bounds-dom-rewrite-id
+            context
+            children
+            sources
+            copies
+            facts
+            blocks
+            out
+            (array-ref edges edge))
+          (set! edge (+ edge 1))))
+      unit)))
+
+(define (opt-bounds-dom-blocks-with-context
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [sources : hashmap.I64I64Map
+      (opt-gvn-sources-blocks
+        blocks
+        (opt-gvn-sources-params params (hashmap.i64-i64-map-with-capacity 64)))]
+    [copies : hashmap.I64I64Map
+      (opt-bounds-dom-copies-add-blocks
+        sources
+        (hashmap.i64-i64-map-with-capacity 64)
+        blocks)]
+    [doms : OptDomInfo (struct-get context doms)]
+    [index : OptCfgIndex (struct-get context index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [children : OptCfgCsr (opt-gvn-dom-children doms)]
+    [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
+    (begin
+      (opt-gvn-block-results-fill-empty! out 0)
+      (match (opt-cfg-index-id index (struct-get context entry-label))
+        [(option_i64.Some entry-id)
+          (if (and
+            (>= entry-id 0)
+            (array-ref (struct-get index reachable) entry-id))
+            (opt-bounds-dom-rewrite-id
+              context
+              children
+              sources
+              copies
+              (OptBoundsFacts.Nil)
+              blocks
+              out
+              entry-id)
+            unit)]
+        [(option_i64.None) unit])
+      (opt-gvn-materialize-blocks doms out blocks))))
+
 ;; --- proven-safe div/rem guard elision (#2937) ------------------------------
 ;;
 ;; This pass marks integer div/rem as non-trapping only from facts established by
@@ -21575,15 +21858,45 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
                           unit)]
+                      ;; Dominated bounds-check dedup rides the same context:
+                      ;; it only deletes mid-block BoundsCheck instructions, so
+                      ;; the CFG (and ssa-context) stay valid for sccp below.
+                      ;; VERIFIER-GATED like GVN: in a fallback (non-SSA)
+                      ;; function a textually-single-def var inside a loop
+                      ;; still changes value across iterations (loop-carried
+                      ;; uses precede the redefinition), so "single source"
+                      ;; only implies "single value" when the verifier proves
+                      ;; every use is dominated by its definition. GVN
+                      ;; preserves that property, so verifying the ssa
+                      ;; function covers the gvn blocks consumed here.
+                      [_t-bounds-dom : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [bounds-dom : CompilerIrBlockList
+                        (if (and
+                          run-heavy?
+                          (opt-verify-ok? (opt-verify-function ssa)))
+                          (opt-bounds-dom-blocks-with-context
+                            ssa-context
+                            params
+                            gvn)
+                          gvn)]
+                      [_p-bounds-dom : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "bounds_dom"
+                            name
+                            _t-bounds-dom)
+                          unit)]
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (if run-heavy?
                           (opt-sccp-blocks-with-context-result
                             ssa-context
                             params
-                            gvn)
+                            bounds-dom)
                           (OptBlockCtxResult.Result
-                            (opt-sccp-blocks params gvn)
+                            (opt-sccp-blocks params bounds-dom)
                             (opt-cfg-context-empty)
                             false))]
                       [sccp : CompilerIrBlockList
@@ -33285,6 +33598,116 @@
   [summaries : OptLoopBceSummaries]) : i64
   (opt-count-bounds-blocks
     (opt-loop-bce-blocks summaries (opt-loop-bce-string-test-params) blocks)))
+
+;; Dominated bounds-dedup fixture: entry checks (idx,len); the dominated mid /
+;; left / exit blocks re-check the same pair (removable), while a different
+;; length, a multi-def index, and a sibling block that only sees the multi-def
+;; var must all keep their checks.
+(define (opt-bounds-dom-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "idx" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "len2" (AstType.I64) 3)
+          (CompilerIrParamList.Nil))))))
+
+(define (opt-bounds-dom-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          "e_ok")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "mid")
+          (CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "mid"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            "m_ok")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 3)
+              "m2_ok")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 1) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+                (CompilerIrInstrList.Nil))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "left"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2)
+              "l_ok")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 2) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.Var 2)
+                  "l2_ok")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "join")
+                  (CompilerIrInstrList.Nil))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "right"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 5)
+                (CompilerIrValue.Var 2)
+                "r_ok")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "join"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 2)
+                  "j_ok")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                  (CompilerIrInstrList.Nil))))
+            (CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-bounds-dom-self-test) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-bounds-dom-test-blocks)]
+    [before : i64 (opt-count-bounds-blocks blocks)]
+    [after-blocks : CompilerIrBlockList
+      (opt-bounds-dom-blocks-with-context
+        (opt-cfg-context-build blocks)
+        (opt-bounds-dom-test-params)
+        blocks)]
+    [after : i64 (opt-count-bounds-blocks after-blocks)]
+    (cond
+      [(not (= before 7)) 1]
+      ;; kept: entry (first), mid's different-length, left's multi-def index,
+      ;; right's multi-def index. dropped: mid/left/join duplicates of
+      ;; (idx,len). The fixture is intentionally multi-def (the negative
+      ;; case), so a full verify does not apply; the pass only deletes
+      ;; mid-block instructions, checked structurally below.
+      [(not (= after 4)) 2]
+      [(not (= (compiler-ir-block-list-count after-blocks) 5)) 3]
+      [(not (opt-cfg-successor-targets-known? after-blocks)) 4]
+      [else 42])))
 
 (define (compiler-optimize-bounds-self-test) : i64
   (let

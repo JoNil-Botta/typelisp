@@ -15961,6 +15961,16 @@
         (CompilerIrValue.I64 (opt-induction-fact-step fact))
         ty)]))
 
+;; A Gep-derived induction value is an ADDRESS: its phi must be word-typed.
+;; The backend sizes spilled phi copies by the PHI's type, so an
+;; element-typed pointer phi over a sub-word array (a byte buffer's moving
+;; pointer) would reload only the low element-width bits of the pointer on
+;; the back edge. Mul-derived values keep their (i64-gated) scalar type.
+(define (opt-induction-derived-phi-type [derived : OptInductionDerived]) : AstType
+  (match derived
+    [(OptInductionDerived.Mul _ _ ty) ty]
+    [(OptInductionDerived.Gep _ _ _) (AstType.I64)]))
+
 (define (opt-induction-phi-instr
   [derived : OptInductionDerived]
   [preheader : String]
@@ -15977,7 +15987,7 @@
         (CompilerIrValue.Var next-var)
         latch
         (CompilerIrPhiInputList.Nil)))
-    (opt-induction-derived-type derived)))
+    (opt-induction-derived-phi-type derived)))
 
 (define (opt-induction-seed-instrs
   [fact : OptInductionFact]
@@ -24190,6 +24200,1160 @@
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
+;; --- bounds-check loop versioning (codegen phase 7) ---------------------------
+;;
+;; A canonical counted self-loop pays cmp+jb per BoundsCheck per iteration even
+;; though the whole trip range is decidable up front: for a check
+;; `BoundsCheck(idx, len)` with loop-invariant `len`,
+;;   * idx == the counter phi      -> every trip index lies in [seed, bound),
+;;     so `seed >= 0 && bound <= len` (signed) proves every check passes;
+;;   * idx == BitAnd(_, M), M >= 0 -> the index lies in [0, M], so `M < len`;
+;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
+;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
+;; edge branches to a check-free fast clone when every condition holds and to
+;; the original checked loop otherwise. Semantics are exact: the fast clone
+;; runs only when no check could abort, the slow path is the unmodified
+;; original, and a conservatively-false guard (e.g. a negative length's signed
+;; compare) merely keeps the slow path, so nothing relies on lengths being
+;; non-negative. Store-bearing bodies are ADMITTED (unlike the unroller):
+;; under a true guard the clone is instruction-for-instruction the original.
+;;
+;; Exit wiring exploits the post-rotation invariant: the loop block does not
+;; dominate its exit when the exit has another predecessor, so loop defs reach
+;; outside code only as exit-phi inputs on the loop edge -- each such input
+;; gains a parallel input from the fast clone. Any remaining direct outside
+;; use of a loop def (the never-rotated single-pred-exit case) rejects.
+;;
+;; The pass runs between induction and unroll so the fast clone -- now a pure
+;; whitelisted body -- unrolls in the SAME pipeline iteration. Rejections:
+;; non-canonical counters, multi-block loops, a check whose condition cannot
+;; be derived, and pre-existing version labels (idempotence). Verifier-gated
+;; with fallback like unroll.
+(defenum OptBceVersionGuardAcc
+  (No)
+  (Some CompilerIrInstrList CompilerIrValueList bool))
+
+(defenum OptBceVersionGuardResult
+  (No)
+  (Some CompilerIrInstrList CompilerIrValue))
+
+(define (opt-bce-version-block-limit) : i64
+  512)
+
+(define (opt-bce-version-body-max) : i64
+  48)
+
+;; Clonable body kinds: everything the unroll cloner can remap, INCLUDING
+;; StorePtr (fills and container writes version fine) and BoundsCheck (the
+;; checks being removed from the clone).
+(define (opt-bce-version-body-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [_ false]))
+
+(define (opt-bce-version-body-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-bce-version-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
+      (opt-bce-version-body-ok? instrs (+ index 1) last))))
+
+(define (opt-bce-version-check-count
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [acc : i64]) : i64
+  (if (>= index last)
+    acc
+    (opt-bce-version-check-count
+      instrs
+      (+ index 1)
+      last
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.BoundsCheck _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-bce-version-alloc-var [cell : (Array i64)]) : i64
+  (let
+    [next : i64 (array-ref cell 0)]
+    (begin
+      (array-set! cell 0 (+ next 1))
+      next)))
+
+;; One derived guard condition instruction; conds accumulate as (instr, value)
+;; so the And chain can be assembled afterwards.
+(define (opt-bce-version-cond
+  [cell : (Array i64)]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [dst : i64 (opt-bce-version-alloc-var cell)]
+        (OptBceVersionGuardAcc.Some
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp dst op lhs rhs (AstType.Bool))
+            instrs)
+          (compiler-ir-value-cons (CompilerIrValue.Var dst) values)
+          counter-seen))]))
+
+(define (opt-bce-version-cond-counter-seen [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values _)
+      (OptBceVersionGuardAcc.Some instrs values true)]))
+
+;; Resolve through same-block Mov copies AND 64-bit int reinterpret casts:
+;; lowered index/length operands routinely arrive as `(cast x : u64)`-shaped
+;; bit-preserving reinterprets (the #930 argument bounds-dom also relies on).
+(define (opt-bce-version-resolve
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [var : i64]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    var
+    (let
+      [def-index : i64 (opt-unroll-def-index instrs phi-count last var)]
+      (if (< def-index 0)
+        var
+        (match (compiler-ir-instr-seq-ref instrs def-index)
+          [(CompilerIrInstr.Mov _ src _)
+            (match src
+              [(CompilerIrValue.Var src-id)
+                (opt-bce-version-resolve
+                  instrs
+                  phi-count
+                  last
+                  src-id
+                  (- fuel 1))]
+              [_ var])]
+          [(CompilerIrInstr.Cast _ src from-ty to-ty)
+            (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+              (match src
+                [(CompilerIrValue.Var src-id)
+                  (opt-bce-version-resolve
+                    instrs
+                    phi-count
+                    last
+                    src-id
+                    (- fuel 1))]
+                [_ var])
+              var)]
+          [_ var])))))
+
+;; The invariant value an operand resolves to (a literal, or a var defined
+;; outside the loop -- possibly behind in-loop copies/reinterprets), if any.
+;; The guard must reference the RESOLVED value: it is the one whose definition
+;; dominates the loop entry edge.
+(define (opt-bce-version-invariant-operand
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : hashmap.I64I64Map]
+  [value : CompilerIrValue]) : CompilerIrMaybeValue
+  (match value
+    [(CompilerIrValue.I64 k)
+      (CompilerIrMaybeValue.Some (CompilerIrValue.I64 k))]
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        (if (opt-used-contains defs id)
+          (CompilerIrMaybeValue.No)
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var id))))]
+    [_ (CompilerIrMaybeValue.No)]))
+
+;; Derive the sufficient invariant condition for one check's index operand.
+(define (opt-bce-version-derive-index
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : hashmap.I64I64Map]
+  [iphi : i64]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]
+  [index-value : CompilerIrValue]
+  [length-value : CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match index-value
+    [(CompilerIrValue.I64 k)
+      (if (>= k 0)
+        (opt-bce-version-cond
+          cell
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.I64 k)
+          length-value
+          acc)
+        (OptBceVersionGuardAcc.No))]
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        (if (= id iphi)
+          ;; counter: [seed, bound) subset of [0, len) iff seed >= 0 (emitted
+          ;; once, below) and bound <= len.
+          (opt-bce-version-cond-counter-seen
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Le)
+              bound
+              length-value
+              acc))
+          (if (not (opt-used-contains defs id))
+            ;; loop-invariant index: exactly its own range check, hoisted.
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var id)
+              length-value
+              (opt-bce-version-cond
+                cell
+                (CompilerIrBinOp.Ge)
+                (CompilerIrValue.Var id)
+                (CompilerIrValue.I64 0)
+                acc))
+            (let
+              [def-index : i64 (opt-unroll-def-index instrs phi-count last id)]
+              (if (< def-index 0)
+                (OptBceVersionGuardAcc.No)
+                (match (compiler-ir-instr-seq-ref instrs def-index)
+                  [(CompilerIrInstr.BinOp _ op lhs rhs _)
+                    (match op
+                      [(CompilerIrBinOp.BitAnd)
+                        (match (opt-affine-var-const lhs rhs)
+                          [(OptAffineOperands.Some _ m)
+                            (if (>= m 0)
+                              ;; masked index: in [0, m] whatever the source.
+                              (opt-bce-version-cond
+                                cell
+                                (CompilerIrBinOp.Lt)
+                                (CompilerIrValue.I64 m)
+                                length-value
+                                acc)
+                              (OptBceVersionGuardAcc.No))]
+                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                      [_ (OptBceVersionGuardAcc.No)])]
+                  [_ (OptBceVersionGuardAcc.No)]))))))]
+    [_ (OptBceVersionGuardAcc.No)]))
+
+(define (opt-bce-version-derive-checks
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [last : i64]
+  [defs : hashmap.I64I64Map]
+  [iphi : i64]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (>= index last)
+    acc
+    (opt-bce-version-derive-checks
+      instrs
+      (+ index 1)
+      phi-count
+      last
+      defs
+      iphi
+      bound
+      cell
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.BoundsCheck index-value length-value _)
+          (match (opt-bce-version-invariant-operand
+            instrs
+            phi-count
+            last
+            defs
+            length-value)
+            [(CompilerIrMaybeValue.Some length-invariant)
+              (opt-bce-version-derive-index
+                instrs
+                phi-count
+                last
+                defs
+                iphi
+                bound
+                cell
+                index-value
+                length-invariant
+                acc)]
+            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)])]
+        [_ acc]))))
+
+(define (opt-bce-version-and-chain
+  [cell : (Array i64)]
+  [first : CompilerIrValue]
+  [rest : CompilerIrValueList]
+  [instrs : CompilerIrInstrList]) : OptBceVersionGuardResult
+  (match rest
+    [(CompilerIrValueList.Nil) (OptBceVersionGuardResult.Some instrs first)]
+    [(CompilerIrValueList.Cons value tail)
+      (let
+        [dst : i64 (opt-bce-version-alloc-var cell)]
+        (opt-bce-version-and-chain
+          cell
+          (CompilerIrValue.Var dst)
+          (box-get tail)
+          (opt-aggregate-instr-list-append
+            instrs
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                dst
+                (CompilerIrBinOp.And)
+                first
+                value
+                (AstType.Bool))
+              (CompilerIrInstrList.Nil)))))]))
+
+;; Assemble the guard: the per-check conditions, the once-only `seed >= 0`
+;; when any counter-cased check needs it (a literal non-negative seed skips
+;; it; a literal negative seed rejects -- the guard could never pass), then
+;; the And chain over every condition value.
+(define (opt-bce-version-guard-conds
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : hashmap.I64I64Map]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]) : OptBceVersionGuardResult
+  (match (opt-bce-version-derive-checks
+    instrs
+    phi-count
+    phi-count
+    last
+    defs
+    iphi
+    bound
+    cell
+    (OptBceVersionGuardAcc.Some
+      (CompilerIrInstrList.Nil)
+      (CompilerIrValueList.Nil)
+      false))
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
+    [(OptBceVersionGuardAcc.Some cond-instrs cond-values counter-seen)
+      (let
+        ;; The canonical self-loop is do-while shaped: the FIRST body
+        ;; iteration (index = seed) runs before any compare, so the counter
+        ;; range argument also needs `seed < bound` in the guard -- without
+        ;; it a loop entered with seed >= bound would run one unchecked fast
+        ;; iteration at an index the slow path would have aborted on.
+        ;; Rotated loops satisfy it dynamically (their preheader guard
+        ;; proved a first iteration), so the compare never deselects the
+        ;; fast path there.
+        [entered : OptBceVersionGuardAcc
+          (if counter-seen
+            (match seed
+              [(CompilerIrValue.I64 sk)
+                (match bound
+                  [(CompilerIrValue.I64 bk)
+                    (if (< sk bk)
+                      (OptBceVersionGuardAcc.Some cond-instrs cond-values true)
+                      (OptBceVersionGuardAcc.No))]
+                  [_
+                    (opt-bce-version-cond
+                      cell
+                      (CompilerIrBinOp.Lt)
+                      seed
+                      bound
+                      (OptBceVersionGuardAcc.Some cond-instrs cond-values true))])]
+              [_
+                (opt-bce-version-cond
+                  cell
+                  (CompilerIrBinOp.Lt)
+                  seed
+                  bound
+                  (OptBceVersionGuardAcc.Some cond-instrs cond-values true))])
+            (OptBceVersionGuardAcc.Some cond-instrs cond-values false))]
+        [seeded : OptBceVersionGuardAcc
+          (if counter-seen
+            (match entered
+              [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+              [(OptBceVersionGuardAcc.Some e-instrs e-values _)
+                (match seed
+                  [(CompilerIrValue.I64 k)
+                    (if (>= k 0)
+                      (OptBceVersionGuardAcc.Some e-instrs e-values true)
+                      (OptBceVersionGuardAcc.No))]
+                  [(CompilerIrValue.Var _)
+                    (opt-bce-version-cond
+                      cell
+                      (CompilerIrBinOp.Ge)
+                      seed
+                      (CompilerIrValue.I64 0)
+                      (OptBceVersionGuardAcc.Some e-instrs e-values true))]
+                  [_ (OptBceVersionGuardAcc.No)])])
+            entered)]
+        (match seeded
+          [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
+          [(OptBceVersionGuardAcc.Some all-instrs all-values _)
+            (match all-values
+              [(CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
+              [(CompilerIrValueList.Cons first rest)
+                (opt-bce-version-and-chain
+                  cell
+                  first
+                  (box-get rest)
+                  (compiler-ir-instr-list-reverse-onto
+                    all-instrs
+                    CompilerIrInstrList.Nil))])]))]))
+
+;; --- shape scan ---------------------------------------------------------------
+(define (opt-bce-version-shape-phi
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-index : i64]
+  [cond-var : i64]
+  [inext : i64]
+  [ity : AstType]
+  [bound : CompilerIrValue]
+  [iphi : i64]) : OptUnrollMaybeShape
+  (let
+    [iphi-index : i64 (opt-unroll-def-index instrs 0 phi-count iphi)]
+    (if (< iphi-index 0)
+      (OptUnrollMaybeShape.No)
+      (match (compiler-ir-instr-seq-ref instrs iphi-index)
+        [(CompilerIrInstr.Phi _ inputs iphi-ty)
+          (match (opt-unroll-split-phi-inputs inputs label)
+            [(OptUnrollPhiSplit.Split seed back pred-label)
+              (if (and
+                (not (string.eq pred-label label))
+                (opt-unroll-back-resolves-to? instrs phi-count last back inext)
+                (not
+                  (opt-cfg-block-exists?
+                    blocks
+                    (string.append label "__bce_guard")))
+                (not
+                  (opt-cfg-block-exists?
+                    blocks
+                    (string.append label "__bce_fast")))
+                (opt-unroll-pred-retargetable? blocks pred-label))
+                (match (opt-unroll-collect-other-phis
+                  instrs
+                  0
+                  phi-count
+                  label
+                  pred-label
+                  iphi)
+                  [(OptUnrollMaybePhis.Some others)
+                    (OptUnrollMaybeShape.Some
+                      (OptUnrollShape
+                        label
+                        pred-label
+                        phi-count
+                        cond-index
+                        cond-var
+                        iphi
+                        iphi-ty
+                        seed
+                        inext
+                        ity
+                        bound
+                        others))]
+                  [(OptUnrollMaybePhis.No) (OptUnrollMaybeShape.No)])
+                (OptUnrollMaybeShape.No))]
+            [(OptUnrollPhiSplit.No) (OptUnrollMaybeShape.No)])]
+        [_ (OptUnrollMaybeShape.No)]))))
+
+(define (opt-bce-version-shape-step
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [cond-index : i64]
+  [inext : i64]
+  [bound : CompilerIrValue]) : OptUnrollMaybeShape
+  (let
+    [inext-index : i64 (opt-unroll-def-index instrs phi-count last inext)]
+    (if (< inext-index 0)
+      (OptUnrollMaybeShape.No)
+      (match (compiler-ir-instr-seq-ref instrs inext-index)
+        [(CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
+          (match add-op
+            [(CompilerIrBinOp.Add)
+              (match add-lhs
+                [(CompilerIrValue.Var add-src)
+                  (match add-rhs
+                    [(CompilerIrValue.I64 step)
+                      (if (and
+                        (= step 1)
+                        ;; I64 only: the guard reasons in SIGNED 64-bit
+                        ;; arithmetic, so narrow (wrapping) and unsigned
+                        ;; counters are out of scope.
+                        (match ity
+                          [(AstType.I64) true]
+                          [_ false]))
+                        (opt-bce-version-shape-phi
+                          blocks
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-index
+                          cond-var
+                          inext
+                          ity
+                          bound
+                          (opt-unroll-resolve-copy
+                            instrs
+                            phi-count
+                            last
+                            add-src
+                            16))
+                        (OptUnrollMaybeShape.No))]
+                    [_ (OptUnrollMaybeShape.No)])]
+                [_ (OptUnrollMaybeShape.No)])]
+            [_ (OptUnrollMaybeShape.No)])]
+        [_ (OptUnrollMaybeShape.No)]))))
+
+(define (opt-bce-version-shape-counter
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [defs : hashmap.I64I64Map]) : OptUnrollMaybeShape
+  (let
+    [cond-index : i64 (opt-unroll-def-index instrs phi-count last cond-var)]
+    (if (< cond-index 0)
+      (OptUnrollMaybeShape.No)
+      (match (compiler-ir-instr-seq-ref instrs cond-index)
+        [(CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
+          (match cmp-op
+            [(CompilerIrBinOp.Lt)
+              (match cmp-lhs
+                [(CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
+                    (opt-bce-version-shape-step
+                      blocks
+                      label
+                      instrs
+                      phi-count
+                      last
+                      cond-var
+                      cond-index
+                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
+                      cmp-rhs)
+                    (OptUnrollMaybeShape.No))]
+                [_ (OptUnrollMaybeShape.No)])]
+            [_ (OptUnrollMaybeShape.No)])]
+        [_ (OptUnrollMaybeShape.No)]))))
+
+(define (opt-bce-version-block-shape
+  [blocks : CompilerIrBlockList]
+  [entry-label : String]
+  [block : CompilerIrBlock]) : OptUnrollMaybeShape
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 4)
+          (OptUnrollMaybeShape.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch cond then-label else-label)
+              (match cond
+                [(CompilerIrValue.Var cond-var)
+                  (if (and
+                    (string.eq then-label label)
+                    (not (string.eq else-label label))
+                    (not (string.eq label entry-label)))
+                    (let
+                      [last : i64 (- count 1)]
+                      [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+                      (if (or
+                        (< phi-count 1)
+                        (< (- last phi-count) 2)
+                        (> (- last phi-count) (opt-bce-version-body-max))
+                        (not (opt-unroll-no-phi-from? instrs phi-count))
+                        (not (opt-bce-version-body-ok? instrs phi-count last))
+                        (<
+                          (opt-bce-version-check-count instrs phi-count last 0)
+                          1))
+                        (OptUnrollMaybeShape.No)
+                        (opt-bce-version-shape-counter
+                          blocks
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          (opt-unroll-block-defs
+                            instrs
+                            0
+                            (hashmap.i64-i64-map-with-capacity 32)))))
+                    (OptUnrollMaybeShape.No))]
+                [_ (OptUnrollMaybeShape.No)])]
+            [_ (OptUnrollMaybeShape.No)])))]))
+
+;; --- rewrite -------------------------------------------------------------------
+;; Uses of loop defs anywhere outside the loop block, except as the loop-edge
+;; inputs of the exit block's phis (those get the parallel fast input).
+(define (opt-bce-version-outside-phi-uses
+  [set : hashmap.I64I64Map]
+  [inputs : CompilerIrPhiInputList]
+  [loop-label : String]) : hashmap.I64I64Map
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (opt-bce-version-outside-phi-uses
+        (if (string.eq label loop-label)
+          set
+          (opt-collect-value-uses set value))
+        (box-get rest)
+        loop-label)]))
+
+(define (opt-bce-version-outside-uses-seq
+  [set : hashmap.I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [loop-label : String]) : hashmap.I64I64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    set
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (opt-bce-version-outside-uses-seq
+        (match instr
+          [(CompilerIrInstr.Phi _ inputs _)
+            (opt-bce-version-outside-phi-uses set inputs loop-label)]
+          [_ (opt-collect-instr-uses set instr)])
+        instrs
+        (+ index 1)
+        loop-label))))
+
+(define (opt-bce-version-outside-uses
+  [set : hashmap.I64I64Map]
+  [blocks : CompilerIrBlockList]
+  [loop-label : String]) : hashmap.I64I64Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-version-outside-uses
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (if (string.eq label loop-label)
+              set
+              (opt-bce-version-outside-uses-seq set instrs 0 loop-label))])
+        (box-get rest)
+        loop-label)]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-version-outside-uses
+        set
+        (compiler-ir-block-seq-to-list seq)
+        loop-label)]))
+
+(define (opt-bce-version-defs-escape?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [outside : hashmap.I64I64Map]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (let
+      [dst : i64 (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      (if (and (>= dst 0) (opt-used-contains outside dst))
+        true
+        (opt-bce-version-defs-escape? instrs (+ index 1) outside)))))
+
+;; The fast clone's leading phis: the counter and every loop-carried value,
+;; seeded from the guard and chained through the clone's remapped back edges.
+(define (opt-bce-version-fast-phis
+  [others : OptUnrollPhiList]
+  [remap : (Array CompilerIrValue)]
+  [guard-label : String]
+  [fast-label : String]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (match others
+    [(OptUnrollPhiList.Nil) tail]
+    [(OptUnrollPhiList.Cons phi rest)
+      (match phi
+        [(OptUnrollPhi.Phi dst init back ty)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              (match (opt-unroll-subst-value remap (CompilerIrValue.Var dst))
+                [(CompilerIrValue.Var fresh-id) fresh-id]
+                [_ dst])
+              (compiler-ir-phi-input-cons
+                init
+                guard-label
+                (compiler-ir-phi-input-cons
+                  (opt-unroll-subst-value remap back)
+                  fast-label
+                  (CompilerIrPhiInputList.Nil)))
+              ty)
+            (opt-bce-version-fast-phis
+              (box-get rest)
+              remap
+              guard-label
+              fast-label
+              tail))])]))
+
+(define (opt-bce-version-clone-body
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]) : CompilerIrInstrList
+  (if (>= index last)
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BoundsCheck _ _ _)
+          (opt-bce-version-clone-body instrs (+ index 1) last remap cell)]
+        [_
+          (let
+            [cloned : CompilerIrInstr
+              (opt-unroll-clone-instr remap cell 0 instr)]
+            (compiler-ir-instr-cons
+              cloned
+              (opt-bce-version-clone-body instrs (+ index 1) last remap cell)))]))))
+
+;; Relabel the loop phis' outside-pred inputs to the guard block.
+(define (opt-bce-version-relabel-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [pred-label : String]
+  [guard-label : String]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        value
+        (if (string.eq label pred-label)
+          guard-label
+          label)
+        (opt-bce-version-relabel-phi-inputs
+          (box-get rest)
+          pred-label
+          guard-label))]))
+
+(define (opt-bce-version-relabel-loop-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [pred-label : String]
+  [guard-label : String]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
+              dst
+              (opt-bce-version-relabel-phi-inputs inputs pred-label guard-label)
+              ty)]
+          [_ instr])
+        (opt-bce-version-relabel-loop-instrs
+          instrs
+          (+ index 1)
+          pred-label
+          guard-label)))))
+
+;; Extend the exit block's phis: every input carried on the loop edge gains a
+;; parallel input carrying the fast clone's remapped value.
+(define (opt-bce-version-extend-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [loop-label : String]
+  [fast-label : String]
+  [remap : (Array CompilerIrValue)]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : CompilerIrPhiInputList
+          (opt-bce-version-extend-phi-inputs
+            (box-get rest)
+            loop-label
+            fast-label
+            remap)]
+        (if (string.eq label loop-label)
+          (compiler-ir-phi-input-cons
+            value
+            label
+            (compiler-ir-phi-input-cons
+              (opt-unroll-subst-value remap value)
+              fast-label
+              tail))
+          (compiler-ir-phi-input-cons value label tail)))]))
+
+(define (opt-bce-version-extend-exit-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [loop-label : String]
+  [fast-label : String]
+  [remap : (Array CompilerIrValue)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
+              dst
+              (opt-bce-version-extend-phi-inputs
+                inputs
+                loop-label
+                fast-label
+                remap)
+              ty)]
+          [_ instr])
+        (opt-bce-version-extend-exit-instrs
+          instrs
+          (+ index 1)
+          loop-label
+          fast-label
+          remap)))))
+
+(define (opt-bce-version-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [pred-label : String]
+  [loop-label : String]
+  [exit-label : String]
+  [fast-label : String]
+  [guard-label : String]
+  [guard-block : CompilerIrBlock]
+  [fast-block : CompilerIrBlock]
+  [remap : (Array CompilerIrValue)]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerIrBlockList
+              (opt-bce-version-rewrite-blocks
+                (box-get rest)
+                pred-label
+                loop-label
+                exit-label
+                fast-label
+                guard-label
+                guard-block
+                fast-block
+                remap)]
+            (if (string.eq label loop-label)
+              (compiler-ir-block-cons
+                guard-block
+                (compiler-ir-block-cons
+                  fast-block
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      label
+                      (opt-bce-version-relabel-loop-instrs
+                        instrs
+                        0
+                        pred-label
+                        guard-label))
+                    tail)))
+              (compiler-ir-block-cons
+                (cond
+                  [(string.eq label pred-label)
+                    (compiler-ir-block
+                      label
+                      (opt-unroll-retarget-instrs
+                        instrs
+                        0
+                        loop-label
+                        guard-label))]
+                  [(string.eq label exit-label)
+                    (compiler-ir-block
+                      label
+                      (opt-bce-version-extend-exit-instrs
+                        instrs
+                        0
+                        loop-label
+                        fast-label
+                        remap))]
+                  [else block])
+                tail)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-version-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        pred-label
+        loop-label
+        exit-label
+        fast-label
+        guard-label
+        guard-block
+        fast-block
+        remap)]))
+
+(define (opt-bce-version-apply
+  [blocks : CompilerIrBlockList]
+  [block : CompilerIrBlock]
+  [shape : OptUnrollShape]
+  [frame : i64]) : OptUnrollResult
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [last : i64 (- count 1)]
+        [phi-count : i64 (struct-get shape phi-count)]
+        [iphi : i64 (struct-get shape iphi)]
+        [iphi-ty : AstType (struct-get shape iphi-ty)]
+        [seed : CompilerIrValue (struct-get shape seed)]
+        [inext : i64 (struct-get shape inext)]
+        [bound : CompilerIrValue (struct-get shape bound)]
+        [others : OptUnrollPhiList (struct-get shape others)]
+        [pred-label : String (struct-get shape pred-label)]
+        [cond-var : i64 (struct-get shape cond-var)]
+        [exit-label : String
+          (match (compiler-ir-instr-seq-ref instrs last)
+            [(CompilerIrInstr.Branch _ _ else-label) else-label]
+            [_ label])]
+        [guard-label : String (string.append label "__bce_guard")]
+        [fast-label : String (string.append label "__bce_fast")]
+        [defs : hashmap.I64I64Map
+          (opt-unroll-block-defs
+            instrs
+            0
+            (hashmap.i64-i64-map-with-capacity 32))]
+        [outside : hashmap.I64I64Map
+          (opt-bce-version-outside-uses
+            (hashmap.i64-i64-map-with-capacity 64)
+            blocks
+            label)]
+        (if (or
+          (string.eq exit-label label)
+          (string.eq exit-label pred-label)
+          (opt-bce-version-defs-escape? instrs 0 outside))
+          (OptUnrollResult.Result blocks frame false)
+          (let
+            [cell : (Array i64) (array.make-array i64 1)]
+            [_cell : unit (array-set! cell 0 frame)]
+            (match (opt-bce-version-guard-conds
+              instrs
+              phi-count
+              last
+              defs
+              iphi
+              seed
+              bound
+              cell)
+              [(OptBceVersionGuardResult.No)
+                (OptUnrollResult.Result blocks frame false)]
+              [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+                (let
+                  [remap : (Array CompilerIrValue)
+                    (array.make-array CompilerIrValue frame)]
+                  [_fill : unit (opt-unroll-remap-fill remap 0)]
+                  ;; Fresh phi destinations first so the cloned body reads the
+                  ;; clone's loop-carried values.
+                  [_iphi : i64 (opt-unroll-clone-dst remap cell iphi)]
+                  [_others : unit
+                    (opt-bce-version-alloc-other-phis remap cell others)]
+                  [body : CompilerIrInstrList
+                    (opt-bce-version-clone-body
+                      instrs
+                      phi-count
+                      last
+                      remap
+                      cell)]
+                  [fast-block : CompilerIrBlock
+                    (compiler-ir-block
+                      fast-label
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Phi
+                          (match (opt-unroll-subst-value
+                            remap
+                            (CompilerIrValue.Var iphi))
+                            [(CompilerIrValue.Var fresh-id) fresh-id]
+                            [_ iphi])
+                          (compiler-ir-phi-input-cons
+                            seed
+                            guard-label
+                            (compiler-ir-phi-input-cons
+                              (opt-unroll-subst-value
+                                remap
+                                (CompilerIrValue.Var inext))
+                              fast-label
+                              (CompilerIrPhiInputList.Nil)))
+                          iphi-ty)
+                        (opt-bce-version-fast-phis
+                          others
+                          remap
+                          guard-label
+                          fast-label
+                          (opt-aggregate-instr-list-append
+                            body
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.Branch
+                                (opt-unroll-subst-value
+                                  remap
+                                  (CompilerIrValue.Var cond-var))
+                                fast-label
+                                exit-label)
+                              (CompilerIrInstrList.Nil))))))]
+                  [guard-block : CompilerIrBlock
+                    (compiler-ir-block
+                      guard-label
+                      (opt-aggregate-instr-list-append
+                        guard-instrs
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch guard-value fast-label label)
+                          (CompilerIrInstrList.Nil))))]
+                  (OptUnrollResult.Result
+                    (opt-bce-version-rewrite-blocks
+                      blocks
+                      pred-label
+                      label
+                      exit-label
+                      fast-label
+                      guard-label
+                      guard-block
+                      fast-block
+                      remap)
+                    (array-ref cell 0)
+                    true))]))))]))
+
+(define (opt-bce-version-alloc-other-phis
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [others : OptUnrollPhiList]) : unit
+  (match others
+    [(OptUnrollPhiList.Nil) unit]
+    [(OptUnrollPhiList.Cons phi rest)
+      (match phi
+        [(OptUnrollPhi.Phi dst _ _ _)
+          (begin
+            (opt-unroll-clone-dst remap cell dst)
+            (opt-bce-version-alloc-other-phis remap cell (box-get rest)))])]))
+
+;; Apply at most one versioning per invocation, like the unroller.
+(define (opt-bce-version-blocks-scan
+  [blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]
+  [entry-label : String]
+  [frame : i64]) : OptUnrollResult
+  (match remaining
+    [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-bce-version-block-shape blocks entry-label block)
+        [(OptUnrollMaybeShape.Some shape)
+          (match (opt-bce-version-apply blocks block shape frame)
+            [(OptUnrollResult.Result next-blocks next-frame changed)
+              (if changed
+                (OptUnrollResult.Result next-blocks next-frame true)
+                (opt-bce-version-blocks-scan
+                  blocks
+                  (box-get rest)
+                  entry-label
+                  frame))])]
+        [(OptUnrollMaybeShape.No)
+          (opt-bce-version-blocks-scan blocks (box-get rest) entry-label frame)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-version-blocks-scan
+        blocks
+        (compiler-ir-block-seq-to-list seq)
+        entry-label
+        frame)]))
+
+;; Cheap prescan: a candidate is a self-loop block that starts with a Phi,
+;; ends with a self-branch, and contains a BoundsCheck.
+(define (opt-bce-version-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 4)
+          false
+          (match (compiler-ir-instr-seq-ref instrs 0)
+            [(CompilerIrInstr.Phi _ _ _)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Branch _ true-label _)
+                  (and
+                    (string.eq true-label label)
+                    (>= (opt-bce-version-check-count instrs 0 (- count 1) 0) 1))]
+                [_ false])]
+            [_ false])))]))
+
+(define (opt-bce-version-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-bce-version-block-candidate? block)
+        true
+        (opt-bce-version-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-version-blocks-have-candidate?
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bce-version-function-verified-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-function-with-context func context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+          (if (>
+            (compiler-ir-block-list-count blocks)
+            (opt-bce-version-block-limit))
+            (OptFunctionCtxResult.Result func context)
+            (match (opt-bce-version-blocks-scan
+              blocks
+              blocks
+              (opt-cfg-entry-label blocks)
+              frame)
+              [(OptUnrollResult.Result next-blocks next-frame changed)
+                (if changed
+                  (let
+                    [next : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        next-frame
+                        next-blocks)]
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build next-blocks)]
+                    (match (opt-verify-function-with-context next next-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionCtxResult.Result next next-context)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptFunctionCtxResult.Result func context)]))
+                  (OptFunctionCtxResult.Result func context))]))])]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]))
+
+(define (opt-bce-version-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
+      (if (opt-bce-version-blocks-have-candidate? prescan-blocks)
+        (opt-bce-version-function-verified-with-context-result context func)
+        (OptFunctionCtxResult.Result func context))]))
+
+(define (opt-bce-version-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-bce-version-function-with-context-result
+        (opt-cfg-context-build blocks)
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -24574,8 +25738,35 @@
                             name
                             _t-induction)
                           unit)]
+                      ;; Bounds-check loop versioning runs on induction's
+                      ;; output so its check-free fast clone reaches the
+                      ;; unroller INSIDE the same pipeline iteration (a
+                      ;; lowered while loop rotates in iteration 1 and only
+                      ;; reaches canonical shape at the fixpoint cap).
+                      [_t-bce-version : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [bce-version-result : OptFunctionCtxResult
+                        (if run-heavy?
+                          (opt-bce-version-function-with-context-result
+                            induction-context
+                            induction)
+                          induction-result)]
+                      [bce-version : CompilerIrFunction
+                        (match bce-version-result
+                          [(OptFunctionCtxResult.Result f _) f])]
+                      [bce-version-context : OptCfgContext
+                        (match bce-version-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-bce-version : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "bce_version"
+                            name
+                            _t-bce-version)
+                          unit)]
                       ;; Canonical counted-loop unrolling (x4) runs on
-                      ;; induction's output blocks. A successful rewrite
+                      ;; the versioned blocks. A successful rewrite
                       ;; versions at most one loop per pipeline iteration and
                       ;; rebuilds the context for the new CFG, so the stages
                       ;; below keep valid dominance facts.
@@ -24583,9 +25774,9 @@
                       [unroll-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-unroll-function-with-context-result
-                            induction-context
-                            induction)
-                          induction-result)]
+                            bce-version-context
+                            bce-version)
+                          bce-version-result)]
                       [unrolled : CompilerIrFunction
                         (match unroll-result
                           [(OptFunctionCtxResult.Result f _) f])]
@@ -43535,6 +44726,309 @@
       [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 8) 3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count nonunit) 3)) 4]
+      [else 42])))
+
+;; --- bounds-check loop versioning self-test ------------------------------------
+(define (opt-bce-version-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "len" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "base" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+;; entry -> loop (i phi, acc phi, bounds check on i, acc += i, i += 1) -> exit
+;; (acc merged through an exit phi). `derivable` false swaps the check's index
+;; for the ADD result, which is neither counter, invariant, nor mask.
+(define (opt-bce-version-test-blocks [derivable : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            3
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.I64 0)
+              "entry"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 6)
+                "loop"
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              4
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 5)
+                  "loop"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.Var 3)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (if derivable
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.Var 5))
+                  (CompilerIrValue.Var 1)
+                  "bce_version_ok")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    6
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      7
+                      (CompilerIrBinOp.Lt)
+                      (CompilerIrValue.Var 6)
+                      (CompilerIrValue.Var 0)
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var 7)
+                        "loop"
+                        "done")
+                      (CompilerIrInstrList.Nil)))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "done"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              8
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 5)
+                "loop"
+                (CompilerIrPhiInputList.Nil))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
+              (CompilerIrInstrList.Nil))))
+        (CompilerIrBlockList.Nil)))))
+
+(define (opt-bce-version-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "bce_version_fixture"
+    (opt-bce-version-test-params)
+    (AstType.I64)
+    9
+    blocks))
+
+(define (opt-bce-version-test-block-checks
+  [blocks : CompilerIrBlockList]
+  [label-want : String]) : i64
+  (match (opt-cfg-find-block blocks label-want)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-version-check-count
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            0)])]))
+
+(define (opt-bce-version-test-exit-phi-inputs
+  [blocks : CompilerIrBlockList]
+  [label-want : String]) : i64
+  (match (opt-cfg-find-block blocks label-want)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (compiler-ir-instr-seq-ref instrs 0)
+            [(CompilerIrInstr.Phi _ inputs _) (opt-phi-input-count inputs)]
+            [_ (- 0 1)])])]))
+
+(define (compiler-optimize-bce-version-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks true)))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    [unchanged : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks false)))]
+    [unchanged-out : CompilerIrBlockList (opt-function-blocks unchanged)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; entry, guard, fast, slow loop, exit.
+      [(not (= (compiler-ir-block-list-count out) 5)) 2]
+      ;; the fast clone dropped its check; the slow loop keeps it.
+      [(not (= (opt-bce-version-test-block-checks out "loop__bce_fast") 0)) 3]
+      [(not (= (opt-bce-version-test-block-checks out "loop") 1)) 4]
+      ;; the exit phi gained the parallel fast-edge input.
+      [(not (= (opt-bce-version-test-exit-phi-inputs out "done") 2)) 5]
+      ;; a non-derivable index rejects: blocks stay untouched.
+      [(not (= (compiler-ir-block-list-count unchanged-out) 3)) 6]
+      [else 42])))
+
+;; Full-pipeline integration: a lowered while loop with a checked array read
+;; must version (rotation in iteration 1, versioning + unrolling of the fast
+;; clone in iteration 2), leaving every fast-derived block check-free.
+(define (opt-bce-version-while-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 1)
+              "bce_while_ok")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                6
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 4)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    8
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.Var 7)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      3
+                      (CompilerIrValue.Var 8)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        9
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 4)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Mov
+                          4
+                          (CompilerIrValue.Var 9)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Jump "header")
+                          (CompilerIrInstrList.Nil))))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+              (CompilerIrInstrList.Nil)))
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-version-test-prefix-from?
+  [label : String]
+  [prefix : String]
+  [index : i64]) : bool
+  (if (>= index (string.string-length prefix))
+    true
+    (if (=
+      (cast (string.string-ref label index) : i64)
+      (cast (string.string-ref prefix index) : i64))
+      (opt-bce-version-test-prefix-from? label prefix (+ index 1))
+      false)))
+
+(define (opt-bce-version-test-has-prefix? [label : String] [prefix : String]) : bool
+  (and
+    (>= (string.string-length label) (string.string-length prefix))
+    (opt-bce-version-test-prefix-from? label prefix 0)))
+
+(define (opt-bce-version-test-prefix-checks
+  [blocks : CompilerIrBlockList]
+  [prefix : String]
+  [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-version-test-prefix-checks
+        (box-get rest)
+        prefix
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (if (opt-bce-version-test-has-prefix? label prefix)
+              (+
+                acc
+                (opt-bce-version-check-count
+                  instrs
+                  0
+                  (compiler-ir-instr-seq-count instrs)
+                  0))
+              acc)]))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-version-test-prefix-checks
+        (compiler-ir-block-seq-to-list seq)
+        prefix
+        acc)]))
+
+(define (compiler-optimize-bce-version-pipeline-self-test) : i64
+  (let
+    [optimized : CompilerIrFunction
+      (optimize-function
+        (CompilerIrFunction.Function
+          "bce_version_while_fixture"
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          10
+          (opt-bce-version-while-blocks)))]
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
+      ;; the fast clone exists ...
+      [(match (opt-cfg-find-block blocks "body__bce_fast")
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        2]
+      ;; ... every fast-derived block (clone + its unroll copies) is
+      ;; check-free ...
+      [(not
+          (= (opt-bce-version-test-prefix-checks blocks "body__bce_fast" 0) 0))
+        3]
+      ;; ... and the slow original keeps its per-iteration check.
+      [(< (opt-bce-version-test-block-checks blocks "body") 1) 4]
       [else 42])))
 
 ;; --- affine chain folding self-test -------------------------------------------

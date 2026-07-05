@@ -1,4 +1,4 @@
-;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
+;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.array)
@@ -33,7 +33,7 @@
 ;; return type, unsafe context, cleanup owners, lifetimes, lambda capture
 ;; checks) must keep scanning the spine below such a cache, because the
 ;; markers they look for can be buried more than a compaction window up
-;; (#2661 -- with-arena escape checking was silently disabled past 32 local
+;; (with-arena escape checking was once silently disabled past 32 local
 ;; binds). Explicit top-env/module caches keep scan-through false so those
 ;; scans still terminate without walking the global env spine. Full caches are
 ;; authoritative on miss. Partial local caches cover only the compaction prefix;
@@ -2744,7 +2744,7 @@
     [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          ;; #2357: AstType reads must stay `array-ref` because inline-by-value
+          ;; AstType reads must stay `array-ref` because inline-by-value
           ;; AstType values are multi-word.
           (TcTypeEnvLookupStep.Found (array-ref values index))]
         [(hashmap.I64I64MapMissing)
@@ -2762,7 +2762,7 @@
     [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          ;; #2357: AstType read must stay `array-ref`; the unsafe flag is a
+          ;; AstType read must stay `array-ref`; the unsafe flag is a
           ;; scalar i64 and keeps the previous raw read path.
           (TcTypeEnvUnsafeLookupStep.Found
             (array-ref values index)
@@ -2843,7 +2843,7 @@
     (cbi.compiler-builtin-refresh!)
     (tc-name-id name)))
 
-;; --- top-env build membership side table (#3792) ----------------------------
+;; --- top-env build membership side table ------------------------------------
 ;; The whole-program top-level env is an UNCACHED spine of ~46K binds. The
 ;; threshold-compaction machinery (tc-env-compact-local-if-threshold) is for
 ;; single-bind function scopes and does not fire here: unsafe/c-abi decls
@@ -4172,8 +4172,7 @@
   (tc-env-with-cache-mode env true))
 
 ;; Threshold-compaction caches inside function-body spines: partial lookup
-;; cache for the newest bind window; marker scans keep scanning the full spine
-;; (#2661).
+;; cache for the newest bind window; marker scans keep scanning the full spine.
 (define (tc-env-with-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-partial-local-cache env))
 
@@ -4783,7 +4782,7 @@
 (define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
   (tc-empty-module-local-env-cache))
 
-;; #2357: arena that owns the module-local env cache chain. The cache lives in
+;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
 ;; whose allocations land in scratch arenas; the cache's (box ...) cells and
 ;; the cached env internals allocated there dangle once the scratch arena is
@@ -4890,7 +4889,7 @@
     (set! tc-hygiene-active-top-env top-env)
     (set! tc-hygiene-active-top-env-ready true)
     (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    ;; #2357: release the persistent cache arena with the chain it owns; the
+    ;; Release the persistent cache arena with the chain it owns; the
     ;; next cache miss creates a fresh one (keeps batch compiles from leaking
     ;; one arena's worth of dead cache entries per program).
     (if (= tc-hygiene-module-env-cache-arena 0)
@@ -6445,7 +6444,7 @@
   (let
     [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [_install : unit (tc-context-install-pools! ctx)]
-    ;; #3677: the well-known spec builder pushes fresh type nodes (e.g. the
+    ;; The well-known spec builder pushes fresh type nodes (e.g. the
     ;; `(Box Expr)` payload of ExprSplice) into this context's type-node pool.
     ;; In a long-lived `test --check --batch` process the captured pool snapshot
     ;; inherits a dedup index whose entries can point at slot ids that a later
@@ -6981,7 +6980,7 @@
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
               (match (hashmap.i64-i64-map-get ids name-id)
-                ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value
+                ;; MUST stay `array-ref` -- inline-by-value
                 ;; `AstType` is multi-word, and the raw ptr path mis-scales it.
                 [(hashmap.I64I64MapFound index)
                   (begin
@@ -7049,7 +7048,7 @@
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
               (match (hashmap.i64-i64-map-get ids name-id)
-                ;; #2357: AstType read MUST stay `array-ref`; the unsafe flag is
+                ;; AstType read MUST stay `array-ref`; the unsafe flag is
                 ;; scalar i64, so the raw ptr path remains sound for that array.
                 [(hashmap.I64I64MapFound index)
                   (begin
@@ -7255,7 +7254,7 @@
   (if tc-hygiene-active-top-env-ready
     (if (string.eq module "")
       (ResultTcEnv.Ok tc-hygiene-active-top-env)
-      ;; #2357: build cache entries in the dedicated persistent arena (see
+      ;; Build cache entries in the dedicated persistent arena (see
       ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
       ;; survives the scratch arenas active during per-decl typechecking.
       (let
@@ -10476,7 +10475,7 @@
   0)
 
 ;; The cached name strings are caller-provided and may live in a transient
-;; scratch arena (per-function typecheck arenas; #2596): clear them to the
+;; scratch arena (per-function typecheck arenas): clear them to the
 ;; static empty string as well, so no slot can compare against freed memory
 ;; after the owning arena is destroyed.
 (define (tc-nominal-owner-cache-reset!) : unit
@@ -12873,7 +12872,7 @@
     [(AstType.F32) true]
     [_ false]))
 
-;; Word-class for register-resident aggregates (#2386): a POD type that occupies
+;; Word-class for register-resident aggregates: a POD type that occupies
 ;; at most one machine word and is trivially copyable by value. Integers, bool,
 ;; char, and raw pointers qualify. Floats are excluded (a register-resident
 ;; aggregate is packed into general-purpose words). Owning handles (Box, String,
@@ -13898,7 +13897,7 @@
         [(ResultTcType.Ok (AstType.String)) true]
         [_ false]))))
 
-;; #2661: markers buried below MORE THAN ONE compaction window. The behavior
+;; Markers buried below MORE THAN ONE compaction window. The behavior
 ;; smoke above only crosses one threshold, so the head cache is unwrapped and
 ;; the markers are reached by the plain bind walk; with two stacked
 ;; compaction caches the scans must recurse through scan-through cache nodes
@@ -16081,7 +16080,7 @@
         (let
           [decls : AstDeclList (box-get decls-box)]
           [base-env : TcTypeEnv (tc-default-env)]
-          ;; #3792: activate the membership bloom across the bind-list so the
+          ;; Activate the membership bloom across the bind-list so the
           ;; enum-variant alias-if-free guard is O(1) instead of rescanning the
           ;; whole top-env spine per variant.
           [_membership-begin : unit (tc-topenv-membership-begin! base-env)]
@@ -16377,11 +16376,11 @@
             [(ResultTcEnv.Ok env)
               (let
                 ;; The cache outlives transient scratch arenas (per-function
-                ;; typecheck arenas; #2596), but `module` may have been
+                ;; typecheck arenas), but `module` may have been
                 ;; allocated in one: hygiene markers decode it by substring.
                 ;; Copy the key into the current arena -- the hygiene caller
                 ;; switches to the dedicated cache arena before inserting
-                ;; (#2357) -- so the stored key cannot dangle.
+                ;; -- so the stored key cannot dangle.
                 [key : String
                   (string.substring module 0 (string.string-length module))]
                 (ResultTcModuleLocalEnv.Ok
@@ -20520,7 +20519,7 @@
 ;; user definition, or a local). Used to decide whether an unbound private
 ;; compiler intrinsic should be recovered as a builtin or as an ordinary direct
 ;; call to a shadowing user definition. Mirrors the host compiler's shadowing
-;; check (#677).
+;; check.
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-bound-id? env (tc-name-id name)))
 
@@ -20980,7 +20979,7 @@
 ;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
 ;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
 ;; reflection.
-;; `length` remains a transitional array alias. String/bytes length is a stdlib
+;; `length` is an array-length alias. String/bytes length is a stdlib
 ;; wrapper over the private `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
@@ -21091,7 +21090,7 @@
     (tc-clone-able-set ctx)
     (tc-context-module ctx)))
 
-;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
+;; `(clone x)` deep-copies x into the current arena. Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
 ;; lands in the enclosing arena, not the source's region). Unsupported types are
 ;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
@@ -26959,7 +26958,7 @@
           (tc-inline-field-layout-offset field)
           (tc-inline-field-layout-list-offset (box-get rest) name)))]))
 
-;; #2601/#2855: register-resident aggregate eightbytes may be INTEGER (the
+;; Register-resident aggregate eightbytes may be INTEGER (the
 ;; existing word-class data) or SSE. SSE admits exact aligned f64 fields and
 ;; packed f32 fields that share an eightbyte only with other SSE fields. Mixed
 ;; integer/float sub-word eightbytes intentionally stay memory-backed.
@@ -26994,7 +26993,7 @@
     [(AstType.MutPtr _) 8]
     [_ 8]))
 
-;; #2386: true when every struct field is word-class, so the aggregate can be
+;; True when every struct field is word-class, so the aggregate can be
 ;; packed into general-purpose register words instead of a memory slot.
 (define (tc-inline-fields-all-word-class? [fields : TcInlineFieldLayoutList]) : bool
   (match fields
@@ -27004,7 +27003,7 @@
         (tc-inline-fields-all-word-class? (box-get rest))
         false)]))
 
-;; #2601/#2855: true when every struct field can be assigned to a supported
+;; True when every struct field can be assigned to a supported
 ;; register eightbyte class and every occupied eightbyte has a single class.
 ;; This preserves every existing INTEGER case, exact f64 SSE eightbytes, and
 ;; homogeneous packed f32 SSE eightbytes while rejecting mixed int/float words.
@@ -27051,7 +27050,7 @@
     (< (tc-inline-fields-word-register-class fields 0 -1) 2)
     (< (tc-inline-fields-word-register-class fields 1 -1) 2)))
 
-;; #2386: true when every payload field of a variant is word-class -- so a 16-byte
+;; True when every payload field of a variant is word-class -- so a 16-byte
 ;; enum (tag in word0, the single word-class payload in word1) can be carried
 ;; register-resident.
 (define (tc-inline-payloads-all-word-class?
@@ -27901,7 +27900,7 @@
 ;; The Superluminal profile of the stage2 self-compile shows ~18% of CPU inside
 ;; the tc-inline-aggregate-* layout walk: every struct-get field offset, enum
 ;; payload offset, and lower-type-size query on a nominal recomputes the whole
-;; recursive layout (the #2386 caches only memoized the final size and the
+;; recursive layout (the scalar caches only memoized the final size and the
 ;; register-word count as scalars). This cache memoizes the COMPLETE
 ;; TcInlineAggregateLayout per type name. Unlike the scalar handle-index caches,
 ;; this cache is keyed by the intern id of the nominal name: symbol handles can
@@ -27909,7 +27908,7 @@
 ;; are stable until intern-reset!. The cached value is deep-cloned into the
 ;; persistent program arena (node-pool-base-arena) before storing -- a layout
 ;; computed while a transient lowering scratch arena is active would otherwise
-;; dangle after the arena rewinds (the #2441 hazard).
+;; dangle after the arena rewinds (the scratch-arena hazard).
 (defenum TcAggLayoutCacheSlot
   (Empty)
   (Full TcInlineAggregateLayout))
@@ -27936,7 +27935,7 @@
         (set! tc-agg-layout-cache-generation (intern-generation))))))
 
 ;; Cache key: the INTERN ID of the nominal type name. Unlike the symbol-handle
-;; index used by the scalar #2386 caches, intern ids are stable for the whole
+;; index used by the scalar caches, intern ids are stable for the whole
 ;; program: the intern table only appends, while the symbol table is rebuilt
 ;; after specialization inserts generated declarations, which shifts handle
 ;; indexes mid-compile (observed as a wrong cached layout under
@@ -28180,10 +28179,10 @@
 (define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
   (tc-inline-aggregate-layout-for-with-stack ctx name TcStringList.Nil))
 
-;; #2386 (compile-time): memoize the inline-aggregate SIZE. tc-inline-aggregate-
+;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
 ;; layout-for re-walks the whole layout on every lower-type-size query, which is
 ;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
-;; (the #2441 scratch-arena hazard makes a grown map / cached field-list dangle):
+;; (the scratch-arena hazard makes a grown map / cached field-list dangle):
 ;; so it is a FIXED global i64 array, allocated once at startup (persistent, like
 ;; the AST node pool) and only read/written thereafter. Keyed by the intern id of
 ;; the nominal type name: symbol handles can be reassigned when specialization
@@ -28197,7 +28196,7 @@
 (define tc-agg-size-cache : (Array i64)
   (array.make-array i64 400000))
 
-;; #2624: these scalar caches used to be keyed by symbol-handle INDEX, which is
+;; These scalar caches used to be keyed by symbol-handle INDEX, which is
 ;; only meaningful for one snapshot of a program's symbol table. Specialization
 ;; rebuilds that table after inserting generated declarations, so a cached value
 ;; under an old handle index could be returned for a different type whose new
@@ -28251,7 +28250,7 @@
                     size))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
 
-;; #2609: same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
+;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
 (define tc-agg-align-cache : (Array i64)
@@ -28297,7 +28296,7 @@
                     align))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
 
-;; #2386 (compile-time): memoize a bare aggregate's register-resident word count
+;; Compile-time cache: memoize a bare aggregate's register-resident word count
 ;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
 ;; fixed array as the size cache; this is the hot query for every aggregate
 ;; construct / struct-get / copy (lower-name-register-words). Encoded as
@@ -28360,7 +28359,7 @@
                     words))]
               [(ResultTcInlineAggregateLayout.Err _) 0])))))))
 
-;; #2386: a struct/enum layout is "register-resident (1-word)" when it fits in a
+;; A struct/enum layout is "register-resident (1-word)" when it fits in a
 ;; single 8-byte machine word and is built only of word-class data. Such a value
 ;; can live in a register end-to-end (packed/extracted by shift+mask) instead of
 ;; round-tripping through a memory slot.
@@ -28380,16 +28379,16 @@
   [layout : TcInlineAggregateLayout]) : bool
   (match layout
     [(TcInlineAggregateLayout.Struct size _ fields)
-      ;; #2386: an integer-class struct of 1 word (8 B) or 2 words (16 B) whose
+      ;; An integer-class struct of 1 word (8 B) or 2 words (16 B) whose
       ;; fields are all supported register classes is register-resident --
-      ;; carried in one or two register-class words end-to-end. #2601 extends the
-      ;; original INTEGER-only gate to exact f64 SSE eightbytes; #2855 admits
-      ;; homogeneous packed f32 SSE eightbytes while mixed int/float words stay
+      ;; carried in one or two register-class words end-to-end. Beyond the
+      ;; INTEGER-only gate, exact f64 SSE eightbytes and homogeneous packed
+      ;; f32 SSE eightbytes are admitted while mixed int/float words stay
       ;; memory-backed.
       (if (or (= size 8) (= size 16))
         (tc-inline-fields-all-register-class? fields)
         false)]
-    ;; #2386: an enum is register-resident at 1 word (size 8 -- necessarily
+    ;; An enum is register-resident at 1 word (size 8 -- necessarily
     ;; nullary, the tag word) or 2 words (size 16 -- tag in word0, a single
     ;; supported register-class payload in word1). Larger or unsupported
     ;; aggregate-payload enums keep the memory path.
@@ -28453,9 +28452,9 @@
                           (tc-repr-c-layout-align layout)))]
                     [(ResultTcReprCLayout.Err message)
                       (ResultTcLayoutInfo.Err message)])
-                  ;; #2296: embed a default-layout struct by value using its
-                  ;; default inline C-rule layout (default layout now follows C
-                  ;; layout per #1867). `seen` carries the repr-c owners so a
+                  ;; Embed a default-layout struct by value using its
+                  ;; default inline C-rule layout (default layout follows C
+                  ;; layout). `seen` carries the repr-c owners so a
                   ;; cycle back through this struct is still detected.
                   (tc-inline-aggregate-type-layout-with-stack
                     ctx
@@ -28478,14 +28477,14 @@
                           (tc-repr-c-layout-align layout)))]
                     [(ResultTcReprCLayout.Err message)
                       (ResultTcLayoutInfo.Err message)])
-                  ;; #2296: embed a default-layout struct (with type args) by value
+                  ;; Embed a default-layout struct (with type args) by value
                   ;; using its default inline C-rule layout.
                   (tc-inline-aggregate-type-layout-with-stack
                     ctx
                     (AstType.StructArgs nested lifetimes)
                     seen))])]
           [(ResultTcStructDecl.Err message) (ResultTcLayoutInfo.Err message)]))]
-    ;; #2296: embed an enum by value using its default inline layout (tag +
+    ;; Embed an enum by value using its default inline layout (tag +
     ;; payload). Enums have no separate repr-c layout; the inline engine threads
     ;; `seen` for cycle detection.
     [(AstType.Enum name)
@@ -31484,7 +31483,7 @@
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
 
-;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
+;; spmd-reduce operator/type rules (SPEC 5.15): the init/value/result type
 ;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
 ;; over i32/i64, `all`/`any` over bool.
 (define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
@@ -31560,7 +31559,7 @@
     [(AstReduceOp.All) "typecheck: spmd-scan all requires a bool type"]
     [(AstReduceOp.Any) "typecheck: spmd-scan any requires a bool type"]))
 
-;; spmd-reduce purity/effect rules (#1011, SPEC.md 5.15): mirror the Rust
+;; spmd-reduce purity/effect rules (SPEC.md 5.15): mirror the Rust
 ;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
 ;; narrow, clearly-pure surface and rejects everything else with a focused
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
@@ -33352,8 +33351,8 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Begin exprs) (tc-begin-list ctx env exprs)]
-    ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
-    ;; raw-pointer ops is added with their checks (#955).
+    ;; `(unsafe ...)` types like `begin`; the unsafe-context flag exists for
+    ;; the raw-pointer op checks.
     [(AstExpr.Unsafe exprs)
       (tc-unsafe-begin-list ctx env exprs TcMaybeAstSourceSpan.No)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
@@ -35489,10 +35488,10 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
-;; --- whole-local move checker (#1048/#1049) ---------------------------------
+;; --- whole-local move checker -----------------------------------------------
 ;;
 ;; Reject use-after-move for move-only whole locals/parameters in source
-;; evaluation order. The staged owner-only policy keeps ordinary aggregate
+;; evaluation order. The owner-only policy keeps ordinary aggregate
 ;; sharing compatible, while consuming only by-value sites whose target is an
 ;; owner today: cleanup-owning structs and Box values. Reads never move; branches
 ;; merge by union (a place moved on any arm is moved afterward). Loops reject
@@ -38864,9 +38863,9 @@
     [(TcMoveResult.Ok _) ResultTcUnit.Ok]
     [(TcMoveResult.Err message) (ResultTcUnit.Err message)]))
 
-;; --- lexical borrow conflict checker (#1050/#806) --------------------------
+;; --- lexical borrow conflict checker ---------------------------------------
 ;;
-;; Borrows are lexical in this staged model: `begin` keeps borrows live, while
+;; Borrows are lexical in this model: `begin` keeps borrows live, while
 ;; `let`, `with-arena`, resource `with`, lambdas, and individual match arms
 ;; bound their own borrow additions. The checker reuses the move path encoding
 ;; so whole roots, fields, tuple elements, and fixed-array literal elements share
@@ -42634,7 +42633,7 @@
     [(TcBorrowCheckResult.Ok _) ResultTcUnit.Ok]
     [(TcBorrowCheckResult.Err message) (ResultTcUnit.Err message)]))
 
-;; --- macro expansion phase (#1139) ------------------------------------------
+;; --- macro expansion phase --------------------------------------------------
 ;;
 ;; Pipeline: parse -> EXPAND -> typecheck. When a call head names a `defmacro`,
 ;; the unevaluated operand forms are passed as `Expr` values (CompilerCtfeValue.Expr) to the
@@ -42904,7 +42903,7 @@
             (ResultCompilerSymbols.Err message)])]
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
-;; Hoisted whole-program macro prescans (plan P2/C2.3). macro-program-has-defmacro?,
+;; Hoisted whole-program macro prescans. macro-program-has-defmacro?,
 ;; macro-collect-expr-type-macro-names, macro-program-needs-expansion?,
 ;; macro-program-has-summary-macro-import? and macro-collect-visible-macro-names
 ;; each walk the whole program. They are computed once per expansion run under
@@ -47606,7 +47605,7 @@
 ;; The implicit core macro prelude module (stdlib/core_macros.tl). A bare name
 ;; that is not bound as a macro in the current module falls back to this module's
 ;; available macros, so `and`/`or`/`when`/`unless`/`cond` resolve without an
-;; explicit import (#2060). Local macros and explicit imports therefore take
+;; explicit import. Local macros and explicit imports therefore take
 ;; precedence over the prelude. Returns MacroMaybeDecl.No (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module
@@ -51211,8 +51210,8 @@
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
-    ;; P4/C4.4: a generated module always emits its FULL body. The surface
-    ;; filter (closure filter + env/fs allow-list + whole-body drop) is deleted;
+    ;; A generated module always emits its FULL body. There is no surface
+    ;; filter (closure filter + env/fs allow-list + whole-body drop);
     ;; the reachability gate (run after typecheck) keeps unused parts out of
     ;; codegen while every declaration is still fully typechecked.
     [generated-body-raw : AstDeclList
@@ -51727,9 +51726,9 @@
                       ret
                       body)
                     (if (tc-macro-result-module? ret)
-                      ;; P4/C4.4: always expand + materialize the module. The
-                      ;; #4301 "skip the import when the alias is textually
-                      ;; unreferenced" fast path is deleted: a declared
+                      ;; Always expand + materialize the module. There is no
+                      ;; "skip the import when the alias is textually
+                      ;; unreferenced" fast path: a declared
                       ;; instantiation must be typechecked whether or not anything
                       ;; references it (typecheck-completeness invariant).
                       (match (macro-expand-exprs
@@ -52072,7 +52071,7 @@
   [_identity : String]) : CompilerMaybeString
   CompilerNoString)
 
-;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
+;; Macro-expansion skip analysis. Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
 ;; the program (all imported modules), which redundantly re-typechecks match
 ;; scrutinees / let bindings and rebuilds the entire AST -- ~1.7GB and >1s on a
@@ -53860,7 +53859,7 @@
     ;; Reset the live symbols/registries cache once per program (plan P2): the
     ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
     (macro-live-symbols-reset!)
-    ;; Reset the hoisted whole-program prescans (plan P2/C2.3): computed at
+    ;; Reset the hoisted whole-program prescans: computed at
     ;; pass setup and refreshed only when a generated file import loads new
     ;; declarations mid-walk.
     (macro-live-prescan-reset!)
@@ -54534,7 +54533,7 @@
       (set! tc-fn-scratch-arena 0))))
 
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
-;; delta; #2596) and the check returns only unit -- everything it allocates
+;; delta) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
 ;; frees it. Run each body check in the shared scratch arena and rewind it
 ;; afterwards, cloning the error diagnostic out first (the mark/rewind/
@@ -54545,7 +54544,7 @@
 ;; forced on for the scope (the intern pool copies new strings into its
 ;; global-init base arena; see compiler_intern). Synthetic marker names use
 ;; tc-marker-name-id, which routes them to file-state storage instead.
-;; Node pools already grow in the persistent base arena (#2357).
+;; Node pools already grow in the persistent base arena.
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -55187,7 +55186,7 @@
   [cache : TcModuleLocalEnvCache]
   [local-env : TcTypeEnv]
   [global-env : TcTypeEnv]) : ResultCompilerTypecheck
-  ;; #2599: this walks every expanded top-level declaration during self-compile.
+  ;; This walks every expanded top-level declaration during self-compile.
   ;; Keep it iterative so a large program does not consume one native stack frame
   ;; per declaration on Windows selfhost binaries.
   (let

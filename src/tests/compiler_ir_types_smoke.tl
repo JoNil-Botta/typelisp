@@ -1,4 +1,4 @@
-;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke (#1043).
+;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
 (import stdlib.string)
 (import "../compiler_ir_types.tl")
 

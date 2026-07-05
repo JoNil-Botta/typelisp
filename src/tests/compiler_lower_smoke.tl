@@ -1,4 +1,4 @@
-;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
+;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)

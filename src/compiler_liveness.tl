@@ -1,4 +1,4 @@
-;; compiler_liveness.tl - Self-hosted CompilerIrFunction liveness analysis (#553).
+;; compiler_liveness.tl - Self-hosted CompilerIrFunction liveness analysis.
 ;;
 ;; This module keeps the selfhost liveness pass deterministic while storing
 ;; integer live sets as compact bitsets keyed by dense IR variable ids. Do not
@@ -2041,7 +2041,7 @@
     42
     (io.panic "liveness: smoke mismatch")))
 
-;; Dense-array path for liveness analysis (#4316).
+;; Dense-array path for liveness analysis.
 ;; Avoids linked-list allocation overhead in the hot self-compile path.
 (define (compiler-live-ir-block-list-to-seq [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (match blocks

@@ -1,4 +1,4 @@
-;; compile_cli_core.tl - Main-free selfhost compile/check core (#565, #1639).
+;; compile_cli_core.tl - Main-free selfhost compile/check core.
 ;;
 ;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
@@ -16,7 +16,7 @@
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
 ;; as the command name. The retained bootstrap `compile.tl` driver and the
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
-;; compiler (#1638).
+;; compiler.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)

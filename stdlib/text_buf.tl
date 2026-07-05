@@ -92,7 +92,7 @@
             unit
             (fail)))))))
 
-;; Inline coverage migrated from stdlib/tests/text_buf_api.tl (#3082).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 
 (cfg

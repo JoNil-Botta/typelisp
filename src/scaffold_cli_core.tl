@@ -1,4 +1,4 @@
-;; scaffold_cli_core.tl - selfhost `typelisp new` / `typelisp init` command logic (#1160).
+;; scaffold_cli_core.tl - selfhost `typelisp new` / `typelisp init` command logic.
 ;;
 ;; Shared by the retained `scaffold.tl` compatibility/coverage driver and the
 ;; unified `cli.tl` dispatcher. `new [--lib] <name>` creates a package skeleton

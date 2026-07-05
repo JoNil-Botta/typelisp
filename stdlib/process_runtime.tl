@@ -1,4 +1,4 @@
-;# stdlib/process_runtime.tl - Process-execution runtime for TypeLisp (#2142).
+;# stdlib/process_runtime.tl - Process-execution runtime for TypeLisp.
 ;#
 ;# Pure-TypeLisp implementations of the `tl_process_output`, `tl_process_start`,
 ;# and `tl_process_wait` runtime helpers that the `tl` API surface calls.

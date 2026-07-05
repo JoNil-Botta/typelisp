@@ -1,4 +1,4 @@
-;# Public dynamic/fixed array helper macros (#3421).
+;# Public dynamic/fixed array helper macros.
 ;#
 ;# This module owns the user-facing array helper spellings during the migration
 ;# away from compiler-public special forms and builtins. The branch compiler

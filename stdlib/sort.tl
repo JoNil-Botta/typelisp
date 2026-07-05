@@ -1,4 +1,4 @@
-;# Stable deterministic sort helpers for generated stdlib vectors (#2678/#3218).
+;# Stable deterministic sort helpers for generated stdlib vectors.
 ;#
 ;# This module follows the generated concrete collection model. `(vec T)`
 ;# emits a module that sorts the matching `(vector T)` module's `Vec` in place.
@@ -142,7 +142,7 @@
                   (array-set! slots j value)
                   (set! i (+ i 1)))))))))))
 
-;; Inline coverage migrated from the old flat vector sort helpers (#3082).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
 (cfg test (import (stdlib.sort.vec i64) as i64sort))

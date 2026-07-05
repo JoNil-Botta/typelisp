@@ -1,4 +1,4 @@
-;; lex_span_smoke.tl - Runnable smoke for the spanned token stream (#599).
+;; lex_span_smoke.tl - Runnable smoke for the spanned token stream.
 ;;
 ;; Lexes a multi-line, nested source and checks that each token carries the
 ;; correct 1-based line/column (including a token inside a nested list and the

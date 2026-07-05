@@ -1,4 +1,4 @@
-;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
+;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector as svec)
@@ -544,7 +544,7 @@
       (i64vec.push (&mut items) 1)
       (i64vec.len (& items)))))")
 
-;; Compatibility alias fixture for #3772. The qualified stdlib.array path is
+;; Compatibility alias fixture for the __tl_dyn-array alias. The qualified stdlib.array path is
 ;; covered by compiler-check-implicit-core-prelude-source above.
 (define (compiler-check-private-dynamic-buffer-public-source) : String
   "(define (main) : i64

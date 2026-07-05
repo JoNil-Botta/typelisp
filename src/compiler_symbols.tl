@@ -1,4 +1,4 @@
-;; compiler_symbols.tl - Top-level compiler symbol table over AstProgram (#405).
+;; compiler_symbols.tl - Top-level compiler symbol table over AstProgram.
 ;;
 ;; Handles are packed as kind * stride + declaration index, where index is the
 ;; source-order position among supported declarations. Import declarations have

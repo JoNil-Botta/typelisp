@@ -95,7 +95,7 @@
             ,(comptime.expr-int n))
           0))]))
 
-;; Inline coverage migrated from stdlib/tests/str_cat_api.tl (#3082).
+;; Inline test coverage.
 ;; Published stage0 compilers have a hardcoded `stdlib.str_cat` test fast path
 ;; that emits legacy helper names, so the cfg-test fixture exercises the same
 ;; checked-in macro body through the bootstrap-safe runtime module name.

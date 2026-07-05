@@ -1,4 +1,4 @@
-;# Deterministic pseudo-random helpers for TypeLisp tools (#882).
+;# Deterministic pseudo-random helpers for TypeLisp tools.
 ;#
 ;# This module provides a small seeded, deterministic, non-cryptographic
 ;# generator plus array/vector/list weighted index selection for selfhost
@@ -353,7 +353,7 @@
   (define (rotl64-17 [value : u64]) : u64
     (bit-or (shl value 17) (shr value 47))))
 
-;: Finalize a mixed 64-bit seed using the SplitMix64 avalanche step from #2100.
+;: Finalize a mixed 64-bit seed using the SplitMix64 avalanche step.
 (cfg
   windows
   (define (splitmix64-finalize [seed : u64]) : u64

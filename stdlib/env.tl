@@ -1,4 +1,4 @@
-;# stdlib/env.tl - Environment variable helpers for TypeLisp (#854).
+;# stdlib/env.tl - Environment variable helpers for TypeLisp.
 ;#
 ;# Provides recoverable environment lookup and PATH-style list helpers on top of
 ;# direct platform C library bindings:
@@ -21,7 +21,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
-;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
+;: Windows kernel32 `GetEnvironmentStringsA` binding. Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
 ;: by an empty entry (a trailing double NUL). Replaces the former backend-emitted
 ;: `getenv` libc shim on Windows; the Linux side walks the SysV stack-captured

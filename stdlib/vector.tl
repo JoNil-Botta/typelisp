@@ -1,4 +1,4 @@
-;# Generated concrete vector family (collections v1, #835/#1989).
+;# Generated concrete vector family (collections v1).
 ;#
 ;# A growable, owned sequence built on the fixed `(Array T)` primitive: a
 ;# backing array plus a live-element count (`len`). Capacity is the backing array
@@ -19,9 +19,8 @@
 ;# move pattern as scalar and `String` families: `push`/`set!` move the element
 ;# into a live slot, `pop` moves the last live element out with the shrunk
 ;# vector, and copying/growth/snapshot helpers move the live prefix into fresh
-;# arrays. On the current handle representation aggregate elements occupy
-;# handle slots; after the inline-aggregate representation flip (#1867/#2357)
-;# the same source API stores aggregate elements inline in the backing array.
+;# arrays. The same source API works whether aggregate elements occupy handle
+;# slots or are stored inline in the backing array.
 ;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
@@ -1050,7 +1049,7 @@
   (define (string-vec-contains? [v : (& v StringVec)] [x : String]) : bool
     (string-vec-contains-from? v x 0)))
 
-;; Inline coverage migrated from stdlib/tests/vector_api.tl (#3082).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 
 (cfg
@@ -1650,7 +1649,7 @@
             (vector-test-pop-value-or pe -1)
             -1
             "empty pop value fallback")))
-      ;; --- from-array / to-array round-trip (#1212) ---
+      ;; --- from-array / to-array round-trip ---
       (let
         [src : (Array i64) (array.make-array i64 3)]
         (begin
@@ -1708,7 +1707,7 @@
                   (test.assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
                   (test.assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
                   (test.assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
-      ;; --- I64Vec higher-order fold/map helpers (#2067) ---
+      ;; --- I64Vec higher-order fold/map helpers ---
       (let
         [src : (Array i64) (array.make-array i64 5)]
         (begin
@@ -1934,7 +1933,7 @@
                               (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
                             107
                             "tag snapshot independent")))))))))))
-      ;; --- generated nominal struct element vector witness (#2564) ---
+      ;; --- generated nominal struct element vector witness ---
       (let
         [pv2 : VecApiPointVec
           (vec-api-point-vec-push

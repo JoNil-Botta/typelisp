@@ -1,9 +1,8 @@
-;; compiler_parse_core.tl - Sexpr -> real compiler AST parser (#335).
+;; compiler_parse_core.tl - Sexpr -> real compiler AST parser.
 ;;
 ;; This module targets `compiler_ast_types.tl`, not the smaller
-;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
-;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
-;; exist.
+;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
+;; the parsed `AstProgram` for typechecking/lowering.
 (import stdlib.array)
 (import stdlib.io)
 (import "compiler_ast_types.tl")
@@ -1209,7 +1208,7 @@
           out
           "comptime"
           (compiler-parse-tag-expr-comptime)))
-      ;; `with-arena` is the canonical scoped-arena spelling (#801, #1118).
+      ;; `with-arena` is the canonical scoped-arena spelling.
       (set!
         out
         (sym_i64_env.sym-i64-bind
@@ -4004,8 +4003,8 @@
         [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
     [_ (ResultAstExpr.Err "parse: malformed struct-get")]))
 
-;; `(comptime expr)` (#718) wraps exactly one inner expression for compile-time
-;; evaluation; evaluation itself is reserved for #719.
+;; `(comptime expr)` wraps exactly one inner expression for compile-time
+;; evaluation; evaluation itself happens in CTFE, not the parser.
 (define (parse-ast-comptime
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -5390,9 +5389,9 @@
         (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs)))]
     [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
-;; `(unsafe expr+)` parses like `begin` but requires a non-empty body. v1 has
+;; `(unsafe expr+)` parses like `begin` but requires a non-empty body. It has
 ;; the same behavior as `begin`; it marks an unsafe context for later raw-pointer
-;; ops (#955).
+;; ops.
 (define (parse-ast-unsafe
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -8622,7 +8621,7 @@
 
 ;; True only when `src` fails to parse with exactly the wanted diagnostic. The
 ;; counterpart to the success-path smoke: it pins the parser's rejection
-;; messages so a regression that drops or relabels an error is caught (#655).
+;; messages so a regression that drops or relabels an error is caught.
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
     [(ResultAstProgram.Err message) (string.eq message want)]
@@ -8691,7 +8690,7 @@
   "(define (main) : i64
   (with-arena r 5))")
 
-;; `with-arena` is the canonical spelling (#801, #1118). Assert it parses to
+;; `with-arena` is the canonical spelling. Assert it parses to
 ;; the `AstExpr.WithRegion` form, not an unbound call.
 (define (compiler-parse-arena-ok?) : bool
   (match (parse-ast-source (compiler-parse-arena-source))
@@ -10325,7 +10324,7 @@
     [(not (compiler-parse-reference-error-tests-ok?)) false]
     [else true]))
 
-;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
+;; Top-level declaration parsing: accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
 ;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
 (define (compiler-parse-ok? [src : String]) : bool
@@ -10424,7 +10423,7 @@
     (compiler-parse-error-ok? "(defstruct)" "parse: malformed defstruct")
     (compiler-parse-error-ok? "(import)" "parse: malformed import")))
 
-;; enum/struct expression coverage (#1073): defenum empty rejection,
+;; enum/struct expression coverage: defenum empty rejection,
 ;; defstruct mixed field types, empty struct rejection, struct-get, and
 ;; struct construction-as-call.
 (define (compiler-parse-enum-struct-tests-ok?) : bool
@@ -10446,7 +10445,7 @@
       "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
 
 ;
-;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, legacy
+;; let-binding parsing: accept untyped, multi-binding, legacy
 ;; parenthesized binding forms, and empty-binding body wrappers. Completes the
 ;; let family alongside the existing flat-let accept and let error tests.
 (define (compiler-parse-let-tests-ok?) : bool
@@ -10481,7 +10480,7 @@
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-parse-ok?
       "(define (main [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
-    ;; #1073: an empty range, a non-i64 index type, and expression
+    ;; An empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
       "(define (main) : i64 (begin (foreach ([i : i64 5 5]) unit) 0))")
@@ -10489,7 +10488,7 @@
       "(define (main) : i64 (begin (foreach ([i : u32 0 3]) unit) 0))")
     (compiler-parse-ok?
       "(define (main [n : i64]) : i64 (begin (foreach ([i : i64 (+ 0 1) (* n 2)]) unit) 0))")
-    ;; #1073: an unknown reduce operator is rejected by the parser.
+    ;; An unknown reduce operator is rejected by the parser.
     (compiler-parse-error-ok?
       "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
       "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
@@ -10537,7 +10536,7 @@
       "(define (main) : i64 (match 1 [() 0]))"
       "parse: expected pattern")))
 
-;; pattern literals (#1073): string literal arms, nested string payload,
+;; pattern literals: string literal arms, nested string payload,
 ;; char literals in pattern and value position.
 (define (compiler-parse-pattern-string-char-tests-ok?) : bool
   (and
@@ -10554,7 +10553,7 @@
     (compiler-parse-ok? "(define (f) : char '\\n')")))
 
 ;
-;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
+;; operator parsing: accept unary (not/neg/bit-not), binary
 ;; arithmetic/comparison, and bitwise/shift operator forms; reject
 ;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
 ;; operator type rules live in the typechecker tests.
@@ -10622,7 +10621,7 @@
         "(define (main) : i64 (type i64 bool))"
         "parse: type expects exactly one type"))))
 
-;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
+;; region parsing: `(with-arena <ident> body+)` accepts (basic,
 ;; multi-expression body, nested region) and rejects missing binder,
 ;; non-identifier binder, and empty body. Parse-shape + parser-owned diagnostics
 ;; only; region typing/lowering live in their own tests.
@@ -10896,7 +10895,7 @@
       "(define x : Expr (quote))"
       "parse: quote form expects exactly one expression")))
 
-;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
+;; REPL-item parsing: `parse-ast-repl-source` accepts a single
 ;; top-level declaration, a parenthesized expression, or a bare expression, and
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
 ;; parser's `parse_repl_item` tests.
@@ -10938,7 +10937,7 @@
     ;; a malformed expression item surfaces the expression diagnostic
     (compiler-parse-repl-error-ok? "(+ 1)" "parse: malformed binary expression")))
 
-;; comptime function-parameter parsing (#1072 / #1041): `[comptime n : i64]`
+;; comptime function-parameter parsing: `[comptime n : i64]`
 ;; and the type-valued `[comptime T : type]` parse as top-level function
 ;; parameters marked comptime; a comptime parameter on a lambda is rejected
 ;; (comptime params are top-level-only). Mirrors the Rust parser's

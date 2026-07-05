@@ -1,4 +1,4 @@
-;; compiler_liveness_smoke.tl - Runnable smoke for compiler_liveness.tl (#553).
+;; compiler_liveness_smoke.tl - Runnable smoke for compiler_liveness.tl.
 (import "../compiler_ir_types.tl")
 (import "../compiler_liveness.tl")
 

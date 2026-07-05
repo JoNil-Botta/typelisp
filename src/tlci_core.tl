@@ -1,4 +1,4 @@
-;; tlci_core.tl - TypeLisp comptime image v1 parse/emit helpers (#2651).
+;; tlci_core.tl - TypeLisp comptime image v1 parse/emit helpers.
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.

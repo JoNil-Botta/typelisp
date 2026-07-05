@@ -1,4 +1,4 @@
-;; doc_site.tl - Static stdlib/API HTML site builder CLI (#964).
+;; doc_site.tl - Static stdlib/API HTML site builder CLI.
 ;;
 ;; Usage through the current compiler runner:
 ;;   typelisp run tools/doc-site/doc_site.tl -- target/site

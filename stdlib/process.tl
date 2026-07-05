@@ -1,4 +1,4 @@
-;# Process command API surface for TypeLisp (#840).
+;# Process command API surface for TypeLisp.
 ;#
 ;# Defines the canonical process command/output/error data model for selfhost
 ;# tools. Runtime process execution is provided by `process_runtime.tl` through
@@ -703,8 +703,8 @@
     [else (ProcessInvalidCommand message)]))
 
 ;: The process-execution runtime (`tl_process_output`, `tl_process_start`,
-;: `tl_process_wait`) is implemented in TypeLisp in `process_runtime.tl`
-;: (#2142 slice 4), replacing the former backend assembly. The public wrappers
+;: `tl_process_wait`) is implemented in TypeLisp in `process_runtime.tl`,
+;: replacing the former backend assembly. The public wrappers
 ;: validate first, then call those functions. Keep this import after the shared
 ;: data model and validation helpers so the runtime sees a complete module.
 (import stdlib.process_runtime)

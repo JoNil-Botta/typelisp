@@ -1,4 +1,4 @@
-;# Lifetime-preserving string caller-result APIs (#1913/#1962).
+;# Lifetime-preserving string caller-result APIs.
 ;#
 ;# This module stays separate from `string.tl` while the compatibility wrapper
 ;# keeps the owned `String` API. It exposes helpers that may return

@@ -1,4 +1,4 @@
-;; clean_cli_core.tl - Selfhost clean command logic (#1643).
+;; clean_cli_core.tl - Selfhost clean command logic.
 ;;
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;

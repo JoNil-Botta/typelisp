@@ -1,4 +1,4 @@
-;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
+;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser.
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;# each entry, skips draft PRs and PRs whose checks are still pending/running as

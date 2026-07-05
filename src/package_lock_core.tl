@@ -1,4 +1,4 @@
-;; package_lock_core.tl - Deterministic typelisp.lock parser/emitter (#1993).
+;; package_lock_core.tl - Deterministic typelisp.lock parser/emitter.
 ;;
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time

@@ -1,4 +1,4 @@
-;; compiler_macro_prelude_smoke.tl - Implicit stdlib macro prelude smoke (#2060).
+;; compiler_macro_prelude_smoke.tl - Implicit stdlib macro prelude smoke.
 (define (compiler-macro-prelude-selfhost-smoke) : i64
   (let
     [value : i64 0]

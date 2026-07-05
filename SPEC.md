@@ -2440,12 +2440,14 @@ bodies; assertion helpers in `stdlib.test` panic on failure.
 
 Example:
 ```lisp test=check name=inline-test-declaration
+(import stdlib.io)
+
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (test inc-basic
   (if (= (inc 41) 42)
     unit
-    (panic "inc result")))
+    (io.panic "inc result")))
 ```
 
 ### 4.6 `typelisp.pkg` — local package manifest
@@ -4805,22 +4807,23 @@ borrow-checked reference surface.
 
 ### 6.1 Core builtins
 
-The compiler owns a small core builtin surface: the print family, `panic` /
-`error`, element operations over fixed-size arrays, and a small set of
-compiler-owned string indexing/slicing primitives. Everything else is
-ordinary standard-library code imported with dotted imports: I/O in
-`stdlib.io` and `stdlib.fs`, process arguments and environment in
-`stdlib.env`, CPU capability checks in `stdlib.cpu`, string inspection and
-parsing in `stdlib.string`, and string building in `stdlib.str_cat` /
-`stdlib.text_buf`. Unimported uses of stdlib names are unbound source names.
-The backend may emit private runtime symbols used by the stdlib extern
-wrappers; user code must not call private names directly.
+The compiler owns a small core builtin surface: element operations over
+fixed-size arrays, a small set of string indexing/slicing primitives, and
+the CPU instruction intrinsics. Everything else — including printing,
+`panic` / `error`, and all richer I/O — is ordinary standard-library code
+imported with dotted imports: I/O in `stdlib.io` and `stdlib.fs`, process
+arguments and environment in `stdlib.env`, CPU capability checks in
+`stdlib.cpu`, string inspection and parsing in `stdlib.string`, and string
+building in `stdlib.str_cat` / `stdlib.text_buf`. Unimported uses of stdlib
+names are unbound source names. The backend may emit private runtime symbols
+used by the stdlib extern wrappers; user code must not call private names
+directly.
 
-**Printing and failure.** `print`, `print-bool`, and `print-newline` are
-core builtins. `panic` and `error` report a failure and terminate the
-process; `error` is an alias for `panic`, and both have return type `never`
-(section 9). Other output helpers, including `print-string` and
-`print-error`, are ordinary `stdlib.io` definitions.
+**Printing and failure.** `print`, `print-bool`, `print-newline`,
+`print-string`, `print-error`, `panic`, and `error` are ordinary `stdlib.io`
+definitions; unimported uses are unbound source names. `panic` and `error`
+report a failure and terminate the process; `error` is an alias for `panic`,
+and both have return type `never` (section 9).
 
 **CPU intrinsics.** The low-level CPU instruction forms `cpuid-eax`,
 `cpuid-ebx`, `cpuid-ecx`, `cpuid-edx`, and `xgetbv` are compiler intrinsics.
@@ -5908,7 +5911,7 @@ branch (an explicit trailing dummy value remains valid but unnecessary).
 (define (parse-or-zero [ok : bool]) : i64
   (if ok
     1
-    (panic "parse failed")))
+    (io.panic "parse failed")))
 ```
 
 Function-local early exit uses the Lisp-shaped `(return expr)` form, as in

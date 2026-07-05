@@ -296,15 +296,16 @@ calls.
 
 ### Builtins and stdlib
 
-Compiler-owned compatibility builtins: `print`, `print-bool`,
-`print-newline`, `make-array`, `array-ref`, `array-set!`,
-`array-length`/`length`, `substring`/`string-slice`, `int->string`, and
-`panic`/`error`. Array and string indexing is bounds-checked at runtime.
-Everything else lives in stdlib modules: `stdlib/string.tl` for string
-inspection/parsing, `stdlib/io.tl` and `stdlib/fs.tl` for files and
-processes, `stdlib.str_cat` and `stdlib.text_buf` for string building,
-`stdlib/byte_buf.tl` for binary buffers, `stdlib/arena.tl` for arena
-control, `stdlib/thread.tl` and `stdlib/sync.tl` for threading.
+Compiler-owned builtins are a small set: fixed-array element operations
+(`array-ref`, `array-set!`, `array-length`/`length`), string
+indexing/slicing primitives (`substring`/`string-slice`, `int->string`),
+and the CPU instruction intrinsics. Array and string indexing is
+bounds-checked at runtime. Everything else lives in stdlib modules imported
+with dotted imports: printing and `panic`/`error` in `stdlib.io`, string
+inspection/parsing in `stdlib.string`, files and processes in `stdlib.io`
+and `stdlib.fs`, string building in `stdlib.str_cat` and `stdlib.text_buf`,
+binary buffers in `stdlib.byte_buf`, arenas in `stdlib.arena`, and threading
+in `stdlib.thread` / `stdlib.sync`.
 
 ## Memory and ownership
 

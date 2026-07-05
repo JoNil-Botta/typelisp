@@ -1240,6 +1240,7 @@
     (unless (= (compiler-optimize-cse-self-test) 42) (return 1))
     (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-bounds-dom-self-test) 42) (return 1))
     (unless (= (smoke-object-bounds-self-test) 42) (return 1))
     (unless (= (smoke-range-bce-self-test) 42) (return 1))
     (unless (= (smoke-ssa-iv-bce-self-test) 42) (return 1))

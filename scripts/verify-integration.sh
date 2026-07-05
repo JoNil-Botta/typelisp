@@ -372,13 +372,15 @@ compile_windows_c_deps() {
 
 # Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
-#   arena_poison_*            Linux-only poison-on-reclaim debug mode
+#   arena_poison_stale_array_trap  the poison-on-reclaim trap cannot fire on
+#                             Windows: tl_arena_poison_enable is a no-op stub
+#                             in the Windows backend runtime, so the stale
+#                             access does not fault (Linux asserts exit 139)
 #   c_abi_sysv_*              Linux System V C ABI fixtures
 #   syscall_arg_alias         raw Linux syscall (rejected on the Windows target)
 #   dead_frame_store          raw Linux syscall (getpid) fixture (rejected on the Windows target)
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
-arena_poison_clone_survives
 arena_poison_stale_array_trap
 c_abi_sysv_register_aggregate_args
 c_abi_sysv_memory_aggregate

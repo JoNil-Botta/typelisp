@@ -233,17 +233,17 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
-stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
-stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
+stdlib/tests/arena_atomic_api.tl|42|-|-|-
+stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
-stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
+stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
-stdlib/tests/thread_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
+stdlib/tests/thread_api.tl|42|-|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 EOF
 }
@@ -262,7 +262,7 @@ stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
-stdlib/tests/comptime_api.tl|pass|-|requires-stage0-diagnostic:'function call' is not supported in compile-time evaluation
+stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/env_api.tl|pass|-

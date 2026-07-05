@@ -136,6 +136,10 @@
   (Valid)
   (Invalid i64 i64 String String))
 
+(defstruct LspAnalyzeResult
+  (diagnostic-uri String)
+  (check-cache LspCheckCache))
+
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
 
@@ -496,7 +500,7 @@
       (json.JsonString "selfhost"))))
 
 (define (lsp-document-fallback) : LspDocument
-  (LspDocument "" "" "" "" (lsp-decl-list-new) false))
+  (LspDocument "" "" "" "" (lsp-decl-list-new) false LspCheckCacheInvalid))
 
 (define lsp-document-cache-arena : i64
   0)
@@ -545,6 +549,7 @@
         [old-text : String (struct-get old-doc text)]
         [old-decls : LspDeclList (struct-get old-doc decls)]
         [old-decls-valid : bool (struct-get old-doc decls-valid)]
+        [old-check-cache : LspCheckCache (struct-get old-doc check-cache)]
         [new-decls : LspDeclList
           (if (string.eq old-text text)
             old-decls
@@ -553,15 +558,33 @@
           (if (string.eq old-text text)
             old-decls-valid
             false)]
+        [new-check-cache : LspCheckCache
+          (if (string.eq old-text text)
+            old-check-cache
+            LspCheckCacheInvalid)]
         (begin
           (lsp-documents-set!
             (&mut docs)
             index
-            (LspDocument uri path text diagnostic-uri new-decls new-decls-valid))
+            (LspDocument
+              uri
+              path
+              text
+              diagnostic-uri
+              new-decls
+              new-decls-valid
+              new-check-cache))
           docs))
       (let
         [doc : LspDocument
-          (LspDocument uri path text diagnostic-uri (lsp-decl-list-new) false)]
+          (LspDocument
+            uri
+            path
+            text
+            diagnostic-uri
+            (lsp-decl-list-new)
+            false
+            LspCheckCacheInvalid)]
         (if (>= (lsp-documents-len (& docs)) lsp-documents-max-capacity)
           (begin
             (lsp-documents-shift-left! docs 0)
@@ -573,6 +596,31 @@
           (begin
             (lsp-documents-push (&mut docs) doc)
             docs))))))
+
+(define (lsp-documents-set-check-cache
+  [docs : LspDocuments]
+  [uri : String]
+  [check-cache : LspCheckCache]) : LspDocuments
+  (let
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (if (>= index 0)
+      (let
+        [doc : LspDocument
+          (lsp-documents-get (& docs) index (lsp-document-fallback))]
+        (begin
+          (lsp-documents-set!
+            (&mut docs)
+            index
+            (LspDocument
+              (struct-get doc uri)
+              (struct-get doc path)
+              (struct-get doc text)
+              (struct-get doc diagnostic-uri)
+              (struct-get doc decls)
+              (struct-get doc decls-valid)
+              check-cache))
+          docs))
+      docs)))
 
 (define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
   (let
@@ -631,7 +679,8 @@
                   disk-text
                   (struct-get doc diagnostic-uri)
                   (lsp-decl-list-new)
-                  false)]
+                  false
+                  LspCheckCacheInvalid)]
               (begin
                 (lsp-documents-set! (&mut docs) index updated)
                 updated)))]
@@ -664,6 +713,51 @@
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ text _) (string.eq text expected-text)]
     [(LspDocumentLookup.Missing) false]))
+
+(define (lsp-documents-smoke-check-cache-ok?
+  [docs : LspDocuments]
+  [uri : String]) : bool
+  (let
+    [idx : i64 (lsp-documents-find-index docs uri)]
+    (if (< idx 0)
+      false
+      (let
+        [doc : LspDocument
+          (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+        (match (struct-get doc check-cache)
+          [(LspCheckCacheOk) true]
+          [_ false])))))
+
+(define (lsp-documents-smoke-check-cache-invalid?
+  [docs : LspDocuments]
+  [uri : String]) : bool
+  (let
+    [idx : i64 (lsp-documents-find-index docs uri)]
+    (if (< idx 0)
+      false
+      (let
+        [doc : LspDocument
+          (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+        (match (struct-get doc check-cache)
+          [(LspCheckCacheInvalid) true]
+          [_ false])))))
+
+(define (lsp-documents-check-cache-smoke-ok?) : bool
+  (let
+    [uri : String "file:///cached.tl"]
+    [docs : LspDocuments (lsp-documents-new)]
+    (begin
+      (set! docs (lsp-documents-set docs uri "cached.tl" "same" ""))
+      (set! docs (lsp-documents-set-check-cache docs uri LspCheckCacheOk))
+      (let
+        [preserved-docs : LspDocuments
+          (lsp-documents-set docs uri "cached.tl" "same" "")]
+        (if (not (lsp-documents-smoke-check-cache-ok? preserved-docs uri))
+          false
+          (let
+            [invalidated-docs : LspDocuments
+              (lsp-documents-set docs uri "cached.tl" "changed" "")]
+            (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri)))))))
 
 (define (lsp-documents-cache-bound-smoke-ok?) : bool
   (let
@@ -1071,6 +1165,7 @@
       (cfg test (unless (lsp-validate-forms-smoke-ok?) (return 7)) unit)
       (cfg test (unless (lsp-validate-forms-line-context-ok?) (return 8)) unit)
       (unless (lsp-documents-cache-bound-smoke-ok?) (return 12))
+      (unless (lsp-documents-check-cache-smoke-ok?) (return 13))
       42)))
 
 (define (lsp-diagnostic-uri
@@ -1199,17 +1294,19 @@
   [uri : String]
   [path : String]
   [text : String]
-  [stdlib-roots : svec.StringVec]) : String
+  [stdlib-roots : svec.StringVec]) : LspAnalyzeResult
   (let
     [lint-diags : json.JsonList (lsp-lint-diagnostics path text stdlib-roots)]
     (match (compiler-check-source-with-roots path text stdlib-roots)
       [(ResultCompilerCheck.Ok _)
         (begin
           (lsp-publish-diagnostics uri lint-diags)
-          "")]
+          (LspAnalyzeResult "" LspCheckCacheOk))]
       [(ResultCompilerCheck.Err diag)
         (let
           [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
+          [check-cache : LspCheckCache
+            (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))]
           (if (string.eq diag-uri uri)
             (begin
               (lsp-publish-diagnostics
@@ -1217,7 +1314,7 @@
                 (lsp-json-list-cons
                   (lsp-compiler-diagnostic (box-get diag))
                   lint-diags))
-              uri)
+              (LspAnalyzeResult uri check-cache))
             (begin
               (lsp-publish-diagnostics uri lint-diags)
               (lsp-publish-diagnostics
@@ -1225,7 +1322,7 @@
                 (lsp-json-list-cons
                   (lsp-compiler-diagnostic (box-get diag))
                   json.JsonListNil))
-              diag-uri)))])))
+              (LspAnalyzeResult diag-uri check-cache))))])))
 
 (define (lsp-first-change-text [params : json.Json]) : LspJsonText
   (let
@@ -1255,12 +1352,25 @@
               (match (lsp-file-uri-to-path uri)
                 [(LspUriPath.Ok path)
                   (let
-                    [diagnostic-uri : String
+                    [analysis : LspAnalyzeResult
                       (lsp-analyze-document uri path text stdlib-roots)]
                     (begin
-                      (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                      (LspHandleResult.Continue
-                        (lsp-documents-set docs uri path text diagnostic-uri))))]
+                      (lsp-clear-stale-diagnostic
+                        docs
+                        uri
+                        (struct-get analysis diagnostic-uri))
+                      (let
+                        [updated-docs : LspDocuments
+                          (lsp-documents-set-check-cache
+                            (lsp-documents-set
+                              docs
+                              uri
+                              path
+                              text
+                              (struct-get analysis diagnostic-uri))
+                            uri
+                            (struct-get analysis check-cache))]
+                        (LspHandleResult.Continue updated-docs))))]
                 [(LspUriPath.Err message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
@@ -1283,12 +1393,25 @@
                 (match (lsp-file-uri-to-path uri)
                   [(LspUriPath.Ok path)
                     (let
-                      [diagnostic-uri : String
+                      [analysis : LspAnalyzeResult
                         (lsp-analyze-document uri path text stdlib-roots)]
                       (begin
-                        (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                        (LspHandleResult.Continue
-                          (lsp-documents-set docs uri path text diagnostic-uri))))]
+                        (lsp-clear-stale-diagnostic
+                          docs
+                          uri
+                          (struct-get analysis diagnostic-uri))
+                        (let
+                          [updated-docs : LspDocuments
+                            (lsp-documents-set-check-cache
+                              (lsp-documents-set
+                                docs
+                                uri
+                                path
+                                text
+                                (struct-get analysis diagnostic-uri))
+                              uri
+                              (struct-get analysis check-cache))]
+                          (LspHandleResult.Continue updated-docs))))]
                   [(LspUriPath.Err message)
                     (begin
                       (lsp-publish-uri-diagnostic uri message)
@@ -1296,9 +1419,14 @@
               [(LspJsonText.Missing)
                 (match (lsp-documents-lookup docs uri)
                   [(LspDocumentLookup.Found path text _)
-                    (begin
-                      (lsp-analyze-document uri path text stdlib-roots)
-                      (LspHandleResult.Continue docs))]
+                    (let
+                      [analysis : LspAnalyzeResult
+                        (lsp-analyze-document uri path text stdlib-roots)]
+                      (LspHandleResult.Continue
+                        (lsp-documents-set-check-cache
+                          docs
+                          uri
+                          (struct-get analysis check-cache))))]
                   [(LspDocumentLookup.Missing) (LspHandleResult.Continue docs)])])]
           [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspHandleResult.Continue docs)])))
@@ -3672,7 +3800,8 @@
               text
               (struct-get doc diagnostic-uri)
               scanned
-              true))
+              true
+              (struct-get doc check-cache)))
           unit)
         unit)
       scanned)))
@@ -4624,6 +4753,58 @@
         (LspHandleResult.Continue docs))]))
 
 ;; tl/check - Typecheck a document and return success/error JSON response
+(define (lsp-check-cache-valid? [check-cache : LspCheckCache]) : bool
+  (match check-cache
+    [(LspCheckCacheInvalid) false]
+    [_ true]))
+
+(define (lsp-write-check-cache-response
+  [id : json.Json]
+  [check-cache : LspCheckCache]) : unit
+  (match check-cache
+    [(LspCheckCacheOk)
+      (lsp-write-response id (lsp-json-object1 "success" (json.JsonBool true)))]
+    [(LspCheckCacheErr message)
+      (lsp-write-response
+        id
+        (lsp-json-object2
+          "success"
+          (json.JsonBool false)
+          "error"
+          (json.JsonString message)))]
+    [(LspCheckCacheInvalid) unit]))
+
+(define (lsp-run-check-and-respond
+  [id : json.Json]
+  [uri : String]
+  [path : String]
+  [text : String]
+  [docs : LspDocuments]
+  [stdlib-roots : svec.StringVec]) : LspHandleResult
+  (let
+    [check-cache : LspCheckCache
+      (match (compiler-check-source-with-roots path text stdlib-roots)
+        [(ResultCompilerCheck.Ok _)
+          (begin
+            (lsp-write-response
+              id
+              (lsp-json-object1 "success" (json.JsonBool true)))
+            LspCheckCacheOk)]
+        [(ResultCompilerCheck.Err diag)
+          (let
+            [message : String (compiler-diagnostic-message (box-get diag))]
+            (begin
+              (lsp-write-response
+                id
+                (lsp-json-object2
+                  "success"
+                  (json.JsonBool false)
+                  "error"
+                  (json.JsonString message)))
+              (LspCheckCacheErr message)))])]
+    (LspHandleResult.Continue
+      (lsp-documents-set-check-cache docs uri check-cache))))
+
 (define (lsp-handle-tl-check
   [id : json.Json]
   [params : json.Json]
@@ -4646,27 +4827,24 @@
       (begin
         (lsp-write-error id -32600 "Missing uri parameter")
         (LspHandleResult.Continue docs))
-      (match (lsp-documents-lookup docs uri)
-        [(LspDocumentLookup.Found path text _)
-          (match (compiler-check-source-with-roots path text stdlib-roots)
-            [(ResultCompilerCheck.Ok _)
+      (let
+        [doc-index : i64 (lsp-documents-find-index docs uri)]
+        (if (>= doc-index 0)
+          (let
+            [doc : LspDocument
+              (lsp-documents-get (& docs) doc-index (lsp-document-fallback))]
+            [check-cache : LspCheckCache (struct-get doc check-cache)]
+            (if (lsp-check-cache-valid? check-cache)
               (begin
-                (lsp-write-response
-                  id
-                  (lsp-json-object1 "success" (json.JsonBool true)))
-                (LspHandleResult.Continue docs))]
-            [(ResultCompilerCheck.Err diag)
-              (begin
-                (lsp-write-response
-                  id
-                  (lsp-json-object2
-                    "success"
-                    (json.JsonBool false)
-                    "error"
-                    (json.JsonString
-                      (compiler-diagnostic-message (box-get diag)))))
-                (LspHandleResult.Continue docs))])]
-        [(LspDocumentLookup.Missing)
+                (lsp-write-check-cache-response id check-cache)
+                (LspHandleResult.Continue docs))
+              (lsp-run-check-and-respond
+                id
+                uri
+                (struct-get doc path)
+                (struct-get doc text)
+                docs
+                stdlib-roots)))
           (match (lsp-file-uri-to-path uri)
             [(LspUriPath.Ok path)
               (let
@@ -4681,27 +4859,7 @@
                         "error"
                         (json.JsonString "Could not read document")))
                     (LspHandleResult.Continue docs))
-                  (match (compiler-check-source-with-roots
-                    path
-                    text
-                    stdlib-roots)
-                    [(ResultCompilerCheck.Ok _)
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object1 "success" (json.JsonBool true)))
-                        (LspHandleResult.Continue docs))]
-                    [(ResultCompilerCheck.Err diag)
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool false)
-                            "error"
-                            (json.JsonString
-                              (compiler-diagnostic-message (box-get diag)))))
-                        (LspHandleResult.Continue docs))])))]
+                  (lsp-run-check-and-respond id uri path text docs stdlib-roots)))]
             [(LspUriPath.Err message)
               (begin
                 (lsp-write-response
@@ -4711,7 +4869,7 @@
                     (json.JsonBool false)
                     "error"
                     (json.JsonString message)))
-                (LspHandleResult.Continue docs))])]))))
+                (LspHandleResult.Continue docs))]))))))
 
 (define (lsp-nearest-inlay-hint-index [line1 : i64] [col1 : i64]) : i64
   (let

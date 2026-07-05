@@ -13184,6 +13184,17 @@
     [(CompilerIrEffect.Unknown) (opt-licm-store-summary-call-or-unknown)]
     [_ (opt-licm-store-summary-empty)]))
 
+(define (opt-licm-store-summary-for-direct-call
+  [direct-call-clean : hashmap.StringI64Map]
+  [name : String]) : OptLicmStoreSummary
+  (if (hashmap.string-i64-map-contains? direct-call-clean name)
+    (opt-licm-store-summary-empty)
+    (match (compiler-ir-direct-call-effect name)
+      [(CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
+      [(CompilerIrEffect.MemoryWrite)
+        (opt-licm-store-summary-header-or-unknown-store)]
+      [_ (opt-licm-store-summary-call-or-unknown)])))
+
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (match env
     [(OptLicmPtrEnv.Nil) (OptLicmPtrEnv.Nil)]
@@ -13413,6 +13424,7 @@
 (define (opt-licm-store-state-instr
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
+  [direct-call-clean : hashmap.StringI64Map]
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (let
     [invalid : OptLicmStoreState
@@ -13443,10 +13455,10 @@
               [_ invalid])]
           [_ invalid])]
       [(CompilerIrInstr.Alloc _ _) invalid]
-      [(CompilerIrInstr.Call _ _ _ _)
+      [(CompilerIrInstr.Call _ name _ _)
         (opt-licm-store-state-add-summary
           invalid
-          (opt-licm-store-summary-call-or-unknown))]
+          (opt-licm-store-summary-for-direct-call direct-call-clean name))]
       [(CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-add-summary
           invalid
@@ -13473,10 +13485,10 @@
             (opt-licm-store-state-add-summary
               invalid
               (opt-licm-store-summary-call-or-unknown))])]
-      [(CompilerIrInstr.TailCall _ _ _)
+      [(CompilerIrInstr.TailCall name _ _)
         (opt-licm-store-state-add-summary
           invalid
-          (opt-licm-store-summary-call-or-unknown))]
+          (opt-licm-store-summary-for-direct-call direct-call-clean name))]
       [(CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-add-summary
           invalid
@@ -13499,6 +13511,7 @@
     (opt-licm-store-state-instr
       (OptSsaVarTypes.Nil)
       (opt-licm-store-state-empty)
+      (hashmap.string-i64-map-with-capacity 1)
       instr)
     summary))
 
@@ -13506,6 +13519,7 @@
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
+  [direct-call-clean : hashmap.StringI64Map]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
@@ -13513,20 +13527,24 @@
       types
       instrs
       (+ index 1)
+      direct-call-clean
       (opt-licm-store-state-instr
         types
         state
+        direct-call-clean
         (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-store-state-instr-seq
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
+  [direct-call-clean : hashmap.StringI64Map]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (opt-licm-store-state-instr-seq-from types instrs 0 state))
+  (opt-licm-store-state-instr-seq-from types instrs 0 direct-call-clean state))
 
 (define (opt-licm-store-state-blocks
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [direct-call-clean : hashmap.StringI64Map]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (match blocks
     [(CompilerIrBlockList.Nil) state]
@@ -13536,11 +13554,17 @@
           (opt-licm-store-state-blocks
             types
             (box-get rest)
-            (opt-licm-store-state-instr-seq types instrs state))])]
+            direct-call-clean
+            (opt-licm-store-state-instr-seq
+              types
+              instrs
+              direct-call-clean
+              state))])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-store-state-blocks
         types
         (compiler-ir-block-seq-to-list seq)
+        direct-call-clean
         state)]))
 
 (define (opt-licm-store-summary-blocks
@@ -13550,6 +13574,7 @@
     (opt-licm-store-state-blocks
       (OptSsaVarTypes.Nil)
       blocks
+      (hashmap.string-i64-map-with-capacity 1)
       (OptLicmStoreState summary (OptLicmPtrEnv.Nil)))
     summary))
 
@@ -13986,6 +14011,7 @@
   [index : OptCfgIndex]
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
+  [direct-call-clean : hashmap.StringI64Map]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : CompilerIrBlockList
   (match (opt-natural-loop-preheader loop)
@@ -14002,6 +14028,7 @@
           (opt-licm-store-state-blocks
             types
             body-blocks
+            direct-call-clean
             (opt-licm-store-state-empty))]
         [store-summary : OptLicmStoreSummary (struct-get store-state summary)]
         [ptrs : OptLicmPtrEnv (struct-get store-state ptrs)]
@@ -14044,6 +14071,7 @@
   [index : OptCfgIndex]
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
+  [direct-call-clean : hashmap.StringI64Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match loops
@@ -14053,19 +14081,34 @@
         index
         sources
         types
+        direct-call-clean
         (box-get rest)
-        (opt-licm-apply-loop index sources types blocks loop))]))
+        (opt-licm-apply-loop index sources types direct-call-clean blocks loop))]))
+
+(define (opt-licm-blocks-with-context-and-direct-call-clean
+  [context : OptCfgContext]
+  [sources : hashmap.I64I64Map]
+  [types : OptSsaVarTypes]
+  [direct-call-clean : hashmap.StringI64Map]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-licm-apply-loops
+    (struct-get context index)
+    sources
+    types
+    direct-call-clean
+    (opt-cfg-natural-loops-with-context blocks context)
+    blocks))
 
 (define (opt-licm-blocks-with-context
   [context : OptCfgContext]
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-licm-apply-loops
-    (struct-get context index)
+  (opt-licm-blocks-with-context-and-direct-call-clean
+    context
     sources
     types
-    (opt-cfg-natural-loops-with-context blocks context)
+    (hashmap.string-i64-map-with-capacity 1)
     blocks))
 
 (define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -14075,8 +14118,9 @@
     (OptSsaVarTypes.Nil)
     blocks))
 
-(define (opt-licm-function-with-context-result
+(define (opt-licm-function-with-context-result-and-direct-call-clean
   [context : OptCfgContext]
+  [direct-call-clean : hashmap.StringI64Map]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (opt-verify-function-with-context func context)
@@ -14093,7 +14137,12 @@
             [types : OptSsaVarTypes
               (opt-licm-type-env-from-function params blocks)]
             [hoisted-blocks : CompilerIrBlockList
-              (opt-licm-blocks-with-context context sources types blocks)]
+              (opt-licm-blocks-with-context-and-direct-call-clean
+                context
+                sources
+                types
+                direct-call-clean
+                blocks)]
             [hoisted : CompilerIrFunction
               (CompilerIrFunction.Function
                 name
@@ -14114,11 +14163,30 @@
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
+(define (opt-licm-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (opt-licm-function-with-context-result-and-direct-call-clean
+    context
+    (hashmap.string-i64-map-with-capacity 1)
+    func))
+
 (define (opt-licm-function-with-context
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
   (match (opt-licm-function-with-context-result context func)
     [(OptFunctionCtxResult.Result next _) next]))
+
+(define (opt-licm-function-with-direct-call-clean
+  [func : CompilerIrFunction]
+  [direct-call-clean : hashmap.StringI64Map]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-licm-function-with-context-result-and-direct-call-clean
+        (opt-cfg-context-build blocks)
+        direct-call-clean
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
 
 (define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -18551,6 +18619,10 @@
 (defstruct OptLoopBceSummaries
   (enabled bool)
   (length-clean hashmap.StringI64Map)
+  ;; Direct user calls proven not to perform memory writes. LICM consumes this
+  ;; to keep descriptor header fields live across read-only helper calls without
+  ;; treating arbitrary calls as safe.
+  (direct-call-clean hashmap.StringI64Map)
   (argc-return hashmap.StringI64Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
@@ -18600,6 +18672,7 @@
     false
     (hashmap.string-i64-map-with-capacity 8)
     (hashmap.string-i64-map-with-capacity 8)
+    (hashmap.string-i64-map-with-capacity 8)
     (hashmap.string-i64-map-with-capacity 8)))
 
 (define (opt-loop-bce-summary-length-clean?
@@ -18611,6 +18684,13 @@
   [summaries : OptLoopBceSummaries]
   [name : String]) : bool
   (hashmap.string-i64-map-contains? (struct-get summaries argc-return) name))
+
+(define (opt-loop-bce-summary-direct-call-clean?
+  [summaries : OptLoopBceSummaries]
+  [name : String]) : bool
+  (hashmap.string-i64-map-contains?
+    (struct-get summaries direct-call-clean)
+    name))
 
 (define (opt-loop-bce-commutative-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -21695,8 +21775,9 @@
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (if run-heavy?
-                          (opt-licm-function-with-context-result
+                          (opt-licm-function-with-context-result-and-direct-call-clean
                             scratch-reset-context
+                            (struct-get summaries direct-call-clean)
                             scratch-reset)
                           scratch-reset-result)]
                       [licm : CompilerIrFunction
@@ -27320,6 +27401,198 @@
           (opt-loop-bce-length-clean-fixed functions next (- remaining 1))
           next)])))
 
+(define (opt-loop-bce-direct-call-clean-effect? [effect : CompilerIrEffect]) : bool
+  (match effect
+    [(CompilerIrEffect.Pure) true]
+    [(CompilerIrEffect.MemoryRead) true]
+    [(CompilerIrEffect.ControlFlow) true]
+    [_ false]))
+
+(define (opt-loop-bce-direct-call-clean-target?
+  [clean : hashmap.StringI64Map]
+  [name : String]) : bool
+  (or
+    (hashmap.string-i64-map-contains? clean name)
+    (opt-loop-bce-direct-call-clean-effect?
+      (compiler-ir-direct-call-effect name))))
+
+(define (opt-loop-bce-direct-call-clean-instr?
+  [clean : hashmap.StringI64Map]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Call _ name _ _)
+      (opt-loop-bce-direct-call-clean-target? clean name)]
+    [(CompilerIrInstr.TailCall name _ _)
+      (opt-loop-bce-direct-call-clean-target? clean name)]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) false]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) false]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _) false])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
+          false])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) false])]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) false]
+    [_
+      (opt-loop-bce-direct-call-clean-effect? (compiler-ir-instr-effect instr))]))
+
+(define (opt-loop-bce-direct-call-clean-instr-seq?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [clean : hashmap.StringI64Map]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-loop-bce-direct-call-clean-instr?
+        clean
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-loop-bce-direct-call-clean-instr-seq? instrs (+ index 1) clean))))
+
+(define (opt-loop-bce-direct-call-clean-blocks?
+  [blocks : CompilerIrBlockList]
+  [clean : hashmap.StringI64Map]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-loop-bce-direct-call-clean-instr-seq? instrs 0 clean)
+            (opt-loop-bce-direct-call-clean-blocks? (box-get rest) clean))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-loop-bce-direct-call-clean-blocks?
+        (compiler-ir-block-seq-to-list seq)
+        clean)]))
+
+(define (opt-loop-bce-direct-call-self-recursive-instr?
+  [name : String]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Call _ callee _ _) (string.eq name callee)]
+    [(CompilerIrInstr.TailCall callee _ _) (string.eq name callee)]
+    [_ false]))
+
+(define (opt-loop-bce-direct-call-self-recursive-seq?
+  [name : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-loop-bce-direct-call-self-recursive-instr?
+        name
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-loop-bce-direct-call-self-recursive-seq? name instrs (+ index 1)))))
+
+(define (opt-loop-bce-direct-call-self-recursive-blocks?
+  [name : String]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-loop-bce-direct-call-self-recursive-seq? name instrs 0)
+            (opt-loop-bce-direct-call-self-recursive-blocks?
+              name
+              (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-loop-bce-direct-call-self-recursive-blocks?
+        name
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-loop-bce-function-direct-call-hoist-target?
+  [func : CompilerIrFunction]
+  [clean : hashmap.StringI64Map]) : bool
+  (match func
+    [(CompilerIrFunction.Function name _ _ _ blocks)
+      (and
+        (opt-loop-bce-direct-call-self-recursive-blocks? name blocks)
+        (opt-loop-bce-direct-call-clean-blocks? blocks clean))]))
+
+(define (opt-loop-bce-direct-call-clean-all-functions
+  [functions : CompilerIrFunctionList]
+  [map : hashmap.StringI64Map]) : hashmap.StringI64Map
+  (match functions
+    [(CompilerIrFunctionList.Nil) map]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (opt-loop-bce-direct-call-clean-all-functions
+            (box-get rest)
+            (hashmap.string-i64-map-put map name 1))])]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-loop-bce-direct-call-clean-all-functions
+        (compiler-ir-function-seq-to-list seq)
+        map)]))
+
+(define (opt-loop-bce-direct-call-clean-filter
+  [functions : CompilerIrFunctionList]
+  [current : hashmap.StringI64Map]
+  [out : hashmap.StringI64Map]
+  [changed : bool]) : OptLoopBceCleanPass
+  (match functions
+    [(CompilerIrFunctionList.Nil) (OptLoopBceCleanPass.Pass out changed)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [was-clean : bool (hashmap.string-i64-map-contains? current name)]
+            [keep : bool
+              (and
+                was-clean
+                (opt-loop-bce-function-direct-call-hoist-target? func current))]
+            (opt-loop-bce-direct-call-clean-filter
+              (box-get rest)
+              current
+              (if keep
+                (hashmap.string-i64-map-put out name 1)
+                out)
+              (or changed (and was-clean (not keep)))))])]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-loop-bce-direct-call-clean-filter
+        (compiler-ir-function-seq-to-list seq)
+        current
+        out
+        changed)]))
+
+(define (opt-loop-bce-direct-call-clean-fixed
+  [functions : CompilerIrFunctionList]
+  [current : hashmap.StringI64Map]
+  [capacity : i64]
+  [remaining : i64]) : hashmap.StringI64Map
+  (if (<= remaining 0)
+    current
+    (match (opt-loop-bce-direct-call-clean-filter
+      functions
+      current
+      (hashmap.string-i64-map-with-capacity capacity)
+      false)
+      [(OptLoopBceCleanPass.Pass next changed)
+        (if changed
+          (opt-loop-bce-direct-call-clean-fixed
+            functions
+            next
+            capacity
+            (- remaining 1))
+          next)])))
+
+(define (opt-loop-bce-direct-call-clean-map
+  [functions : CompilerIrFunctionList]
+  [capacity : i64]) : hashmap.StringI64Map
+  (opt-loop-bce-direct-call-clean-fixed
+    functions
+    (opt-loop-bce-direct-call-clean-all-functions
+      functions
+      (hashmap.string-i64-map-with-capacity capacity))
+    capacity
+    (+ (opt-function-list-count functions) 1)))
+
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
 ;; use otherwise emits a rip-relative load, so substituting the literal removes a
@@ -27654,18 +27927,21 @@
       disq
       (hashmap.string-i64-map-with-capacity capacity))))
 
-;; The BCE summaries (argc-return + length-clean) gate on a function-count limit
-;; because the length-clean pass runs a per-function fixpoint. The const-divisor
-;; table is independent and far cheaper (one linear store scan), so it is built
-;; separately by the program driver and injected here rather than tied to this
-;; gate -- see optimize-program-with-level.
+;; The whole-program call summaries (argc-return + length-clean +
+;; direct-call-clean) gate on a function-count limit because they scan function
+;; bodies across a fixpoint. The const-divisor table is independent and far
+;; cheaper (one linear store scan), so it is built separately by the program
+;; driver and injected here rather than tied to this gate -- see
+;; optimize-program-with-level.
 (define (opt-loop-bce-summary-function-limit) : i64
   ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
   ;; functions than the old 64-function gate, even when the final program is still
   ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
   1024)
 
-(define (opt-loop-bce-build-summaries [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
+(define (opt-loop-bce-build-summaries-with-direct-call-clean
+  [functions : CompilerIrFunctionList]
+  [build-direct-call-clean : bool]) : OptLoopBceSummaries
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-list-count functions))]
@@ -27678,11 +27954,19 @@
         functions
         (hashmap.string-i64-map-with-capacity capacity))
         [(OptLoopBceCleanPass.Pass clean _) clean])]
+    [direct-call-clean : hashmap.StringI64Map
+      (if build-direct-call-clean
+        (opt-loop-bce-direct-call-clean-map functions capacity)
+        (hashmap.string-i64-map-with-capacity 1))]
     (OptLoopBceSummaries
       true
       length-clean
+      direct-call-clean
       argc-return
       (hashmap.string-i64-map-with-capacity 1))))
+
+(define (opt-loop-bce-build-summaries [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
+  (opt-loop-bce-build-summaries-with-direct-call-clean functions true))
 
 (define (opt-loop-bce-summaries-set-const-divisors
   [summaries : OptLoopBceSummaries]
@@ -27690,14 +27974,15 @@
   (OptLoopBceSummaries
     (struct-get summaries enabled)
     (struct-get summaries length-clean)
+    (struct-get summaries direct-call-clean)
     (struct-get summaries argc-return)
     const-divisors))
 
-;; Build the per-program summaries: the function-count-gated BCE maps plus the
-;; const-divisor table. The const-divisor table is built only at opt level 2
-;; (the only level whose pipeline runs the divisor rewrite), so opt0/opt1 -- and
-;; in particular the opt1 self-compile throughput metric -- pay nothing for it
-;; and stay byte-identical.
+;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
+;; plus the const-divisor table. The const-divisor table is built only at opt
+;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
+;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
+;; for it and stay byte-identical.
 (define (opt-build-program-summaries
   [globals : CompilerIrGlobalList]
   [reachable-functions : CompilerIrFunctionList]
@@ -27706,7 +27991,9 @@
     (if (<=
       (opt-function-list-count reachable-functions)
       (opt-loop-bce-summary-function-limit))
-      (opt-loop-bce-build-summaries reachable-functions)
+      (opt-loop-bce-build-summaries-with-direct-call-clean
+        reachable-functions
+        (>= level 2))
       (opt-loop-bce-empty-summaries))
     (if (>= level 2)
       (opt-const-divisors-build globals reachable-functions)
@@ -32524,6 +32811,7 @@
         (hashmap.string-i64-map-with-capacity 8))]
     (OptLoopBceSummaries
       true
+      clean
       clean
       argc
       (hashmap.string-i64-map-with-capacity 8))))
@@ -38527,6 +38815,13 @@
 (define (opt-licm-array-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (opt-licm-function (opt-licm-array-test-function blocks)))
 
+(define (opt-licm-array-optimized-function-with-direct-call-clean
+  [blocks : CompilerIrBlockList]
+  [direct-call-clean : hashmap.StringI64Map]) : CompilerIrFunction
+  (opt-licm-function-with-direct-call-clean
+    (opt-licm-array-test-function blocks)
+    direct-call-clean))
+
 (define (opt-licm-summary-for-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
   (opt-licm-store-summary-blocks
     (compiler-ir-block-cons
@@ -39254,6 +39549,37 @@
               (opt-licm-loop-finish-instrs))))))
     10))
 
+(define (opt-licm-direct-call-clean-test-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-test-function-named
+      "probe"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call 90 "probe" (CompilerIrCallArgs.Nil) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 90)))
+          (CompilerIrInstrList.Nil))))
+    (compiler-ir-function-cons
+      (opt-test-function-named
+        "writer"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-function-cons
+        (opt-test-function-named
+          "leaf"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrFunctionList.Nil)))))
+
 (define (compiler-optimize-licm-self-test) : i64
   (let
     [arith-func : CompilerIrFunction
@@ -39300,6 +39626,17 @@
     [header-call-func : CompilerIrFunction
       (opt-licm-array-optimized-function (opt-licm-header-load-call-blocks))]
     [header-call : CompilerIrBlockList (opt-function-blocks header-call-func)]
+    [clean-touch-calls : hashmap.StringI64Map
+      (hashmap.string-i64-map-put
+        (hashmap.string-i64-map-with-capacity 8)
+        "touch"
+        1)]
+    [header-clean-call-func : CompilerIrFunction
+      (opt-licm-array-optimized-function-with-direct-call-clean
+        (opt-licm-header-load-call-blocks)
+        clean-touch-calls)]
+    [header-clean-call : CompilerIrBlockList
+      (opt-function-blocks header-clean-call-func)]
     [unknown-store-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-unknown-store-blocks))]
@@ -39331,6 +39668,10 @@
         (CompilerIrInstr.Call 81 "touch" (CompilerIrCallArgs.Nil) (AstType.I64)))]
     [element-summary : OptLicmStoreSummary
       (opt-licm-store-summary-element-only-store)]
+    [direct-clean-built : hashmap.StringI64Map
+      (opt-loop-bce-direct-call-clean-map
+        (opt-licm-direct-call-clean-test-functions)
+        8)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
       [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
@@ -39384,15 +39725,21 @@
       [(not (opt-verify-ok? (opt-verify-function header-call-func))) 47]
       [(not (= (opt-count-load-label-blocks header-call "loop") 2)) 48]
       [(not (= (opt-count-load-label-blocks header-call "entry") 0)) 49]
-      [(not (opt-verify-ok? (opt-verify-function unknown-store-func))) 50]
-      [(not (= (opt-count-load-label-blocks unknown-store "loop") 1)) 51]
-      [(not (= (opt-count-load-label-blocks unknown-store "entry") 0)) 52]
-      [(not (opt-verify-ok? (opt-verify-function element-load-func))) 53]
-      [(not (= (opt-count-load-label-blocks element-load "entry") 1)) 54]
-      [(not (= (opt-count-load-label-blocks element-load "loop") 1)) 55]
-      [(not (opt-verify-ok? (opt-verify-function raw-slot-func))) 56]
-      [(not (= (opt-count-load-label-blocks raw-slot "entry") 0)) 57]
-      [(not (= (opt-count-load-label-blocks raw-slot "loop") 2)) 58]
+      [(not (opt-verify-ok? (opt-verify-function header-clean-call-func))) 50]
+      [(not (= (opt-count-load-label-blocks header-clean-call "entry") 2)) 51]
+      [(not (= (opt-count-load-label-blocks header-clean-call "loop") 0)) 52]
+      [(not (opt-verify-ok? (opt-verify-function unknown-store-func))) 53]
+      [(not (= (opt-count-load-label-blocks unknown-store "loop") 1)) 54]
+      [(not (= (opt-count-load-label-blocks unknown-store "entry") 0)) 55]
+      [(not (opt-verify-ok? (opt-verify-function element-load-func))) 56]
+      [(not (= (opt-count-load-label-blocks element-load "entry") 1)) 57]
+      [(not (= (opt-count-load-label-blocks element-load "loop") 1)) 58]
+      [(not (opt-verify-ok? (opt-verify-function raw-slot-func))) 59]
+      [(not (= (opt-count-load-label-blocks raw-slot "entry") 0)) 60]
+      [(not (= (opt-count-load-label-blocks raw-slot "loop") 2)) 61]
+      [(not (hashmap.string-i64-map-contains? direct-clean-built "probe")) 62]
+      [(hashmap.string-i64-map-contains? direct-clean-built "writer") 63]
+      [(hashmap.string-i64-map-contains? direct-clean-built "leaf") 64]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList

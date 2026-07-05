@@ -44063,6 +44063,210 @@
                     (set! steps (+ steps 1)))))))
           out)))))
 
+(defenum MacroMaybeSpliceDecls
+  (No)
+  (Some AstDeclList))
+
+;; Decls-macro splice memo. A Decls-position macro call splices its generated
+;; declarations inline, and the demand-driven walk rebuilds the whole-program
+;; symbols right after every splice -- so a second call with the same generated
+;; identity would put two copies of every generated item in front of the
+;; symbols builder before gen-normalize's registry dedup ever runs (the retired
+;; fixed-point loop normalized between passes, so its symbols never saw the
+;; transient duplicate). Memoize the first expansion per identity: a repeat
+;; splice with a structurally identical payload contributes nothing (and skips
+;; the context rebuild entirely); an incompatible payload errors exactly like
+;; gen-register-generated-decl. Same lifecycle as the module memo: reset per
+;; program, self-clears on intern-generation change.
+(define macro-generated-decls-memo-capacity : i64
+  1024)
+(define macro-generated-decls-memo-keys : (Array i64)
+  (array.make-array i64 1024))
+(define macro-generated-decls-memo-decls : (Array AstDeclList)
+  (array.make-array AstDeclList 1024))
+(define macro-generated-decls-memo-count : i64
+  0)
+(define macro-generated-decls-memo-generation : i64
+  -1)
+(define macro-generated-decls-memo-ready : bool
+  false)
+
+(define (macro-generated-decls-memo-reset!) : unit
+  (set! macro-generated-decls-memo-ready false))
+
+(define (macro-generated-decls-memo-ensure!) : unit
+  (if (if macro-generated-decls-memo-ready
+    (= macro-generated-decls-memo-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-generated-decls-memo-capacity)
+          (begin
+            (array-set! macro-generated-decls-memo-keys i 0)
+            (array-set! macro-generated-decls-memo-decls i (ast-decl-list-new))
+            (set! i (+ i 1))))
+        (set! macro-generated-decls-memo-count 0)
+        (set! macro-generated-decls-memo-generation (intern-generation))
+        (set! macro-generated-decls-memo-ready true)))))
+
+(define (macro-generated-decls-memo-bucket [identity-id : i64]) : i64
+  (bit-and (* identity-id 2654435761) (- macro-generated-decls-memo-capacity 1)))
+
+(define (macro-generated-decls-memo-get [identity : String]) : MacroMaybeSpliceDecls
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-decls-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-decls-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : MacroMaybeSpliceDecls (MacroMaybeSpliceDecls.No)]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-decls-memo-capacity))
+            (let
+              [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set!
+                      out
+                      (MacroMaybeSpliceDecls.Some
+                        (array-ref macro-generated-decls-memo-decls cursor)))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-decls-memo-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (macro-generated-decls-memo-put!
+  [identity : String]
+  [decls : AstDeclList]) : unit
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-decls-memo-ensure!)
+      (if (>=
+        (* macro-generated-decls-memo-count 2)
+        macro-generated-decls-memo-capacity)
+        unit
+        (let
+          [cursor : i64 (macro-generated-decls-memo-bucket identity-id)]
+          [key : i64 (+ identity-id 1)]
+          [steps : i64 0]
+          [done : bool false]
+          (begin
+            (while (if done
+              false
+              (< steps macro-generated-decls-memo-capacity))
+              (let
+                [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
+                (if (= slot 0)
+                  (begin
+                    (array-set! macro-generated-decls-memo-keys cursor key)
+                    (array-set! macro-generated-decls-memo-decls cursor decls)
+                    (set!
+                      macro-generated-decls-memo-count
+                      (+ macro-generated-decls-memo-count 1))
+                    (set! done true))
+                  (if (= slot key)
+                    (begin
+                      (array-set! macro-generated-decls-memo-decls cursor decls)
+                      (set! done true))
+                    (begin
+                      (set!
+                        cursor
+                        (bit-and
+                          (+ cursor 1)
+                          (- macro-generated-decls-memo-capacity 1)))
+                      (set! steps (+ steps 1)))))))
+            unit))))))
+
+;; Structural equality between two Decls-macro splices, mirroring the
+;; per-declaration gen-decl-eq? comparison gen-register-generated-decl applies
+;; in gen-normalize: unwrap the generated-meta wrappers and compare templates.
+(define (macro-generated-decls-splice-template [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDecl.ComptimeDecl _ template-box) (box-get template-box)]
+    [_ decl]))
+
+(define (macro-generated-decls-splice-equal?
+  [a : AstDeclList]
+  [b : AstDeclList]) : bool
+  (if (not (= (ast-decl-list-len (& a)) (ast-decl-list-len (& b))))
+    false
+    (let
+      [cursor-a : AstDeclList a]
+      [cursor-b : AstDeclList b]
+      [equal : bool true]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (match (ast-decl-list-step cursor-a)
+            [(AstDeclListStep.Nil) (set! done true)]
+            [(AstDeclListStep.Cons decl-a rest-a)
+              (match (ast-decl-list-step cursor-b)
+                [(AstDeclListStep.Nil)
+                  (begin
+                    (set! equal false)
+                    (set! done true))]
+                [(AstDeclListStep.Cons decl-b rest-b)
+                  (if (gen-decl-eq?
+                    (macro-generated-decls-splice-template decl-a)
+                    (macro-generated-decls-splice-template decl-b))
+                    (begin
+                      (set! cursor-a rest-a)
+                      (set! cursor-b rest-b))
+                    (begin
+                      (set! equal false)
+                      (set! done true)))])]))
+        equal))))
+
+(define (macro-generated-decls-splice-first-item [decls : AstDeclList]) : String
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ""]
+    [(AstDeclListStep.Cons decl _)
+      (match (gen-decl-visible-name
+        (macro-generated-decls-splice-template decl))
+        [(SpecMaybeString.Some item) item]
+        [(SpecMaybeString.None) ""])]))
+
+;; Resolve a Decls-macro splice against the memo: first expansion is recorded
+;; and spliced; a structurally identical repeat contributes an empty splice; an
+;; incompatible repeat errors with the same diagnostic gen-normalize's registry
+;; would produce.
+(define (macro-decls-splice-with-memo
+  [identity : String]
+  [wrapped : AstDeclList]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (match (macro-generated-decls-memo-get identity)
+    [(MacroMaybeSpliceDecls.No)
+      (begin
+        (macro-generated-decls-memo-put! identity wrapped)
+        (ResultMacroDeclExpansion.Ok
+          wrapped
+          (macro-paths-for-decls wrapped decl-path)))]
+    [(MacroMaybeSpliceDecls.Some existing)
+      (if (macro-generated-decls-splice-equal? existing wrapped)
+        (ResultMacroDeclExpansion.Ok
+          (ast-decl-list-new)
+          (ast-decl-path-list-new))
+        (ResultMacroDeclExpansion.Err
+          (box
+            (gen-incompatible-diag
+              (macro-generated-decls-splice-first-item wrapped)
+              (macro-decls-generated-key identity)))))]))
+
 (define (macro-decl-generated? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.ComptimeDecl meta template-box)
@@ -51311,11 +51515,10 @@
                                               macro-name
                                               (macro-decls-generated-key
                                                 identity))]
-                                          (ResultMacroDeclExpansion.Ok
+                                          (macro-decls-splice-with-memo
+                                            identity
                                             wrapped
-                                            (macro-paths-for-decls
-                                              wrapped
-                                              decl-path)))]
+                                            decl-path))]
                                       [(ResultMacroParsedDecls.Err diag)
                                         (ResultMacroDeclExpansion.Err diag)])))
                                 (match (macro-eval-transformer-expanded-with-env
@@ -51365,11 +51568,10 @@
                                                 macro-name
                                                 (macro-decls-generated-key
                                                   identity))]
-                                            (ResultMacroDeclExpansion.Ok
+                                            (macro-decls-splice-with-memo
+                                              identity
                                               wrapped
-                                              (macro-paths-for-decls
-                                                wrapped
-                                                decl-path)))]
+                                              decl-path))]
                                         [(ResultMacroParsedDecls.Err diag)
                                           (ResultMacroDeclExpansion.Err diag)]))]
                                   [(ResultMacroValueEnv.Err diag)
@@ -52877,48 +53079,58 @@
                         decl
                         decl-path)
                         [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
-                          ;; Force the splice inline: rebuild the live
-                          ;; symbols/env over the spliced whole-program view so
-                          ;; the generated names resolve, and continue the walk
-                          ;; over the spliced body itself (its nested
-                          ;; placeholders and generated file imports included).
-                          (let
-                            [next-decls : AstDeclList
-                              (macro-decl-list-append
-                                (macro-decl-list-reverse out-rev)
-                                (macro-decl-list-append expanded rest))]
-                            [next-paths : AstDeclPathList
-                              (macro-decl-path-list-append
-                                (macro-decl-path-list-reverse out-paths-rev)
-                                (macro-decl-path-list-append
-                                  expanded-paths
-                                  rest-paths))]
-                            (match (macro-expand-rebuild-context-for-splice
-                              cur-ctx
-                              next-decls
-                              next-paths
-                              cur-module)
-                              [(ResultMacroSpliceRebuild.Ok
-                                  next-ctx
-                                  next-top-env)
-                                (begin
-                                  (set! cur-ctx next-ctx)
-                                  (set! cur-orig-decls next-decls)
-                                  (set! cur-top-env next-top-env)
-                                  (set!
-                                    cur-decls
-                                    (macro-decl-list-append expanded rest))
-                                  (set!
-                                    cur-paths
+                          ;; A deduplicated splice (see
+                          ;; macro-decls-splice-with-memo) expands to nothing:
+                          ;; drop the placeholder and keep walking -- there is
+                          ;; no new name, so no context rebuild is needed.
+                          (match (ast-decl-list-step expanded)
+                            [(AstDeclListStep.Nil)
+                              (begin
+                                (set! cur-decls rest)
+                                (set! cur-paths rest-paths))]
+                            [_
+                              ;; Force the splice inline: rebuild the live
+                              ;; symbols/env over the spliced whole-program view so
+                              ;; the generated names resolve, and continue the walk
+                              ;; over the spliced body itself (its nested
+                              ;; placeholders and generated file imports included).
+                              (let
+                                [next-decls : AstDeclList
+                                  (macro-decl-list-append
+                                    (macro-decl-list-reverse out-rev)
+                                    (macro-decl-list-append expanded rest))]
+                                [next-paths : AstDeclPathList
+                                  (macro-decl-path-list-append
+                                    (macro-decl-path-list-reverse out-paths-rev)
                                     (macro-decl-path-list-append
                                       expanded-paths
-                                      rest-paths)))]
-                              [(ResultMacroSpliceRebuild.Err diag)
-                                (begin
-                                  (set!
-                                    result
-                                    (ResultMacroDeclsWithPaths.Err diag))
-                                  (set! done true))]))]
+                                      rest-paths))]
+                                (match (macro-expand-rebuild-context-for-splice
+                                  cur-ctx
+                                  next-decls
+                                  next-paths
+                                  cur-module)
+                                  [(ResultMacroSpliceRebuild.Ok
+                                      next-ctx
+                                      next-top-env)
+                                    (begin
+                                      (set! cur-ctx next-ctx)
+                                      (set! cur-orig-decls next-decls)
+                                      (set! cur-top-env next-top-env)
+                                      (set!
+                                        cur-decls
+                                        (macro-decl-list-append expanded rest))
+                                      (set!
+                                        cur-paths
+                                        (macro-decl-path-list-append
+                                          expanded-paths
+                                          rest-paths)))]
+                                  [(ResultMacroSpliceRebuild.Err diag)
+                                    (begin
+                                      (set!
+                                        result
+                                        (ResultMacroDeclsWithPaths.Err diag))
+                                      (set! done true))]))])]
                         [(ResultMacroDeclExpansion.Err diag)
                           (begin
                             (set! result (ResultMacroDeclsWithPaths.Err diag))
@@ -53537,6 +53749,7 @@
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-generated-module-memo-reset!)
+    (macro-generated-decls-memo-reset!)
     ;; Reset the CTFE base-env cache once per program (plan P2). The pass
     ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
     ;; every in-pass splice rebuild and by the downstream typecheck/lower

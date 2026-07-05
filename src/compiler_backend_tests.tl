@@ -1049,12 +1049,17 @@
 (define (compiler-backend-string-contains-inline-alloc-size?
   [asm : String]
   [size : i64]) : bool
-  (if (= size 16)
+  (if (compiler-backend-fast-alloc-supported-size? size)
     (and
       (compiler-backend-string-contains?
         asm
-        "    movq %fs:tl_current_arena@tpoff, %r8\n")
-      (compiler-backend-string-contains? asm "    addq $16, "))
+        (str_cat.str-cat "    leaq " (string.int->string size) "(%rax), "))
+      (compiler-backend-string-contains?
+        asm
+        (str_cat.str-cat
+          "_slow:\n    call .L_tl_alloc"
+          (string.int->string size)
+          "\n")))
     false))
 
 (define (compiler-backend-string-contains-alloc-size?
@@ -16705,6 +16710,84 @@
             "    movq %rax, %r10\n    addq $16, %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-fast-alloc-gate-ok?) : bool
+  (and
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 1)))
+      8)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 8)))
+      8)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 9)))
+      16)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 64)))
+      64)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 65)))
+      0)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 0)))
+      0)
+    (=
+      (compiler-backend-fast-alloc-size
+        (CompilerIrCallArgs.One (CompilerIrValue.Var 0)))
+      0)
+    (compiler-backend-inline-fast-alloc? 8)
+    (compiler-backend-inline-fast-alloc? 24)
+    (compiler-backend-inline-fast-alloc? 40)
+    (compiler-backend-inline-fast-alloc? 64)
+    (not (compiler-backend-inline-fast-alloc? 0))
+    (not (compiler-backend-inline-fast-alloc? 10))
+    (not (compiler-backend-inline-fast-alloc? 72))))
+
+(define (compiler-backend-inline-fast-alloc-multi-size-source) : String
+  "(define (make3 [x : i64]) : (Tuple i64 i64 i64)
+  (tuple x (+ x 1) (+ x 2)))
+
+(define (make5 [x : i64]) : (Tuple i64 i64 i64 i64 i64)
+  (tuple x (+ x 1) (+ x 2) (+ x 3) (+ x 4)))
+
+(define (main) : i64
+  (let
+    [a : (Tuple i64 i64 i64) (make3 10)]
+    [b : (Tuple i64 i64 i64 i64 i64) (make5 20)]
+    (+ (tuple-ref a 2) (tuple-ref b 4))))")
+
+(define (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-inline-fast-alloc-multi-size-source)
+    target)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains-inline-alloc-size? asm 24)
+        (compiler-backend-string-contains-inline-alloc-size? asm 40)
+        (compiler-backend-string-contains?
+          asm
+          "_slow:\n    call .L_tl_alloc24\n")
+        (compiler-backend-string-contains?
+          asm
+          "_slow:\n    call .L_tl_alloc40\n")
+        (not (compiler-backend-string-contains? asm "    call tl_alloc\n"))
+        (compiler-backend-string-contains? asm "    jb ")
+        (compiler-backend-string-contains? asm "    ja "))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-inline-fast-alloc-multi-size-ok?) : bool
+  (and
+    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+      (CompilerBackendTarget.Windows))))
+
 ;; Backend emit-shape coverage for local tuple construction/ref (#1414).
 ;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
 ;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
@@ -17976,7 +18059,9 @@
       (and
         (compiler-backend-box-ok?)
         (compiler-backend-fast-alloc-next-load-ok?)
+        (compiler-backend-fast-alloc-gate-ok?)
         (compiler-backend-inline-fast-alloc-result-ok?)
+        (compiler-backend-inline-fast-alloc-multi-size-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)
     (compiler-backend-export-symbol-tests-ok?)

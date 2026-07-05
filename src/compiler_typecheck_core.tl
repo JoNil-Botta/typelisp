@@ -47230,6 +47230,14 @@
 (define macro-flat-import-target-cache-ready : bool
   false)
 
+;; Eager-index state: built records the one-pass build ran this generation;
+;; complete records every module fit under the half-load insert cap, making a
+;; table miss a definitive "no flat imports" answer.
+(define macro-flat-import-target-cache-built : bool
+  false)
+(define macro-flat-import-target-cache-complete : bool
+  false)
+
 ;; The mapping is program-derived, so the cache must not survive into the next
 ;; program of a multi-program process (smoke batteries, REPL, LSP, package
 ;; builds). macro-expand-program and the REPL typecheck entry reset it at the
@@ -47378,6 +47386,8 @@
             (set! i (+ i 1))))
         (set! macro-flat-import-target-cache-count 0)
         (set! macro-flat-import-target-cache-generation (intern-generation))
+        (set! macro-flat-import-target-cache-built false)
+        (set! macro-flat-import-target-cache-complete false)
         (set! macro-flat-import-target-cache-ready true)))))
 
 (define (macro-flat-import-target-cache-bucket [module-id : i64]) : i64
@@ -47538,24 +47548,131 @@
             (set! index (+ index 1)))))
       (macro-flat-import-target-list-reverse cur-targets))))
 
+;; Overwrite the stored list for a module id already present in the table
+;; (macro-flat-import-target-cache-put! keeps existing entries untouched).
+(define (macro-flat-import-target-cache-overwrite!
+  [module-id : i64]
+  [targets : MacroFlatImportTargetList]) : unit
+  (let
+    [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
+    [module-key : i64 (+ module-id 1)]
+    [steps : i64 0]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-flat-import-target-cache-capacity))
+        (let
+          [slot : i64
+            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+          (if (= slot module-key)
+            (begin
+              (array-set! macro-flat-import-target-cache-values cursor targets)
+              (set! done true))
+            (if (= slot 0)
+              (set! done true)
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-flat-import-target-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      unit)))
+
+;; One-pass eager build of every module's flat-import target list. Each
+;; per-module cache miss used to rescan the ENTIRE declaration list (with a
+;; ~100B AstDecl unwrap copy per declaration), and the cache resets at every
+;; in-pass splice rebuild, so a self-compile re-paid those whole-program scans
+;; per module per epoch. Lists are accumulated newest-first in program order
+;; and reversed on store, matching macro-flat-import-targets-from-list's
+;; add-then-reverse order exactly. If the table's half-load insert cap is hit,
+;; complete stays false and misses fall back to the exact scan, so only
+;; memoization -- never correctness -- degrades.
+(define (macro-flat-import-target-cache-build! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 (intern "")]
+    [truncated : bool false]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+              (match maybe-alias
+                [(AstMaybeImportAlias.Some alias)
+                  (if (= (string.string-length alias) 0)
+                    (match expected
+                      [(AstMaybeModuleName.Some target-module)
+                        (let
+                          [target-id : i64 (intern target-module)]
+                          (if (= target-id cur-module-id)
+                            unit
+                            (match (macro-flat-import-target-cache-get
+                              cur-module-id)
+                              [(MacroFlatImportTargetCacheLookup.Hit existing)
+                                (macro-flat-import-target-cache-overwrite!
+                                  cur-module-id
+                                  (macro-flat-import-target-list-add
+                                    existing
+                                    target-id))]
+                              [(MacroFlatImportTargetCacheLookup.Missing)
+                                (if (>=
+                                  (* macro-flat-import-target-cache-count 2)
+                                  macro-flat-import-target-cache-capacity)
+                                  (set! truncated true)
+                                  (macro-flat-import-target-cache-put!
+                                    cur-module-id
+                                    (macro-flat-import-target-list-add
+                                      (MacroFlatImportTargetList.Nil)
+                                      target-id)))])))]
+                      [(AstMaybeModuleName.No) unit])
+                    unit)]
+                [(AstMaybeImportAlias.No) unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      ;; Reverse each accumulated list into program order.
+      (set! i 0)
+      (while (< i macro-flat-import-target-cache-capacity)
+        (begin
+          (if (= (array-ref macro-flat-import-target-cache-module-keys i) 0)
+            unit
+            (array-set!
+              macro-flat-import-target-cache-values
+              i
+              (macro-flat-import-target-list-reverse
+                (array-ref macro-flat-import-target-cache-values i))))
+          (set! i (+ i 1))))
+      (set! macro-flat-import-target-cache-built true)
+      (set! macro-flat-import-target-cache-complete (not truncated)))))
+
 (define (macro-flat-import-targets
   [decls : AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
   (begin
     (macro-flat-import-target-cache-ensure!)
+    (if macro-flat-import-target-cache-built
+      unit
+      (macro-flat-import-target-cache-build! decls))
     (match (macro-flat-import-target-cache-get current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
-        (let
-          [targets : MacroFlatImportTargetList
-            (macro-flat-import-targets-from-list
-              decls
-              current-module-id
-              (intern "")
-              (MacroFlatImportTargetList.Nil))]
-          (begin
-            (macro-flat-import-target-cache-put! current-module-id targets)
-            targets))])))
+        (if macro-flat-import-target-cache-complete
+          (MacroFlatImportTargetList.Nil)
+          (let
+            [targets : MacroFlatImportTargetList
+              (macro-flat-import-targets-from-list
+                decls
+                current-module-id
+                (intern "")
+                (MacroFlatImportTargetList.Nil))]
+            (begin
+              (macro-flat-import-target-cache-put! current-module-id targets)
+              targets)))])))
 
 (define (macro-alias-cache-ensure!) : unit
   (if (if macro-alias-cache-ready

@@ -3046,22 +3046,11 @@
 ;;     prologue movs = a net loss in every loop) -- so all pins are refused,
 ;;     not just %rdx;
 ;;   * kind 2 (VARIABLE-count shift) hardwires only %rcx/%cl and stages at
-;;     most the count: bans only a spanned %rcx pin;
-;;   * kind 3 (switch dispatch): ANY switch in the function bans ALL pins
-;;     (function-global, unlike the other kinds). The dispatch emitter's
-;;     EMERGENCY scavenge is unsound (its restore lands after the indirect
-;;     jmp = unreachable, so the occupant arrives in the arms holding the
-;;     jump-table address -- the documented GAP2b vm_run finding). Pre-pin
-;;     the pool never saturated at a dispatch; pins were MEASURED to
-;;     re-trigger it, and not only by direct spanning: vm_run's %rdi pin
-;;     ends before its dispatch loop, yet removing that param's entry copy
-;;     dropped one saved CSR and re-shuffled which values held the others, so
-;;     the dispatch's scavenge lost its one dead-occupant candidate and went
-;;     emergency. Occupancy at a dispatch is a whole-function property of the
-;;     allocation the pin perturbs, so the sound guard is function-global --
-;;     the GAP2b #switch-headroom precedent (its pair guard also costs a few
-;;     placements until the dispatch emitter is fixed; fixing IT re-admits
-;;     these pins, the natural v2).
+;;     most the count: bans only a spanned %rcx pin.
+;; Switch dispatches no longer participate in this gate. GAP2b-v2 made the
+;; dispatch emergency scavenge restore borrowed occupants before the indirect
+;; jmp, so the old function-global "any switch bans all pins" guard would now
+;; reject valid placements for a bug that is no longer present.
 ;; "Spanned" is the inclusive-start test: a param whose LAST use is the
 ;; clobbering instruction itself (the dividend/divisor of the div, an
 ;; outgoing argument of the call) is read before the clobber lands, exactly

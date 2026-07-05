@@ -47240,6 +47240,10 @@
   false)
 (define macro-alias-cache-complete : bool
   false)
+(define macro-alias-cache-built-decl-count : i64
+  -1)
+(define macro-alias-cache-built-decl-offset : i64
+  -1)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
 (define macro-unqualified-import-cache-module-keys : (Array i64)
@@ -47275,6 +47279,10 @@
   false)
 (define macro-flat-import-target-cache-complete : bool
   false)
+(define macro-flat-import-target-cache-built-decl-count : i64
+  -1)
+(define macro-flat-import-target-cache-built-decl-offset : i64
+  -1)
 
 ;; The mapping is program-derived, so the cache must not survive into the next
 ;; program of a multi-program process (smoke batteries, REPL, LSP, package
@@ -47686,6 +47694,12 @@
                 (array-ref macro-flat-import-target-cache-values i))))
           (set! i (+ i 1))))
       (set! macro-flat-import-target-cache-built true)
+      (set!
+        macro-flat-import-target-cache-built-decl-count
+        (ast-decl-list-len (& decls)))
+      (set!
+        macro-flat-import-target-cache-built-decl-offset
+        (struct-get decls offset))
       (set! macro-flat-import-target-cache-complete (not truncated)))))
 
 (define (macro-flat-import-targets
@@ -47699,7 +47713,16 @@
     (match (macro-flat-import-target-cache-get current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
-        (if macro-flat-import-target-cache-complete
+        ;; Same batch-safety rule as the alias index: a definitive empty
+        ;; answer requires the build to match this decl-list shape.
+        (if (and
+          macro-flat-import-target-cache-complete
+          (=
+            macro-flat-import-target-cache-built-decl-count
+            (ast-decl-list-len (& decls)))
+          (=
+            macro-flat-import-target-cache-built-decl-offset
+            (struct-get decls offset)))
           (MacroFlatImportTargetList.Nil)
           (let
             [targets : MacroFlatImportTargetList
@@ -47850,6 +47873,8 @@
             [_ unit])
           (set! i (+ i 1))))
       (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
+      (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
       (set! macro-alias-cache-complete (not truncated)))))
 
 (define (macro-import-alias-target-cached-id
@@ -47862,9 +47887,19 @@
       unit
       (macro-alias-cache-build! decls))
     (let
+      ;; Batch/REPL compiles can reuse this process without a per-program
+      ;; reset; the old lazy design tolerated stale positives (module names
+      ;; are distinct across programs) because every miss rescanned the
+      ;; CURRENT decl list. A definitive eager miss is therefore only
+      ;; trustworthy when the index was built over this same decl-list shape.
+      [complete-here : bool
+        (and
+          macro-alias-cache-complete
+          (= macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
+          (= macro-alias-cache-built-decl-offset (struct-get decls offset)))]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (cond
-        [(and (= cached -2) macro-alias-cache-complete)
+        [(and (= cached -2) complete-here)
           ;; The eager index saw every aliased import, so a miss is a
           ;; definitive "no alias import for this (module, qualifier)".
           (TcMaybeString.No)]

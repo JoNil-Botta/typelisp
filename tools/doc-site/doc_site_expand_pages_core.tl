@@ -30,9 +30,7 @@
       found)))
 
 (define (doc-site-expand-module-list-empty? [modules : DocModuleList]) : bool
-  (match modules
-    [(DocModuleList.Nil) true]
-    [_ false]))
+  (= (doc-module-list-count modules) 0))
 
 (define (doc-site-expand-generated-sections [source : String]) : String
   (let

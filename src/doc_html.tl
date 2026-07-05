@@ -546,22 +546,26 @@
       (doc-html-escape name)
       "</code></a></li>\n")))
 
+(define (doc-html-item-nav-entries-from
+  [items : DocItemList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-html-item-nav-entry (doc-item-list-ref items index))
+      (doc-html-item-nav-entries-from items (+ index 1) count))))
+
 (define (doc-html-item-nav-entries [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil) ""]
-    [(DocItemList.Cons item rest)
-      (string.append
-        (doc-html-item-nav-entry item)
-        (doc-html-item-nav-entries (box-get rest)))]))
+  (doc-html-item-nav-entries-from items 0 (doc-item-list-count items)))
 
 (define (doc-html-item-nav [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil) ""]
-    [_
-      (str_cat.str-cat
-        "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
-        (doc-html-item-nav-entries items)
-        "</ul>\n</nav>\n")]))
+  (if (= (doc-item-list-count items) 0)
+    ""
+    (str_cat.str-cat
+      "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
+      (doc-html-item-nav-entries items)
+      "</ul>\n</nav>\n")))
 
 (define (doc-html-item [item : DocItem]) : String
   (let
@@ -585,17 +589,23 @@
         "No item docs.")
       "</section>\n")))
 
+(define (doc-html-item-list-from
+  [items : DocItemList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-html-item (doc-item-list-ref items index))
+      (doc-html-item-list-from items (+ index 1) count))))
+
 (define (doc-html-item-list [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil) ""]
-    [(DocItemList.Cons item rest)
-      (string.append (doc-html-item item) (doc-html-item-list (box-get rest)))]))
+  (doc-html-item-list-from items 0 (doc-item-list-count items)))
 
 (define (doc-html-items [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil)
-      "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"]
-    [_ (doc-html-item-list items)]))
+  (if (= (doc-item-list-count items) 0)
+    "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
+    (doc-html-item-list items)))
 
 (define (doc-html-module-nav-entry [module : DocModule]) : String
   (let
@@ -608,22 +618,26 @@
       (doc-html-escape path)
       "</a></li>\n")))
 
+(define (doc-html-module-nav-entries-from
+  [modules : DocModuleList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-html-module-nav-entry (doc-module-list-ref modules index))
+      (doc-html-module-nav-entries-from modules (+ index 1) count))))
+
 (define (doc-html-module-nav-entries [modules : DocModuleList]) : String
-  (match modules
-    [(DocModuleList.Nil) ""]
-    [(DocModuleList.Cons module rest)
-      (string.append
-        (doc-html-module-nav-entry module)
-        (doc-html-module-nav-entries (box-get rest)))]))
+  (doc-html-module-nav-entries-from modules 0 (doc-module-list-count modules)))
 
 (define (doc-html-module-nav [modules : DocModuleList]) : String
-  (match modules
-    [(DocModuleList.Nil) "<p class=\"tl-doc-empty\">No modules.</p>\n"]
-    [_
-      (str_cat.str-cat
-        "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
-        (doc-html-module-nav-entries modules)
-        "</ul>\n</nav>\n")]))
+  (if (= (doc-module-list-count modules) 0)
+    "<p class=\"tl-doc-empty\">No modules.</p>\n"
+    (str_cat.str-cat
+      "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
+      (doc-html-module-nav-entries modules)
+      "</ul>\n</nav>\n")))
 
 (define (doc-html-module-section [module : DocModule]) : String
   (let
@@ -648,13 +662,18 @@
       (doc-html-items (doc-extraction-items docs))
       "</section>\n")))
 
+(define (doc-html-module-sections-from
+  [modules : DocModuleList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-html-module-section (doc-module-list-ref modules index))
+      (doc-html-module-sections-from modules (+ index 1) count))))
+
 (define (doc-html-module-sections [modules : DocModuleList]) : String
-  (match modules
-    [(DocModuleList.Nil) ""]
-    [(DocModuleList.Cons module rest)
-      (string.append
-        (doc-html-module-section module)
-        (doc-html-module-sections (box-get rest)))]))
+  (doc-html-module-sections-from modules 0 (doc-module-list-count modules)))
 
 (define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
   (let

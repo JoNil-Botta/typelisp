@@ -268,7 +268,7 @@
   (panic message))
 
 (define (doc-site-empty-docs) : DocExtraction
-  (DocExtraction.Extraction "" DocItemList.Nil))
+  (DocExtraction.Extraction "" (doc-item-list-new)))
 
 (define (doc-site-validate-stdlib-manifest [modules : DocSiteModuleList]) : unit
   (if (not (doc-site-expected-manifest-size? modules))

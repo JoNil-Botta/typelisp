@@ -27,9 +27,9 @@
 (defenum DocItem
   (Item DocItemKind String String String))
 
-(defenum DocItemList
-  (Nil)
-  (Cons DocItem (Box DocItemList)))
+(defstruct DocItemList
+  (slots (Array DocItem))
+  (len i64))
 
 (defenum DocExtraction
   (Extraction String DocItemList))
@@ -82,35 +82,96 @@
   (match item
     [(DocItem.Item _ _ _ signature) signature]))
 
+(define (doc-item-fallback) : DocItem
+  (DocItem.Item (DocItemKind.Define) "" "" ""))
+
+(define (doc-item-list-slots [items : (& items DocItemList)]) : (&
+    items
+    (Array DocItem))
+  (& (struct-get items slots)))
+
 (define (doc-item-list-count [items : DocItemList]) : i64
-  (match items
-    [(DocItemList.Nil) 0]
-    [(DocItemList.Cons _ rest) (+ 1 (doc-item-list-count (box-get rest)))]))
+  (doc-item-list-len (& items)))
 
-(define (doc-item-list-reverse-into [items : DocItemList] [acc : DocItemList]) : DocItemList
-  (match items
-    [(DocItemList.Nil) acc]
-    [(DocItemList.Cons item rest)
-      (doc-item-list-reverse-into
-        (box-get rest)
-        (DocItemList.Cons item (box acc)))]))
+(define (doc-item-list-len [items : (& items DocItemList)]) : i64
+  (struct-get items len))
 
-(define (doc-item-list-reverse [items : DocItemList]) : DocItemList
-  (doc-item-list-reverse-into items DocItemList.Nil))
+(define (doc-item-list-ref [items : DocItemList] [index : i64]) : DocItem
+  (doc-item-list-get (& items) index (doc-item-fallback)))
 
-(define (doc-item-array-to-list-rev
+(define (doc-item-list-with-capacity [capacity : i64]) : DocItemList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (DocItemList (make-array DocItem cap) 0)))
+
+(define (doc-item-list-new) : DocItemList
+  (doc-item-list-with-capacity 4))
+
+(define (doc-item-list-get
+  [items : (& items DocItemList)]
+  [index : i64]
+  [fallback : DocItem]) : DocItem
+  (if (if (>= index 0)
+    (< index (doc-item-list-len items))
+    false)
+    (array-ref (doc-item-list-slots items) index)
+    fallback))
+
+(define (doc-item-list-copy-range
+  [dst : (&mut dst (Array DocItem))]
+  [src : (& src (Array DocItem))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (doc-item-list-copy-range dst src (+ index 1) count))))
+
+(define (doc-item-list-grow [items : (&mut items DocItemList)]) : unit
+  (let
+    [n : i64 (struct-get items len)]
+    [old-cap : i64 (array-length (struct-get items slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array DocItem) (make-array DocItem new-cap)]
+    (begin
+      (doc-item-list-copy-range (&mut bigger) (& (struct-get items slots)) 0 n)
+      (set! (struct-get items slots) bigger))))
+
+(define (doc-item-list-push [items : (&mut items DocItemList)] [item : DocItem]) : unit
+  (begin
+    (if (< (struct-get items len) (array-length (struct-get items slots)))
+      unit
+      (doc-item-list-grow items))
+    (let
+      [index : i64 (struct-get items len)]
+      (begin
+        (array-set! (struct-get items slots) index item)
+        (set! (struct-get items len) (+ index 1))))))
+
+(define (doc-item-array-copy-to-list
+  [out : (&mut out DocItemList)]
   [items : (Array DocItem)]
   [index : i64]
-  [acc : DocItemList]) : DocItemList
-  (if (< index 0)
-    acc
-    (doc-item-array-to-list-rev
-      items
-      (- index 1)
-      (DocItemList.Cons (array-ref items index) (box acc)))))
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (doc-item-list-push out (array-ref items index))
+      (doc-item-array-copy-to-list out items (+ index 1) count))))
 
 (define (doc-item-array-to-list [items : (Array DocItem)]) : DocItemList
-  (doc-item-array-to-list-rev items (- (array-length items) 1) DocItemList.Nil))
+  (let
+    [out : DocItemList (doc-item-list-with-capacity (array-length items))]
+    (begin
+      (doc-item-array-copy-to-list (&mut out) items 0 (array-length items))
+      out)))
 
 (define (doc-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -593,100 +654,72 @@
         (doc-string-contains? signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
-  (match items
-    [(DocItemList.Cons answer rest-answer)
-      (match (box-get rest-answer)
-        [(DocItemList.Cons main-fn rest-main)
-          (match (box-get rest-main)
-            [(DocItemList.Cons maybe rest-maybe)
-              (match (box-get rest-maybe)
-                [(DocItemList.Cons print rest-print)
-                  (match (box-get rest-print)
-                    [(DocItemList.Cons point rest-point)
-                      (match (box-get rest-point)
-                        [(DocItemList.Cons guard rest-guard)
-                          (match (box-get rest-guard)
-                            [(DocItemList.Nil)
-                              (begin
-                                (unless
-                                  (doc-item-ok?
-                                    answer
-                                    1
-                                    "answer"
-                                    "answer doc\nstill answer"
-                                    "(define answer : i64 42)")
-                                  (return false))
-                                (unless
-                                  (doc-item-ok?
-                                    main-fn
-                                    2
-                                    "main"
-                                    "function doc"
-                                    "(define (main [argc : i64])")
-                                  (return false))
-                                (unless
-                                  (doc-item-ok?
-                                    maybe
-                                    4
-                                    "Maybe"
-                                    "enum doc"
-                                    "(defenum Maybe")
-                                  (return false))
-                                (unless
-                                  (doc-item-ok?
-                                    print
-                                    3
-                                    "io.print"
-                                    "external doc"
-                                    "(extern (io.print")
-                                  (return false))
-                                (unless
-                                  (doc-item-ok?
-                                    point
-                                    5
-                                    "Point"
-                                    "struct doc"
-                                    "(defstruct Point")
-                                  (return false))
-                                (doc-item-ok?
-                                  guard
-                                  6
-                                  "guard"
-                                  "macro doc"
-                                  "(defmacro (guard"))]
-                            [_ false])]
-                        [_ false])]
-                    [_ false])]
-                [_ false])]
-            [_ false])]
-        [_ false])]
-    [_ false]))
+  (begin
+    (unless (= (doc-item-list-count items) 6) (return false))
+    (unless
+      (doc-item-ok?
+        (doc-item-list-ref items 0)
+        1
+        "answer"
+        "answer doc\nstill answer"
+        "(define answer : i64 42)")
+      (return false))
+    (unless
+      (doc-item-ok?
+        (doc-item-list-ref items 1)
+        2
+        "main"
+        "function doc"
+        "(define (main [argc : i64])")
+      (return false))
+    (unless
+      (doc-item-ok?
+        (doc-item-list-ref items 2)
+        4
+        "Maybe"
+        "enum doc"
+        "(defenum Maybe")
+      (return false))
+    (unless
+      (doc-item-ok?
+        (doc-item-list-ref items 3)
+        3
+        "io.print"
+        "external doc"
+        "(extern (io.print")
+      (return false))
+    (unless
+      (doc-item-ok?
+        (doc-item-list-ref items 4)
+        5
+        "Point"
+        "struct doc"
+        "(defstruct Point")
+      (return false))
+    (doc-item-ok?
+      (doc-item-list-ref items 5)
+      6
+      "guard"
+      "macro doc"
+      "(defmacro (guard")))
 
 (define (doc-extract-generated-smoke-ok?) : bool
   (match (doc-extract-source (doc-extract-generated-smoke-source))
     [(DocExtraction.Extraction _ items)
-      (match items
-        [(DocItemList.Cons option-item rest-option)
-          (match (box-get rest-option)
-            [(DocItemList.Cons helper-item rest-helper)
-              (match (box-get rest-helper)
-                [(DocItemList.Nil)
-                  (and
-                    (doc-item-ok?
-                      option-item
-                      5
-                      "Box_String"
-                      "generated box doc"
-                      "(:generated sample-family Box_String")
-                    (doc-item-ok?
-                      helper-item
-                      2
-                      "box-string-value"
-                      "generated helper doc"
-                      "(:generated sample-family box-string-value"))]
-                [_ false])]
-            [_ false])]
-        [_ false])]))
+      (and
+        (= (doc-item-list-count items) 2)
+        (doc-item-ok?
+          (doc-item-list-ref items 0)
+          5
+          "Box_String"
+          "generated box doc"
+          "(:generated sample-family Box_String")
+        (doc-item-ok?
+          (doc-item-list-ref items 1)
+          2
+          "box-string-value"
+          "generated helper doc"
+          "(:generated sample-family box-string-value"))]))
 
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
@@ -715,20 +748,12 @@
               (unless
                 (= (doc-item-list-count legacy-items) 1)
                 (return (io.panic "doc-extract: legacy item count mismatch")))
-              (match legacy-items
-                [(DocItemList.Cons legacy legacy-rest)
-                  (match (box-get legacy-rest)
-                    [(DocItemList.Nil)
-                      (begin
-                        (unless
-                          (doc-item-ok?
-                            legacy
-                            1
-                            "legacy"
-                            "legacy item"
-                            "(define legacy : i64 1)")
-                          (return
-                            (io.panic "doc-extract: legacy item mismatch")))
-                        42)]
-                    [_ 0])]
-                [_ 0]))]))]))
+              (unless
+                (doc-item-ok?
+                  (doc-item-list-ref legacy-items 0)
+                  1
+                  "legacy"
+                  "legacy item"
+                  "(define legacy : i64 1)")
+                (return (io.panic "doc-extract: legacy item mismatch")))
+              42)]))]))

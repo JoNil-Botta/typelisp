@@ -18,6 +18,20 @@
 
 (define hidden : i64 1)")
 
+(define (doc-html-smoke-modules
+  [docs : DocExtraction]
+  [second-docs : DocExtraction]) : DocModuleList
+  (let
+    [modules : DocModuleList (doc-module-list-with-capacity 2)]
+    (begin
+      (doc-module-list-push
+        (&mut modules)
+        (DocModule.Module "smoke<&>.tl" docs))
+      (doc-module-list-push
+        (&mut modules)
+        (DocModule.Module "second.tl" second-docs))
+      modules)))
+
 (define (doc-html-smoke) : i64
   (let
     [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
@@ -25,13 +39,7 @@
       (doc-extract-source (doc-html-second-smoke-source))]
     [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
     [graph : String
-      (doc-html-render-module-graph
-        (DocModuleList.Cons
-          (DocModule.Module "smoke<&>.tl" docs)
-          (box
-            (DocModuleList.Cons
-              (DocModule.Module "second.tl" second-docs)
-              (box DocModuleList.Nil)))))]
+      (doc-html-render-module-graph (doc-html-smoke-modules docs second-docs))]
     (if (and
       (doc-html-require-contains
         page

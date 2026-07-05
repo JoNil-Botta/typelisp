@@ -1011,6 +1011,18 @@
         [(opt-i64-one? resolved-rhs) (CompilerIrMaybeValue.Some lhs)]
         [(opt-i64-one? resolved-lhs) (CompilerIrMaybeValue.Some rhs)]
         [else (CompilerIrMaybeValue.No)])]
+    [(CompilerIrBinOp.BitOr)
+      (if (opt-i64-zero? resolved-rhs)
+        (CompilerIrMaybeValue.Some lhs)
+        (if (opt-i64-zero? resolved-lhs)
+          (CompilerIrMaybeValue.Some rhs)
+          (CompilerIrMaybeValue.No)))]
+    [(CompilerIrBinOp.BitXor)
+      (if (opt-i64-zero? resolved-rhs)
+        (CompilerIrMaybeValue.Some lhs)
+        (if (opt-i64-zero? resolved-lhs)
+          (CompilerIrMaybeValue.Some rhs)
+          (CompilerIrMaybeValue.No)))]
     [_ (CompilerIrMaybeValue.No)]))
 
 (define (opt-strength-bool-binop
@@ -10107,10 +10119,29 @@
           (OptSsaBlockOuts.Nil)
           frame)])))
 
+;; Dead-path phi input: a candidate var can reach a phi over an edge on which
+;; it has no definition -- e.g. an inner-loop counter's phi at the OUTER loop
+;; header sees the function-entry path, where the counter is first defined only
+;; inside the outer body. A well-formed source never READS the var along such a
+;; path, so the input value is unobservable there. The previous fallback named
+;; the ORIGINAL var, which made the materialized function fail the
+;; use-before-definition verify and silently disabled SSA construction (and
+;; with it every SSA-gated pass: GVN, load-GVN, preheaders, LICM, induction,
+;; loop-BCE) for every function with a nested loop. Feed a typed zero constant
+;; instead: it renders and allocates like any other constant phi input, and
+;; phis whose value is never used are removed by DCE.
+(define (opt-ssa-phi-undef-input [ty : AstType]) : CompilerIrValue
+  (if (opt-float-type? ty)
+    (CompilerIrValue.F64 0)
+    (if (opt-bool-type? ty)
+      (CompilerIrValue.Bool false)
+      (CompilerIrValue.I64 0))))
+
 (define (opt-ssa-phi-inputs
   [preds : OptLabelSet]
   [outs : OptSsaBlockOuts]
-  [var : i64]) : CompilerIrPhiInputList
+  [var : i64]
+  [ty : AstType]) : CompilerIrPhiInputList
   (match preds
     [(OptLabelSet.Nil) (CompilerIrPhiInputList.Nil)]
     [(OptLabelSet.Cons pred rest)
@@ -10119,11 +10150,11 @@
         [value : CompilerIrValue
           (match (opt-ssa-env-lookup env var)
             [(option_i64.Some current) (CompilerIrValue.Var current)]
-            [(option_i64.None) (CompilerIrValue.Var var)])]
+            [(option_i64.None) (opt-ssa-phi-undef-input ty)])]
         (compiler-ir-phi-input-cons
           value
           pred
-          (opt-ssa-phi-inputs (box-get rest) outs var)))]))
+          (opt-ssa-phi-inputs (box-get rest) outs var ty)))]))
 
 (define (opt-ssa-phis-for-label
   [pred-map : OptPredMap]
@@ -10145,7 +10176,8 @@
                   (opt-ssa-phi-inputs
                     (opt-pred-map-lookup pred-map label)
                     outs
-                    var)
+                    var
+                    ty)
                   ty)
                 tail)
               tail)]))]))
@@ -40650,6 +40682,168 @@
         15]
       [else 42])))
 
+;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the
+;; OUTER header have no definition on the function-entry path. Before the
+;; dead-path zero-input fix in opt-ssa-phi-inputs, materialization named the
+;; ORIGINAL var on those inputs, the use-before-definition verify rejected the
+;; result, and SSA construction silently fell back -- disabling every SSA-gated
+;; pass (GVN, load-GVN, preheaders, LICM, induction, loop-BCE) for any function
+;; containing a nested loop. The fixture mirrors a lowered nested array-sum:
+;; handle-field geps/loads in the inner body must hoist once SSA succeeds.
+(define (opt-ssa-nested-loop-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "rounds" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "n" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "arr" (AstType.DynArray 0) 2)
+        (CompilerIrParamList.Nil)))))
+
+(define (opt-ssa-nested-loop-inner-body) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      10
+      (CompilerIrValue.Var 2)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 11 (CompilerIrValue.Var 10) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          12
+          (CompilerIrValue.Var 2)
+          (CompilerIrValue.I64 0)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 13 (CompilerIrValue.Var 12) (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              14
+              (CompilerIrValue.Var 13)
+              (CompilerIrValue.Var 5)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 15 (CompilerIrValue.Var 14) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  16
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 3)
+                  (CompilerIrValue.Var 15)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    19
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 16)
+                    (CompilerIrValue.Var 11)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      3
+                      (CompilerIrValue.Var 19)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        17
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 5)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Mov
+                          5
+                          (CompilerIrValue.Var 17)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Jump "inner_head")
+                          (CompilerIrInstrList.Nil))))))))))))))
+
+(define (opt-ssa-nested-loop-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "ssa_nested_loop"
+    (opt-ssa-nested-loop-params)
+    (AstType.I64)
+    32
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "outer_head")
+              (CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "outer_head"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              6
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 0)
+              (AstType.Bool))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 6)
+                "outer_body"
+                "exit")
+              (CompilerIrInstrList.Nil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "outer_body"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "inner_head")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "inner_head"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  7
+                  (CompilerIrBinOp.Lt)
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.Var 1)
+                  (AstType.Bool))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 7)
+                    "inner_body"
+                    "outer_latch")
+                  (CompilerIrInstrList.Nil))))
+            (compiler-ir-block-cons
+              (compiler-ir-block "inner_body" (opt-ssa-nested-loop-inner-body))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "outer_latch"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      18
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.I64 1)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Mov
+                        4
+                        (CompilerIrValue.Var 18)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Jump "outer_head")
+                        (CompilerIrInstrList.Nil)))))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    "exit"
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Return
+                        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                      (CompilerIrInstrList.Nil)))
+                  (CompilerIrBlockList.Nil))))))))))
+
 (define (compiler-optimize-ssa-self-test) : i64
   (let
     [diamond-blocks : CompilerIrBlockList (opt-ssa-diamond-blocks)]
@@ -40695,6 +40889,14 @@
     [entry-backedge : CompilerIrFunction (opt-ssa-entry-backedge-function)]
     [entry-backedge-out : CompilerIrFunction
       (opt-ssa-construct-function (opt-ssa-entry-backedge-function))]
+    [constructed-nested : CompilerIrFunction
+      (opt-ssa-construct-function (opt-ssa-nested-loop-function))]
+    [constructed-nested-blocks : CompilerIrBlockList
+      (opt-function-blocks constructed-nested)]
+    [pipeline-nested : CompilerIrFunction
+      (optimize-function-once (opt-ssa-nested-loop-function))]
+    [pipeline-nested-blocks : CompilerIrBlockList
+      (opt-function-blocks pipeline-nested)]
     (cond
       [(not
           (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
@@ -40795,6 +40997,14 @@
       [(not (opt-verify-ok? (opt-verify-function pipeline-loop))) 51]
       [(not (= (opt-count-mov-dst-blocks pipeline-loop-blocks 1) 0)) 52]
       [(not (opt-function-eq entry-backedge entry-backedge-out)) 53]
+      [(not (opt-verify-ok? (opt-verify-function constructed-nested))) 54]
+      [(not (> (opt-count-phi-blocks constructed-nested-blocks) 0)) 55]
+      [(not (opt-verify-ok? (opt-verify-function pipeline-nested))) 56]
+      [(not
+          (=
+            (opt-count-load-label-blocks pipeline-nested-blocks "inner_body")
+            1))
+        57]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

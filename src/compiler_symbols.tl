@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import sym_i64_env)
+(cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
 (import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)

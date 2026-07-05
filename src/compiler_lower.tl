@@ -16,6 +16,7 @@
 (import "compiler_float.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile (import stdlib.profile))
 (import sym_i64_env)
@@ -1777,22 +1778,31 @@
         ""
         (string.substring path 0 (+ last 1))))))
 
-(define (lower-path-segment-vec-render-from
-  [segments : svec.StringVec]
-  [index : i64]
-  [prefix : String]) : String
-  (if (>= index (svec.string-vec-len (& segments)))
-    prefix
-    (let
-      [segment : String (svec.string-vec-get (& segments) index "")]
-      [next-prefix : String
-        (if (= (string.string-length prefix) 0)
-          segment
-          (string.append prefix (string.append "/" segment)))]
-      (lower-path-segment-vec-render-from segments (+ index 1) next-prefix))))
-
+;; Join segments with '/' in one linear text-buf build. The fold-with-append
+;; version copied the whole accumulated prefix on every segment (quadratic in
+;; rendered length) and ran once per normalized path, making it the largest
+;; string.append caller in the lowering phase of a self-compile.
 (define (lower-path-segment-vec-render [segments : svec.StringVec]) : String
-  (lower-path-segment-vec-render-from segments 0 ""))
+  (let
+    [count : i64 (svec.string-vec-len (& segments))]
+    (if (<= count 1)
+      (svec.string-vec-get (& segments) 0 "")
+      (let
+        [buf : text_buf.TextBuf
+          (text_buf.append
+            (text_buf.empty)
+            (svec.string-vec-get (& segments) 0 ""))]
+        [i : i64 1]
+        (begin
+          (while (< i count)
+            (begin
+              (set!
+                buf
+                (text_buf.append
+                  (text_buf.append buf "/")
+                  (svec.string-vec-get (& segments) i "")))
+              (set! i (+ i 1))))
+          (text_buf.render buf))))))
 
 (define (lower-path-normalize-segment
   [segment : String]

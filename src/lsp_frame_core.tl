@@ -3738,6 +3738,20 @@
                     json.JsonMemberListNil))))))]
       (lsp-json-list-cons obj (lsp-decls-to-json-list decls (+ idx 1))))))
 
+(define (lsp-decls-to-position-map-members [decls : LspDeclList] [idx : i64]) : json.JsonMemberList
+  (if (>= idx (lsp-decl-list-len (& decls)))
+    json.JsonMemberListNil
+    (let
+      [entry : LspDeclEntry
+        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+      (lsp-json-member
+        (struct-get entry name)
+        (lsp-position (struct-get entry name-line) (struct-get entry name-col))
+        (lsp-decls-to-position-map-members decls (+ idx 1))))))
+
+(define (lsp-position-map-for-text [text : String]) : json.Json
+  (lsp-json-object (lsp-decls-to-position-map-members (lsp-scan-decls text) 0)))
+
 (define (lsp-decl-query-name-ok?
   [entry : LspDeclEntry]
   [exact-name : String]
@@ -4300,11 +4314,13 @@
       (begin
         (lsp-write-response
           id
-          (lsp-json-object2
+          (lsp-json-object3
             "success"
             (json.JsonBool true)
             "text"
-            (json.JsonString formatted)))
+            (json.JsonString formatted)
+            "positionMap"
+            (lsp-position-map-for-text formatted)))
         (LspHandleResult.Continue next-docs))]
     [(LspSaveResult.Err message)
       (begin
@@ -7570,13 +7586,15 @@
           (LspBatchRunResult.Err message index text)])]))
 
 (define (lsp-batch-success-json [text : String] [results : json.JsonList]) : json.Json
-  (lsp-json-object3
+  (lsp-json-object4
     "success"
     (json.JsonBool true)
     "text"
     (json.JsonString text)
     "results"
-    (lsp-json-array results)))
+    (lsp-json-array results)
+    "positionMap"
+    (lsp-position-map-for-text text)))
 
 (define (lsp-batch-failure-json
   [message : String]

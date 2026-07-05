@@ -1255,6 +1255,7 @@
     (unless (= (compiler-optimize-loop-rotation-self-test) 42) (return 1))
     (unless (= (compiler-optimize-licm-self-test) 42) (return 1))
     (unless (= (compiler-optimize-induction-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-unroll-self-test) 42) (return 1))
     (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-level-self-test) 42) (return 1))
     (unless (= (compiler-optimize-callgraph-self-test) 42) (return 1))

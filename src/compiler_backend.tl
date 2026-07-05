@@ -16073,11 +16073,14 @@
         (* (/ (+ size 7) 8) 8))]
     [_ 0]))
 
+(define (compiler-backend-fast-alloc-supported-size? [size : i64]) : bool
+  (and (> size 0) (<= size 64) (= (% size 8) 0)))
+
 (define (compiler-backend-fast-alloc-label [size : i64]) : String
   (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
 
 (define (compiler-backend-inline-fast-alloc? [size : i64]) : bool
-  (= size 16))
+  (compiler-backend-fast-alloc-supported-size? size))
 
 (define (compiler-backend-fast-alloc-site-label
   [function : String]

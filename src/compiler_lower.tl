@@ -819,21 +819,6 @@
       (lower-instr-list-fill-array-reversed instrs slots (- count 1))
       (CompilerIrInstrSeq slots count))))
 
-(define (lower-block-list-reverse-onto
-  [blocks : CompilerIrBlockList]
-  [acc : CompilerIrBlockList]) : CompilerIrBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) acc]
-    [(CompilerIrBlockList.Cons head rest)
-      (lower-block-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-block-cons head acc))]
-    [(CompilerIrBlockList.Array seq)
-      (lower-block-list-reverse-onto (compiler-ir-block-seq-to-list seq) acc)]))
-
-(define (lower-block-list-reverse [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (lower-block-list-reverse-onto blocks CompilerIrBlockList.Nil))
-
 (define (lower-global-list-reverse-onto
   [globals : CompilerIrGlobalList]
   [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
@@ -846,23 +831,6 @@
 
 (define (lower-global-list-reverse [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
   (lower-global-list-reverse-onto globals CompilerIrGlobalList.Nil))
-
-(define (lower-function-list-reverse-onto
-  [functions : CompilerIrFunctionList]
-  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-function-list-force-cons functions)
-    [(CompilerIrFunctionList.Nil) acc]
-    [(CompilerIrFunctionList.Cons head rest)
-      (lower-function-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-function-cons head acc))]
-    [(CompilerIrFunctionList.Array seq)
-      (lower-function-list-reverse-onto
-        (compiler-ir-function-seq-to-list seq)
-        acc)]))
-
-(define (lower-function-list-reverse [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (lower-function-list-reverse-onto functions CompilerIrFunctionList.Nil))
 
 (define (lower-function-list-append
   [left : CompilerIrFunctionList]
@@ -9117,12 +9085,11 @@
           (CompilerIrBlock.Block
             current-label
             (lower-instr-seq-from-reversed-list (box-get current-instrs)))]
-        (lower-block-list-reverse-onto
-          (box-get blocks)
-          (compiler-ir-block-cons current-block CompilerIrBlockList.Nil)))]))
+        (compiler-ir-block-list-compact-reversed
+          (compiler-ir-block-cons current-block (box-get blocks))))]))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : CompilerIrBlockList
-  (compiler-ir-block-list-compact (lower-state-build-blocks state)))
+  (lower-state-build-blocks state))
 
 (define (lower-state-add-functions
   [state : LowerState]
@@ -44133,7 +44100,7 @@
                   (box
                     (LowerDeclsSuccess
                       (lower-global-list-reverse cur-globals)
-                      (lower-function-list-reverse cur-functions)
+                      (compiler-ir-function-list-compact-reversed cur-functions)
                       (lower-extern-list-reverse cur-externs)
                       cur-spans))))
               (set! done true))]
@@ -44566,8 +44533,7 @@
                 (ResultCompilerLower.Ok
                   (CompilerIrProgram.Program
                     (struct-get success globals)
-                    (compiler-ir-function-list-compact
-                      (struct-get success functions))
+                    (struct-get success functions)
                     (struct-get success externs))
                   (struct-get success spans)))]
             [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))

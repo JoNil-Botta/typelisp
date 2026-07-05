@@ -49,13 +49,14 @@ use.
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
   `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
   exported compile-time helper signatures such as `expr-int`,
-  `expr-list-head`, `expr-clause-list->expr-list`, `pattern-variant`,
+  `expr-list-nth`, `expr-clause-list->expr-list`, `pattern-variant`,
   `match-arm`, and `expr-match`. `expr-type` returns the produced type of a
   captured expression for macro-time reflection. Dense sequence accessors use
   the public `items` and `len` fields in ordinary stdlib source; remaining
   compiler intrinsics are syntax constructors, reflection helpers, and
-  provenance-preserving sequence operations such as `expr-list-tail`,
-  `expr-clause-list->expr-list`, and `expr-binding-clause-list->expr-list`.
+  provenance-preserving sequence conversions such as
+  `expr-clause-list->expr-list` and
+  `expr-binding-clause-list->expr-list`.
   The compiler verifies these shapes when the module is loaded and maps the
   syntax declarations and helper calls to the current compile-time-only macro
   representation during the CTFE migration. Import it with

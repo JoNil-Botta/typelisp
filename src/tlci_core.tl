@@ -168,100 +168,142 @@
   100)
 (define tlci-host-callback-op-expr-int : i64
   101)
-(define tlci-host-callback-op-expr-var : i64
-  102)
-(define tlci-host-callback-op-string-concat : i64
-  103)
-(define tlci-host-callback-op-string-append : i64
-  104)
-(define tlci-host-callback-op-int->string : i64
-  105)
-(define tlci-host-callback-op-expr-splice : i64
-  106)
-(define tlci-host-callback-op-expr-if : i64
-  107)
-(define tlci-host-callback-op-expr-type : i64
-  108)
-(define tlci-host-callback-op-module-export-value? : i64
-  109)
-(define tlci-host-callback-op-module-export-type? : i64
-  110)
-(define tlci-host-callback-op-module-export-macro? : i64
-  111)
-(define tlci-host-callback-op-module-export-value-type : i64
-  112)
-(define tlci-host-callback-op-module-export-type : i64
-  113)
-(define tlci-host-callback-op-module-export-macro-type : i64
-  114)
-(define tlci-host-callback-op-expr-bool? : i64
-  115)
-(define tlci-host-callback-op-expr-bool-value : i64
-  116)
-(define tlci-host-callback-op-expr-if? : i64
-  117)
-(define tlci-host-callback-op-expr-if-cond : i64
-  118)
-(define tlci-host-callback-op-expr-if-then : i64
-  119)
-(define tlci-host-callback-op-expr-if-else : i64
-  120)
-(define tlci-host-callback-op-expr-list-empty? : i64
-  121)
-(define tlci-host-callback-op-expr-list-length : i64
-  122)
-(define tlci-host-callback-op-expr-list-head : i64
-  123)
-(define tlci-host-callback-op-expr-list-tail : i64
-  124)
-(define tlci-host-callback-op-expr-list-nth : i64
-  125)
-(define tlci-host-callback-op-expr-clause-first : i64
-  126)
-(define tlci-host-callback-op-expr-clause-second : i64
-  127)
-(define tlci-host-callback-op-expr-clause-list-empty? : i64
-  128)
-(define tlci-host-callback-op-expr-clause-list-length : i64
-  129)
-(define tlci-host-callback-op-expr-clause-list-head : i64
-  130)
-(define tlci-host-callback-op-expr-clause-list-tail : i64
-  131)
-(define tlci-host-callback-op-expr-clause-list-nth : i64
-  132)
-(define tlci-host-callback-op-expr-clause-list->expr-list : i64
-  133)
-(define tlci-host-callback-op-expr-binding-clause-name : i64
-  134)
-(define tlci-host-callback-op-expr-binding-clause-has-type? : i64
-  135)
-(define tlci-host-callback-op-expr-binding-clause-type : i64
-  136)
-(define tlci-host-callback-op-expr-binding-clause-init : i64
-  137)
-(define tlci-host-callback-op-expr-binding-clause-list-empty? : i64
-  138)
-(define tlci-host-callback-op-expr-binding-clause-list-length : i64
-  139)
-(define tlci-host-callback-op-expr-binding-clause-list-head : i64
-  140)
-(define tlci-host-callback-op-expr-binding-clause-list-tail : i64
-  141)
-(define tlci-host-callback-op-expr-binding-clause-list-nth : i64
-  142)
-(define tlci-host-callback-op-expr-binding-clause-list->expr-list : i64
-  143)
-(define tlci-host-callback-op-module-name : i64
-  144)
-(define tlci-host-callback-op-module-hook : i64
-  145)
 (define tlci-host-callback-op-expr-string : i64
-  146)
+  102)
+(define tlci-host-callback-op-expr-var : i64
+  103)
+(define tlci-host-callback-op-expr-struct-get : i64
+  104)
+(define tlci-host-callback-op-expr-tuple-ref : i64
+  105)
 (define tlci-host-callback-op-expr-struct-set : i64
+  106)
+(define tlci-host-callback-op-string-eq : i64
+  107)
+(define tlci-host-callback-op-string-concat : i64
+  108)
+(define tlci-host-callback-op-string-append : i64
+  109)
+(define tlci-host-callback-op-string-length : i64
+  110)
+(define tlci-host-callback-op-string-ref : i64
+  111)
+(define tlci-host-callback-op-string->int : i64
+  112)
+(define tlci-host-callback-op-int->string : i64
+  113)
+(define tlci-host-callback-op-expr-splice : i64
+  114)
+(define tlci-host-callback-op-expr-if : i64
+  115)
+(define tlci-host-callback-op-pattern-wildcard : i64
+  116)
+(define tlci-host-callback-op-pattern-binding : i64
+  117)
+(define tlci-host-callback-op-pattern-variant : i64
+  118)
+(define tlci-host-callback-op-pattern-list-empty : i64
+  119)
+(define tlci-host-callback-op-pattern-list-cons : i64
+  120)
+(define tlci-host-callback-op-match-arm : i64
+  121)
+(define tlci-host-callback-op-match-arm-list-empty : i64
+  122)
+(define tlci-host-callback-op-match-arm-list-cons : i64
+  123)
+(define tlci-host-callback-op-expr-match : i64
+  124)
+(define tlci-host-callback-op-expr-type : i64
+  125)
+(define tlci-host-callback-op-type-info : i64
+  126)
+(define tlci-host-callback-op-module-name : i64
+  127)
+(define tlci-host-callback-op-module-export-macro? : i64
+  128)
+(define tlci-host-callback-op-module-hook : i64
+  129)
+(define tlci-host-callback-op-type-kind : i64
+  130)
+(define tlci-host-callback-op-type-key : i64
+  131)
+(define tlci-host-callback-op-type-nominal-module : i64
+  132)
+(define tlci-host-callback-op-type-nominal-name : i64
+  133)
+(define tlci-host-callback-op-struct-field-count : i64
+  134)
+(define tlci-host-callback-op-struct-field-name : i64
+  135)
+(define tlci-host-callback-op-struct-field-type : i64
+  136)
+(define tlci-host-callback-op-enum-variant-count : i64
+  137)
+(define tlci-host-callback-op-enum-variant-name : i64
+  138)
+(define tlci-host-callback-op-enum-variant-payload-count : i64
+  139)
+(define tlci-host-callback-op-enum-variant-payload-type : i64
+  140)
+(define tlci-host-callback-op-array-element-type : i64
+  141)
+(define tlci-host-callback-op-array-length : i64
+  142)
+(define tlci-host-callback-op-array-dynamic? : i64
+  143)
+(define tlci-host-callback-op-tuple-element-count : i64
+  144)
+(define tlci-host-callback-op-tuple-element-type : i64
+  145)
+(define tlci-host-callback-op-function-param-count : i64
+  146)
+(define tlci-host-callback-op-function-param-type : i64
   147)
+(define tlci-host-callback-op-function-return-type : i64
+  148)
+(define tlci-host-callback-op-expr-bool? : i64
+  149)
+(define tlci-host-callback-op-expr-bool-value : i64
+  150)
+(define tlci-host-callback-op-expr-if? : i64
+  151)
+(define tlci-host-callback-op-expr-if-cond : i64
+  152)
+(define tlci-host-callback-op-expr-if-then : i64
+  153)
+(define tlci-host-callback-op-expr-if-else : i64
+  154)
+(define tlci-host-callback-op-expr-list-length : i64
+  155)
+(define tlci-host-callback-op-expr-list-nth : i64
+  156)
+(define tlci-host-callback-op-expr-clause-first : i64
+  157)
+(define tlci-host-callback-op-expr-clause-second : i64
+  158)
+(define tlci-host-callback-op-expr-clause-list-length : i64
+  159)
+(define tlci-host-callback-op-expr-clause-list-nth : i64
+  160)
+(define tlci-host-callback-op-expr-clause-list->expr-list : i64
+  161)
+(define tlci-host-callback-op-expr-binding-clause-name : i64
+  162)
+(define tlci-host-callback-op-expr-binding-clause-has-type? : i64
+  163)
+(define tlci-host-callback-op-expr-binding-clause-type : i64
+  164)
+(define tlci-host-callback-op-expr-binding-clause-init : i64
+  165)
+(define tlci-host-callback-op-expr-binding-clause-list-length : i64
+  166)
+(define tlci-host-callback-op-expr-binding-clause-list-nth : i64
+  167)
+(define tlci-host-callback-op-expr-binding-clause-list->expr-list : i64
+  168)
 (define tlci-host-callback-stdlib-op-count : i64
-  48)
+  69)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -1196,53 +1238,74 @@
     (= tlci-host-callback-op-scratch-reset 4)
     (= tlci-host-callback-op-expr-bool 100)
     (= tlci-host-callback-op-expr-int 101)
-    (= tlci-host-callback-op-expr-var 102)
-    (= tlci-host-callback-op-string-concat 103)
-    (= tlci-host-callback-op-string-append 104)
-    (= tlci-host-callback-op-int->string 105)
-    (= tlci-host-callback-op-expr-splice 106)
-    (= tlci-host-callback-op-expr-if 107)
-    (= tlci-host-callback-op-expr-type 108)
-    (= tlci-host-callback-op-module-export-value? 109)
-    (= tlci-host-callback-op-module-export-type? 110)
-    (= tlci-host-callback-op-module-export-macro? 111)
-    (= tlci-host-callback-op-module-export-value-type 112)
-    (= tlci-host-callback-op-module-export-type 113)
-    (= tlci-host-callback-op-module-export-macro-type 114)
-    (= tlci-host-callback-op-expr-bool? 115)
-    (= tlci-host-callback-op-expr-bool-value 116)
-    (= tlci-host-callback-op-expr-if? 117)
-    (= tlci-host-callback-op-expr-if-cond 118)
-    (= tlci-host-callback-op-expr-if-then 119)
-    (= tlci-host-callback-op-expr-if-else 120)
-    (= tlci-host-callback-op-expr-list-empty? 121)
-    (= tlci-host-callback-op-expr-list-length 122)
-    (= tlci-host-callback-op-expr-list-head 123)
-    (= tlci-host-callback-op-expr-list-tail 124)
-    (= tlci-host-callback-op-expr-list-nth 125)
-    (= tlci-host-callback-op-expr-clause-first 126)
-    (= tlci-host-callback-op-expr-clause-second 127)
-    (= tlci-host-callback-op-expr-clause-list-empty? 128)
-    (= tlci-host-callback-op-expr-clause-list-length 129)
-    (= tlci-host-callback-op-expr-clause-list-head 130)
-    (= tlci-host-callback-op-expr-clause-list-tail 131)
-    (= tlci-host-callback-op-expr-clause-list-nth 132)
-    (= tlci-host-callback-op-expr-clause-list->expr-list 133)
-    (= tlci-host-callback-op-expr-binding-clause-name 134)
-    (= tlci-host-callback-op-expr-binding-clause-has-type? 135)
-    (= tlci-host-callback-op-expr-binding-clause-type 136)
-    (= tlci-host-callback-op-expr-binding-clause-init 137)
-    (= tlci-host-callback-op-expr-binding-clause-list-empty? 138)
-    (= tlci-host-callback-op-expr-binding-clause-list-length 139)
-    (= tlci-host-callback-op-expr-binding-clause-list-head 140)
-    (= tlci-host-callback-op-expr-binding-clause-list-tail 141)
-    (= tlci-host-callback-op-expr-binding-clause-list-nth 142)
-    (= tlci-host-callback-op-expr-binding-clause-list->expr-list 143)
-    (= tlci-host-callback-op-module-name 144)
-    (= tlci-host-callback-op-module-hook 145)
-    (= tlci-host-callback-op-expr-string 146)
-    (= tlci-host-callback-op-expr-struct-set 147)
-    (= tlci-host-callback-stdlib-op-count 48)))
+    (= tlci-host-callback-op-expr-string 102)
+    (= tlci-host-callback-op-expr-var 103)
+    (= tlci-host-callback-op-expr-struct-get 104)
+    (= tlci-host-callback-op-expr-tuple-ref 105)
+    (= tlci-host-callback-op-expr-struct-set 106)
+    (= tlci-host-callback-op-string-eq 107)
+    (= tlci-host-callback-op-string-concat 108)
+    (= tlci-host-callback-op-string-append 109)
+    (= tlci-host-callback-op-string-length 110)
+    (= tlci-host-callback-op-string-ref 111)
+    (= tlci-host-callback-op-string->int 112)
+    (= tlci-host-callback-op-int->string 113)
+    (= tlci-host-callback-op-expr-splice 114)
+    (= tlci-host-callback-op-expr-if 115)
+    (= tlci-host-callback-op-pattern-wildcard 116)
+    (= tlci-host-callback-op-pattern-binding 117)
+    (= tlci-host-callback-op-pattern-variant 118)
+    (= tlci-host-callback-op-pattern-list-empty 119)
+    (= tlci-host-callback-op-pattern-list-cons 120)
+    (= tlci-host-callback-op-match-arm 121)
+    (= tlci-host-callback-op-match-arm-list-empty 122)
+    (= tlci-host-callback-op-match-arm-list-cons 123)
+    (= tlci-host-callback-op-expr-match 124)
+    (= tlci-host-callback-op-expr-type 125)
+    (= tlci-host-callback-op-type-info 126)
+    (= tlci-host-callback-op-module-name 127)
+    (= tlci-host-callback-op-module-export-macro? 128)
+    (= tlci-host-callback-op-module-hook 129)
+    (= tlci-host-callback-op-type-kind 130)
+    (= tlci-host-callback-op-type-key 131)
+    (= tlci-host-callback-op-type-nominal-module 132)
+    (= tlci-host-callback-op-type-nominal-name 133)
+    (= tlci-host-callback-op-struct-field-count 134)
+    (= tlci-host-callback-op-struct-field-name 135)
+    (= tlci-host-callback-op-struct-field-type 136)
+    (= tlci-host-callback-op-enum-variant-count 137)
+    (= tlci-host-callback-op-enum-variant-name 138)
+    (= tlci-host-callback-op-enum-variant-payload-count 139)
+    (= tlci-host-callback-op-enum-variant-payload-type 140)
+    (= tlci-host-callback-op-array-element-type 141)
+    (= tlci-host-callback-op-array-length 142)
+    (= tlci-host-callback-op-array-dynamic? 143)
+    (= tlci-host-callback-op-tuple-element-count 144)
+    (= tlci-host-callback-op-tuple-element-type 145)
+    (= tlci-host-callback-op-function-param-count 146)
+    (= tlci-host-callback-op-function-param-type 147)
+    (= tlci-host-callback-op-function-return-type 148)
+    (= tlci-host-callback-op-expr-bool? 149)
+    (= tlci-host-callback-op-expr-bool-value 150)
+    (= tlci-host-callback-op-expr-if? 151)
+    (= tlci-host-callback-op-expr-if-cond 152)
+    (= tlci-host-callback-op-expr-if-then 153)
+    (= tlci-host-callback-op-expr-if-else 154)
+    (= tlci-host-callback-op-expr-list-length 155)
+    (= tlci-host-callback-op-expr-list-nth 156)
+    (= tlci-host-callback-op-expr-clause-first 157)
+    (= tlci-host-callback-op-expr-clause-second 158)
+    (= tlci-host-callback-op-expr-clause-list-length 159)
+    (= tlci-host-callback-op-expr-clause-list-nth 160)
+    (= tlci-host-callback-op-expr-clause-list->expr-list 161)
+    (= tlci-host-callback-op-expr-binding-clause-name 162)
+    (= tlci-host-callback-op-expr-binding-clause-has-type? 163)
+    (= tlci-host-callback-op-expr-binding-clause-type 164)
+    (= tlci-host-callback-op-expr-binding-clause-init 165)
+    (= tlci-host-callback-op-expr-binding-clause-list-length 166)
+    (= tlci-host-callback-op-expr-binding-clause-list-nth 167)
+    (= tlci-host-callback-op-expr-binding-clause-list->expr-list 168)
+    (= tlci-host-callback-stdlib-op-count 69)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and
@@ -1252,6 +1315,30 @@
       [(ResultTlciHostAbi.Ok) true]
       [(ResultTlciHostAbi.Err _) false])
     (match (tlci-validate-image-registration (tlci-test-image-registration))
+      [(ResultTlciHostAbi.Ok) true]
+      [(ResultTlciHostAbi.Err _) false])
+    (match (tlci-validate-host-callback-table
+      (TlciHostCallbackTable
+        tlci-host-callback-table-magic
+        tlci-host-abi-version
+        (+ tlci-host-callback-table-size 16)
+        1234
+        0
+        0
+        4096
+        8192))
+      [(ResultTlciHostAbi.Ok) true]
+      [(ResultTlciHostAbi.Err _) false])
+    (match (tlci-validate-image-registration
+      (TlciImageRegistration
+        tlci-image-registration-magic
+        tlci-host-abi-version
+        (+ tlci-image-registration-size 16)
+        5678
+        0
+        0
+        12288
+        1))
       [(ResultTlciHostAbi.Ok) true]
       [(ResultTlciHostAbi.Err _) false])
     (tlci-test-host-abi-rejects?
@@ -1290,6 +1377,18 @@
           1
           1))
       "tlci host ABI: host callback table byte-size is smaller than v1")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          1
+          0
+          1
+          1))
+      "tlci host ABI: host callback table reserved0 must be zero")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
         (TlciHostCallbackTable
@@ -1350,6 +1449,18 @@
           0
           0))
       "tlci host ABI: image registration byte-size is smaller than v1")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          tlci-image-registration-magic
+          tlci-host-abi-version
+          tlci-image-registration-size
+          0
+          0
+          1
+          0
+          0))
+      "tlci host ABI: image registration reserved1 must be zero")
     (tlci-test-host-abi-rejects?
       (tlci-validate-image-registration
         (TlciImageRegistration

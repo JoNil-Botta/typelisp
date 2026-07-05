@@ -26400,7 +26400,7 @@
       [(CompilerIrFunction.Function name _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
-          (if (string.eq (opt-symbol-leaf name) leaf)
+          (if (opt-symbol-leaf-matches? name leaf)
             (opt-reach-add-function index state name)
             state)
           leaf
@@ -26420,16 +26420,33 @@
 
 (define (opt-runtime-prelude-string-helper-name [source-name : String]) : String
   (let
-    [base : String (opt-symbol-leaf source-name)]
-    (cond
-      [(string.eq base "tl_int_to_string") "tl-runtime-int-to-string"]
-      [(string.eq base "tl_substring") "tl-runtime-substring"]
-      [(string.eq base "tl_str_view") "tl-runtime-str-view"]
-      [(string.eq base "tl_string_concat") "tl-runtime-string-concat"]
-      [(string.eq base "tl_string_concat3") "tl-runtime-string-concat3"]
-      [(string.eq base "tl_string_concat4") "tl-runtime-string-concat4"]
-      [(string.eq base "tl_string_concat5") "tl-runtime-string-concat5"]
-      [else ""])))
+    [start : i64 (opt-symbol-leaf-start source-name)]
+    [n : i64 (string.string-length source-name)]
+    ;; Cheap gate: every prelude helper leaf starts with "tl_" -- reject the
+    ;; overwhelming majority of call targets with three char compares before
+    ;; the exact per-name checks (all allocation-free).
+    (if (or
+      (< (- n start) 3)
+      (not (= (string.string-ref source-name start) 't'))
+      (not (= (string.string-ref source-name (+ start 1)) 'l'))
+      (not (= (string.string-ref source-name (+ start 2)) '_')))
+      ""
+      (cond
+        [(opt-symbol-leaf-matches? source-name "tl_int_to_string")
+          "tl-runtime-int-to-string"]
+        [(opt-symbol-leaf-matches? source-name "tl_substring")
+          "tl-runtime-substring"]
+        [(opt-symbol-leaf-matches? source-name "tl_str_view")
+          "tl-runtime-str-view"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat")
+          "tl-runtime-string-concat"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat3")
+          "tl-runtime-string-concat3"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat4")
+          "tl-runtime-string-concat4"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat5")
+          "tl-runtime-string-concat5"]
+        [else ""]))))
 
 (define (opt-reach-add-runtime-prelude-string-helper
   [index : OptFunctionIndex]
@@ -26863,7 +26880,7 @@
               (opt-reach-add-function index state name)
               state))])]))
 
-(define (opt-symbol-leaf [name : String]) : String
+(define (opt-symbol-leaf-start [name : String]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length name)]
@@ -26877,7 +26894,37 @@
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
-      (string.substring name start (- n start)))))
+      start)))
+
+;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf).
+;; The reachability pass tests every call target's leaf against a handful of
+;; fixed runtime helper names; materializing the leaf substring allocated on
+;; every call site in the program.
+(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+  (let
+    [start : i64 (opt-symbol-leaf-start name)]
+    [n : i64 (string.string-length name)]
+    [leaf-len : i64 (string.string-length leaf)]
+    (if (not (= (- n start) leaf-len))
+      false
+      (let
+        [ok : bool true]
+        [i : i64 0]
+        (begin
+          (while (and ok (< i leaf-len))
+            (begin
+              (if (=
+                (string.string-ref name (+ start i))
+                (string.string-ref leaf i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok)))))
+
+(define (opt-symbol-leaf [name : String]) : String
+  (let
+    [start : i64 (opt-symbol-leaf-start name)]
+    (string.substring name start (- (string.string-length name) start))))
 
 (define (opt-prune-unreachable-program
   [globals : CompilerIrGlobalList]

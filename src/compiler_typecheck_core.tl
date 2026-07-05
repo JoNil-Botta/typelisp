@@ -18666,14 +18666,52 @@
         (not (tc-name-local-bound-before-module? env base))
         (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
 
+;; Allocation-free equivalent of
+;;   (string.eq text (compiler-symbol-module-key module base))
+;; for non-empty modules: the arena-safety checks run per call expression, and
+;; building the module/base key string allocated on every one of them.
+(define (tc-module-key-text-matches?
+  [text : String]
+  [module : String]
+  [base : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [module-len : i64 (string.string-length module)]
+    [base-len : i64 (string.string-length base)]
+    (if (not (= text-len (+ module-len (+ base-len 1))))
+      false
+      (if (not (= (string.string-ref text module-len) '/'))
+        false
+        (let
+          [ok : bool true]
+          [i : i64 0]
+          (begin
+            (while (and ok (< i module-len))
+              (begin
+                (if (= (string.string-ref text i) (string.string-ref module i))
+                  unit
+                  (set! ok false))
+                (set! i (+ i 1))))
+            (set! i 0)
+            (while (and ok (< i base-len))
+              (begin
+                (if (=
+                  (string.string-ref text (+ module-len (+ 1 i)))
+                  (string.string-ref base i))
+                  unit
+                  (set! ok false))
+                (set! i (+ i 1))))
+            ok))))))
+
 (define (tc-arena-canonical-call-name?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
   [base : String]) : bool
-  (string.eq
+  (tc-module-key-text-matches?
     (tc-call-builtin-lookup-name ctx env name)
-    (compiler-symbol-module-key (tc-arena-module-name) base)))
+    (tc-arena-module-name)
+    base))
 
 (define (tc-arena-safe-call-name?
   [ctx : TcContext]

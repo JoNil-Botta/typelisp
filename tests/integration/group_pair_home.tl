@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP2b: register-PAIR homing for 16-byte group values.
 ;;
@@ -49,7 +49,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 8)]
+    [n : i64 (+ (io.arg-count) 8)]
     [r : i64 (probe n)]
     ;; n = 9 (no args): i in 0..8; i%3==0 -> +1 (i=0,3,6 -> 3);
     ;; others: 5i+1 for i in {1,2,4,5,7,8} = 6+11+21+26+36+41 = 141.

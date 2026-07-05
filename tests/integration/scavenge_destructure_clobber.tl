@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 (import stdlib.string)
 
@@ -24,7 +24,7 @@
 ;; CORRECTNESS GUARD: the lookup returns the id whose key string-equals the query.
 ;; If slot-key is clobbered by slot-id's load, the string compare reads garbage
 ;; (crash or false), so the wrong id (or none) is returned -> exit 1. Seeded from
-;; (arg-count) so the optimizer cannot fold the loop, and the key strings are
+;; (io.arg-count) so the optimizer cannot fold the loop, and the key strings are
 ;; distinct heap pointers so the compare must really dereference them.
 (defenum Slot
   (SlotEmpty)
@@ -62,7 +62,7 @@
 
 (define (main) : i64
   (let
-    [s : i64 (arg-count)]
+    [s : i64 (io.arg-count)]
     [n : i64 6]
     [slots : (Array Slot) (array.make-array Slot n)]
     (begin

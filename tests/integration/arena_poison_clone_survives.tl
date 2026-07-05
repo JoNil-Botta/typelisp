@@ -1,5 +1,5 @@
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_arena_poison_enable) : unit)
 
@@ -16,7 +16,7 @@
       (unsafe
         (arena.set! scratch))
       (let
-        [source : PoisonPayload (PoisonPayload (append "poison" "ok") 34)]
+        [source : PoisonPayload (PoisonPayload (string.append "poison" "ok") 34)]
         (begin
           (unsafe
             (arena.set! outer))

@@ -1,6 +1,6 @@
 (import stdlib.arena)
 (import stdlib.sync)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let
@@ -9,7 +9,7 @@
       [(sync.ChannelStringCreateErr _) 1]
       [(sync.ChannelStringCreateOk channel)
         (let
-          [message : String (in-arena owner (append "owned" "-message"))]
+          [message : String (in-arena owner (string.append "owned" "-message"))]
           [sent : sync.ChannelStringSendResult
             (sync.channel-string-send channel message)]
           [after : i64 (string-length message)]

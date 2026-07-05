@@ -1,5 +1,5 @@
 ;; hashmap_macro_scalar_modules.tl - scalar generated-module hashmap surfaces (#3760).
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.hashmap)
 (import stdlib.string)
 (import (hashmap String String) as map_string_string)
@@ -10,7 +10,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (test
   hashmap-macro-string-string-basic-operations
@@ -19,13 +19,13 @@
     [beta : String "beta"]
     [m : map_string_string.Map (map_string_string.with-capacity 2)]
     (begin
-      (assert-i64-eq (map_string_string.len (& m)) 0 "fresh StringString len")
-      (assert-true
+      (test.assert-i64-eq (map_string_string.len (& m)) 0 "fresh StringString len")
+      (test.assert-true
         (map_string_string.is-empty? (& m))
         "fresh StringString empty")
       (map_string_string.insert (&mut m) "alpha" "red")
       (map_string_string.insert (&mut m) "beta" "amber")
-      (assert-i64-eq (map_string_string.len (& m)) 2 "StringString insert len")
+      (test.assert-i64-eq (map_string_string.len (& m)) 2 "StringString insert len")
       (assert-owned-string-eq
         (map_string_string.lookup-value-or
           (map_string_string.get (& m) "alpha")
@@ -38,35 +38,35 @@
           "fallback")
         "amber"
         "StringString borrowed get")
-      (assert-true
+      (test.assert-true
         (map_string_string.contains-borrowed? (& m) (& alpha))
         "StringString borrowed contains")
-      (assert-true
+      (test.assert-true
         (map_string_string.borrowed-value-found?
           (map_string_string.get-value-borrowed (& m) (& alpha)))
         "StringString borrowed value get")
-      (assert-true
+      (test.assert-true
         (map_string_string.remove-ok?
           (map_string_string.remove-borrowed (&mut m) (& beta)))
         "StringString remove borrowed")
-      (assert-false
+      (test.assert-false
         (map_string_string.contains? (& m) "beta")
         "StringString removed key absent")
       (match (map_string_string.entry-or-insert (&mut m) "beta" "gold")
         [(map_string_string.EntryOrInsertInserted value)
           (assert-owned-string-eq value "gold" "StringString inserted value")]
         [(map_string_string.EntryOrInsertFound _)
-          (assert-true false "StringString entry-or-insert should insert")])
+          (test.assert-true false "StringString entry-or-insert should insert")])
       (match (map_string_string.entry-or-insert (&mut m) "alpha" "purple")
         [(map_string_string.EntryOrInsertFound value)
           (assert-owned-string-eq value "red" "StringString found value")]
         [(map_string_string.EntryOrInsertInserted _)
-          (assert-true false "StringString entry-or-insert should find")])
+          (test.assert-true false "StringString entry-or-insert should find")])
       (let
         [entry : (map_string_string.MutEntry m)
           (map_string_string.get-mut-entry-borrowed (&mut m) (& alpha))]
         (begin
-          (assert-true
+          (test.assert-true
             (map_string_string.mut-entry-present? entry)
             "StringString mut-entry present")
           (assert-owned-string-eq
@@ -82,7 +82,7 @@
         "StringString mut-entry writes through")
       (let
         [cursor : i64 (map_string_string.next-occupied (& m) 0)]
-        (assert-true
+        (test.assert-true
           (>
             (string.string-length
               (map_string_string.entry-value-or
@@ -102,8 +102,8 @@
       (map_string_string.insert (&mut m) "k3" "v3")
       (map_string_string.insert (&mut m) "k4" "v4")
       (map_string_string.insert (&mut m) "k5" "v5")
-      (assert-i64-eq (map_string_string.len (& m)) 6 "StringString growth len")
-      (assert-true
+      (test.assert-i64-eq (map_string_string.len (& m)) 6 "StringString growth len")
+      (test.assert-true
         (>= (map_string_string.capacity (& m)) 8)
         "StringString growth capacity")
       (assert-owned-string-eq
@@ -118,53 +118,53 @@
   (let
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 2)]
     (begin
-      (assert-i64-eq (map_i64_i64.len (& m)) 0 "fresh I64I64 len")
-      (assert-true (map_i64_i64.is-empty? (& m)) "fresh I64I64 empty")
+      (test.assert-i64-eq (map_i64_i64.len (& m)) 0 "fresh I64I64 len")
+      (test.assert-true (map_i64_i64.is-empty? (& m)) "fresh I64I64 empty")
       (map_i64_i64.insert (&mut m) 1 10)
       (map_i64_i64.insert (&mut m) 2 20)
-      (assert-i64-eq (map_i64_i64.len (& m)) 2 "I64I64 insert len")
-      (assert-i64-eq
+      (test.assert-i64-eq (map_i64_i64.len (& m)) 2 "I64I64 insert len")
+      (test.assert-i64-eq
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 1) -1)
         10
         "I64I64 owned get")
-      (assert-true (map_i64_i64.contains? (& m) 2) "I64I64 contains")
-      (assert-true
+      (test.assert-true (map_i64_i64.contains? (& m) 2) "I64I64 contains")
+      (test.assert-true
         (map_i64_i64.borrowed-value-found?
           (map_i64_i64.get-value-borrowed (& m) 1))
         "I64I64 borrowed value get")
-      (assert-true
+      (test.assert-true
         (map_i64_i64.remove-ok? (map_i64_i64.remove (&mut m) 2))
         "I64I64 remove")
-      (assert-false (map_i64_i64.contains? (& m) 2) "I64I64 removed absent")
+      (test.assert-false (map_i64_i64.contains? (& m) 2) "I64I64 removed absent")
       (match (map_i64_i64.entry-or-insert (&mut m) 2 22)
         [(map_i64_i64.EntryOrInsertInserted value)
-          (assert-i64-eq value 22 "I64I64 inserted value")]
+          (test.assert-i64-eq value 22 "I64I64 inserted value")]
         [(map_i64_i64.EntryOrInsertFound _)
-          (assert-true false "I64I64 entry-or-insert should insert")])
+          (test.assert-true false "I64I64 entry-or-insert should insert")])
       (match (map_i64_i64.entry-or-insert (&mut m) 1 99)
         [(map_i64_i64.EntryOrInsertFound value)
-          (assert-i64-eq value 10 "I64I64 found value")]
+          (test.assert-i64-eq value 10 "I64I64 found value")]
         [(map_i64_i64.EntryOrInsertInserted _)
-          (assert-true false "I64I64 entry-or-insert should find")])
+          (test.assert-true false "I64I64 entry-or-insert should find")])
       (let
         [entry : (map_i64_i64.MutEntry m)
           (map_i64_i64.get-mut-entry (&mut m) 1)]
         (begin
-          (assert-true
+          (test.assert-true
             (map_i64_i64.mut-entry-present? entry)
             "I64I64 mut-entry present")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (map_i64_i64.mut-entry-value-or entry -1)
             10
             "I64I64 mut-entry reads")
           (map_i64_i64.mut-entry-set! entry 33)))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 1) -1)
         33
         "I64I64 mut-entry writes through")
       (let
         [cursor : i64 (map_i64_i64.next-occupied (& m) 0)]
-        (assert-true
+        (test.assert-true
           (>=
             (map_i64_i64.entry-value-or (map_i64_i64.entry-at (& m) cursor) -1)
             0)
@@ -181,9 +181,9 @@
       (map_i64_i64.insert (&mut m) 3 3)
       (map_i64_i64.insert (&mut m) 4 4)
       (map_i64_i64.insert (&mut m) 5 5)
-      (assert-i64-eq (map_i64_i64.len (& m)) 6 "I64I64 growth len")
-      (assert-true (>= (map_i64_i64.capacity (& m)) 8) "I64I64 growth capacity")
-      (assert-i64-eq
+      (test.assert-i64-eq (map_i64_i64.len (& m)) 6 "I64I64 growth len")
+      (test.assert-true (>= (map_i64_i64.capacity (& m)) 8) "I64I64 growth capacity")
+      (test.assert-i64-eq
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 5) -1)
         5
         "I64I64 growth keeps late insert"))))
@@ -193,41 +193,41 @@
   (let
     [m : map_i64_string.Map (map_i64_string.with-capacity 2)]
     (begin
-      (assert-i64-eq (map_i64_string.len (& m)) 0 "fresh I64String len")
-      (assert-true (map_i64_string.is-empty? (& m)) "fresh I64String empty")
+      (test.assert-i64-eq (map_i64_string.len (& m)) 0 "fresh I64String len")
+      (test.assert-true (map_i64_string.is-empty? (& m)) "fresh I64String empty")
       (map_i64_string.insert (&mut m) 1 "one")
       (map_i64_string.insert (&mut m) 2 "two")
-      (assert-i64-eq (map_i64_string.len (& m)) 2 "I64String insert len")
+      (test.assert-i64-eq (map_i64_string.len (& m)) 2 "I64String insert len")
       (assert-owned-string-eq
         (map_i64_string.lookup-value-or (map_i64_string.get (& m) 1) "fallback")
         "one"
         "I64String owned get")
-      (assert-true (map_i64_string.contains? (& m) 2) "I64String contains")
-      (assert-true
+      (test.assert-true (map_i64_string.contains? (& m) 2) "I64String contains")
+      (test.assert-true
         (map_i64_string.borrowed-value-found?
           (map_i64_string.get-value-borrowed (& m) 1))
         "I64String borrowed value get")
-      (assert-true
+      (test.assert-true
         (map_i64_string.remove-ok? (map_i64_string.remove (&mut m) 2))
         "I64String remove")
-      (assert-false
+      (test.assert-false
         (map_i64_string.contains? (& m) 2)
         "I64String removed absent")
       (match (map_i64_string.entry-or-insert (&mut m) 2 "deux")
         [(map_i64_string.EntryOrInsertInserted value)
           (assert-owned-string-eq value "deux" "I64String inserted value")]
         [(map_i64_string.EntryOrInsertFound _)
-          (assert-true false "I64String entry-or-insert should insert")])
+          (test.assert-true false "I64String entry-or-insert should insert")])
       (match (map_i64_string.entry-or-insert (&mut m) 1 "uno")
         [(map_i64_string.EntryOrInsertFound value)
           (assert-owned-string-eq value "one" "I64String found value")]
         [(map_i64_string.EntryOrInsertInserted _)
-          (assert-true false "I64String entry-or-insert should find")])
+          (test.assert-true false "I64String entry-or-insert should find")])
       (let
         [entry : (map_i64_string.MutEntry m)
           (map_i64_string.get-mut-entry (&mut m) 1)]
         (begin
-          (assert-true
+          (test.assert-true
             (map_i64_string.mut-entry-present? entry)
             "I64String mut-entry present")
           (assert-owned-string-eq
@@ -241,7 +241,7 @@
         "I64String mut-entry writes through")
       (let
         [cursor : i64 (map_i64_string.next-occupied (& m) 0)]
-        (assert-true
+        (test.assert-true
           (>
             (string.string-length
               (map_i64_string.entry-value-or
@@ -261,8 +261,8 @@
       (map_i64_string.insert (&mut m) 3 "v3")
       (map_i64_string.insert (&mut m) 4 "v4")
       (map_i64_string.insert (&mut m) 5 "v5")
-      (assert-i64-eq (map_i64_string.len (& m)) 6 "I64String growth len")
-      (assert-true
+      (test.assert-i64-eq (map_i64_string.len (& m)) 6 "I64String growth len")
+      (test.assert-true
         (>= (map_i64_string.capacity (& m)) 8)
         "I64String growth capacity")
       (assert-owned-string-eq

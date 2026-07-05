@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP3c: the param ABI-pin gate is PER-INTERVAL, not
 ;; function-global.
@@ -42,8 +42,8 @@
 (define (main) : i64
   (let
     ;; no CLI args: arg-count = 1 (program name), so a = 5, b = 4.
-    [a : i64 (+ (arg-count) 4)]
-    [b : i64 (+ (arg-count) 3)]
+    [a : i64 (+ (io.arg-count) 4)]
+    [b : i64 (+ (io.arg-count) 3)]
     (begin
       (if (> b 100)
         (begin

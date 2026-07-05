@@ -1,5 +1,7 @@
 ;; compile_profile_generated_import_inert.tl - Fixture for inert generated
 ;; import follow-up compile-profile rows.
+;; Retained for #2454 path-import compatibility: the generated module imports a
+;; helper whose module name intentionally does not map to a dotted source path.
 (defmacro (profile-generated-inert-import-module) : Module
   `(begin
     (module generated.profile_generated_import_inert)

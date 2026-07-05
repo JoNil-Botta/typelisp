@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; FORCING TEST for GAP6d: a constant array index folds into the bounds-check

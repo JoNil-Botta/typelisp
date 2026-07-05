@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (main) : unit
-  (write-file "tests/integration/missing-parent-zzz/output.txt" "alpha"))
+  (io.write-file "tests/integration/missing-parent-zzz/output.txt" "alpha"))

@@ -1,7 +1,7 @@
 ;; module_macro_generated_imported_type_vector_import.tl - generated module
 ;; bodies can use a flat-imported generated type in a later `(vector T)` import.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defmacro (type-provider) : Module
   `(begin
@@ -27,7 +27,7 @@
 
 (test
   generated-module-imported-type-vector-import
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score (user.make 42))
     42
     "generated module imported type vector"))

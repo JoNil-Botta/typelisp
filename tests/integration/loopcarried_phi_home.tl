@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING / CORRECTNESS test for SplitKit step 2 -- phi-aware register homing of
 ;; loop-carried values (the dominant 607-spill population).
@@ -60,7 +60,7 @@
 
 (define (main) : i64
   (let
-    [s : i64 (arg-count)]
+    [s : i64 (io.arg-count)]
     ;; acc-sum n times: acc = seed + sum_{i=0}^{n-1} i = seed + n*(n-1)/2
     [r1a : i64 (acc-sum 1000 s)]
     [r1b : i64 (acc-sum 500 (+ s 7))]

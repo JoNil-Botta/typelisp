@@ -1,6 +1,6 @@
 ;; module_macro_generated_global_init.tl - generated module top-level values
 ;; run their hidden runtime initializers before imported code reads them.
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defmacro (global-module) : Module
   `(begin
@@ -14,14 +14,14 @@
 
 (test
   generated-module-global-initializer-runs
-  (assert-i64-eq
+  (test.assert-i64-eq
     generated.answer
     42
     "generated module global initialized through alias"))
 
 (test
   generated-module-global-initializer-visible-to-generated-function
-  (assert-i64-eq
+  (test.assert-i64-eq
     (generated.read-answer)
     42
     "generated module function reads initialized global"))

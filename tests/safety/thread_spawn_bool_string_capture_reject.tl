@@ -1,6 +1,6 @@
 (import stdlib.thread)
 (import (thread.handle bool) as thread_bool)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let

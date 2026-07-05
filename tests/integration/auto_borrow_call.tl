@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (defstruct Pair
   (left i64)

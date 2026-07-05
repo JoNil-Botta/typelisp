@@ -1,5 +1,5 @@
 ; generated_option_result_families.tl - Generated Option/Result family modules.
-(import "stdlib/string.tl")
+(import stdlib.string)
 (import stdlib.option)
 (import stdlib.result)
 (import (option String) as option_string)

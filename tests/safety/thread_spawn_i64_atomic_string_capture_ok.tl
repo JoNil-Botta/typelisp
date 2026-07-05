@@ -1,7 +1,7 @@
 (import stdlib.arena)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (defstruct AtomicThreadText
   (text String))
@@ -19,7 +19,7 @@
     [message : AtomicThreadMessage
       (in-arena
         owner
-        (AtomicThreadMessageText (AtomicThreadText (append "atom" "ic"))))]
+        (AtomicThreadMessageText (AtomicThreadText (string.append "atom" "ic"))))]
     [spawn : thread_i64.SpawnResult
       (thread_i64.spawn
         (lambda () : i64

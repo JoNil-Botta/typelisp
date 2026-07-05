@@ -1,6 +1,8 @@
 ;; vector_named_family_import_consumer.tl - imported named vector-family generated names remain visible.
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.io)
+;; Retained for #2454 path-import compatibility: this fixture checks that a path
+;; import still exposes generated family names in the importing module.
 (import "vector_named_family_import_provider.tl")
 
 (define (imported-vector-family-helper-ok?) : bool

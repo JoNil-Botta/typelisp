@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP3b: handle-typed params are pinnable to their incoming
 ;; ABI register.
@@ -34,7 +34,7 @@
 (define (main) : i64
   (let
     ;; no CLI args: arg-count = 1 (program name), so n = 4.
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [xs : (Array i64) (make-array i64 n)]
     [i : i64 0]
     (begin

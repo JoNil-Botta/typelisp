@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP2a: direct register-homed base/src in the fused
 ;; gep+CopyBytes (aggregate copy) path.
@@ -55,7 +55,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 5)]
+    [n : i64 (+ (io.arg-count) 5)]
     [r : i64 (probe n)]
     ;; n = 6 (no args): sum over i<6 of (i+1) + 2i + 7 = (1+..+6) + 2*15 + 42
     ;;                = 21 + 30 + 42 = 93.

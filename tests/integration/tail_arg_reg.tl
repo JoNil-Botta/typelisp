@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-G2a: args of gp-parallel DIRECT TAIL CALLS become
 ;; register-eligible. spin-a/spin-b are MUTUALLY tail-recursive (self tail
@@ -51,8 +51,8 @@
   (let
     ;; arg-count = 1 when run without args (program name); keeps the depths
     ;; even/10-divisible so the closed forms below hold.
-    [n1 : i64 (* 2 (+ 500000 (arg-count)))]
-    [n2 : i64 (* 10 (+ 200000 (arg-count)))]
+    [n1 : i64 (* 2 (+ 500000 (io.arg-count)))]
+    [n2 : i64 (* 10 (+ 200000 (io.arg-count)))]
     [r1 : i64 (spin-a 3 1 0 n1)]
     [r2 : i64 (whirl-a 1 2 3 4 5 n2)]
     ;; r1: n1=1000002 hops swap a/b back to (3,1); c = 10 per hop-pair

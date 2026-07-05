@@ -1,6 +1,6 @@
 ;; vector_macro_struct.tl - runnable aggregate coverage for stdlib `(vector T)`.
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defstruct Pair
   (left i64)
@@ -30,22 +30,22 @@
   (let
     [v : pvec.Vec (vector-macro-pair-fill 6)]
     (begin
-      (assert-i64-eq (pvec.len (& v)) 6 "struct vector macro length")
-      (assert-i64-eq
+      (test.assert-i64-eq (pvec.len (& v)) 6 "struct vector macro length")
+      (test.assert-i64-eq
         (pvec.capacity (& v))
         8
         "struct vector macro doubled capacity")
-      (assert-i64-eq
+      (test.assert-i64-eq
         (pair-score (pvec.get (& v) 5 (Pair 0 0)))
         56
         "struct vector macro keeps grown element")
       (pvec.set (&mut v) 1 (Pair 9 8))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
         "struct vector macro set in place")
       (pvec.set (&mut v) 20 (Pair 7 7))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
         "struct vector macro out-of-range set is no-op"))))
@@ -56,7 +56,7 @@
     [v : pvec.Vec (vector-macro-pair-fill 3)]
     (begin
       (pvec.reverse! (&mut v))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (pair-score (pvec.get (& v) 0 (Pair 0 0)))
         23
         "struct vector reverse mutates first slot")
@@ -64,14 +64,14 @@
         [mapped : pvec.Vec (pvec.map (& v) pair-swap)]
         [snapshot : (Array Pair) (pvec.to-array (& mapped))]
         (begin
-          (assert-i64-eq
+          (test.assert-i64-eq
             (pair-score (array-ref snapshot 0))
             32
             "struct vector map snapshots aggregate")
           (match (pvec.pop (&mut v))
             [(pvec.Pop.Ok value)
               (begin
-                (assert-i64-eq (pair-score value) 1 "struct vector pop value")
-                (assert-i64-eq (pvec.len (& v)) 2 "struct vector pop shrinks"))]
+                (test.assert-i64-eq (pair-score value) 1 "struct vector pop value")
+                (test.assert-i64-eq (pvec.len (& v)) 2 "struct vector pop shrinks"))]
             [pvec.Pop.Empty
-              (assert-true false "struct vector pop should return a value")]))))))
+              (test.assert-true false "struct vector pop should return a value")]))))))

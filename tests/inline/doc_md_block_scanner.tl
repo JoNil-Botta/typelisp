@@ -1,5 +1,7 @@
 ;; doc_md_block_scanner.tl - Inline coverage for #1276's Markdown block scanner.
 (import stdlib.io)
+;; Retained for #2454 path-import compatibility: doc_md.tl is a raw tool source
+;; fixture without a resolvable top-level module name.
 (import "../../tools/doc-site/doc_md.tl")
 
 (define (doc-md-assert-i64-eq

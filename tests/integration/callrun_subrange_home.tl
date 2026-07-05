@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for SplitKit Phase B (#154): caller-saved call-run sub-range
 ;; homing of a spilled call-spanning pointer.
@@ -22,7 +22,7 @@
 ;;
 ;; SOUNDNESS GUARD: if Phase B homes `p` in a register that a call clobbers, or
 ;; reconstructs the wrong sub-range, the sum is wrong -> exit 1. Inputs derive
-;; from (arg-count) so the optimizer cannot constant-fold the calls/derefs away,
+;; from (io.arg-count) so the optimizer cannot constant-fold the calls/derefs away,
 ;; and `expected` is a straight-line closed form -- a reconstruction guard the
 ;; pointer-heavy self-host fixpoint cannot provide.
 (define (clobber [x : i64]) : i64
@@ -59,7 +59,7 @@
 
 (define (main) : i64
   (let
-    [ac : i64 (arg-count)]
+    [ac : i64 (io.arg-count)]
     [p : (Array i64) (make-array i64 3)]
     (begin
       (array-set! p 0 (+ ac 10))

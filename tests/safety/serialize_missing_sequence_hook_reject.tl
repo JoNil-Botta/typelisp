@@ -1,5 +1,5 @@
 (import stdlib.serialize)
-(import "serialize_missing_sequence_hook_format.tl" module serialize_missing_sequence_hook_format as bad)
+(import serialize_missing_sequence_hook_format as bad)
 
 (defstruct Sample
   (items (Array i64 2)))

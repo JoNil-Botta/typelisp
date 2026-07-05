@@ -3,9 +3,9 @@
 (defmacro (profile-generated-import-module) : Module
   `(begin
     (module generated.profile_generated_import)
-    (import "stdlib/string.tl")
+    (import stdlib.string)
     (define (answer) : i64
-      (if (eq "ok" "ok")
+      (if (string.eq "ok" "ok")
         42
         1))))
 

@@ -1,5 +1,5 @@
 (import stdlib.thread)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let

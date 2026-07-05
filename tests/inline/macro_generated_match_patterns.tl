@@ -1,5 +1,5 @@
 ;; macro_generated_match_patterns.tl - public comptime Pattern API coverage (#3977).
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.comptime)
 
 (defenum GeneratedChoice
@@ -41,15 +41,15 @@
 (test
   generated-enum-match-pattern-api
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (generated-choice-score (GeneratedEmpty))
       0
       "generated match handles qualified nullary variant pattern")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (generated-choice-score (GeneratedOne 42))
       42
       "generated match binds unary enum payload")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (generated-choice-score (GeneratedPair 20 22))
       42
       "generated match binds binary enum payloads")))

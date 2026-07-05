@@ -1,5 +1,5 @@
-(import "stdlib/io.tl")
-(import "stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length (arg 99)))
+  (string-length (io.arg 99)))

@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP2b-v2: sound emergency-scavenge restore before a
 ;; switch-dispatch indirect jump.
@@ -206,8 +206,8 @@
       (array-set! p 4 (Op4))
       (array-set! p 5 (Op5))
       (let
-        [n : i64 (+ (arg-count) 300)]
-        [seed : i64 (+ (arg-count) 5)]
+        [n : i64 (+ (io.arg-count) 300)]
+        [seed : i64 (+ (io.arg-count) 5)]
         [rs : i64 (run-switch p 6 n seed)]
         [rr : i64 (run-ref n seed)]
         (if (= rs rr)

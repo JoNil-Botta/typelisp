@@ -4,7 +4,7 @@
 ;; proves the disambiguation rule: a genuine zero-arg `define`d function `(bias)`
 ;; still CALLS the function (it is bound as a function type, not an enum type),
 ;; while `(Red)` / `(Green)` construct their nullary variants.
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (defenum Color
   (Red)
@@ -19,7 +19,7 @@
     [(Green) 2]
     [(RGB v) v]))
 
-;; A real zero-arg function — NOT an enum variant. `(bias)` must dispatch to this
+;; A real zero-arg function ??? NOT an enum variant. `(bias)` must dispatch to this
 ;; function (returns 30), proving the nullary-variant call form does not shadow
 ;; ordinary zero-arg function calls.
 (define (bias) : i64

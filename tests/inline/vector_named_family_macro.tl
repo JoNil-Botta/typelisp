@@ -1,6 +1,6 @@
 ;; vector_named_family_macro.tl - named generated vector-family coverage (#3305).
-(import "stdlib/test.tl")
-(import "stdlib/vector.tl")
+(import stdlib.test)
+(import stdlib.vector)
 
 (defstruct VecFamilyPoint
   (x i64)
@@ -16,9 +16,9 @@
 (define (vec-family-span-end [s : VecFamilySpan]) : i64
   (+ (struct-get s start) (struct-get s len)))
 
-(family VecFamilyPoint VecFamilyPointVec vec-family-point-vec)
+(vector.family VecFamilyPoint VecFamilyPointVec vec-family-point-vec)
 
-(family VecFamilySpan VecFamilySpanVec vec-family-span-vec)
+(vector.family VecFamilySpan VecFamilySpanVec vec-family-span-vec)
 
 (test
   named-vector-family-two-local-aggregate-families
@@ -29,28 +29,28 @@
       (vec-family-point-vec-push (&mut points) (VecFamilyPoint 1 2))
       (vec-family-point-vec-push (&mut points) (VecFamilyPoint 3 4))
       (vec-family-span-vec-push (&mut spans) (VecFamilySpan 5 7))
-      (assert-i64-eq (vec-family-point-vec-len (& points)) 2 "point family len")
-      (assert-i64-eq
+      (test.assert-i64-eq (vec-family-point-vec-len (& points)) 2 "point family len")
+      (test.assert-i64-eq
         (vec-family-point-vec-capacity (& points))
         2
         "point family grew")
-      (assert-i64-eq
+      (test.assert-i64-eq
         (vec-family-point-score
           (vec-family-point-vec-get (& points) 1 (VecFamilyPoint 0 0)))
         34
         "point family get")
       (vec-family-point-vec-set! (&mut points) 0 (VecFamilyPoint 9 8))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (vec-family-point-score
           (vec-family-point-vec-get (& points) 0 (VecFamilyPoint 0 0)))
         98
         "point family set!")
-      (assert-i64-eq (vec-family-span-vec-len (& spans)) 1 "span family len")
-      (assert-i64-eq
+      (test.assert-i64-eq (vec-family-span-vec-len (& spans)) 1 "span family len")
+      (test.assert-i64-eq
         (vec-family-span-vec-capacity (& spans))
         4
         "span family default capacity")
-      (assert-i64-eq
+      (test.assert-i64-eq
         (vec-family-span-end
           (vec-family-span-vec-get (& spans) 0 (VecFamilySpan 0 0)))
         12

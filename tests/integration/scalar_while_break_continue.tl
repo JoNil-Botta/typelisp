@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_region_mark) : u64)
 
@@ -56,7 +56,7 @@
         (with-arena
           scratch
           (let
-            [text : String (append "break" "arena")]
+            [text : String (string.append "break" "arena")]
             (begin
               (set! observed (string-length text))
               (break)))))
@@ -74,7 +74,7 @@
           (with-arena
             scratch
             (let
-              [text : String (append "continue" "arena")]
+              [text : String (string.append "continue" "arena")]
               (begin
                 ;; lint-allow: unit-if-guard
                 (if (< i 5)

@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING / SOUNDNESS test for SplitKit M5 -- CSR-ACROSS-THE-CALL via occupant
 ;; liberation (design 3.2). A call-spanning value V is used AFTER a real
@@ -24,7 +24,7 @@
 ;;              builds where occ's CSR is not liberated, hot uses whatever CSR is
 ;;              free or reloads per use -- still CORRECT, just fewer reloads saved.)
 ;;
-;; CORRECTNESS GUARD: closed form computed by hand and seeded from (arg-count) so the
+;; CORRECTNESS GUARD: closed form computed by hand and seeded from (io.arg-count) so the
 ;; optimizer cannot constant-fold the calls away. If the allocator mis-models the
 ;; occupant liberation (reloads a stale slot, clobbers hot across call2, or fails to
 ;; reload occ after the region), the sum is wrong -> exit 1.
@@ -63,7 +63,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (csr n)]
     ;; a+b+c+d+occ = 5n+15 ; (clobber n)=n+1 each of 3 calls = 3n+3
     ;; a+b+c+d = 4n+10 ; 4*hot = 4n+400 ; occ = n+5

@@ -41,7 +41,9 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
-(import "stdlib/io.tl")
+;; Retained for #2454 path-import compatibility: this fixture intentionally uses
+;; the co-located token module as a flat multi-file program slice.
+(import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import "token.tl")
@@ -108,7 +110,7 @@
     [(= c '/') Token.Slash]
     [(= c '(') Token.LParen]
     [(= c ')') Token.RParen]
-    [else (panic "lexer: unexpected character")]))
+    [else (io.panic "lexer: unexpected character")]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is the shape of a real lexer: a cursor over the input, a
@@ -184,7 +186,7 @@
 (define (expect [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)] [want : i64]) : unit
   (if (= (current-tag toks cur) want)
     (advance cur)
-    (panic "parser: unexpected token")))
+    (io.panic "parser: unexpected token")))
 
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
@@ -207,7 +209,7 @@
             (begin
               (expect toks cur (tag-rparen))
               inner)))
-        (panic "parser: expected an integer or '('")))))
+        (io.panic "parser: expected an integer or '('")))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `Expr.Mul`/`Expr.Div` nodes over the

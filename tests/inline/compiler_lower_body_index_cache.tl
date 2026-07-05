@@ -1,6 +1,8 @@
 ;; Regression for stale lowerer global-name cache use during prune body indexing.
 (import stdlib.io)
-(import "stdlib/test.tl")
+(import stdlib.test)
+;; Retained for #2454 path-import compatibility: compiler_lower.tl is raw source
+;; without a resolvable top-level module name.
 (import "../../src/compiler_lower.tl")
 
 (define (compiler-lower-body-index-cache-regression) : i64
@@ -23,7 +25,7 @@
 
 (test
   compiler-lower-body-index-cache
-  (assert-i64-eq
+  (test.assert-i64-eq
     (compiler-lower-body-index-cache-regression)
     42
     "module body index should resolve helpers through a fresh global cache"))

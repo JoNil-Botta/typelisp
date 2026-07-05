@@ -7,7 +7,7 @@
 ;; calls the `grow` helper. Lowering must therefore keep and resolve generated
 ;; module bodies, including unqualified helper calls inside the generated
 ;; module, rather than pruning those bodies after typecheck succeeds.
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defmacro (int-vector-module) : Module
   `(begin
@@ -84,8 +84,8 @@
   (let
     [v : iv.IntVec (iv.int-vec-new)]
     (begin
-      (assert-i64-eq (iv.int-vec-len v) 0 "fresh generated vector is empty")
-      (assert-i64-eq
+      (test.assert-i64-eq (iv.int-vec-len v) 0 "fresh generated vector is empty")
+      (test.assert-i64-eq
         (iv.int-vec-capacity v)
         4
         "fresh generated vector reserves 4"))))
@@ -95,38 +95,38 @@
   (let
     [v : iv.IntVec (int-vec-fill 10)]
     (begin
-      (assert-i64-eq
+      (test.assert-i64-eq
         (iv.int-vec-len v)
         10
         "push tracks length past initial capacity")
-      (assert-true
+      (test.assert-true
         (> (iv.int-vec-capacity v) 4)
         "capacity doubles when pushing past the initial reservation")
-      (assert-i64-eq (iv.int-vec-get v 0) 0 "element 0 survives growth")
-      (assert-i64-eq (iv.int-vec-get v 7) 49 "element 7 survives growth")
-      (assert-i64-eq (iv.int-vec-get v 9) 81 "last element survives growth"))))
+      (test.assert-i64-eq (iv.int-vec-get v 0) 0 "element 0 survives growth")
+      (test.assert-i64-eq (iv.int-vec-get v 7) 49 "element 7 survives growth")
+      (test.assert-i64-eq (iv.int-vec-get v 9) 81 "last element survives growth"))))
 
 (test
   generated-module-vector-set-overwrites
   (let
     [v : iv.IntVec (iv.int-vec-set (int-vec-fill 5) 2 999)]
     (begin
-      (assert-i64-eq (iv.int-vec-get v 2) 999 "set overwrites the indexed slot")
-      (assert-i64-eq (iv.int-vec-get v 1) 1 "set leaves neighbours intact")
-      (assert-i64-eq (iv.int-vec-len v) 5 "set preserves length"))))
+      (test.assert-i64-eq (iv.int-vec-get v 2) 999 "set overwrites the indexed slot")
+      (test.assert-i64-eq (iv.int-vec-get v 1) 1 "set leaves neighbours intact")
+      (test.assert-i64-eq (iv.int-vec-len v) 5 "set preserves length"))))
 
 (test
   generated-module-vector-extra-body-forms-round-trip
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (iv.int-vec-fixed-array-probe)
       6
       "generated typed fixed array binding round-trips")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (iv.int-vec-scalar-probe-score 0)
       10
       "generated scalar match handles literal pattern")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (iv.int-vec-scalar-probe-score 2)
       30
       "generated scalar match handles wildcard pattern")))

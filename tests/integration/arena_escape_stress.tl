@@ -10,7 +10,7 @@
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_alloc [arg0 : u64]) : u64)
 
@@ -27,9 +27,9 @@
     unit))
 
 (define (payload [seed : i64] [idx : i64]) : String
-  (append
-    (append "arena-stress:" (int->string seed))
-    (append ":" (int->string idx))))
+  (string.append
+    (string.append "arena-stress:" (string.int->string seed))
+    (string.append ":" (string.int->string idx))))
 
 (define (make-list [count : i64] [seed : i64]) : StressList
   (if (= count 0)
@@ -42,7 +42,7 @@
     [(StressCons head rest)
       (and
         (> count 0)
-        (eq head (payload seed count))
+        (string.eq head (payload seed count))
         (list-ok? (box-get rest) (- count 1) seed))]))
 
 (define (escape-string [seed : i64]) : String
@@ -123,7 +123,7 @@
     (let
       [escaped : String (escape-string n)]
       [noise : StressList (escape-list 8 (+ n 1000))]
-      (if (and (eq escaped (payload n 999)) (list-ok? noise 8 (+ n 1000)))
+      (if (and (string.eq escaped (payload n 999)) (list-ok? noise 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
         0))))
 
@@ -133,7 +133,7 @@
     (let
       [items : StressList (escape-list 96 n)]
       [after : String (escape-string (+ n 2000))]
-      (if (and (list-ok? items 96 n) (eq after (payload (+ n 2000) 999)))
+      (if (and (list-ok? items 96 n) (string.eq after (payload (+ n 2000) 999)))
         (list-cycles (- n 1) (+ acc 1))
         0))))
 

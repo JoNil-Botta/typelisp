@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for SplitKit step 1 -- redefined write-back for single-block
 ;; self-loops (the un-deaded bidirectional OUT-copy path in the loop-split).
@@ -38,7 +38,7 @@
 ;; CORRECTNESS GUARD: every accumulator is read AND written every iteration through
 ;; the self-loop. If the redefined-path gate relaxation, the coalesced-group remap,
 ;; or (when a register frees up) the OUT store-back mis-reconstructs ANY accumulator
-;; the sum is wrong -> exit 1. The seed comes from (arg-count) so the optimizer
+;; the sum is wrong -> exit 1. The seed comes from (io.arg-count) so the optimizer
 ;; cannot constant-fold the loop, and `expected` is a closed form (no loop) -- a
 ;; reconstruction guard the pointer-heavy self-host fixpoint cannot provide, and a
 ;; regression anchor for step 2 when the homing completes.
@@ -105,7 +105,7 @@
 
 (define (main) : i64
   (let
-    [s : i64 (arg-count)]
+    [s : i64 (io.arg-count)]
     [r : i64 (acc-loop 0 0 s)]
     ;; closed form: sum_J (s + J + 1) + 16 * sum_{i=0}^{999} i
     ;;            = 16*s + (1+2+...+16) + 16 * (999*1000/2)

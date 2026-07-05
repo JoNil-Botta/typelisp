@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP3a: shift-by-CONSTANT is not a param-pin clobber point.
 ;;
@@ -45,8 +45,8 @@
     ;; i=2: acc=27 -> +13=40  -> 40          -> +8  =48  -> +5 =53
     ;; i=3: acc=53 -> +26=79  -> 79          -> +12 =91  -> +5 =96
     ;; result = 96 + n = 100
-    [a : i64 (+ (arg-count) 4)]
-    [n : i64 (+ (arg-count) 3)]
+    [a : i64 (+ (io.arg-count) 4)]
+    [n : i64 (+ (io.arg-count) 3)]
     [r : i64
       (if (> n 100)
         (poke shift-mix a n)

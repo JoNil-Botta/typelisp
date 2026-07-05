@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING / CORRECTNESS test for LLVM-style loop-carry phi coalescing -- mirrors
 ;; quicksort's `qs_partition` shape: a value (`store`) carried across a loop whose
@@ -20,7 +20,7 @@
 ;; homing mis-reconstructs `store` (reads a clobbered caller-saved reg across the
 ;; call, or the wrong sub-range), the count is wrong -> exit 1. The expected value
 ;; is a closed form (count of scan < threshold), a reconstruction guard the
-;; pointer-heavy self-host fixpoint cannot provide. Seeded from (arg-count) so the
+;; pointer-heavy self-host fixpoint cannot provide. Seeded from (io.arg-count) so the
 ;; optimizer cannot constant-fold the loop away.
 ;; Recursive on purpose: the opt-2 leaf-inliner would inline a trivial leaf and
 ;; delete the call, defeating the call-spanning shape. A self-recursive function
@@ -50,7 +50,7 @@
 
 (define (main) : i64
   (let
-    [s : i64 (arg-count)]
+    [s : i64 (io.arg-count)]
     [n : i64 1000]
     [xs : (Array i64) (array.make-array i64 1000)]
     [i : i64 0]

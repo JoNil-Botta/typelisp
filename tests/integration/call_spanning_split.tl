@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for #79 (per-var call-spanning live-range split). Eight values
 ;; a..h are computed before the loop and used INSIDE it, AFTER a call (clobber)
@@ -10,7 +10,7 @@
 ;; call). If the split mis-reconstructs ANY of the eight (reads a clobbered reg,
 ;; or the wrong sub-range), the sum is wrong -> exit 1. This is the correctness
 ;; guard the pointer-heavy self-host fixpoint cannot provide. Values come from
-;; (arg-count) so the optimizer cannot constant-fold the calls away. Correct
+;; (io.arg-count) so the optimizer cannot constant-fold the calls away. Correct
 ;; both before (overlapping values spill) and after (each gets its own
 ;; caller-saved register) the generalization -- a reconstruction regression guard.
 ;; Recursive on purpose: the opt-2 leaf-inliner inlines a trivial (+ x 1) leaf,
@@ -50,7 +50,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r : i64 (spanning n)]
     ;; n=1: a..h = 2..9, sum = 44; loop i=0..3 adds 44 (pre-call) + (i+1)
     ;; (clobber) + 44 (post-call) = 89 + i per iteration.

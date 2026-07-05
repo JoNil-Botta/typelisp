@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.array)
 
 ;; FORCING TEST for SCAV2 (backend descriptor-CSE of repeated global-handle

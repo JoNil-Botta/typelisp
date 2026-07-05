@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main [cell : (Box String)]) : i64
   (let

@@ -1,6 +1,6 @@
 ;: SPEC safe-code contract: references tied to visible lifetimes and scoped
 ;: arena allocations that return region-free scalars are valid safe code.
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (take-ref [r : (& n i64)]) : unit
   unit)
@@ -13,5 +13,5 @@
       (with-arena
         phase
         (let
-          [text : String (int->string n)]
+          [text : String (string.int->string n)]
           (string-length text))))))

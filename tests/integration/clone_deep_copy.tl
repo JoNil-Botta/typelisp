@@ -1,6 +1,6 @@
 (import stdlib.array)
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (defstruct Bundle
   (name String)
@@ -25,30 +25,30 @@
 
 (define (bundle-score [bundle : Bundle]) : i64
   (+
-    (score-bool (eq (struct-get bundle name) "name"))
+    (score-bool (string.eq (struct-get bundle name) "name"))
     (+
-      (score-bool (eq (tuple-ref (struct-get bundle pair) 0) "t0"))
+      (score-bool (string.eq (tuple-ref (struct-get bundle pair) 0) "t0"))
       (+
-        (score-bool (eq (tuple-ref (struct-get bundle pair) 1) "t1"))
+        (score-bool (string.eq (tuple-ref (struct-get bundle pair) 1) "t1"))
         (+
-          (score-bool (eq (array-ref (struct-get bundle fixed) 0) "f0"))
+          (score-bool (string.eq (array-ref (struct-get bundle fixed) 0) "f0"))
           (+
-            (score-bool (eq (array-ref (struct-get bundle fixed) 1) "f1"))
+            (score-bool (string.eq (array-ref (struct-get bundle fixed) 1) "f1"))
             (+
-              (score-bool (eq (array-ref (struct-get bundle items) 0) "d0"))
-              (score-bool (eq (array-ref (struct-get bundle items) 1) "d1")))))))))
+              (score-bool (string.eq (array-ref (struct-get bundle items) 0) "d0"))
+              (score-bool (string.eq (array-ref (struct-get bundle items) 1) "d1")))))))))
 
 (define (make-bundle [items : (Array String)]) : Bundle
   (Bundle
-    (append "na" "me")
-    (tuple (append "t" "0") (append "t" "1"))
-    (array (append "f" "0") (append "f" "1"))
+    (string.append "na" "me")
+    (tuple (string.append "t" "0") (string.append "t" "1"))
+    (array (string.append "f" "0") (string.append "f" "1"))
     items))
 
 (define (make-list) : StringList
   (StringList.Cons
-    (append "a" "a")
-    (box (StringList.Cons (append "b" "bb") (box StringList.Nil)))))
+    (string.append "a" "a")
+    (box (StringList.Cons (string.append "b" "bb") (box StringList.Nil)))))
 
 (define (copy-from-scratch [home : arena.Arena] [scratch : arena.Arena]) : i64
   (begin
@@ -57,8 +57,8 @@
     (let
       [items : (Array String) (array.make-array String 2)]
       (begin
-        (array-set! items 0 (append "d" "0"))
-        (array-set! items 1 (append "d" "1"))
+        (array-set! items 0 (string.append "d" "0"))
+        (array-set! items 1 (string.append "d" "1"))
         (let
           [bundle : Bundle (make-bundle items)]
           [list : StringList (make-list)]

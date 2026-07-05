@@ -2,7 +2,7 @@
 (import stdlib.arena)
 (import stdlib.sync)
 (import stdlib.thread)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define sync-string-integration-count : i64
   48)
@@ -46,7 +46,7 @@
     [(sync.ChannelStringRecvErr _) fallback]))
 
 (define (sync-string-integration-message [index : i64]) : String
-  (append "message:" (int->string index)))
+  (string.append "message:" (string.int->string index)))
 
 (define (sync-string-integration-expected-sum [count : i64]) : i64
   (let
@@ -78,7 +78,7 @@
               (sync.channel-string-recv channel)
               "missing")]
           [expected : String (sync-string-integration-message i)]
-          (if (eq value expected)
+          (if (string.eq value expected)
             (begin
               (set! sum (+ sum (string-length value)))
               (set! i (+ i 1)))

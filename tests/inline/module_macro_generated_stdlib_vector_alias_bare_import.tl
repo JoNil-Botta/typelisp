@@ -1,6 +1,6 @@
 ;; module_macro_generated_stdlib_vector_alias_bare_import.tl - dotted imports
 ;; expose their self-named module macro for bare `(import (vector T) ...)` calls.
-(import "stdlib/test.tl")
+(import stdlib.test)
 (import stdlib.vector)
 
 (defstruct Pair
@@ -38,25 +38,25 @@
   dotted-stdlib-vector-import-exposes-bare-vector-module-macro
   (let
     [items : direct.Vec (direct.new)]
-    (assert-i64-eq (direct.len (& items)) 0 "dotted stdlib vector bare import")))
+    (test.assert-i64-eq (direct.len (& items)) 0 "dotted stdlib vector bare import")))
 
 (test
   generated-module-body-imports-dotted-stdlib-vector-then-bare-vector
-  (assert-i64-eq
+  (test.assert-i64-eq
     (user.score 7 0)
     42
     "generated body dotted stdlib vector bare import"))
 
 (test
   generated-module-body-imports-dotted-stdlib-vector-string
-  (assert-i64-eq
+  (test.assert-i64-eq
     (string-user.score "alpha" "fallback")
     42
     "generated body dotted stdlib vector bare import string"))
 
 (test
   generated-module-body-imports-dotted-stdlib-vector-struct
-  (assert-i64-eq
+  (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
     "generated body dotted stdlib vector bare import struct"))

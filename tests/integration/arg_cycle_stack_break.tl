@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; SCAV1 forcing fixture -- the argument parallel-move CYCLE-BREAK temp.
 ;;
@@ -21,7 +21,7 @@
 ;; that the program still returns 42 (the stack rotation is correct).
 ;;
 ;; Run normally (register-temp break) it is a runtime regression guard on
-;; argument-cycle correctness. Values come from (arg-count) so the optimizer
+;; argument-cycle correctness. Values come from (io.arg-count) so the optimizer
 ;; cannot fold the calls away and must emit the real call + marshalling.
 ;; 2-cycle: %rdi<->%rsi.
 (define (c2-callee [x : i64] [y : i64]) : i64
@@ -63,7 +63,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [r2 : i64 (c2-caller (* n 3) (* n 7))]
     [r3 : i64 (c3-caller (* n 1) (* n 2) (* n 3))]
     [r6 : i64 (c6-caller (* n 1) (* n 2) (* n 3) (* n 4) (* n 5) (* n 6))]

@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for GAP5 (post-emission dead frame-store sweep).
 ;;
@@ -18,7 +18,7 @@
 ;; asserts grab's body contains ZERO `movq %rax, N(%rsp)` frame stores (FAILS
 ;; on the pre-GAP5 compiler, which emits the orphaned store -- proven forcing).
 ;;
-;; `relay` forwards the previous call's result straight into a tail call (arg
+;; `relay` forwards the previous call's result straight into a tail call (io.arg
 ;; register), a second peephole-orphaned-store shape (the dst-home store's
 ;; only read is forwarded to %rdi). `keep` sums both so neither is DCE'd.
 (define (grab [seed : i64]) : i64

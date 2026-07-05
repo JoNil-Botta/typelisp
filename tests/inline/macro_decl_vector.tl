@@ -7,7 +7,7 @@
 ;; make-array, array-ref/array-set!, let, while, and set!, all of which the
 ;; module-scope macro-output serializer must round-trip back to declarations.
 ;; These inline tests build and run the generated code on the host compiler.
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (defmacro (int-vector-family) : Decls
   `(begin
@@ -115,37 +115,37 @@
   (let
     [v : IntVec (int-vec-new)]
     (begin
-      (assert-i64-eq (int-vec-len v) 0 "fresh generated vector is empty")
-      (assert-i64-eq (int-vec-capacity v) 4 "fresh generated vector reserves 4"))))
+      (test.assert-i64-eq (int-vec-len v) 0 "fresh generated vector is empty")
+      (test.assert-i64-eq (int-vec-capacity v) 4 "fresh generated vector reserves 4"))))
 
 (test
   generated-vector-push-grows-past-capacity
   (let
     [v : IntVec (int-vec-fill 10)]
     (begin
-      (assert-i64-eq
+      (test.assert-i64-eq
         (int-vec-len v)
         10
         "push tracks length past initial capacity")
-      (assert-true
+      (test.assert-true
         (> (int-vec-capacity v) 4)
         "capacity doubles when pushing past the initial reservation")
-      (assert-i64-eq (int-vec-get v 0) 0 "element 0 survives growth")
-      (assert-i64-eq (int-vec-get v 7) 49 "element 7 survives growth")
-      (assert-i64-eq (int-vec-get v 9) 81 "last element survives growth"))))
+      (test.assert-i64-eq (int-vec-get v 0) 0 "element 0 survives growth")
+      (test.assert-i64-eq (int-vec-get v 7) 49 "element 7 survives growth")
+      (test.assert-i64-eq (int-vec-get v 9) 81 "last element survives growth"))))
 
 (test
   generated-vector-set-overwrites
   (let
     [v : IntVec (int-vec-set (int-vec-fill 5) 2 999)]
     (begin
-      (assert-i64-eq (int-vec-get v 2) 999 "set overwrites the indexed slot")
-      (assert-i64-eq (int-vec-get v 1) 1 "set leaves neighbours intact")
-      (assert-i64-eq (int-vec-len v) 5 "set preserves length"))))
+      (test.assert-i64-eq (int-vec-get v 2) 999 "set overwrites the indexed slot")
+      (test.assert-i64-eq (int-vec-get v 1) 1 "set leaves neighbours intact")
+      (test.assert-i64-eq (int-vec-len v) 5 "set preserves length"))))
 
 (test
   generated-vector-fixed-array-type-round-trips
-  (assert-i64-eq
+  (test.assert-i64-eq
     (int-vec-fixed-array-probe)
     6
     "generated typed fixed array binding round-trips"))
@@ -153,30 +153,30 @@
 (test
   generated-vector-match-round-trips
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (int-vec-probe-score (IntVecProbeEmpty))
       0
       "generated match handles nullary variant")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (int-vec-probe-score (IntVecProbeValue 41))
       42
       "generated match binds payload")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (int-vec-scalar-probe-score 0)
       10
       "generated match handles literal pattern")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (int-vec-scalar-probe-score 2)
       30
       "generated match handles wildcard pattern")
-    (assert-i64-eq
+    (test.assert-i64-eq
       (int-vec-binding-probe-score 39)
       42
       "generated match handles binding pattern")))
 
 (test
   generated-vector-derived-prefix-names
-  (assert-i64-eq
+  (test.assert-i64-eq
     (lsp-decl-list-push (lsp-decl-list-new))
     42
     "declaration macro derives identifiers from prefix strings"))

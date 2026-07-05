@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 ;; FORCING TEST for M-B part 1: dead call-result store elision. `poke` returns
 ;; unit and is recursive on purpose (the opt2 leaf-inliner cannot delete the
@@ -30,7 +30,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (+ (arg-count) 3)]
+    [n : i64 (+ (io.arg-count) 3)]
     [r : i64 (spin n)]
     ;; n=4 (no args): acc = 3*(0+1+2+3) = 18.
     (if (= r 18)

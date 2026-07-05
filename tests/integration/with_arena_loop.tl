@@ -4,7 +4,7 @@
 ; region-free scalar (a length), so the reset is safe.
 ; Tail-recursive loop: each iteration allocates a fresh String inside the region
 ; and resets it, accumulating only the (region-free) length.
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (sum-lengths [n : i64] [acc : i64]) : i64
   (if (= n 0)
@@ -16,7 +16,7 @@
         (with-arena
           r
           (let
-            [s : String (append "ab" "cd")]
+            [s : String (string.append "ab" "cd")]
             (string-length s)))))))
 
 ; Nested regions: the inner region resets before the outer one. Both bodies
@@ -25,13 +25,13 @@
   (with-arena
     outer
     (let
-      [a : String (append "x" "y")]
+      [a : String (string.append "x" "y")]
       (+
         (string-length a)
         (with-arena
           inner
           (let
-            [b : String (append "p" "q")]
+            [b : String (string.append "p" "q")]
             (string-length b)))))))
 
 (define (main) : i64

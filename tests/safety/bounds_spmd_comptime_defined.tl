@@ -1,7 +1,7 @@
 ;: SPEC safe-code contract: in-bounds collection access, checked aggregate
 ;: construction, race-free SPMD, and valid comptime values have defined results.
 (import stdlib.array)
-(import "stdlib/string.tl")
+(import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -21,7 +21,7 @@
       (fill items 3)
       (cond
         [(!= (array-ref items 2) 3) 1]
-        [(!= (string-length (substring "abcdef" 1 3)) 3) 2]
+        [(!= (string-length (string.substring "abcdef" 1 3)) 3) 2]
         [(!= (+ (struct-get p x) (struct-get p y)) 42) 3]
         [(!=
             (match m

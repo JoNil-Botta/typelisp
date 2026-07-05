@@ -1,7 +1,7 @@
 (import stdlib.arena)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (atomic-arena-join-code [worker : thread_i64.Handle]) : i64
   (match (thread_i64.join worker)
@@ -11,9 +11,9 @@
 (define (main) : i64
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [kept : String (in-arena owner (append "kept" "-value"))]
+    [kept : String (in-arena owner (string.append "kept" "-value"))]
     [phase : arena.ArenaPhase (arena.phase owner)]
-    [temp : String (in-arena owner (append "temp" "-value"))]
+    [temp : String (in-arena owner (string.append "temp" "-value"))]
     [temp-len : i64 (string-length temp)]
     (match (thread_i64.spawn
       (lambda () : i64

@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (tl_alloc [arg0 : u64]) : u64)
 (extern (tl_region_mark) : u64)
@@ -6,9 +6,9 @@
 
 (define (main) : i64
   (let
-    [before : String (append "a" "b")]
+    [before : String (string.append "a" "b")]
     [m : u64 (tl_region_mark)]
     (begin
       (tl_alloc (cast 67108864 : u64))
       (tl_region_reset m)
-      (string-length (append before "c")))))
+      (string-length (string.append before "c")))))

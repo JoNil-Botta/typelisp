@@ -227,10 +227,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_passes|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|"
+# The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
+# expansion is a single demand-driven pass, so the fixed_point_* counters no
+# longer exist.
+assert_not_contains "$CHECK_STDERR" "typecheck.macro.fixed_point_"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.hits|"
@@ -252,10 +252,13 @@ assert_contains_in \
     "compile-profile-detail|typecheck.macro_expand|" \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
+# Single demand-driven pass: both family instantiations expand in the one walk,
+# so a single macro-walk profile block reports calls=2 (a re-expansion would
+# inflate the count or add blocks).
 assert_line_count_in \
     "$VECTOR_STDERR" \
-    "stdlib.vector/family arity=3 calls=1" \
-    2 \
+    "stdlib.vector/family arity=3 calls=2" \
+    1 \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
 
@@ -268,38 +271,12 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl 
     fail "profiled generated import fixture check failed"
 fi
 
-assert_contains_in \
+# The generated module imports stdlib.string; the single demand-driven pass
+# loads and forces that file import inline (there is no fixed-point loop or
+# follow-up worklist to fall back to).
+assert_not_contains_in \
     "$GEN_IMPORT_STDERR" \
-    "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|" \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_contains_in \
-    "$GEN_IMPORT_STDERR" \
-    "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|" \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$GEN_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_passes" \
-    1 \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$GEN_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_needs_followup" \
-    0 \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$GEN_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_generated_imports" \
-    0 \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$GEN_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_module_placeholders" \
-    0 \
+    "typecheck.macro.fixed_point_" \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
 
@@ -317,28 +294,9 @@ assert_contains_in \
     "stdlib.result/result arity=2 calls=1" \
     "$RESULT_IMPORT_STDOUT" \
     "$RESULT_IMPORT_STDERR"
-assert_profile_counter_eq_in \
+assert_not_contains_in \
     "$RESULT_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_passes" \
-    1 \
-    "$RESULT_IMPORT_STDOUT" \
-    "$RESULT_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$RESULT_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_needs_followup" \
-    0 \
-    "$RESULT_IMPORT_STDOUT" \
-    "$RESULT_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$RESULT_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_generated_imports" \
-    0 \
-    "$RESULT_IMPORT_STDOUT" \
-    "$RESULT_IMPORT_STDERR"
-assert_profile_counter_eq_in \
-    "$RESULT_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_followup_module_placeholders" \
-    0 \
+    "typecheck.macro.fixed_point_" \
     "$RESULT_IMPORT_STDOUT" \
     "$RESULT_IMPORT_STDERR"
 
@@ -379,16 +337,12 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_ine
     fail "profiled inert generated import fixture check failed"
 fi
 
-assert_profile_counter_at_least_in \
+# The generated module imports a source file by path; the single
+# demand-driven pass loads it inline (the multi-pass materialization
+# fallback this fixture used to exercise is gone).
+assert_not_contains_in \
     "$GEN_IMPORT_INERT_STDERR" \
-    "typecheck.macro.fixed_point_passes" \
-    2 \
-    "$GEN_IMPORT_INERT_STDOUT" \
-    "$GEN_IMPORT_INERT_STDERR"
-assert_profile_counter_eq_in \
-    "$GEN_IMPORT_INERT_STDERR" \
-    "typecheck.macro.fixed_point_followup_generated_imports" \
-    0 \
+    "typecheck.macro.fixed_point_" \
     "$GEN_IMPORT_INERT_STDOUT" \
     "$GEN_IMPORT_INERT_STDERR"
 
@@ -415,31 +369,13 @@ assert_contains_in \
     "compile-profile|typecheck.macro.generated_module_memo_hits|" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
-assert_contains_in \
+# The demand-driven walk forces the generated module import inline in a single
+# traversal, and the repeated structurally-identical import resolves through
+# the program-global memo as a memo hit rather than a re-expand. The fixed-point
+# loop and its follow-up counters are deleted.
+assert_not_contains_in \
     "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_contains_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-# Plan P3 (C3.1/C3.2): the demand-driven walk forces the generated module import
-# inline in a single traversal, and the repeated structurally-identical import
-# resolves through the program-global memo as a memo hit rather than a re-expand.
-# So this fixture now converges in one pass with no follow-up work -- it no longer
-# exercises a second whole-program pass or module-placeholder follow-up.
-assert_profile_counter_eq_in \
-    "$REPLAY_STDERR" \
-    "typecheck.macro.fixed_point_passes" \
-    1 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_profile_counter_eq_in \
-    "$REPLAY_STDERR" \
-    "typecheck.macro.fixed_point_followup_module_placeholders" \
-    0 \
+    "typecheck.macro.fixed_point_" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 assert_profile_counter_at_least_in \

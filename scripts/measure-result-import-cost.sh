@@ -621,10 +621,6 @@ if [ "$RUN_PROFILE" -eq 1 ]; then
         variant_profile="$WORKDIR/profile/$variant.profile.tsv"
         append_counter_delta "$variant" typecheck.macro.generated_module_materializations "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
         append_counter_delta "$variant" typecheck.macro.generated_module_memo_hits "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
-        append_counter_delta "$variant" typecheck.macro.fixed_point_passes "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
-        append_counter_delta "$variant" typecheck.macro.fixed_point_followup_needs_followup "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
-        append_counter_delta "$variant" typecheck.macro.fixed_point_followup_generated_imports "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
-        append_counter_delta "$variant" typecheck.macro.fixed_point_followup_module_placeholders "$WORKDIR/profile/base.profile.tsv" "$variant_profile"
     done
 
     echo "[result-import-cost] profile summary: $PROFILE_SUMMARY"

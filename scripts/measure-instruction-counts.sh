@@ -10,6 +10,13 @@ set -eu
 # the benchmark loops and the self-compile workload are large enough to dominate
 # it. If a future tiny case needs startup exclusion, use callgrind region
 # toggling in a separate gate.
+#
+# The opt-in `--c-scalar` mode (env TYPELISP_IR_MEASURE_C_SCALAR=1) additionally
+# builds each C baseline with clang vectorization disabled
+# (-fno-vectorize -fno-slp-vectorize) and measures it as
+# `benchmark/c-scalar/<name>`, a scalar-fair comparison point alongside the
+# default auto-vectorized clang -O2 baseline. It is off by default, so the
+# check-instruction-counts.sh gate and committed baselines are unaffected.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -24,6 +31,7 @@ OPT_LEVEL=${TYPELISP_IR_OPT_LEVEL:-1}
 # selects the self-compile throughput metric's optimizer level.
 BENCH_OPT_LEVEL=${TYPELISP_IR_BENCH_OPT_LEVEL:-2}
 C_OPT=-O2
+C_SCALAR=${TYPELISP_IR_MEASURE_C_SCALAR:-0}
 MEASURE_BENCHMARKS=1
 MEASURE_SELF_COMPILE=1
 
@@ -42,6 +50,9 @@ Options:
   --self-compile-only   Measure compiler self-compile only
   --skip-benchmarks     Do not measure benchmark binaries
   --skip-self-compile   Do not measure compiler self-compile
+  --c-scalar            Also build each C baseline with clang vectorization
+                        disabled (-fno-vectorize -fno-slp-vectorize) and
+                        measure it as benchmark/c-scalar/<name> (opt-in)
   -h, --help            Show this help
 
 Environment:
@@ -53,6 +64,9 @@ Environment:
   TYPELISP_IR_OPT_LEVEL Default --opt-level (self-compile only)
   TYPELISP_IR_BENCH_OPT_LEVEL
                         Benchmark binary opt level (default: 2)
+  TYPELISP_IR_MEASURE_C_SCALAR
+                        Default --c-scalar (0 or 1; also measure a scalar,
+                        vectorization-disabled C baseline)
 EOF
 }
 
@@ -117,6 +131,10 @@ while [ "$#" -gt 0 ]; do
             MEASURE_SELF_COMPILE=0
             shift
             ;;
+        --c-scalar)
+            C_SCALAR=1
+            shift
+            ;;
         -h | --help)
             usage
             exit 0
@@ -155,6 +173,14 @@ esac
 case "$CASES" in
     *[!A-Za-z0-9_.,-]*)
         echo "--cases may only contain comma-separated benchmark names: $CASES" >&2
+        exit 2
+        ;;
+esac
+
+case "$C_SCALAR" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_IR_MEASURE_C_SCALAR must be 0 or 1: $C_SCALAR" >&2
         exit 2
         ;;
 esac
@@ -413,6 +439,25 @@ build_c_benchmark() {
     C_STATUS=$LAST_SUMMARY_STATUS
 }
 
+build_c_scalar_benchmark() {
+    baseline_c=$1
+    name=$2
+    bin="$WORKDIR/bin/$name.c-scalar"
+    safe=$(safe_name "benchmark-c-scalar-$name")
+    stdout="$WORKDIR/logs/$safe.build.stdout"
+    stderr="$WORKDIR/logs/$safe.build.stderr"
+
+    echo "[ir-count] build benchmark/c-scalar $name"
+    if ! clang "$C_OPT" -fno-vectorize -fno-slp-vectorize "$baseline_c" -o "$bin" >"$stdout" 2>"$stderr"; then
+        show_logs "$stdout" "$stderr"
+        fail "failed to build scalar C benchmark $name"
+    fi
+    [ -x "$bin" ] || fail "scalar C benchmark build did not write executable: $bin"
+    # shellcheck disable=SC2086
+    measure_repeated "benchmark/c-scalar" "$name" 0 "$bin" $bench_args
+    C_SCALAR_STATUS=$LAST_SUMMARY_STATUS
+}
+
 build_benchmark_pair() {
     bench_tl=$1
     name=$2
@@ -428,6 +473,12 @@ build_benchmark_pair() {
     [ "$TL_STATUS" = "$C_STATUS" ] || {
         fail "benchmark $name observable output differs (typelisp exit $TL_STATUS, C exit $C_STATUS)"
     }
+    if [ "$C_SCALAR" -eq 1 ]; then
+        build_c_scalar_benchmark "$baseline_c" "$name"
+        [ "$C_SCALAR_STATUS" = "$C_STATUS" ] || {
+            fail "benchmark $name scalar C baseline output differs (c-scalar exit $C_SCALAR_STATUS, C exit $C_STATUS)"
+        }
+    fi
 }
 
 benchmark_selected() {
@@ -486,6 +537,9 @@ measure_self_compile() {
 echo "[ir-count] compiler: $COMPILER"
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     echo "[ir-count] C benchmark compiler: clang $C_OPT"
+    if [ "$C_SCALAR" -eq 1 ]; then
+        echo "[ir-count] scalar C baseline: clang $C_OPT -fno-vectorize -fno-slp-vectorize"
+    fi
 fi
 echo "[ir-count] output: $WORKDIR"
 echo "[ir-count] runs per case: $RUNS"

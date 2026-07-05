@@ -20174,6 +20174,15 @@
           (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")
           (compiler-backend-scavenge-reg dst exclude exclude-n "%r8"))
         dst-home)]
+    ;; On BACK edges the scavenged staging register may host a loop-carried
+    ;; value whose linear interval already ended (its next use is the next
+    ;; iteration), so the occupancy mask reads it free; bracket the staged GP
+    ;; copy with push/pop so the occupant survives into the next iteration.
+    ;; See compiler-backend-phi-edge-back? for the full account. Homes are
+    ;; frame-relative at emission, so the transient %rsp shift cannot skew the
+    ;; operands, and the FPO audit tracks push/pop deltas. Forward edges keep
+    ;; the cheap unbracketed shape (their live-through values still have
+    ;; interval cover at the emit point).
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       assignments
       value
@@ -20183,13 +20192,29 @@
       [(ResultCompilerBackend.Ok load)
         (ResultCompilerBackend.Ok
           (if (string.eq dst-home "")
-            (string.append
-              load
-              (compiler-backend-emit-store-typed-var-with-plan
-                assignments
-                dst
+            (if (or
+              (compiler-backend-float-type? ty)
+              (not compiler-backend-phi-edge-back))
+              (string.append
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  reg
+                  ty))
+              (str_cat.str-cat
+                "    pushq "
                 reg
-                ty))
+                "\n"
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  reg
+                  ty)
+                "    popq "
+                reg
+                "\n"))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -20665,7 +20690,83 @@
       (ResultCompilerBackend.Err
         (box (compiler-diagnostic-at-start "" message)))]))
 
+;; Back-edge phi-copy protection. A loop-carried register-homed value's linear
+;; interval ends at its LAST in-body use, so at the latch/branch tail -- where
+;; edge phi copies are emitted -- the scavenge occupancy mask reads its
+;; register as free even though the next iteration reads it again. A staged
+;; slot-destination copy scavenging that register clobbers the live value
+;; (stage2 self-build: opt-inline-slot-order's len(next) bound riding %r9 was
+;; overwritten by the latch edge copies, corrupting the following iteration's
+;; bounds compare). Forward edges are safe: a value live-in at a forward join
+;; still has a use after the branch point, so its interval covers the emit
+;; point and the mask reports it occupied. The edge classification scans the
+;; CURRENT block list directly -- a compilation-arena-backed global label
+;; table dangles across emissions (the carry-safe lesson) -- and the
+;; load-store staging brackets its scratch register with push/pop only on
+;; back edges.
+(define compiler-backend-phi-edge-back : bool
+  false)
+
+(define (compiler-backend-phi-label-position
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [index : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) (- 0 1)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block block-label _)
+          (if (string.eq block-label label)
+            index
+            (compiler-backend-phi-label-position
+              (box-get rest)
+              label
+              (+ index 1)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-phi-label-position
+        (compiler-ir-block-seq-to-list seq)
+        label
+        index)]))
+
+;; True when `target` does not come after `from` in block layout order: a loop
+;; back edge (or self loop). Unknown labels classify as forward, which keeps
+;; the cheap unbracketed staging.
+(define (compiler-backend-phi-edge-back?
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]) : bool
+  (let
+    [target-pos : i64
+      (compiler-backend-phi-label-position blocks target-label 0)]
+    [from-pos : i64 (compiler-backend-phi-label-position blocks from-label 0)]
+    (and (>= target-pos 0) (>= from-pos 0) (<= target-pos from-pos))))
+
 (define (compiler-backend-emit-phi-edge-copies
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [was-back : bool compiler-backend-phi-edge-back]
+    [_set : unit
+      (set!
+        compiler-backend-phi-edge-back
+        (compiler-backend-phi-edge-back? blocks target-label from-label))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-phi-edge-copies-scan
+        assignments
+        blocks
+        target-label
+        from-label
+        program-index
+        vars)]
+    (begin
+      (set! compiler-backend-phi-edge-back was-back)
+      result)))
+
+(define (compiler-backend-emit-phi-edge-copies-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : String]
@@ -20689,7 +20790,7 @@
               from-label
               program-index
               vars)
-            (compiler-backend-emit-phi-edge-copies
+            (compiler-backend-emit-phi-edge-copies-scan
               assignments
               (box-get rest)
               target-label
@@ -20697,7 +20798,7 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-phi-edge-copies
+      (compiler-backend-emit-phi-edge-copies-scan
         assignments
         (compiler-ir-block-seq-to-list seq)
         target-label
@@ -20706,6 +20807,35 @@
         vars)]))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [was-back : bool compiler-backend-phi-edge-back]
+    [_set : unit
+      (set!
+        compiler-backend-phi-edge-back
+        (compiler-backend-phi-edge-back? blocks target-label from-label))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-mov-phi-copy-edge-scan
+        assignments
+        blocks
+        target-label
+        from-label
+        moved-dst
+        moved-src
+        program-index
+        vars)]
+    (begin
+      (set! compiler-backend-phi-edge-back was-back)
+      result)))
+
+(define (compiler-backend-emit-mov-phi-copy-edge-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : String]
@@ -20751,7 +20881,7 @@
               [(ResultBackendPhiCopies.Err message)
                 (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-at-start "" message)))])
-            (compiler-backend-emit-mov-phi-copy-edge
+            (compiler-backend-emit-mov-phi-copy-edge-scan
               assignments
               (box-get rest)
               target-label
@@ -20761,7 +20891,7 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-mov-phi-copy-edge
+      (compiler-backend-emit-mov-phi-copy-edge-scan
         assignments
         (compiler-ir-block-seq-to-list seq)
         target-label

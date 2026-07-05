@@ -152,18 +152,6 @@ stdlib_runtime_gap_applies() {
     [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]
 }
 
-should_skip_staged() {
-    _symbols=$1
-    shift
-    [ -n "$_symbols" ] || return 1
-    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
-        for _stream in "$@"; do
-            grep -qF "$_symbol" "$_stream" && return 0
-        done
-    done
-    return 1
-}
-
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
 # decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest
@@ -227,9 +215,8 @@ EOF
 # for one line using the host executable's newline convention, or a
 # repository-relative path for exact stream bytes. The stdin and capability
 # columns are optional; stdin defaults to "-". A runnable row may use
-# `requires-stage0-symbol:<name>[,<name>...]` or
-# `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` only as metadata. These
-# markers do not make failures pass; CI must run the row and fail on regression.
+# `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` only as metadata. This
+# marker does not make failures pass; CI must run the row and fail on regression.
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
@@ -254,10 +241,7 @@ EOF
 # Use these for stdlib fixtures that only need the typechecker, including
 # platform-independent with-arena policy tests. The expected status is `fail`
 # or `pass`; failure rows must include a diagnostic substring that should
-# appear on stderr. Pass rows may use "-" for the diagnostic field. Pass rows
-# may use `requires-stage0-diagnostic:<stderr-substring>` to skip only when the
-# local stage0 fallback lacks a staged typechecker diagnostic accepted by the
-# current compiler in CI.
+# appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
@@ -494,19 +478,16 @@ fi
 export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
-skipped=0
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
     esac
 
-    requires_symbol=
     runtime_gap_host=
     runtime_gap_issue=
     runtime_gap_stderr=
     case "${extra:-}" in
         '') ;;
-        requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
         requires-runtime-gap:*:#*:*)
             runtime_gap=${extra#requires-runtime-gap:}
             runtime_gap_host=${runtime_gap%%:*}
@@ -568,18 +549,9 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     stdlib_build_run "$copied" "$stem" "$stdin"
 
     if [ "$build_status" -ne 0 ]; then
-        if should_skip_staged "$requires_symbol" "$stem.build.err" "$stem.build.out"; then
-            echo "[stdlib] SKIP $fixture (awaiting stage0 compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
-        fi
         echo "FAIL: $fixture failed to build" >&2
         sed 's/^/  /' "$stem.build.err" >&2 || true
         exit 1
-    fi
-
-    if [ -n "$requires_symbol" ]; then
-        echo "[stdlib] NOTE: $fixture built with the current compiler; once the stage0 compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     if [ "$got" -ne "$want" ]; then
@@ -659,10 +631,8 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
             ;;
     esac
 
-    requires_diagnostic=
     case "${extra:-}" in
         '') ;;
-        requires-stage0-diagnostic:*) requires_diagnostic=${extra#requires-stage0-diagnostic:} ;;
         *)
             echo "FAIL: malformed stdlib check manifest row has too many fields: $fixture" >&2
             exit 1
@@ -700,17 +670,9 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
 
     if [ "$want" = pass ]; then
         if [ "$got" -ne 0 ]; then
-            if [ -n "$requires_diagnostic" ] && grep -F "$requires_diagnostic" "$stderr" >/dev/null 2>&1; then
-                echo "[stdlib] SKIP $fixture (awaiting stage0 compiler support for diagnostic '$requires_diagnostic')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $fixture expected check success, got exit $got" >&2
             show_streams "$stdout" "$stderr"
             exit 1
-        fi
-        if [ -n "$requires_diagnostic" ]; then
-            echo "[stdlib] NOTE: $fixture checked with the current compiler; once the stage0 compiler path accepts this source, drop the requires-stage0-diagnostic marker" >&2
         fi
     else
         if [ "$got" -eq 0 ]; then
@@ -731,4 +693,4 @@ done < "$CHECK_MANIFEST"
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
-echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $skipped staged fixture(s) skipped, $checked check fixture(s), $pipe_regressions pipe regression(s)"
+echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s), $pipe_regressions pipe regression(s)"

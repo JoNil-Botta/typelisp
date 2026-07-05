@@ -19,10 +19,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
-  first-class scratch arena through `with-escape`. The row remains a runnable
-  fixture while its `requires-stage0-symbol:with-escape` constraint is needed.
-  The `arena_policy_escape_*.tl` fixtures are check-only negative cases proving
-  active-arena stdlib results cannot escape their scoped arena.
+  first-class scratch arena through `with-escape`. It runs as a normal runnable
+  fixture. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
+  proving active-arena stdlib results cannot escape their scoped arena.
 - `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
   to a shorter-lived vector.
 - `comptime_api.tl` remains a check-only import-shape fixture for expression
@@ -73,11 +72,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
 - `process_api.tl` remains a runnable fixture for command-validation paths that
-  intentionally call `output` / `start` and therefore preserve
-  the staged `requires-stage0-symbol:tl_process_start,tl_process_wait`
-  coverage. Pure command construction, argv/env vector builders, validation
-  helpers, duplicate-name order, list conversion, and result/error predicates
-  now live inline in `stdlib/process.tl`.
+  intentionally call `output` / `start`. Pure command construction, argv/env
+  vector builders, validation helpers, duplicate-name order, list conversion,
+  and result/error predicates now live inline in `stdlib/process.tl`.
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.

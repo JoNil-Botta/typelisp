@@ -1031,6 +1031,9 @@
 
 (define (compiler-backend-spmd-call-unimplemented
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  ;; SPMD call emission is deliberately deferred: analysis passes may preserve
+  ;; SpmdCall IR, but the backend rejects it explicitly until the call ABI and
+  ;; vector/scalar lowering contract are specified.
   (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-with-message

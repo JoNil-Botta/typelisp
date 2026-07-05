@@ -919,13 +919,13 @@
         [(CompilerLiveBlock.Block label _ _ _ _ _ _)
           (begin
             (array-set! values index block)
-            (compiler-live-block-graph-fill!
-              (box-get rest)
-              (if (hashmap.string-i64-map-contains? ids label)
-                ids
-                (hashmap.string-i64-map-put ids label index))
-              values
-              (+ index 1)))])]))
+            (if (hashmap.string-i64-map-contains? ids label)
+              (io.panic "liveness: duplicate block label")
+              (compiler-live-block-graph-fill!
+                (box-get rest)
+                (hashmap.string-i64-map-put ids label index)
+                values
+                (+ index 1))))])]))
 
 (define (compiler-live-block-graph-build [blocks : CompilerLiveBlockList]) : CompilerLiveBlockGraph
   (let

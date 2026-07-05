@@ -4,134 +4,83 @@ A statically typed Lisp/Scheme dialect that compiles directly to native
 x86_64 assembly for Linux and Windows. **Self-hosted**: the compiler is written
 in TypeLisp and compiles itself, with **zero third-party dependencies**.
 
-## Goals and inspirations
+## Goals
 
-Current implementation goals:
+- **Typed**: every expression has a known type at compile time. No runtime
+  type tagging.
+- **Native**: compiles straight to x86_64 assembly, then native toolchains
+  produce executables (Linux: `as` + `ld`; Windows: `clang` + MSVC
+  `link.exe`). No bytecode VM, no interpreter, no garbage collector.
+  Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM
+  are not near-term goals.
+- **Self-hosted**: the compiler, tooling, and stdlib are written in TypeLisp
+  (see [`src/`](src) and [`stdlib/`](stdlib)). The published stage0 compiler
+  is a single self-hosted binary that builds its own successor; the toolchain
+  has no other-language implementation.
+- **Zero dependencies**: no third-party packages. The only build inputs are
+  the native assembler/linker toolchain.
+- **Fast**: generated code quality should approach LLVM (`clang -O2`) on the
+  benchmark corpus while compilation itself stays fast. Performance is
+  tracked deterministically — paired C baselines under
+  [`benchmarks/`](benchmarks) and an executed-instruction-count CI gate under
+  [`perf/`](perf) — rather than by wall-clock noise.
 
-- **Typed**: Every expression has a known type at compile time. No runtime type tagging.
-- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector. Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM are not supported yet and are not near-term goals.
-- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`src/`](src) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
-- **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
-- **Fast**: Generated code quality should approach LLVM (`clang -O2`) on the benchmark corpus while compilation itself stays fast. Performance is tracked deterministically — paired C baselines under [`benchmarks/`](benchmarks) and a cachegrind instruction-count CI gate under [`perf/`](perf) — rather than by wall-clock noise. The codegen-quality roadmap is #2559.
+### Language direction
 
-Language direction:
+- Keep a minimal language core with Lisp/Scheme syntax and explicit types,
+  expressive enough for C-style systems programming: native layout,
+  runtime/FFI escape hatches, deterministic builds, and direct linker
+  interop.
+- Pursue Rust-style safety for ownership, borrowing, move semantics, and
+  arena lifetimes. Safe TypeLisp should not have undefined behavior.
+  Move-only aggregates, immutable/mutable borrow checking with conservative
+  non-lexical lifetime shortening, lifetime-parameterized aggregates, scoped
+  arenas, and checker-proven arena invalidation are implemented.
+- Treat ISPC-style SPMD as the data-parallel model: `foreach`,
+  `spmd-reduce`, `spmd-scan`, and runtime SIMD dispatch, lowered to scalar,
+  AVX2, or AVX-512 backends (see [SPEC.md section 5.15](SPEC.md)).
+- Use Zig-style comptime as the abstraction mechanism. TypeLisp does not
+  grow source-level generics, traits, interfaces, or `impl` syntax; comptime
+  code generates concrete types, functions, and implementation bundles.
+- Move toward C3-style modules: module identity participates in name
+  resolution and prefixes linker symbols. Every top-level item is exported
+  by default.
+- Use an arena-based memory model: a default program-lifetime arena, scoped
+  `(with-arena ...)` regions, and first-class arena values.
 
-- Keep a minimal language core with Lisp/Scheme syntax and explicit types.
-- Be expressive enough for C-style systems programming: native layout,
-  runtime/FFI escape hatches, deterministic builds, and direct linker interop.
-- Pursue Rust-style safety for ownership, borrowing, move semantics, and arena
-  lifetimes. Safe TypeLisp should not have undefined behavior. Move-only
-  aggregates, lexical immutable/mutable borrow checking, lifetime-parameterized
-  aggregates, scoped arenas, and conservative non-lexical lifetime shortening
-  are implemented; #182 remains the umbrella map. Struct field-place
-  mutation through `(set! (struct-get place field) value)` is implemented by
-  #1521; local dotted field syntax such as `(set! place.field value)` uses the
-  same machinery.
-- Treat ISPC-style SPMD as the data-parallel model. The current source surface
-  is in [SPEC.md section 5.15](SPEC.md); scalar gather-only reads from dynamic
-  arrays (#2762), lane identity forms (#2761), and the scalar/AVX-512 masked
-  varying `if` subset are implemented, including value-producing scalar lane
-  selects. AVX2 emits an explicit masked-if diagnostic, and the remaining SPMD
-  queue covers wider lane types (#2763), public vector/mask values (#2764),
-  cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
-  flow (#2767), and out-of-line varying-call ABI (#2852).
-- Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
-  source-level generics, traits, interfaces, or `impl` syntax; comptime code
-  generates concrete types, functions, and implementation bundles instead.
-  Comptime-generated declarations, type reflection, and typed expression macros
-  are implemented; see SPEC.md sections 3.7 and 5.17.
-- Move toward C3-style modules where module identity participates in name
-  resolution and prefixes TypeLisp linker symbols. Module identities are
-  implemented and every top-level item is exported by default; the
-  repository-wide migration to dotted module imports is tracked by #2452,
-  #2453, #2454, and #2492.
-- Use an arena-based memory model with a default program-lifetime arena and
-  scoped `(with-arena ...)` allocation regions (implemented).
-- Land new language features in the self-hosted compiler ([`src/`](src)).
-  The toolchain is fully self-hosted (#666, #795); each published stage0 binary
-  builds its successor.
+The issue tracker is the source of truth for direction; the pinned
+[Project Roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) issue is
+the live index, and design decisions are recorded as comments on their
+issues.
 
-Most of the language-direction bullets above are now implemented; the bullets
-say where the remaining work is tracked. The rest of this README describes
-current behavior unless it explicitly says a feature is planned.
+### Conventions (write new code this way)
 
-## Decided direction (read this before writing new code)
+Some transitional spellings survive in the tree while migrations finish. New
+code should use the end-state forms and not imitate the leftovers:
 
-The issue tracker is the source of truth for direction; issue #8 is the live
-roadmap index, and design decisions are recorded as comments on their issues.
-The following decisions are **made**; new code should anticipate them instead
-of imitating transitional patterns still present in the tree:
-
-- **Imports**: dotted module imports with aliases and dotted qualified member
-  access replace path imports and slash-qualified source names (#2452, #2453,
-  #2454, #2492). The legacy `(import "path/file.tl")` spelling is being
-  removed.
-- **Stdlib names**: module-name prefixes on stdlib functions
-  (`string-append`, `read-dir`, ...) are flat-namespace fossils; the
-  end-state is qualified short names such as `str.append` (#2582, #2583).
-- **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
-  `cond`) are canonical; qualified `core.` calls are transitional (#2581).
-  Macros support bracket operands for clause- and binding-shaped surfaces, and
-  core `cond` uses bracket arms `(cond [test expr] ... [else fallback])`;
-  the flat call shape is rejected (#2579).
-  Macros become order-independent within a module (#2584).
-- **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
-  `text_buf` are the blessed forms; user-facing `string-append`/
-  `string-concat` chains are deprecated (#2573).
-- **Binary bytes**: mutable binary storage uses the specified `ByteBuf` owner
-  and borrowed `bytes` views, not mutable `str` or `TextBuf` (#2782). Current
-  `(Array u8)` and `String` byte plumbing is compatibility surface until the
-  stdlib byte-buffer module lands.
+- **Imports**: dotted module imports with aliases and dotted member access
+  (`(import stdlib.string)`, `(string.length text)`). The legacy
+  `(import "path/file.tl")` spelling is being removed.
+- **Stdlib names**: qualified short names such as `str.append` are the end
+  state; module-name-prefixed flat names (`string-append`, `read-dir`, ...)
+  are transitional.
+- **Core macros**: bare prelude spellings `when`, `unless`, `and`, `or`, and
+  bracket-arm `cond` — `(cond [test expr] ... [else fallback])` — are
+  canonical. The flat `cond` call shape is rejected.
+- **Strings**: `str-cat` (single-allocation variadic concat) and `text_buf`
+  builders are the blessed forms; `string-append`/`string-concat` chains are
+  deprecated compatibility primitives.
+- **Binary bytes**: mutable binary storage uses the `ByteBuf` owner and
+  borrowed `bytes` views, not mutable `str` or `(Array u8)`.
 - **Arrays**: public `Array` is moving to fixed-size-only `(Array T N)`.
-  Runtime-sized/growable collections should use vector or slice-style stdlib
-  APIs, with private dynamic-buffer storage reserved for vector backing,
-  SPMD lanes during migration, binary/FFI/runtime buffers, and compiler
-  internals (#3576, #3577, #3578, #3579, #3581).
-- **Mutation**: in-place mutation is the direction: struct field-place
-  assignment uses `(set! (struct-get place field) value)` or local dotted sugar
-  `(set! place.field value)` (#1521), and boxed storage uses `(box-take b)`
-  plus `(set! (box-get b) value)` for destructive access (#2553).
-  Copy-on-update is transitional; remaining hot-path migrations are split
-  across vector/deque handle metadata (#2955), hashmap metadata (#2956),
-  `TextBuf` mutable builders (#2957), dense-key env/table storage (#2958),
-  and boxed-list rewrites (#2553).
-- **Memory + threads**: per-thread default arenas plus a shared atomic arena
-  for concurrent allocation (#2591, #2593). Thread safety follows the Rust
-  model via structural checker classification — no traits (#2590): values
-  cross threads only when owned by an arena whose lifetime spans both; safe
-  spawn/join/mutex/channels build on the SPEC.md section 6.5 model (#2592).
-  See [`examples/safe_threading.tl`](examples/safe_threading.tl) for a
-  safe task-threading program with no user `(unsafe ...)`.
-- **Testing**: inline `(test ...)` items and doctests are typechecked on
-  every build of the owning package and never generate code outside the test
-  runner (#2587, #2594); stdlib adopts inline tests (#2586). The typechecked
-  test surface is exactly the package's own sources — never stdlib or
-  dependencies.
-- **Performance**: the codegen target is `clang -O2` quality (#2559).
-  Optimizations are proven, not asserted: every claimed win must show an
-  executed-instruction delta against the committed baselines, and compile
-  speed is gated the same way (#2532).
-- **Compilation model**: one whole program per executable with import-graph
-  dedup (each module typechecked once per program); package dependencies are
-  codegen'd once into archives but re-typechecked per consumer until
-  signature metadata exists; in-process session caching is the accepted
-  compile-speed direction (#2596).
-- **Comptime execution**: the public macro/comptime surface is stdlib-owned
-  `Expr`/reflection data (#2647/#2653). Source stdlib overrides
-  (`--stdlib-root`) execute through CTFE, while the embedded stdlib executes
-  compiled comptime code from an embedded `stdlib.tlci`; both paths must produce
-  byte-identical expansions (#2658). Comptime code is pure safe TypeLisp with no
-  `unsafe`, `extern`, or host I/O (#2648), bounded by deterministic fuel
-  (#2656). Every package emits a `tlci` compile-time interface carrying
-  signature metadata and macro code when present (#2651, #2655, #2659).
+  Runtime-sized/growable collections use vector or slice-style stdlib APIs;
+  unsized `(Array T)` remains as a compatibility surface during migration.
+- **Mutation**: mutate in place — `(set! place.field value)` (or the
+  equivalent `(set! (struct-get place field) value)`) for struct fields and
+  `(set! (box-get b) value)` / `(box-take b)` for boxed storage — rather
+  than copy-on-update.
 
-Transitional states in the current tree — do **not** imitate them in new
-code: path imports, `core.`-qualified macro calls, module-name-prefixed
-stdlib calls, `string-append` chains, copy-on-update for record
-mutation, and the in-flight aggregate-inline representation work
-(#1867/#2296/#2357).
-
-## Quick Start
+## Quick start
 
 ```bash
 git clone https://github.com/JoNil-Botta/typelisp
@@ -143,7 +92,7 @@ scripts/fetch-stage0.sh            # or: powershell -ep Bypass -f scripts\fetch-
 tl=target/stage0/typelisp          # tl=target/stage0/typelisp.exe on Windows
 
 # Type-check, compile, build, or run a program.
-# Linux build/run require `as`/`ld`; Windows target build/run require `clang`/MSVC `link.exe`.
+# Linux build/run require `as`/`ld`; Windows build/run require `clang`/MSVC `link.exe`.
 $tl check examples/hello.tl
 $tl fmt --check examples/hello.tl
 $tl compile examples/hello.tl     # writes examples/hello.s
@@ -174,10 +123,10 @@ $tl build                         # builds nearest typelisp.pkg
        (area (Rect 5 6)))))        ; 30  -> main returns 33
 ```
 
-The entry point is a function named `main` returning `i64` or `unit`. If `main`
-is omitted, the compiler synthesizes one that returns 0.
+The entry point is a function named `main` returning `i64` or `unit`. If
+`main` is omitted, the compiler synthesizes one that returns 0.
 
-## Language at a glance
+## Language overview
 
 TypeLisp uses S-expressions with explicit type annotations on parameters,
 struct/enum fields, and (optionally) `let` bindings.
@@ -198,166 +147,272 @@ struct/enum fields, and (optionally) `let` bindings.
 ;; Control flow
 (if (< answer 100) "small" "large")
 (while (> answer 0) (set! answer (- answer 1)))
-(while true (if (< answer 0) (break) unit) (set! answer (- answer 1)))
-(begin (print 1) (print 2) 0)
 (begin (when (< answer 0) (return 0)) answer)
 
-;; Casts
+;; Casts and zero/identity initialization
 (cast 300 : u8)
-
-;; Zero/identity initialization
 (import stdlib.array)
 (let ([n : i64 (init)]
-      [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
   (+ n (array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,
-narrowing, and truncation; `f64` <-> `f32` precision changes; and integer/char
-<-> float conversions (float -> integer truncates toward zero).
+narrowing, and truncation; `f64` <-> `f32` precision changes; and
+integer/char <-> float conversions (float -> integer truncates toward zero).
 `(init : T)` constructs a valid initialized value for supported `T`;
-contextual `(init)` works where an expected type is known. Compatibility
-`make-array` initializes every live element under the same ZII rules while the
-runtime-sized collection surface migrates to vectors/private buffers.
+contextual `(init)` works where an expected type is known.
 
 ### Types
 
 ```
 i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
-ByteBuf           ; specified owned mutable byte buffer
+ByteBuf           ; owned mutable byte buffer
 (Array t n)       ; fixed-size array (public Array end state)
 (Array t)         ; compatibility runtime-sized buffer during migration
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
-(Box t)           ; specified arena-owned indirection for recursive aggregates
-(& r t)           ; specified immutable reference tied to lifetime/arena r
-(& r bytes)       ; specified immutable borrowed byte slice
-(&mut r bytes)    ; specified exclusive mutable borrowed byte slice
+(Box t)           ; arena-owned indirection for recursive aggregates
+(& r t)           ; immutable reference tied to lifetime/arena r
+(& r str)         ; borrowed string view of an owned String
+(& r bytes)       ; immutable borrowed byte slice
+(&mut r bytes)    ; exclusive mutable borrowed byte slice
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
-(Name r...)       ; specified lifetime-parameterized nominal type use
+(Name r...)       ; lifetime-parameterized nominal type use
 ```
 
 Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
-comparisons, and casts.
-Raw pointer types `(Ptr T)` and `(MutPtr T)`, `(unsafe ...)`, and unsafe
-function/extern declaration wrappers are implemented for the v1 FFI surface
-described in [SPEC.md](SPEC.md) sections 3.4, 4.3.1, and 5.20.
-Unsafe sequentially consistent raw pointer atomics are available as
-`atomic-load`, `atomic-store!`, `atomic-add!`, `atomic-fetch-add!`, and
-`atomic-cas!` for 32-bit and 64-bit signed/unsigned integer pointer elements.
+comparisons, and casts. Raw pointer types `(Ptr T)` / `(MutPtr T)` and
+`(unsafe ...)` are the FFI/runtime escape hatch (see
+[SPEC.md](SPEC.md) sections 3.4, 4.3.1, and 5.20), including sequentially
+consistent raw-pointer atomics (`atomic-load`, `atomic-store!`,
+`atomic-add!`, `atomic-fetch-add!`, `atomic-cas!`) for 32/64-bit integer
+elements.
 
-### Abstraction policy
+### Abstraction: comptime, not generics
 
 TypeLisp does not plan source-level generics, traits, interfaces, `impl`
 blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
-conversion. Library abstraction should come from Zig-style comptime generation:
-compile-time code inspects type values and emits concrete structs, enums,
-functions, and implementation bundles. New generated declarations should use
-declaration-emitting `defmacro` forms; the deprecated `comptime-decl`
-single-payload compatibility form remains only for legacy generated concrete
-declarations. Write hand-authored monomorphic declarations such as `MaybeI64`
-or domain-specific `Result*` enums when a generated family has not been
-requested. Use `(return expr)` for
-function-local early exits, `(when cond body)` /
-`(unless cond body)` for unit-valued guards, and `(try expr)` for the
-Lisp-shaped propagation form over compatible concrete Result-like enums.
-
-The comptime implementation path is tracked by #893 and #902; v1 type
-reflection from #913 is implemented in the selfhost CTFE path. Historical
-generic/type-constructor work in #483 is superseded by that chain.
+conversion. Library abstraction comes from comptime generation: compile-time
+code inspects type values and emits concrete structs, enums, functions, and
+implementation bundles through declaration-emitting `defmacro` forms.
+Comptime-generated declarations, type reflection, and typed expression
+macros are implemented; see SPEC.md sections 3.7 and 5.17. Comptime code is
+pure safe TypeLisp — no `unsafe`, `extern`, or host I/O — bounded by
+deterministic fuel. Write hand-authored monomorphic declarations (such as a
+domain-specific `Result*` enum) when a generated family has not been
+requested; `(try expr)` is the propagation form over compatible concrete
+Result-like enums.
 
 ### Top-level forms
 
-Implemented today: `define` (variable / function), `defenum`, `defstruct`,
-`extern`, and `import`. The selfhost module/macro path also supports `module`
-and `defmacro` for typed expression macro workflows; every top-level item is
-exported by default, and the legacy `export` form has been removed (it is no
-longer a recognized declaration). The final stdlib-macro migration of
-parser-owned core forms remains separate.
+`define` (variable / function), `defenum`, `defstruct`, `extern`, `import`,
+`module`, and `defmacro`. Every top-level item is exported by default (there
+is no `export` form).
 
 ```lisp
-(defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
+(defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree)))
 (defstruct Pair (fst i64) (snd i64))
 (extern (foreign-add [a : i64] [b : i64]) : i64)
-(extern (local-add [a : i64] [b : i64]) : i64 (:symbol "foreign_add_exact"))
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
 (extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
-(import "lib/util.tl")                        ; relative, deduped; cycles load once
+(import stdlib.string)
 ```
 
-Ordinary `defstruct` and `defenum` declarations have stable inline layout
-metadata by default. Struct fields use declaration order with natural
-alignment; enums use an 8-byte tag at offset 0 plus max-aligned payload
-storage. The current lowering path may still use aggregate heap handles in
-runtime slots, and full recursive-by-value enforcement is being staged
-separately, but source that needs recursive aggregates should use explicit
-`(Box T)` fields/payloads at the recursive edge.
+Structs and enums have stable inline layout by default: struct fields use
+declaration order with natural alignment; enums use an 8-byte tag plus
+max-aligned payload storage. Comptime layout queries (`size-of`, `align-of`,
+`offset-of`) use that layout. Recursive aggregates use explicit `(Box T)`
+fields/payloads at the recursive edge.
 
-`extern` defaults to the target C ABI with the linker symbol equal to the local
-name. Function-head externs are direct external functions. Bare-name externs are
-external data symbols; a bare function type is loaded as a raw C function
-pointer and remains raw when copied to a local. Calls through such values use
-the C ABI, distinct from ordinary TypeLisp function or closure descriptor
-calls. `(:symbol "...")` can bind a local TypeLisp
-declaration to an exact foreign linker symbol without applying the `_tl_` prefix
-used for ordinary TypeLisp declarations. C varargs externs can use a
-function-head declaration: bare `...` accepts any C ABI value tail and
-`[arg : ...T]` requires every variadic argument to have type `T`.
+`extern` defaults to the target C ABI with the linker symbol equal to the
+local name; `(:symbol "...")` binds an exact foreign symbol (without the
+`_tl_` prefix used for ordinary TypeLisp declarations). Function-head externs
+are direct external functions; bare-name externs are external data symbols,
+and a bare function type is a raw C function pointer called with the C ABI.
+C varargs are declared with bare `...` (any C ABI tail) or `[arg : ...T]`
+(homogeneous tail).
 
-Dotted module imports bind a module alias and keep imported definitions out of
-the local unqualified namespace: `(import stdlib.string)` binds `string`, and
-`(import stdlib.core_macros as core)` binds `core`. Imported values, types,
-constructors, variants, patterns, and macros are referenced with dotted member
-access such as `(string.length text)`, `[p : geometry.Point]`, and
-`(core.when cond body)`. Full module paths such as `stdlib.string.length` are
-accepted only when that module identity has been imported in the current
-module. Slash-qualified source names such as `string/length` are rejected.
-Legacy path imports such as `(import "lib/util.tl")` keep the transitional flat
-behavior while that spelling is removed; see `SPEC.md` section 4.4 for the
-migration contract. Macro
-imports use the same module loader identities and path-resolution rules,
-with macro expansion happening before ordinary runtime typechecking.
+### Modules and imports
 
-Comptime layout queries such as `size-of`, `align-of`, and `offset-of` use
-ordinary aggregate layout. `(:repr c)` remains accepted on structs as
-compatibility/ABI-intent metadata, but it is not required for declaration-order
-field offsets. Target C ABI call/return lowering for aggregate externs is a
-separate backend contract.
+Dotted module imports bind a module alias and keep imported definitions out
+of the local unqualified namespace: `(import stdlib.string)` binds `string`,
+and `(import stdlib.core_macros as core)` binds `core`. Imported values,
+types, constructors, variants, patterns, and macros are referenced with
+dotted member access — `(string.length text)`, `[p : geometry.Point]`.
+Macro imports use the same module identities, with expansion happening
+before ordinary typechecking. Legacy path imports such as
+`(import "lib/util.tl")` keep transitional flat-namespace behavior while
+that spelling is removed; see SPEC.md section 4.4 for the migration
+contract.
 
-`stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
-are ordinary modules imported with explicit paths such as
-`(import "stdlib/string.tl")`. `check`, `compile`, `build <file.tl>`, and `run`
-also accept `--stdlib-root <dir>` for resolving `stdlib/...` imports from a
-configured source tree. `TYPELISP_STDLIB_ROOT` can provide an optional fallback
-root after explicit CLI roots. If no local path or configured root provides the
-module, the compiler falls back to its embedded copy of the checked-in stdlib.
-Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
-[stdlib/README.md](stdlib/README.md) for the current stdlib layout and
-verification conventions.
+The compile driver prepends the stdlib runtime and the core macro module as
+an implicit prelude, so bare `when`, `unless`, `and`, `or`, and bracket-arm
+`cond` resolve without imports. Stdlib modules otherwise resolve local-first,
+then from `--stdlib-root <dir>` (or the `TYPELISP_STDLIB_ROOT` fallback),
+then from the compiler's embedded copy of the checked-in stdlib. Prefer
+`--stdlib-root` for CI and reproducible scripts; see
+[stdlib/README.md](stdlib/README.md) for the stdlib layout.
 
-The compile driver prepends the stdlib runtime and the core macro module as an
-implicit prelude. Bare `when`, `unless`, `and`, `or`, and bracket-arm
-`cond` resolve to `stdlib/core_macros.tl` unless a local or imported macro
-shadows them. `cond` is written `(cond [test expr] ... [else fallback])`; the
-flat `(cond test expr ... fallback)` shape is rejected by the core macro. The
-same module can still be imported explicitly as
-`(import "stdlib/core_macros.tl" module stdlib.core_macros as core)` for
-qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
-`core.cond`.
+Within each module, type names and value names live in separate namespaces:
+enum and struct type names share the type namespace, while functions,
+variables, externs, struct constructors, and enum variant constructors share
+the value namespace. An enum type may share a name with one of its own
+variants. Module identity then qualifies both namespaces, so two modules can
+define the same local name without colliding.
 
-`typelisp compile` and `typelisp run` accept `--cfg <name>` to enable
-source-level conditional compilation flags. Source may wrap a top-level
-declaration as
-`(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
-`(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
-not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
-declarations from compilers that should not see them. The compiler also enables
-target OS predicates automatically: `linux`, `unix`, `target-linux`, and
-`os-linux` for `linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
-`windows-x86_64`.
+### Conditional compilation
 
-Local packages can be described with a std-only S-expression manifest named
+`compile`, `run`, and `build` accept repeated `--cfg <name>` flags. Source
+can wrap a top-level declaration as `(cfg predicate declaration)` or use the
+expression form `(cfg predicate expr [else-expr])`, where `predicate` is a
+flag name, `(all ...)`, `(any ...)`, or `(not ...)`. Inactive branches are
+read but not parsed as declarations, so they can hide stage- or
+platform-specific code. Target OS predicates are enabled automatically:
+`linux`/`unix`/`target-linux`/`os-linux` and
+`windows`/`target-windows`/`os-windows`.
+
+### Expression forms
+
+`if`, `when`, `unless`, `let`, `while` (with unit `break`/`continue`),
+`begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
+struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
+`spmd-reduce`, `spmd-scan`; arithmetic (`+ - * / %`), comparison
+(`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
+`bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a struct
+field, and dotted syntax `place.field` is sugar for the same operation;
+`(set! place.field value)` writes in place.
+
+Named top-level functions and `lambda` literals are pointer-sized closure
+descriptor values. Non-capturing lambdas use static descriptors; capturing
+lambdas snapshot supported captures (scalars, function values, `String`,
+aggregates, fixed arrays — recursively deep-copied) into heap environments
+that outlive the creating frame. Local non-escaping closures may capture
+immutable references; escaping closures reject reference captures, and
+mutation of captured names is rejected by design. Direct, mutual, and
+supported indirect function-value tail calls are optimized to jumps; ABI
+shapes that cannot be tail-jumped are conservatively emitted as ordinary
+calls.
+
+### Builtins and stdlib
+
+Compiler-owned compatibility builtins: `print`, `print-bool`,
+`print-newline`, `make-array`, `array-ref`, `array-set!`,
+`array-length`/`length`, `substring`/`string-slice`, `int->string`, and
+`panic`/`error`. Array and string indexing is bounds-checked at runtime.
+Everything else lives in stdlib modules: `stdlib/string.tl` for string
+inspection/parsing, `stdlib/io.tl` and `stdlib/fs.tl` for files and
+processes, `stdlib.str_cat` and `stdlib.text_buf` for string building,
+`stdlib/byte_buf.tl` for binary buffers, `stdlib/arena.tl` for arena
+control, `stdlib/thread.tl` and `stdlib/sync.tl` for threading.
+
+## Memory and ownership
+
+TypeLisp implements move-only aggregate semantics and lexical
+immutable/mutable borrow checking with conservative non-lexical lifetime
+shortening. There are no destructors, no general `free`, and no garbage
+collector; heap allocation uses a backend-emitted bump allocator into the
+active arena. Scalars, raw pointers, and non-capturing function values are
+copyable; `String`, arrays, tuples, structs, enums, and capturing closures
+move in by-value positions. See [SPEC.md](SPEC.md) sections 4.6.2 and 7 for
+the precise model.
+
+`String` values are immutable at the source level; borrowing a `String`
+place produces a borrowed `(& lifetime str)` view, and typed calls
+auto-borrow borrowable places for immutable reference parameters.
+`substring`/`string-slice` return fresh owned copies;
+`substring-view`/`string-slice-view` return bounds-checked borrowed slices
+without copying. Mutable binary storage is the owned `ByteBuf` plus
+`(& lifetime bytes)` / `(&mut lifetime bytes)` borrowed views; conversions
+between text, arrays, and byte buffers are explicit copy or borrow
+boundaries.
+
+`(Box T)` is a safe, move-only, arena-owned indirection handle: `(box expr)`
+allocates in the active arena, `(box-get b)` projects the value, `(box-take
+b)` consumes the box, and `(set! (box-get b) value)` mutates boxed storage.
+A box allocated inside `(with-arena r ...)` cannot escape that scope.
+
+### Arenas
+
+The first safe reclamation surface is `(with-arena r body ...)` — a
+lexically scoped arena with static escape checking: the typechecker rejects
+any arena-tagged value that would leave the scope, so the compiler can
+safely reset the region afterwards. On top of that, `stdlib.arena` provides
+typed first-class arenas. The standard patterns:
+
+- `(with-arena scratch ...)` for temporary work returning only scalars or
+  outer-owned values; nest scopes for stack-shaped lifetimes (level/frame).
+- `(with-escape scratch ...)` with an `arena.make` arena, or
+  `(with-scratch ...)` for one-shot work, when one supported result must be
+  cloned out.
+- `(in-arena arena body ...)` when results should remain owned by a
+  first-class arena; `(arena.make-atomic)` for a shared atomic allocation
+  target across threads.
+- `arena.phase` plus `arena.rewind-safe!` / `arena.destroy-safe!` for
+  checker-proven arena invalidation: the checker rejects the reset while any
+  values, borrows, captures, or owner handles from that arena remain live.
+- Raw `arena.set!` / `arena.rewind` / `arena.destroy` require
+  `(unsafe ...)`.
+
+The runnable cookbook in
+[`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl) covers lexical
+frame scopes, double-buffered frame arenas, and event-driven unload. Scoped
+cleanup of non-memory resources is separate:
+`(with ([name init cleanup]) body ...)` runs cleanup functions in reverse
+binding order on scope exit (files, locks, process handles); it does not
+imply destructors or arena resets.
+
+## Safe task threading
+
+Safe task threads use generated typed closure modules from
+`stdlib/thread.tl` — for example `(import (thread.handle i64) as
+thread_i64)` with `thread_i64.spawn` / `thread_i64.join` — plus aggregate
+wrappers. The checker validates captured environments and joined results
+structurally (no traits): references, borrowed views, scoped regions,
+ordinary arenas, raw-pointer ownership claims, and live mutable aliases do
+not cross task-thread boundaries; values cross threads only when owned by an
+arena whose lifetime spans both, such as a shared atomic arena.
+`stdlib/sync.tl` provides generated channel and mutex modules. An atomic
+arena proves allocation lifetime, not data-race freedom — use mutexes,
+channels, or atomics for shared mutation. See
+[`examples/safe_threading.tl`](examples/safe_threading.tl) for a complete
+safe program and SPEC.md section 6.5 for the model.
+
+## SPMD and SIMD
+
+Task threading creates independently scheduled workers; SPMD is
+data-parallel lowering inside one task. `compile`, `run`, and `build` accept
+`--backend-mode scalar|avx2|avx512` (default `scalar`).
+
+- Every SPMD form has scalar reference lowering; backend modes must preserve
+  its semantics.
+- AVX2 and AVX-512 vectorize a contiguous `foreach` map/zip subset over
+  `i8`–`i64`, `u8`–`u64`, `f32`, and `f64` lanes (AVX-512 additionally
+  covers bool lanes), plus eligible `spmd-reduce` array folds (`sum` over
+  `i32`/`i64`/`f64`, `min`/`max` over `i32`, and AVX-512 `min`/`max` over
+  `i64`). Contiguous maps can borrow vector backing or slice storage, so
+  public APIs can take vector/slice views.
+- Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
+  inclusive `spmd-scan` over the SPEC-supported types.
+- Masked varying `if` (including value-producing selects) runs in scalar and
+  an AVX-512 subset; varying `while`, varying `match` (enum tags and lane
+  payload bindings), and early exits run in scalar reference lowering. AVX2
+  reports an explicit masked-control-flow diagnostic instead of silently
+  scalarizing.
+- `(program-index)` and `(program-count)` are lane identity forms inside
+  SPMD scopes; programs using them intentionally observe backend gang
+  width.
+- `defdispatch` declares one logical function with scalar/AVX2/AVX-512
+  variants; ordinary calls resolve once per process via the CPUID/XGETBV
+  checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires AVX-512BW).
+
+Public vector/mask value types, vectorized scans and shuffles, and an
+out-of-line ABI for non-inlined varying helper calls are deferred; see
+SPEC.md sections 5.15 and 8.
+
+## Packages
+
+Local packages are described by a std-only S-expression manifest named
 `typelisp.pkg`:
 
 ```lisp
@@ -374,152 +429,54 @@ Local packages can be described with a std-only S-expression manifest named
     (windows-libraries "opengl32" "gdi32" "winmm" "shell32" "user32")))
 ```
 
-The optional top-level `(link ...)` section declares native link inputs for
-`bin` builds so a package linking system or vendored libraries does not need
-`(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)` metadata on every
-`extern`. `libraries`, `search-paths`, and `args` apply to all targets, while
-`linux-*`/`windows-*` add per-target inputs. Each field is a list of one or more
-non-empty strings; unknown fields, a repeated `link` section or field, empty
-strings, and non-string values are rejected. Relative `search-paths` resolve
-against the manifest directory; libraries, raw args, and absolute search paths
-pass through verbatim. Effective inputs merge in first-seen order with exact
-duplicates removed per class: all-target manifest inputs, then target-specific
-manifest inputs, then source `extern` link metadata, then dependency archives.
-On Linux any non-empty effective link input makes the package link through
-`cc` (the C runtime) instead of the freestanding `ld` path. See
-[SPEC.md §4.6](SPEC.md) for the full contract.
+`typelisp build [--manifest-path <typelisp.pkg>]` resolves `entry` relative
+to the manifest directory and writes outputs under `target/<profile>/`
+(profiles: `release` default, `--profile dev`; release defaults to
+`--opt-level 2`, dev to `0`). `kind "bin"` builds a native executable;
+`kind "staticlib"` builds a static archive. When both are omitted, `bin` is
+inferred from `src/main.tl` and `staticlib` from `src/lib.tl`. Package
+builds also emit a metadata-only comptime image `<name>.tlci` beside the
+native artifact; `typelisp inspect <file.tlci>` renders its header,
+sections, and package metadata.
 
-`typelisp build <file.tl> [-o <exe>]` compiles, assembles, and links one source
-file to a native executable without running it. Without `-o`, the executable is
-written next to the source path with the `.tl` extension removed. `typelisp
-build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
-resolves `entry` relative to the manifest directory and writes outputs under
-`target/<profile>/`, where the package build profile defaults to `release`.
-`--profile dev` uses the `dev` profile; `--profile release` and `--release`
-select the release profile. Omitted `entry` defaults to `src/main.tl` for
-binaries and `src/lib.tl` for static libraries. When both `kind` and `entry` are
-omitted from a disk-backed manifest, package loading infers `bin` if only
-`src/main.tl` exists and `staticlib` if only `src/lib.tl` exists; if both or
-neither conventional entry exists, add an explicit `kind` or `entry`. `kind
-"bin"` builds a native executable named after the package; `kind "staticlib"`
-builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
-Assembly and object side artifacts use the same `target/<profile>/` directory.
-Package builds also emit a metadata-only comptime image named `<name>.tlci`
-beside the native artifact; `typelisp inspect <file.tlci>` renders the tlci
-header, section table, and package metadata. The `.tlci` name is
-target-independent today because v1 images carry host compile-time metadata,
-not target runtime object code; cross-target package builds keep separate
-runtime artifacts while sharing the same host comptime image path.
-`kind "lib"` remains accepted as a compatibility alias. Dependency entries may
-use a local path relative to that same package root, an absolute path, or the
-GitHub shorthand form shown above. `tag` and `branch` pins are also accepted,
-and the shorthand normalizes to
-`https://github.com/owner/repo.git#rev=commit`. Remote entries are resolved
-through `typelisp.lock` and the package cache. When an existing lock entry
-matches the manifest alias, normalized URL, and requested `rev`/`tag`/`branch`
-pin, package builds replay the recorded commit as an exact `rev`; otherwise the
-requested pin is resolved and the lockfile is rewritten deterministically.
-`--locked` requires matching lock entries and never rewrites `typelisp.lock`;
-missing, stale, or extra lock entries fail with a diagnostic. `--update-lock`
-intentionally refreshes remote pins and rewrites `typelisp.lock`. A
-pre-existing legacy fetch root under `target/typelisp/git-deps/<alias>` with
-`typelisp.pkg` is used as-is unless it has a `.git` directory, in which case the
-checkout is refreshed.
+Dependencies may be local paths or git/GitHub pins (`rev`, `tag`, or
+`branch`). Remote pins resolve through `typelisp.lock` — a deterministic
+S-expression lockfile recording alias, normalized URL, pin, and exact
+commit — and a content-keyed package cache under
+`target/typelisp/cache/`. `--locked` requires matching lock entries and
+never rewrites the lockfile; `--update-lock` intentionally refreshes remote
+pins. Dependency packages must be static libraries; transitive dependencies
+build once per invocation as a DAG (concurrently where the host supports
+it), and cycles fail with a diagnostic. Inside a package build,
+`(import "pkg:math/src/lib.tl")` resolves from the dependency root declared
+for alias `math`. The optional `(link ...)` section declares native link
+inputs per target; on Linux any non-empty link input switches the package to
+linking through `cc` instead of freestanding `ld`. Registry support,
+semantic-version solving, and workspaces are deferred by design: the model
+is deterministic zero-dependency builds through the host `git` CLI plus
+checked-in lockfile replay. See [SPEC.md §4.6](SPEC.md) for the full
+contract.
 
-Resolved remote package pins can be represented in `typelisp.lock`, a
-deterministic v1 S-expression lockfile:
+Package source discovery walks `.tl` files below the manifest directory,
+skipping build/VCS state, nested package roots, and `tests` directories
+(reserved for `typelisp test` integration discovery and fixture corpora).
+Package `check`/`build` validate the entry's reachable import closure;
+package `lint` checks every discovered source.
 
-```lisp
-(typelisp-lock
-  (version "v1")
-  (dependencies
-    (dependency
-      (alias "lint")
-      (url "https://github.com/JoNil-Botta/typelisp-lint.git")
-      (pin (tag "v1.0.0"))
-      (commit "0123456789abcdef0123456789abcdef01234567"))))
-```
+## Tests and documentation
 
-Each dependency records its manifest alias, normalized URL, original pin
-kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. The selfhost
-lockfile helper parses this format with duplicate, missing-field, malformed,
-non-string, and unknown-version diagnostics, and emits entries in stable alias
-order. Package builds consume that model through `build_cli_core.tl`: matching
-entries pin remote dependencies to the recorded commit, missing or stale entries
-are refreshed from the manifest pin by default, and a deterministic lockfile is
-written when remote dependencies or a prior lockfile are present. `--locked`
-turns missing or stale entries into errors, while `--update-lock` refreshes
-remote pins intentionally.
+Inline tests live next to source declarations as `(test name body...)`
+items. Normal builds type-check inline tests owned by the package's own
+sources (never imported stdlib or dependencies), then drop them before
+production codegen. `typelisp test <file.tl>` turns a file's inline tests
+into a generated harness and runs it; with no file, it runs the nearest
+package's inline tests plus `tests/**/*.tl` integration programs (exit 0
+passes). `typelisp test --check` type-checks harnesses without linking.
+Tests commonly import `stdlib/test.tl` for assertions. CI auto-discovers
+inline-test-bearing files, so adding tests requires no manifest edits.
 
-Remote package cache helpers use a deterministic v1 layout under the package
-root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
-normalized remote URL plus an exact `rev` commit pin; `tag` and `branch` pins
-must be resolved, either from `typelisp.lock` or from `git`, before they can be
-reused as cache entries. Complete entries with matching metadata, completion
-marker, and `typelisp.pkg` are reused without invoking `git`, including during
-locked replay. Missing entries, partial writes, corrupt metadata, or stale
-marker state are fetched into a staging directory and finalized through the
-package-cache helpers; conflicting corrupt entries are preserved with a
-`.corrupt.N` suffix before replacement.
-
-The repository root is also a package. From a checkout, `typelisp build` builds
-the unified selfhost CLI from `src/main.tl` and writes
-`target/release/typelisp` (or `target/release/typelisp.exe` on Windows). Stage0
-publication uses
-`scripts/build-stage0.sh`, which compiles `src/main.tl` directly and links
-it with the host toolchain so a seed compiler does not depend on its own
-`build` command.
-
-Package-wide source discovery walks regular `.tl` source files below the
-manifest directory while skipping build/tool state (`target`, VCS directories),
-nested package roots that have their own `typelisp.pkg`, and directories named
-`tests`. Test directories are reserved for `typelisp test` integration
-discovery and repository fixture corpora such as `src/tests/`.
-
-Package `check` and package `build` validate the manifest entry's reachable
-import closure, not every source file discovered under the package root. That
-same closure also scopes package doc-comment example typechecking for these
-commands. Orphan modules, alternate entries, and other out-of-closure files are
-checked by explicit `typelisp check <file>`, `typelisp doc --test <file>`, or
-package `typelisp test` coverage when they are intended to stand alone.
-
-Package `lint` checks every discovered package source. Dead-code lint treats
-every top-level declaration in `staticlib`/`lib` packages as an external API
-root, while `bin` packages report declarations unreachable from the entry,
-top-level tests, macro-import calls, or generated-declaration metadata.
-
-Package builds load local dependency manifests into a normalized DAG keyed by
-manifest path before code generation. Transitive dependencies are built once per
-package build invocation, diamond graphs share the common archive build,
-independent ready dependency nodes run concurrently on hosts with async process
-handles, binaries link the transitive static archives in dependency-aware order,
-and dependency cycles fail with a `build: dependency cycle:` path diagnostic.
-Hosts without async child handles keep the same graph semantics through a serial
-fallback. Dependency packages must be `staticlib`/`lib` packages.
-Inside a package build, imports of the form `(import
-"pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
-`math`; ordinary string imports remain relative to the importing file, and
-`stdlib/...` imports keep their local-first then configured-root then embedded
-fallback behavior.
-
-Under the legacy loader, imported package definitions share the same flat
-top-level namespace as local modules, so duplicate value or type names fail
-through the existing duplicate definition diagnostics. The next package-manager
-phase keeps the explicit local-path plus git/GitHub pin model: registry support
-is deferred, semantic-version solving is a non-goal, and workspaces are deferred.
-The rationale is deterministic zero-dependency builds through the host `git` CLI
-plus checked-in `typelisp.lock` replay. Namespace isolation and qualified symbol
-lookup are specified for the selfhost module model in `SPEC.md`.
-
-Documentation comments can contain checked examples. `typelisp doc --test
-<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
-attached `;:` item docs, writes each example to a deterministic temporary
-source file, type-checks it, and removes the temporary directory before exiting.
-Multiple explicit doctest inputs and package doctests keep per-file reporting.
-The self-hosted Markdown generator renders `typelisp doc input.tl -o output.md`
-from the entry file plus its reachable import graph, with deterministic module
-sections and navigation. Package docs use `typelisp doc -o output.md
---manifest-path typelisp.pkg`.
+Documentation comments use `;#` (module docs) and `;:` (item docs), and can
+contain checked examples:
 
 ```lisp
 ;# ```typelisp
@@ -532,388 +489,59 @@ sections and navigation. Package docs use `typelisp doc -o output.md
 (define documented : i64 1)
 ```
 
-Examples are standalone TypeLisp source snippets. By default an example must
-parse, resolve imports, and type-check. Add `expect-error` after the language tag
-when the example is intended to fail. `typelisp run` / `tl run` fences are
-recognized as runnable examples: they must include `;; doctest-exit: <integer>`
-and may include `;; doctest-stdout: -` / `;; doctest-stderr: -` or
-`literal:<escaped text>` (`\n`, `\t`, `\r`, `\\`). On Linux, runnable examples
-compile and run through the self-hosted build/run path and compare exact
-exit status, stdout, and stderr. Unsupported hosts report an unsupported
-runnable doctest diagnostic. Ordinary `;` and `;;` comments are not
-documentation and are ignored by the doctest scanner. `;#` and `;:` are the
-only public documentation comment syntaxes.
+`typelisp doc --test <file.tl>` type-checks every fenced `typelisp`/`tl`
+example (add `expect-error` for intended failures; `typelisp run` fences
+compile, run, and compare exit/stdout/stderr on Linux). `typelisp doc
+input.tl -o output.md` renders Markdown docs for the entry file and its
+import graph; `--manifest-path` documents a package.
 
-Inline tests can live next to source declarations as `(test name body...)`
-items. Normal `check`, `compile`, `build`, and `run` type-check inline tests
-owned by the explicitly named source or the package's own discovered sources,
-with `test` cfg helpers enabled for that preflight, then drop `test` items
-before production lowering and codegen. Imported stdlib and dependency files
-provide runtime declarations only; their inline tests are not checked merely
-because they were imported. `typelisp test <file.tl>` loads the import graph,
-turns inline tests owned by the requested source into private unit-returning
-functions, generates a test-owned `main`, and runs the resulting executable.
-Imported files provide runtime declarations but do not contribute their own
-inline tests to that harness. With
-no file, `typelisp test` discovers the nearest package and runs package sources
-that contain top-level inline tests, plus package-local `tests/**/*.tl`
-integration test files; stdlib and dependency imports provide runtime
-declarations only. Integration test files run as normal programs: a `main` exit
-status of `0` passes, while any non-zero status fails the package test command
-with exit `1`. `typelisp test --check` type-checks generated inline harnesses
-and integration test files without assembling or linking. Package integration
-discovery skips reserved fixture corpora such as
-`tests/diagnostics/**`, `tests/format_golden/**`, `tests/inline/**`,
-`tests/no-libc/**`, `tests/safety/**`, and `tests/spmd/**`; it also leaves
-`tests/integration/**` to explicit integration manifests when
-`tests/integration/native-*.manifest` exists. Dedicated verification scripts
-own those files. Tests commonly import `stdlib/test.tl` for assertion helpers.
+`typelisp lint` includes staged migration rules such as
+`--deprecated-string-concat`, `--redundant-function-name`, and
+`--prefer-dotted-field`. Dead-code lint treats library packages as external
+API roots and reports unreachable declarations in `bin` packages.
 
-CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
-test-bearing `.tl` files under `src/`, `stdlib/`, `tests/integration/`,
-`tests/inline/`, and `examples/`. Add inline tests without editing a manifest;
-the script fails if discovered tests do not type-check, build, or pass.
+## Self-hosting and bootstrap
 
-### Enum and struct namespace rules
+The compiler front end, IR, optimizer, backends, and all tooling under
+[`src/`](src) are written in TypeLisp; compiler self-test conventions are
+documented in [`src/TESTING.md`](src/TESTING.md). The repository root is
+itself a package: from a checkout, `typelisp build` builds the unified
+selfhost CLI from `src/main.tl` into `target/release/`.
 
-In the current flat stage0 model, TypeLisp keeps **type names** and **value
-names** in separate namespaces:
-
-- **Type namespace**: enum and struct type names share one namespace, so
-  `defenum Shape` and `defstruct Shape` collide.
-- **Value namespace**: functions, variables (`define`), `extern`s, struct
-  constructors, and enum *variant* constructors all share one namespace, so a
-  variant `Foo` cannot coexist with a function, variable, or `extern` named
-  `Foo`, even if they belong to different enums.
-- An enum *type* name may intentionally share a name with one of its own
-  variants (e.g. `defenum Result (Result i64) (Err String)`), because the type
-  and the constructor live in different namespaces.
-
-The selfhost module model keeps the same value/type split inside each module,
-then qualifies names by module identity so two modules can define the
-same local value or type name without colliding.
-
-### Expression forms
-
-`if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
-nested/recursive enum patterns, constructor-shaped struct patterns, and `_`),
-`ann`, `cast`, `foreach`,
-`spmd-reduce`, `spmd-scan`, plus
-arithmetic (`+ - * / %`),
-comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
-(`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
-struct field, and local dotted field syntax such as `place.field` is sugar for
-the same operation. `(set! (struct-get place field) value)` and
-`(set! place.field value)` write fields in place.
-
-Named top-level functions and `lambda` literals can be passed as pointer-sized
-closure descriptor values. Non-capturing lambdas use static descriptors.
-Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, compatibility dynamic arrays, tuples/structs/enums,
-and fixed arrays, including nested aggregate and fixed-array contents that are
-recursively deep-copied. The aggregate captures snapshot their storage onto the
-heap so the environment can outlive the creating frame. Local non-escaping closures may
-capture immutable references (#2280); escaping closures still reject reference
-captures, and mutation of captured names is rejected (#2552).
-SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
-compiler parses and type-checks the first source form and lowers it to scalar
-reference loops; `--backend-mode avx2|avx512` supports a first contiguous
-map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
-`f32`, and `f64` lanes, with AVX-512 additionally supporting bool
-compatibility dynamic-buffer copies and bool-valued map results through private
-mask conversion. Contiguous maps may borrow generated vector backing storage or
-generated full-slice storage before the `foreach` body, so public APIs can use
-vector/slice views instead of exposing `(Array T)` parameters.
-Runtime-dispatched SIMD variants are specified with `defdispatch`:
-ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
-using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
-AVX-512 dispatch currently requires AVX-512BW because byte-lane lowering uses
-BW instructions.
-`spmd-reduce` scalar lowering supports `sum` over `i32`, `i64`, and `f64`,
-`min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`; `spmd-scan`
-scalar lowering supports inclusive `sum`/`min`/`max` scans over `i32`/`i64` and
-`all`/`any` scans over `bool`. SIMD backend modes vectorize eligible contiguous
-array reductions: `sum` over `i32`, `i64`, and `f64`; `min`/`max` over `i32`;
-and AVX-512 `min`/`max` over `i64`. Masked varying `if` is accepted in scalar
-reference lowering and in the current AVX-512 subset for unit-result branches,
-nested branch-mask composition, and i64 value-producing selects; AVX2 emits an
-explicit staged diagnostic for masked-if fixtures instead of silently
-scalarizing them. `(program-index)` and `(program-count)` are implemented as
-no-argument SPMD lane identity forms inside `foreach` bodies and `spmd-reduce`
-value expressions; programs that use those forms intentionally observe backend
-gang width.
-
-### Builtins
-
-Compiler-owned compatibility builtins are `print`, `print-bool`,
-`print-newline`, `make-array`, `array-ref`, `array-set!`,
-`array-length`/`length`; imported `stdlib/string.tl` string helpers
-`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`,
-`string->int`; compatibility string slice/format helpers
-`substring`/`string-slice`, `int->string`; and `panic`/`error`.
-Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
-argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
-`stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
-`file-open`, `read-stdin-line`, `flush-stdout`, `fs-*`, and related APIs.
-Import `stdlib/string.tl` for public string inspection and parsing helpers:
-`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, and
-`string->int`.
-For user-facing string concatenation, import `stdlib.str_cat` and use
-`str_cat.str-cat` for fixed-arity joins; use `stdlib.text_buf` for incremental
-builders. Legacy path imports can still use unqualified `str-cat`.
-`string-append`/`string-concat` are deprecated low-level compatibility
-primitives kept for legacy code. The staged lint rule is available with
-`typelisp lint --deprecated-string-concat` while the remaining in-tree
-migrations land. `typelisp lint --redundant-function-name` enables the staged
-rule for functions or macros that repeat their module prefix in the local name.
-`typelisp lint --prefer-dotted-field` enables the staged rule that prefers
-`p.field` and `(set! p.field value)` over simple local `struct-get` forms.
-
-### Memory and aliasing
-
-TypeLisp implements v1 move-only aggregate semantics and lexical
-immutable/mutable borrow checking with conservative non-lexical lifetime
-shortening; it does not implement destructors, `free`, or a garbage collector.
-Scalars, raw pointers, and non-capturing function values are copyable, while
-`String`, arrays, tuples, structs, enums, and capturing closures move in
-by-value positions. Aggregate values are implemented as
-pointer-sized handles in the IR/ABI, but those handles are not checked language
-references. The v1 raw pointer design is now specified as explicit unsafe
-syntax:
-`(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
-dereference/write/offset/cast operations require `(unsafe ...)`. The selfhost
-compiler implements that surface for FFI/runtime work; it is not the future safe
-reference/borrow model.
-
-`String` values are immutable at the source level. Compatibility dynamic arrays
-are mutable buffers reached through a live owner handle or an exclusive mutable
-reference; `array-set!` and `array-push!` reject immutable-reference receivers.
-That unsized `(Array T)` surface is transitional: public growable collections
-should move to vector/slice APIs and private dynamic buffers while fixed
-`(Array T N)` remains the public `Array` direction. Struct fields can be
-mutated in place with `(set! (struct-get place field) value)` or
-`(set! place.field value)` when the receiver is an owned storage place or
-mutable reference; immutable reference receivers are rejected. The current
-IR/ABI may still carry aggregate values through pointer-shaped heap handles in
-positions not covered by the new layout-query contract. Heap allocation uses a
-backend-emitted `tl_alloc` bump allocator and allocations live until process
-exit. See [SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and
-specified model.
-
-`SPEC.md` also defines the v1 owned `String` / borrowed `str` direction:
-string literals remain owned `String` values, `str` is a borrowed-only referent
-used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
-`str` view. Typed calls auto-borrow borrowable places for immutable reference
-parameters, including `String` places passed to `(& lifetime str)`. The `str`
-frontend and stdlib API migration are implemented
-(#1453, #1454); several compiler builtins keep compatibility `String`
-signatures. `substring`/`string-slice` keep returning fresh owned `String`
-copies, while `substring-view`/`string-slice-view` return bounds-checked
-borrowed `(& lifetime str)` slices without copying bytes. Mutable binary storage
-is specified separately as owned `ByteBuf` plus `(& lifetime bytes)` /
-`(&mut lifetime bytes)` borrowed views; conversions between text, arrays, and
-byte buffers are explicit copy or borrow boundaries.
-
-Lifetime-parameterized named aggregates are specified with declaration metadata
-such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as
-`(RefBox r)`. Those arguments are lifetime names only, not source-level generic
-type parameters; selfhost parser/typechecker support is implemented (#1722) —
-see `stdlib/text_buf_borrowed.tl` and `stdlib/vector_slice.tl` for usage.
-
-`(Box T)` is specified as a safe, move-only, arena-owned indirection handle:
-`(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects
-the boxed value for read/pattern use under the move rules. A box allocated
-inside `(with-arena r ...)` is typed as `(in r (Box T))` and cannot escape that
-scope. It provides the explicit indirection required by the default inline
-aggregate layout contract for recursive structs/enums; complete enforcement is
-staged separately (#2554). `box-take` explicitly consumes a box handle and
-returns its contents, and `(set! (box-get b) value)` mutates boxed storage.
-
-The v1 reclamation direction keeps a process-lifetime default arena per thread
-and does not add general per-object `free` or GC yet. `String` buffers, dynamic
-array storage, returned enum/struct storage, and self-hosted data structures all
-remain heap allocations in the active arena.
-General `free` is deferred until ownership, borrowing, and reference semantics
-are enforced, because arbitrary object reclamation before move/borrow checking
-would make double-free and use-after-free errors expressible. A tracing GC is
-also larger than the next step.
-
-The first safe reclamation surface is `(with-arena r body ...)` — a
-lexically scoped arena with **static escape checking**. The arena model uses
-"scoped arena" for this behavior. The typechecker rejects any arena-tagged value
-that would leave the scope, so the compiler
-can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
-body. This makes scoped cleanup safe by construction, unlike the raw extern
-helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
-
-The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
-work that returns only scalars or outer-owned values; use `(with-escape scratch
-...)` with a typed first-class `arena.Arena` from `arena.make` when one
-supported result must be cloned out across repeated scratch builds; use
-`(with-scratch body ...)` when a supported result should be cloned out from a
-fresh one-shot scratch arena; use `(arena.make-atomic)` for a shared atomic
-allocation target; use `(in-arena arena body ...)` when the result should remain
-owned by that first-class arena; use `arena.phase` plus `arena.rewind-safe!` or
-`arena.destroy-safe!` for checker-proven ordinary single-thread arena
-invalidation; reserve manual `arena.set!` / `arena.rewind` / `arena.destroy`
-calls for unsafe internals that can prove every invalidated handle is dead.
-
-### Safe task threading
-
-Safe task threads use generated typed closure modules from `stdlib/thread.tl`,
-such as `(import (thread.handle i64) as thread_i64)` with
-`thread_i64.spawn` / `thread_i64.join`, plus aggregate wrappers such as
-`thread.spawn-string` and their matching joins. The checker validates the
-captured environment and joined result structurally: references, borrowed `str`
-views, scoped regions, ordinary first-class arenas, raw pointer ownership
-claims, live mutable aliases, and guards do not cross safe task-thread
-boundaries. Aggregate results that leave a worker must live in a spanning
-owner, or in a wrapper that explicitly copies them into one. `stdlib/sync.tl`
-provides the first concrete synchronized surfaces: generated `(channel i64)`
-modules, generated `(mutex i64)` modules, `ChannelI64PairChannel`, and
-`ChannelString`.
-
-Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
-inside one task; task threading creates independently scheduled workers with
-their own default arenas and explicit ownership crossing points. An atomic
-arena proves allocation storage lifetime and concurrent allocation safety. It
-does not by itself make ordinary array, struct, box, or raw-pointer mutation
-race-free; use mutexes, channels, explicit atomics, or unsafe code with its own
-proof. A runnable safe example is
-[`examples/safe_threading.tl`](examples/safe_threading.tl).
-
-For game-style loops, choose the narrowest safe arena surface that matches the
-lifetime. Keep global state in the default program arena. Use lexical
-`(with-arena level ...)` and nested `(with-arena frame ...)` scopes when the
-state has strict stack-shaped lifetimes. Use `(with-escape scratch ...)` with a
-reusable first-class scratch arena, or `(with-scratch ...)` for one-shot work,
-when one supported result should be cloned into the enclosing state. Use
-`(in-arena owner ...)` when the result should remain owned by a first-class
-level or frame arena. For overlapping frame buffers, create two direct local
-ordinary arenas, take an `arena.phase` before filling each buffer, and call
-`arena.rewind-safe!` only after the checker can prove the previous buffer's
-values, borrows, captures, container slots, and channel sends are dead or
-released. For event-driven level unload, call `arena.destroy-safe!` only after
-all level-owned values are dead; for atomic arenas that crossed task-thread or
-channel boundaries, all checker-visible users must be joined or otherwise
-released first. The runnable cookbook in
-[`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl) covers lexical
-frame scopes, double-buffered frame arenas, and event-driven unload after join.
-
-Scoped cleanup of non-memory resources is separate. The implemented
-`(with ([name init cleanup]) body ...)` form (SPEC.md §5.19) runs cleanup
-functions in reverse binding order on scope exit for files, process handles,
-locks, mapped files, and similar resources; it does not imply destructors,
-`free`, or arena reset semantics.
-
-Programs that need manual control import `stdlib.arena` and use the typed
-first-class arena helpers. `arena.make`, `arena.make-atomic`, and
-`arena.current` create or observe an `arena.Arena`; `arena.mark` records an
-`arena.ArenaMark`; `arena.phase` records an `arena.ArenaPhase` token for a
-direct local ordinary `arena.make` owner. `arena.rewind-safe!` consumes that
-token and invalidates only values allocated in the token's phase;
-`arena.destroy-safe!` consumes a direct local ordinary owner and invalidates all
-values owned by it.
-The checker rejects both operations while such values, borrows, captures, or
-owner handles remain live. Raw integers do not satisfy those public helper
-signatures. `arena.set!`, raw `arena.destroy`, and raw `arena.rewind` require
-`(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
-live heap handles. The safe `in-arena` form switches allocation targets without
-marking, rewinding, destroying, or cloning. See [SPEC.md §7.3](SPEC.md) for
-details.
-
-See [SPEC.md](SPEC.md) for the full language reference.
-
-## Self-hosting sources
-
-The [`src/`](src) directory builds up a TypeLisp front end *written in
-TypeLisp*:
-
-- `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
-- `read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
-- The REPL and all tooling evaluate through the real compiler path only:
-  source is parsed, typechecked, compiled, linked, and run by the same pipeline
-  used for non-interactive commands.
-
-Compiler self-test and smoke-driver conventions are documented in
-[`src/TESTING.md`](src/TESTING.md).
-The published stage0 is a single self-hosted [`src/main.tl`](src/main.tl)
-binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
-handles every toolchain command in-process. The `Bootstrap Stage0` workflow
-([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
-is **self-perpetuating**: on each merge to `main` it fetches the
-previously published stage0, uses *that* compiler to build the next stage0 from
-`src/main.tl`, and publishes the result to the `stage0-latest` and immutable
-`stage0-*` releases. Each stage0 therefore builds its own successor. To reproduce
-that build locally, run [`scripts/build-stage0.sh`](scripts/build-stage0.sh) with
-a fetched stage0 as the seed:
+The published stage0 is a single self-hosted binary per OS
+(`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`). The
+[`Bootstrap Stage0`](.github/workflows/bootstrap-stage0.yml) workflow is
+self-perpetuating: on each merge to `main` it fetches the previously
+published stage0, uses *that* compiler to build the next stage0 from
+`src/main.tl`, and publishes the result — each stage0 builds its own
+successor. Reproduce locally:
 
 ```sh
 scripts/fetch-stage0.sh
-scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux   # Linux
-scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe  # Windows (Git Bash)
+scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux            # Linux
+scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe # Windows (Git Bash)
 ```
 
-`build-stage0.sh` compiles `src/main.tl` to assembly with the seed and links
-it through the host toolchain (`as`/`ld` on Linux; `clang` + MSVC `link.exe` on
-Windows). The bootstrap path deliberately uses `compile` plus the native linker
-so a stage0 can build its successor without depending on its own `build` command.
-
-Published stage0 compilers can be fetched with
-[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
-[`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
-download the single host asset and install it as the command under
-`target/stage0/`.
-
-To run the same stage0 verification gate used by CI, run
-`scripts/ci-verify.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset. The gate performs a single compiler build on every
-host: the published compiler seeds the stage1->stage2->stage3 bootstrap
-fixpoint over `src/main.tl`, and every remaining gate then runs on the
-freshly bootstrapped stage2 compiler (the branch-built full CLI).
-
-The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
-and compares Linux assembly through `as` and `ld`; on Git Bash/MSYS/Cygwin for
-Windows it emits `windows-x86_64` assembly, assembles with `clang
---target=x86_64-pc-windows-msvc -c`, links compiler stages with MSVC
-`link.exe`, and compares `stage2.s` with `stage3.s`. From Git Bash:
-
-```sh
-scripts/fetch-stage0.sh
-scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
-```
-
-From PowerShell, fetch the Windows stage0 and invoke the same script through
-`bash`:
-
-```powershell
-powershell -ep Bypass -f scripts\fetch-stage0.ps1
-bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
-```
-
-Set `TYPELISP_WINDOWS_CLANG` or `TYPELISP_WINDOWS_LINK` to override tool
-discovery. The Windows path requires a Clang that accepts the MSVC target plus a
-Visual Studio/MSVC `link.exe` and Windows SDK installation.
-
-Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
+`build-stage0.sh` compiles `src/main.tl` with the seed and links through the
+host toolchain, so a stage0 never depends on its own `build` command.
+`scripts/ci-verify.sh` runs the same gate as CI: the published compiler
+seeds a stage1->stage2->stage3 bootstrap fixpoint
+(`scripts/check-bootstrap-fixpoint.sh` compares stage2 and stage3 assembly),
+and every remaining gate runs on the freshly bootstrapped compiler. On
+Windows the fixpoint script runs from Git Bash and uses `clang
+--target=x86_64-pc-windows-msvc` plus MSVC `link.exe`; set
+`TYPELISP_WINDOWS_CLANG` / `TYPELISP_WINDOWS_LINK` to override tool
+discovery.
 
 ## Documentation site
 
-A static language-reference and stdlib/API documentation site is generated
-entirely in TypeLisp by [`tools/doc-site/doc_site.tl`](tools/doc-site/doc_site.tl) and
-published to GitHub Pages at <https://jonil-botta.github.io/typelisp/>. Pushes
-to `main` rebuild and publish it automatically via the
-[`Publish Docs`](.github/workflows/docs-pages.yml) workflow; pull requests build
-and validate the site without publishing (the "Verify docs site" step in CI).
-
-Build the site locally into any output directory:
-
-```bash
-typelisp run tools/doc-site/doc_site.tl -- target/site
-typelisp run tools/doc-site/doc_site_expand_pages.tl -- target/site
-# Build + validate links/anchors the way CI does (no publish):
-scripts/verify-doc-site.sh
-```
+A static language-reference and stdlib/API site is generated entirely in
+TypeLisp by [`tools/doc-site/doc_site.tl`](tools/doc-site/doc_site.tl) and
+published to GitHub Pages at <https://jonil-botta.github.io/typelisp/> on
+every push to `main`; pull requests build and validate it without
+publishing. Build locally with
+`typelisp run tools/doc-site/doc_site.tl -- target/site`, or run
+`scripts/verify-doc-site.sh` to build and validate links the way CI does.
 
 ## Architecture
 
@@ -927,6 +555,11 @@ Source (.tl)
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
+
+Compilation is one whole program per executable with import-graph dedup
+(each module typechecked once per program). Package dependencies are
+codegen'd once into archives; an in-process session cache warms compiler
+pools across compiles within one process (batch and LSP paths).
 
 ## CLI
 
@@ -955,103 +588,44 @@ Commands:
     typelisp test           Run or check inline tests
 ```
 
-`check` is the public type-check command.
-
-`inspect <file.tlci>` reads a TypeLisp comptime image and prints stable header,
-section, and package metadata. Malformed images report tlci parse
-diagnostics.
-
-Common options include `--target <target>`, `--backend-mode <mode>`,
-`--manifest-path <file>`, `--stdlib-root <dir>`, `--opt-level <0|1|2>`,
-`--locked`, `--update-lock`, and `--cfg <name>`. Run command-specific help with
-`typelisp <command> --help`.
-
-The `typelisp repl` command provides a stdio command loop for `.help`,
-`.type <expr>`, and `.exit`. Top-level declarations are remembered for later
-commands and bare expressions are evaluated by compiling a scratch program
-through the TypeLisp-owned build/run path.
-
-`compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
-`scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
-`foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`,
-`u64`, `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
-compatibility dynamic-buffer copies and bool-valued map results through private
-mask conversion. SIMD backend modes also support eligible `spmd-reduce` array folds.
-Scalar `spmd-reduce` and `spmd-scan` lowering supports `sum`, `min`, `max`,
-`all`, and `any` over the SPEC.md supported types.
-For `i8`/`u8` lanes, `+` is vectorized and `*` is rejected in explicit SIMD
-backend modes until widening/narrowing byte multiply lowering is designed.
-AVX-512 uses ZMM vectors and opmask predicated tails, requires AVX-512BW for
-runtime dispatch selection, and additionally vectorizes `i64` min/max
-reductions.
-Unsupported vector IR falls back or rejects explicitly.
-Masked varying `if` is implemented for scalar reference lowering and the
-current AVX-512 subset, including value-producing scalar lane selects; AVX2
-reports the staged masked-if diagnostic.
-`(program-index)`/`(program-count)` lane identity forms are accepted in the
-SPMD scopes described by `SPEC.md` and are backend-mode observable.
-
-`compile` and `run` accept repeated `--cfg <name>` flags. Enabled names control
-`(cfg predicate declaration)` and expression-level `(cfg predicate expr
-[else-expr])` forms. Without `--cfg`, named predicates are false, `(all ...)` is
-true only when all operands are true, `(any ...)` is true when any operand is
-true, and `(not ...)` negates one predicate. Target OS predicates are enabled
-implicitly from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
-`linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
-`windows-x86_64`.
-
-The language-level runtime dispatch design is specified as `defdispatch` in
-`SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant
-functions, with scalar required as the fallback. Ordinary calls do not need to
-manually call CPU detection helpers.
-
-`compile`, `run`, source-file `build`, and `test` accept
-`--target linux-x86_64|windows-x86_64`. Linux is the default output target for
-compile/build. `test` defaults to the host target so the generated executable
-can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
-runtime helper policy, and the `clang` + `lld-link` toolchain.
-
-Source-file `typelisp build`/`typelisp run` and package build (`typelisp build
-[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2`. Package builds
-also accept `--profile dev|release` and `--release`; the selected profile is
-visible in `target/<profile>/`. When `--opt-level` is
-omitted, the release profile uses level 2 and the dev profile uses level 0.
-Explicit `--opt-level` overrides the profile default. `--opt-level 0` builds
-without the IR optimizer (faster compiles, larger/slower code), level 1 runs the
-cheap stack-only optimizer path, and level 2 runs the full optimizer plus scalar
-register allocation and inlining.
-Higher levels may spend more compile time but must preserve program semantics —
-the exit/output of a program never depends on the level. The package-build flags
-report missing/duplicate/invalid diagnostics.
-Package builds also accept `--locked` to require a matching `typelisp.lock`
-without rewriting it, and `--update-lock` to refresh remote pins and rewrite the
-lockfile. These flags are rejected for source-file builds.
+Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
+default output target; `test` defaults to the host), `--backend-mode
+scalar|avx2|avx512`, `--opt-level 0|1|2` (0: no IR optimizer; 1: cheap
+stack-only passes; 2: full optimizer with register allocation and inlining —
+levels never change program semantics), `--manifest-path <file>`,
+`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`. Run
+`typelisp <command> --help` for command-specific help. The REPL remembers
+top-level declarations and evaluates bare expressions by compiling a scratch
+program through the real build/run pipeline — there is no interpreter.
 
 ## Status
 
-Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
-x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/unit,
-`if`/`while`/`begin`, local & global variables, direct and indirect calls,
-`cast`, enums + `match`, structs + field access/mutation, fixed arrays,
-compatibility dynamic arrays, strings, `extern`, multi-file modules, scalar
-`foreach`, an initial SIMD `foreach`
-map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
-[project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (indirect/closure tail
-calls, general GC/free, non-lexical lifetimes, remaining SPMD control-flow and
-value-result slices beyond the current masked varying `if` subset, and later
-public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
-operations are implemented, including local scalar address-of scratch pointers
-for FFI out-params. Broader C-string and address-of ergonomics remain follow-up
-FFI work.
+Implemented: the full pipeline (lexer, parser, type checker, IR lowering,
+optimizer, Linux/Windows x86_64 backends); integers, floats, bool/char/unit,
+strings, enums + `match`, structs with in-place field mutation, fixed and
+compatibility dynamic arrays, tuples, closures, tail calls, `extern`/FFI
+with raw pointers and atomics, move/borrow checking with conservative
+non-lexical lifetime shortening, arenas with checker-proven invalidation,
+safe task threading, SPMD `foreach`/`spmd-reduce`/`spmd-scan` with
+scalar/AVX2/AVX-512 backends and runtime dispatch, comptime macros with type
+reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
+generation, a docs site, and an LSP diagnostics server.
+
+Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
+GC/`free` (deferred by design in favor of arenas), AVX2 masked varying
+control flow, vectorized SPMD scans/shuffles and public vector/mask values,
+out-of-line varying helper calls, reference captures in escaping closures
+(rejected by design), package registry and workspaces, and richer IDE
+features. Codegen quality versus `clang -O2` is an active work stream
+tracked by the committed benchmark baselines.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Two standing policies to note: TypeLisp
-is **self-hosted with zero dependencies** (implementation, tooling, and tests are
-written in TypeLisp), and **syntax changes carry no aliases** — when a spelling
-changes, every usage migrates and the old form is removed in the same change
-rather than kept as a parallel parser path.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Two standing policies to note:
+TypeLisp is **self-hosted with zero dependencies** (implementation, tooling,
+and tests are written in TypeLisp), and **syntax changes carry no aliases**
+— when a spelling changes, every usage migrates and the old form is removed
+in the same change rather than kept as a parallel parser path.
 
 ## License
 

@@ -2628,6 +2628,152 @@
             (set! index (+ index 1)))))
       cur-names)))
 
+;; --- per-program module -> decl-position index (#4344 lever) ------------------
+;; lower-name-env-add-module-aliases-cache, lower-name-env-from-import-aliases-
+;; in-module-cache, and lower-module-local-envs-list all filter the whole-program
+;; decl list down to one module's declarations by scanning every declaration and
+;; tracking `(module NAME)` markers. lower-module-local-envs runs per module
+;; marker and every import alias fanout rescans the list again, so a
+;; self-compile pays O(module markers x imports x program) AstDecl array-ref
+;; copies. This CSR-shaped index maps each module id to the program-order
+;; positions of its declarations (module markers excluded) so those walks touch
+;; only the target module's rows. Built lazily per program over the checked
+;; decl list, which is immutable for the whole lower run;
+;; lower-reset-file-state! drops it between programs and the (len, offset)
+;; stamp re-checks the list shape on every ensure.
+(define lower-module-decl-index-ready : bool
+  false)
+(define lower-module-decl-index-decl-count : i64
+  -1)
+(define lower-module-decl-index-decl-offset : i64
+  -1)
+(define lower-module-decl-index-modules : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define lower-module-decl-index-starts : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-ends : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-positions : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-arena : i64
+  0)
+
+(define (lower-module-decl-index-reset!) : unit
+  (begin
+    (set! lower-module-decl-index-ready false)
+    (set! lower-module-decl-index-decl-count -1)
+    (set! lower-module-decl-index-decl-offset -1)
+    ;; The stale array/map globals are never read while ready is false (every
+    ;; consumer goes through ensure!), so destroying their arena here is safe.
+    (if (= lower-module-decl-index-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy lower-module-decl-index-arena))
+        (set! lower-module-decl-index-arena 0)))))
+
+(define (lower-module-decl-index-ensure! [decls : AstDeclList]) : unit
+  (if (and
+    lower-module-decl-index-ready
+    (= lower-module-decl-index-decl-count (struct-get decls len))
+    (= lower-module-decl-index-decl-offset (struct-get decls offset)))
+    unit
+    (let
+      [count : i64 (struct-get decls len)]
+      [decl-offset : i64 (struct-get decls offset)]
+      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [empty-module-id : i64 (intern "")]
+      ;; The index outlives the transient scratch arenas active during
+      ;; lowering, so its backing allocations live in a dedicated arena
+      ;; (same idiom as tc-hygiene-module-env-cache-arena): allocating them
+      ;; in whatever arena happens to be active would leave the globals
+      ;; dangling when that scratch arena is destroyed.
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [_make-arena : unit
+        (if (= lower-module-decl-index-arena 0)
+          (set! lower-module-decl-index-arena (arena.tl_arena_make))
+          unit)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set lower-module-decl-index-arena))]
+      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [module-count : i64 0]
+      [counts : (Array i64) (make-array i64 (+ count 1))]
+      [starts : (Array i64) (make-array i64 (+ count 1))]
+      [ends : (Array i64) (make-array i64 (+ count 1))]
+      [positions : (Array i64) (make-array i64 (+ count 1))]
+      [cur-module-id : i64 empty-module-id]
+      [i : i64 0]
+      [running : i64 0]
+      (begin
+        ;; Pass 1: assign a dense slot per module id and count its decls.
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (let
+                  [slot : i64
+                    (match (hashmap.i64-i64-map-get modules cur-module-id)
+                      [(hashmap.I64I64MapFound found-slot) found-slot]
+                      [(hashmap.I64I64MapMissing)
+                        (let
+                          [new-slot : i64 module-count]
+                          (begin
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                new-slot))
+                            (set! module-count (+ module-count 1))
+                            new-slot))])]
+                  (array-set! counts slot (+ (array-ref counts slot) 1)))])
+            (set! i (+ i 1))))
+        ;; Prefix sums: starts fixed, ends double as fill cursors below.
+        (set! i 0)
+        (while (< i module-count)
+          (begin
+            (array-set! starts i running)
+            (array-set! ends i running)
+            (set! running (+ running (array-ref counts i)))
+            (set! i (+ i 1))))
+        ;; Pass 2: fill program-order positions per module slot.
+        (set! cur-module-id empty-module-id)
+        (set! i 0)
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (hashmap.i64-i64-map-get modules cur-module-id)
+                  [(hashmap.I64I64MapFound slot)
+                    (let
+                      [cursor : i64 (array-ref ends slot)]
+                      (begin
+                        (array-set! positions cursor i)
+                        (array-set! ends slot (+ cursor 1))))]
+                  [(hashmap.I64I64MapMissing) unit])])
+            (set! i (+ i 1))))
+        (set! lower-module-decl-index-modules modules)
+        (set! lower-module-decl-index-starts starts)
+        (set! lower-module-decl-index-ends ends)
+        (set! lower-module-decl-index-positions positions)
+        (set! lower-module-decl-index-decl-count count)
+        (set! lower-module-decl-index-decl-offset decl-offset)
+        ;; The arena head advances as it grows; re-capture it so reset!
+        ;; destroys the whole chain, then restore the caller's arena.
+        (set! lower-module-decl-index-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set prev-arena))
+        (set! lower-module-decl-index-ready true)))))
+
+;; Dense slot for a module id, or -1 when the module owns no declarations.
+(define (lower-module-decl-index-slot [module-id : i64]) : i64
+  (match (hashmap.i64-i64-map-get lower-module-decl-index-modules module-id)
+    [(hashmap.I64I64MapFound slot) slot]
+    [(hashmap.I64I64MapMissing) -1]))
+
 (define (lower-name-env-add-module-aliases-cache
   [decls : AstDeclList]
   [base-cache : LowerNameCache]
@@ -2636,40 +2782,44 @@
   [target-module : String]
   [target-module-id : i64]
   [alias : String]
-  [module-id : i64]) : LowerNameEnv
+  [_module-id : i64]) : LowerNameEnv
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 module-id]
-    (begin
-      (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
-          (begin
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (if (= cur-module-id target-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-decl-alias-in-module-cache
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      cur-names
+      (let
+        [j : i64 (array-ref lower-module-decl-index-starts slot)]
+        [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        (begin
+          (while (< j end)
+            (let
+              [decl : AstDecl
+                (array-ref
+                  (struct-get decls slots)
+                  (+
+                    (struct-get decls offset)
+                    (array-ref lower-module-decl-index-positions j)))]
+              (begin
+                (match decl
+                  [(AstDecl.Module _) unit]
+                  [(AstDecl.Import _) unit]
+                  [(AstDecl.IncludeStr _ _) unit]
+                  [(AstDecl.IncludeBin _ _) unit]
+                  [(AstDecl.Test _ _ _) unit]
+                  [_
+                    (set!
                       cur-names
-                      base-cache
-                      dedup-base
-                      alias
-                      target-module
-                      decl))
-                  unit)])
-            (set! index (+ index 1)))))
-      cur-names)))
+                      (lower-name-env-add-decl-alias-in-module-cache
+                        cur-names
+                        base-cache
+                        dedup-base
+                        alias
+                        target-module
+                        decl))])
+                (set! j (+ j 1)))))
+          cur-names)))))
 
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
@@ -2818,50 +2968,52 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [target-current-module-id : i64]
-  [current-module-id : i64]) : LowerNameEnv
+  [_current-module-id : i64]) : LowerNameEnv
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 current-module-id]
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-current-module-id)]
     (begin
       ;; `names` is always a fresh (empty) overlay here, so seed the overlay
       ;; membership set empty; it then mirrors every alias bound below.
       (lower-alias-overlay-reset!)
-      (while (< index count)
+      (if (< slot 0)
+        cur-names
         (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
+          [j : i64 (array-ref lower-module-decl-index-starts slot)]
+          [end : i64 (array-ref lower-module-decl-index-ends slot)]
           (begin
-            (match decl
-              [(AstDecl.Import
-                  (AstImportSpec.Spec
-                    _
-                    _
-                    (AstMaybeModuleName.Some target-module)
-                    (AstMaybeImportAlias.Some alias)
-                    _))
-                (if (= cur-module-id target-current-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-module-aliases-cache
-                      all-decls
-                      base-cache
-                      dedup-base
-                      cur-names
-                      target-module
-                      (intern target-module)
-                      alias
-                      (intern "")))
-                  unit)]
-              [_ unit])
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      cur-names)))
+            (while (< j end)
+              (let
+                [decl : AstDecl
+                  (array-ref
+                    (struct-get decls slots)
+                    (+
+                      (struct-get decls offset)
+                      (array-ref lower-module-decl-index-positions j)))]
+                (begin
+                  (match decl
+                    [(AstDecl.Import
+                        (AstImportSpec.Spec
+                          _
+                          _
+                          (AstMaybeModuleName.Some target-module)
+                          (AstMaybeImportAlias.Some alias)
+                          _))
+                      (set!
+                        cur-names
+                        (lower-name-env-add-module-aliases-cache
+                          all-decls
+                          base-cache
+                          dedup-base
+                          cur-names
+                          target-module
+                          (intern target-module)
+                          alias
+                          (intern "")))]
+                    [_ unit])
+                  (set! j (+ j 1)))))
+            cur-names))))))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : AstDeclList]
@@ -3152,15 +3304,22 @@
   [name-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
-  [module-id : i64]) : ResultLowerModuleLocalEnv
+  [_module-id : i64]) : ResultLowerModuleLocalEnv
   (let
     [cur-type-env : TcTypeEnv type-env]
     [cur-local-type-env : TcTypeEnv local-type-env]
     [cur-names : LowerNameEnv names]
     [cur-local-names : LowerNameEnv local-names]
-    [cur-module-id : i64 module-id]
-    [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    [index : i64
+      (if (< slot 0)
+        0
+        (array-ref lower-module-decl-index-starts slot))]
+    [count : i64
+      (if (< slot 0)
+        0
+        (array-ref lower-module-decl-index-ends slot))]
     [decl-offset : i64 (struct-get decls offset)]
     [result : ResultLowerModuleLocalEnv
       (ResultLowerModuleLocalEnv.Err "lower: module local env walk")]
@@ -3169,54 +3328,54 @@
       (while (and (not done) (< index count))
         (let
           [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+            (array-ref
+              (struct-get decls slots)
+              (+
+                decl-offset
+                (array-ref lower-module-decl-index-positions index)))]
           (begin
             (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Module _) unit]
               [_
-                (if (= cur-module-id target-module-id)
-                  (match (lower-module-local-type-env-add-decl
-                    top-env
-                    cur-type-env
-                    target-module
-                    decl)
-                    [(ResultTcEnv.Ok next-type-env)
-                      (match (lower-module-local-type-env-add-decl
-                        top-env
-                        cur-local-type-env
-                        target-module
-                        decl)
-                        [(ResultTcEnv.Ok next-local-type-env)
-                          (let
-                            [next-names : LowerNameEnv
-                              (lower-name-env-add-local-decl
-                                cur-names
-                                name-cache
-                                target-module
-                                decl)]
-                            [next-local-names : LowerNameEnv
-                              (lower-name-env-add-local-decl-resolve
-                                cur-local-names
-                                cur-names
-                                name-cache
-                                target-module
-                                decl)]
-                            (begin
-                              (set! cur-type-env next-type-env)
-                              (set! cur-local-type-env next-local-type-env)
-                              (set! cur-names next-names)
-                              (set! cur-local-names next-local-names)))]
-                        [(ResultTcEnv.Err message)
+                (match (lower-module-local-type-env-add-decl
+                  top-env
+                  cur-type-env
+                  target-module
+                  decl)
+                  [(ResultTcEnv.Ok next-type-env)
+                    (match (lower-module-local-type-env-add-decl
+                      top-env
+                      cur-local-type-env
+                      target-module
+                      decl)
+                      [(ResultTcEnv.Ok next-local-type-env)
+                        (let
+                          [next-names : LowerNameEnv
+                            (lower-name-env-add-local-decl
+                              cur-names
+                              name-cache
+                              target-module
+                              decl)]
+                          [next-local-names : LowerNameEnv
+                            (lower-name-env-add-local-decl-resolve
+                              cur-local-names
+                              cur-names
+                              name-cache
+                              target-module
+                              decl)]
                           (begin
-                            (set!
-                              result
-                              (ResultLowerModuleLocalEnv.Err message))
-                            (set! done true))])]
-                    [(ResultTcEnv.Err message)
-                      (begin
-                        (set! result (ResultLowerModuleLocalEnv.Err message))
-                        (set! done true))])
-                  unit)])
+                            (set! cur-type-env next-type-env)
+                            (set! cur-local-type-env next-local-type-env)
+                            (set! cur-names next-names)
+                            (set! cur-local-names next-local-names)))]
+                      [(ResultTcEnv.Err message)
+                        (begin
+                          (set! result (ResultLowerModuleLocalEnv.Err message))
+                          (set! done true))])]
+                  [(ResultTcEnv.Err message)
+                    (begin
+                      (set! result (ResultLowerModuleLocalEnv.Err message))
+                      (set! done true))])])
             (set! index (+ index 1)))))
       (if done
         result
@@ -3301,6 +3460,7 @@
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
     (set! lower-spmd-inline-next-temp 0)
     (lower-reach-scratch-globals-reset!)
+    (lower-module-decl-index-reset!)
     (set! lower-no-main-entry-prune-active false)))
 
 (define (lower-reset-intern-owned-state!) : unit

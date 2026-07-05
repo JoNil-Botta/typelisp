@@ -10185,6 +10185,7 @@
 (define (opt-ssa-materialize-blocks
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
+  [facts : OptSsaFacts]
   [renamed : OptSsaRenameBlocks]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]) : CompilerIrBlockList
@@ -10197,7 +10198,10 @@
             [phis : CompilerIrInstrList
               (opt-ssa-phis-for-label pred-map outs sites label)]
             [body : CompilerIrInstrList
-              (opt-ssa-rename-blocks-lookup renamed label)]
+              (opt-ssa-rewrite-preexisting-instrs
+                facts
+                outs
+                (opt-ssa-rename-blocks-lookup renamed label))]
             (compiler-ir-block-cons
               (compiler-ir-block
                 label
@@ -10205,6 +10209,7 @@
               (opt-ssa-materialize-blocks
                 (box-get rest)
                 pred-map
+                facts
                 renamed
                 outs
                 sites)))])]
@@ -10212,9 +10217,88 @@
       (opt-ssa-materialize-blocks
         (compiler-ir-block-seq-to-list seq)
         pred-map
+        facts
         renamed
         outs
         sites)]))
+
+;; Pre-existing (lowerer-emitted) phis: value-producing `if`/`match` joins
+;; lower directly to Phi instructions, so a function can arrive at SSA
+;; construction with phis AND multi-def `set!` locals. The renamer passes
+;; such phis through untouched (their inputs are edge uses that must NOT be
+;; rewritten with the current block env); the materializer rewrites each
+;; input with the PREDECESSOR's out-env below, exactly like the inserted phi
+;; sites, so the renamed defs reach the pre-existing joins per edge. A
+;; candidate input with no binding on some edge is the dead-path case and
+;; takes the typed undef constant (see opt-ssa-phi-undef-input).
+(define (opt-ssa-rewrite-preexisting-phi-inputs
+  [facts : OptSsaFacts]
+  [outs : OptSsaBlockOuts]
+  [inputs : CompilerIrPhiInputList]
+  [ty : AstType]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Cons value pred rest)
+      (compiler-ir-phi-input-cons
+        (match value
+          [(CompilerIrValue.Var v)
+            (if (opt-ssa-candidate? facts v)
+              (match (opt-ssa-env-lookup (opt-ssa-block-out-lookup outs pred) v)
+                [(option_i64.Some current) (CompilerIrValue.Var current)]
+                [(option_i64.None) (opt-ssa-phi-undef-input ty)])
+              value)]
+          [_ value])
+        pred
+        (opt-ssa-rewrite-preexisting-phi-inputs facts outs (box-get rest) ty))]))
+
+(define (opt-ssa-rewrite-preexisting-instrs
+  [facts : OptSsaFacts]
+  [outs : OptSsaBlockOuts]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
+              dst
+              (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
+              ty)]
+          [_ instr])
+        (opt-ssa-rewrite-preexisting-instrs facts outs (box-get rest)))]))
+
+;; A pre-existing phi whose DST is itself a rename candidate would need its
+;; definition versioned per edge -- out of scope; skip construction (the
+;; lowerer emits fresh single-def phi dsts, so this does not fire today).
+(define (opt-ssa-instr-seq-has-candidate-phi-dst?
+  [facts : OptSsaFacts]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst _ _)
+        (if (opt-ssa-candidate? facts dst)
+          true
+          (opt-ssa-instr-seq-has-candidate-phi-dst? facts instrs (+ index 1)))]
+      [_ (opt-ssa-instr-seq-has-candidate-phi-dst? facts instrs (+ index 1))])))
+
+(define (opt-ssa-blocks-have-candidate-phi-dst?
+  [facts : OptSsaFacts]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-ssa-instr-seq-has-candidate-phi-dst? facts instrs 0)
+            true
+            (opt-ssa-blocks-have-candidate-phi-dst? facts (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-ssa-blocks-have-candidate-phi-dst?
+        facts
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-ssa-instr-seq-has-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -10249,6 +10333,7 @@
   [ret-ty : AstType]
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
+  [facts : OptSsaFacts]
   [sites : OptSsaPhiSites]
   [state : OptSsaRenameState]) : CompilerIrFunction
   (match state
@@ -10263,6 +10348,7 @@
           (opt-ssa-materialize-blocks
             blocks
             (struct-get context pred-map)
+            facts
             renamed
             outs
             sites)))]))
@@ -10274,6 +10360,7 @@
   [ret-ty : AstType]
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
+  [facts : OptSsaFacts]
   [sites : OptSsaPhiSites]
   [state : OptSsaRenameState]) : OptFunctionCtxResult
   (match state
@@ -10283,6 +10370,7 @@
           (opt-ssa-materialize-blocks
             blocks
             (struct-get context pred-map)
+            facts
             renamed
             outs
             sites)]
@@ -10318,10 +10406,13 @@
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (opt-verify-single-defs? params blocks)
         func
-        (if (opt-ssa-blocks-have-phi? blocks)
-          func
-          (let
-            [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+        (let
+          [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+          ;; Pre-existing lowerer phis are fine (their inputs are rewritten
+          ;; per edge during materialization); only a phi DST that is itself
+          ;; a rename candidate is out of scope.
+          (if (opt-ssa-blocks-have-candidate-phi-dst? facts blocks)
+            func
             (if (not (opt-ssa-any-candidate? facts))
               func
               (let
@@ -10370,6 +10461,7 @@
           ret-ty
           blocks
           context
+          facts
           sites
           (opt-ssa-rename-function-blocks
             context
@@ -10400,6 +10492,7 @@
           ret-ty
           blocks
           context
+          facts
           sites
           (opt-ssa-rename-function-blocks
             context
@@ -10417,31 +10510,36 @@
         [context : OptCfgContext (opt-cfg-context-build blocks)]
         (if (opt-verify-single-defs? params blocks)
           (OptFunctionCtxResult.Result func context)
-          (if (opt-ssa-blocks-have-phi? blocks)
-            (OptFunctionCtxResult.Result func context)
-            (let
-              [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
-              (if (not (opt-ssa-any-candidate? facts))
-                (OptFunctionCtxResult.Result func context)
-                ;; A CFG edge into the entry block (the tail-recursion-to-loop
-                ;; back edge) cannot be represented in SSA: the entry block's
-                ;; initial values (parameters and prologue defs) arrive over the
-                ;; implicit function-entry edge, which has no predecessor block
-                ;; or label. A phi inserted at the entry block only sees the
-                ;; explicit predecessors, so renaming silently drops the
-                ;; first-iteration values. Skip SSA construction for such
-                ;; functions; the non-SSA passes still run.
-                (if (opt-ssa-entry-has-preds? context)
-                  (OptFunctionCtxResult.Result func context)
-                  (opt-ssa-construct-with-context-result
-                    func
-                    name
-                    params
-                    ret-ty
-                    frame
-                    blocks
-                    facts
-                    context)))))))]))
+          (let
+            [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+            (cond
+              ;; Pre-existing lowerer phis are fine (their inputs are rewritten
+              ;; per edge during materialization); only a phi DST that is
+              ;; itself a rename candidate is out of scope.
+              [(opt-ssa-blocks-have-candidate-phi-dst? facts blocks)
+                (OptFunctionCtxResult.Result func context)]
+              [(not (opt-ssa-any-candidate? facts))
+                (OptFunctionCtxResult.Result func context)]
+              ;; A CFG edge into the entry block (the tail-recursion-to-loop
+              ;; back edge) cannot be represented in SSA: the entry block's
+              ;; initial values (parameters and prologue defs) arrive over the
+              ;; implicit function-entry edge, which has no predecessor block
+              ;; or label. A phi inserted at the entry block only sees the
+              ;; explicit predecessors, so renaming silently drops the
+              ;; first-iteration values. Skip SSA construction for such
+              ;; functions; the non-SSA passes still run.
+              [(opt-ssa-entry-has-preds? context)
+                (OptFunctionCtxResult.Result func context)]
+              [else
+                (opt-ssa-construct-with-context-result
+                  func
+                  name
+                  params
+                  ret-ty
+                  frame
+                  blocks
+                  facts
+                  context)]))))]))
 
 ;; --- conservative global value numbering / cross-block copies ---------------
 ;;
@@ -14788,6 +14886,208 @@
     [(CompilerIrBlockList.Array seq)
       (opt-licm-subst-body-blocks env (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-licm-switch-case-outside?
+  [body : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : bool
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) false]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case _ label)
+          (if (not (opt-label-contains body label))
+            true
+            (opt-licm-switch-case-outside? body (box-get rest)))])]))
+
+;; Pure register staging that a return path may perform without counting as
+;; "more work": scalar copies/arithmetic and the group packing a multi-word
+;; return needs. A direct call whose effect is an aborting ControlFlow
+;; runtime (tl_oob_abort and friends) is also allowed -- that exit terminates
+;; the process. Loads, stores, geps, bounds checks, and real calls make the
+;; exit a break into further work instead.
+(define (opt-licm-return-staging-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.Phi _ _ _) true]
+    [(CompilerIrInstr.Pack _ _ _) true]
+    [(CompilerIrInstr.Word _ _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    ;; A found/insert exit does bounded memory work (compute the entry address,
+    ;; read/write the slot) before returning. That still makes the loop a
+    ;; short-trip SEARCH -- it returns as soon as the slot is located -- so
+    ;; hoisting a loop-invariant load into it does not pay and (under high
+    ;; register pressure) strands the hoisted value's live range across the
+    ;; probe loop. Allow the memory ops on the way OUT; a path that instead
+    ;; loops back into more iterations never reaches a Return within the walk
+    ;; fuel, so it still classifies as break-into-work.
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.Call _ name _ _) (compiler-ir-runtime-control-flow? name)]
+    [(CompilerIrInstr.Jump _) true]
+    ;; a Branch is only ever a terminator; the walk itself validates both
+    ;; of its arms.
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Return _) true]
+    [_ false]))
+
+(define (opt-licm-return-staging-block?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-licm-return-staging-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-licm-return-staging-block? instrs (+ index 1)))))
+
+;; A RETURN-SHAPED exit target reaches a Return through at most `fuel`
+;; staging-only blocks (chained by unconditional Jumps).
+(define (opt-licm-return-shaped-target?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match (opt-cfg-find-block blocks label)
+      [(OptMaybeBlock.No) false]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64 (compiler-ir-instr-seq-count instrs)]
+              (if (= count 0)
+                false
+                (if (not (opt-licm-return-staging-block? instrs 0))
+                  false
+                  (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                    [(CompilerIrInstr.Return _) true]
+                    [(CompilerIrInstr.Jump target)
+                      (opt-licm-return-shaped-target? blocks target (- fuel 1))]
+                    ;; a staging-only diamond on the way out (the probe's
+                    ;; first-tombstone select) stays return-shaped when both
+                    ;; arms are.
+                    [(CompilerIrInstr.Branch _ then-label else-label)
+                      (and
+                        (opt-licm-return-shaped-target?
+                          blocks
+                          then-label
+                          (- fuel 1))
+                        (opt-licm-return-shaped-target?
+                          blocks
+                          else-label
+                          (- fuel 1)))]
+                    [_ false]))))])])))
+
+(define (opt-licm-branch-exit-return-shaped?
+  [blocks : CompilerIrBlockList]
+  [body : OptLabelSet]
+  [target : String]) : bool
+  (if (opt-label-contains body target)
+    true
+    (opt-licm-return-shaped-target? blocks target 8)))
+
+;; Tri-state side-exit classification: 0 = no side exits, 1 = every side exit
+;; is return-shaped, 2 = at least one side exit breaks into further work.
+(define (opt-licm-instr-side-exit-kind
+  [blocks : CompilerIrBlockList]
+  [body : OptLabelSet]
+  [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Jump target)
+      (if (opt-label-contains body target)
+        0
+        (if (opt-licm-return-shaped-target? blocks target 8)
+          1
+          2))]
+    [(CompilerIrInstr.Branch _ then-label else-label)
+      (if (and
+        (opt-label-contains body then-label)
+        (opt-label-contains body else-label))
+        0
+        (if (and
+          (opt-licm-branch-exit-return-shaped? blocks body then-label)
+          (opt-licm-branch-exit-return-shaped? blocks body else-label))
+          1
+          2))]
+    [(CompilerIrInstr.Switch _ _ cases default-label)
+      (if (or
+        (not (opt-label-contains body default-label))
+        (opt-licm-switch-case-outside? body cases))
+        (if (and
+          (opt-licm-branch-exit-return-shaped? blocks body default-label)
+          (opt-licm-switch-cases-return-shaped? blocks body cases))
+          1
+          2)
+        0)]
+    [_ 0]))
+
+(define (opt-licm-switch-cases-return-shaped?
+  [blocks : CompilerIrBlockList]
+  [body : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : bool
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) true]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case _ label)
+          (and
+            (opt-licm-branch-exit-return-shaped? blocks body label)
+            (opt-licm-switch-cases-return-shaped? blocks body (box-get rest)))])]))
+
+;; Suppression kind for the whole loop: max over the non-header body blocks'
+;; terminator classifications.
+(define (opt-licm-loop-side-exit-kind
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [latch : String]
+  [body : OptLabelSet]
+  [body-blocks : CompilerIrBlockList]) : i64
+  (match body-blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (let
+        [here : i64
+          (match block
+            [(CompilerIrBlock.Block label instrs)
+              ;; the header's AND the latch's loop-exit branches are the
+              ;; normal counted exits (a rotated loop tests at its latch);
+              ;; only OTHER blocks' exits mark the early-return probe shape.
+              (if (or
+                (string.eq label header)
+                (string.eq label latch)
+                (= (compiler-ir-instr-seq-count instrs) 0))
+                0
+                (opt-licm-instr-side-exit-kind
+                  blocks
+                  body
+                  (compiler-ir-instr-seq-ref
+                    instrs
+                    (- (compiler-ir-instr-seq-count instrs) 1))))])]
+        (if (= here 2)
+          2
+          (let
+            [rest-kind : i64
+              (opt-licm-loop-side-exit-kind
+                blocks
+                header
+                latch
+                body
+                (box-get rest))]
+            (if (> rest-kind here)
+              rest-kind
+              here))))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-loop-side-exit-kind
+        blocks
+        header
+        latch
+        body
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
   [sources : hashmap.I64I64Map]
@@ -14809,7 +15109,32 @@
             types
             body-blocks
             (opt-licm-store-state-empty))]
-        [store-summary : OptLicmStoreSummary (struct-get store-state summary)]
+        [raw-summary : OptLicmStoreSummary (struct-get store-state summary)]
+        ;; Measured (cachegrind, three rounds): hoisting invariant loads out
+        ;; of PROBE-SHAPED loops -- every side exit an early RETURN, trips
+        ;; averaging one or two iterations -- is pure register pressure: the
+        ;; extra live-across-loop values push other values into spill staging
+        ;; on the return paths (hashmap_get +1.2%, hashmap_insert +0.6%,
+        ;; self_compile +0.74%). Suppressing ALL side-exit loops overshot the
+        ;; other way: break-into-work side exits mark long-trip kernels
+        ;; (spmd_zip +50%, opt_quicksort +1.0% under the broad gate). So the
+        ;; load/gep hoist is suppressed exactly when every side exit is
+        ;; return-shaped (reaches Return through staging-only blocks; an
+        ;; aborting runtime call also qualifies), by folding a header-store
+        ;; poison into the summary. Pure BinOp/UnOp hoisting is unaffected.
+        [store-summary : OptLicmStoreSummary
+          (if (=
+            (opt-licm-loop-side-exit-kind
+              blocks
+              (opt-natural-loop-header loop)
+              (opt-natural-loop-latch loop)
+              (opt-natural-loop-body loop)
+              body-blocks)
+            1)
+            (opt-licm-store-summary-merge
+              raw-summary
+              (opt-licm-store-summary-header-or-unknown-store))
+            raw-summary)]
         [ptrs : OptLicmPtrEnv (struct-get store-state ptrs)]
         (match (opt-licm-filter-body-blocks
           loop-defs
@@ -45029,6 +45354,416 @@
         3]
       ;; ... and the slow original keeps its per-iteration check.
       [(< (opt-bce-version-test-block-checks blocks "body") 1) 4]
+      [else 42])))
+
+;; --- pre-existing-phi SSA construction self-test --------------------------------
+;; A value-if join lowers to a Phi while `set!` locals stay multi-def Movs, so
+;; the function reaches SSA construction with BOTH pre-existing phis and rename
+;; candidates. Construction must rename the phi's inputs per edge; a phi whose
+;; DST is itself multi-def must reject (function left non-SSA).
+(define (opt-ssa-preexisting-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+    (CompilerIrParamList.Nil)))
+
+(define (opt-ssa-preexisting-test-blocks [dup-phi-dst : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 5) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov
+            (if dup-phi-dst
+              4
+              5)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 7) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 11) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstrList.Nil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                4
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 3)
+                  "then"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 3)
+                    "else"
+                    (CompilerIrPhiInputList.Nil)))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 9) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    6
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 4)
+                    (CompilerIrValue.Var 2)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+                    (CompilerIrInstrList.Nil))))))
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-ssa-preexisting-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "ssa_preexisting_phi"
+    (opt-ssa-preexisting-test-params)
+    (AstType.I64)
+    7
+    blocks))
+
+(define (opt-ssa-preexisting-test-first-phi-inputs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : CompilerIrValueList
+  (if (>= index count)
+    (CompilerIrValueList.Nil)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ inputs _)
+        (match inputs
+          [(CompilerIrPhiInputList.Cons a _ rest)
+            (match (box-get rest)
+              [(CompilerIrPhiInputList.Cons b _ _)
+                (compiler-ir-value-cons
+                  a
+                  (compiler-ir-value-cons b (CompilerIrValueList.Nil)))]
+              [_ (CompilerIrValueList.Nil)])]
+          [_ (CompilerIrValueList.Nil)])]
+      [_ (opt-ssa-preexisting-test-first-phi-inputs instrs (+ index 1) count)])))
+
+;; The join block's first phi's two inputs; Nil when missing.
+(define (opt-ssa-preexisting-test-phi-inputs [blocks : CompilerIrBlockList]) : CompilerIrValueList
+  (match (opt-cfg-find-block blocks "join")
+    [(OptMaybeBlock.No) (CompilerIrValueList.Nil)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-ssa-preexisting-test-first-phi-inputs
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs))])]))
+
+(define (compiler-optimize-ssa-preexisting-phi-self-test) : i64
+  (let
+    [constructed : CompilerIrFunction
+      (opt-ssa-construct-function
+        (opt-ssa-preexisting-test-function
+          (opt-ssa-preexisting-test-blocks false)))]
+    [rejected : CompilerIrFunction
+      (opt-ssa-construct-function
+        (opt-ssa-preexisting-test-function
+          (opt-ssa-preexisting-test-blocks true)))]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function constructed))) 1]
+      ;; the pre-existing join phi reads the then/else VERSIONS of var 3: two
+      ;; Var inputs that differ from each other (unrewritten would be 3 == 3).
+      [(match (opt-ssa-preexisting-test-phi-inputs
+          (opt-function-blocks constructed))
+          [(CompilerIrValueList.Cons a rest)
+            (match (box-get rest)
+              [(CompilerIrValueList.Cons b _)
+                (match a
+                  [(CompilerIrValue.Var av)
+                    (match b
+                      [(CompilerIrValue.Var bv) (= av bv)]
+                      [_ true])]
+                  [_ true])]
+              [_ true])]
+          [_ true])
+        2]
+      ;; a multi-def phi DST rejects: the function stays non-SSA.
+      [(opt-verify-ok? (opt-verify-function rejected)) 3]
+      [else 42])))
+
+;; --- multi-exit loop LICM self-test ---------------------------------------------
+;; A probe-shaped search loop (guarded header, bounds check, early-return side
+;; exit) must still hoist its loop-invariant ptr/len loads; adding an in-loop
+;; store must block the hoist.
+(define (opt-licm-multi-exit-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "map" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "key" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "limit" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+(define (opt-licm-multi-exit-header-block) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        3
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          "entry"
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 10)
+            "next"
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          4
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.I64 0)
+            "entry"
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 11)
+              "next"
+              (CompilerIrPhiInputList.Nil)))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-licm-multi-exit-body-tail [mode : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      12
+      (CompilerIrValue.Var 9)
+      (CompilerIrValue.Var 3)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 13 (CompilerIrValue.Var 12) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          14
+          (CompilerIrBinOp.Eq)
+          (CompilerIrValue.Var 13)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (if (= mode 0)
+            (CompilerIrInstr.Jump "next")
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 14) "found" "next"))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-licm-multi-exit-body-block [mode : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        6
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 7)
+            "licm_multi_exit_ok")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              8
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+              (opt-licm-multi-exit-body-tail mode))))))))
+
+(define (opt-licm-multi-exit-next-block [with-store : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "next"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        10
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          11
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 4)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (if with-store
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 12)
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-licm-multi-exit-found-block [mode : i64]) : CompilerIrBlock
+  (if (= mode 1)
+    ;; return-shaped side exit: a found handler locates the slot (bounded
+    ;; memory work) and returns -- still a short-trip SEARCH, so the invariant
+    ;; load hoist is suppressed (the put! shape: gep/load/store then return).
+    (compiler-ir-block
+      "found"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 16 (CompilerIrValue.Var 12) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 12)
+            (CompilerIrValue.Var 16)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 16)))
+            (CompilerIrInstrList.Nil)))))
+    ;; break-shaped side exit: the continuation calls out to unbounded work,
+    ;; marking a long-trip kernel -- the hoist stays.
+    (compiler-ir-block
+      "found"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call
+          16
+          "licm_multi_exit_callee"
+          (CompilerIrCallArgs.Nil)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 16)))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-licm-multi-exit-tail-blocks [mode : i64]) : CompilerIrBlockList
+  (let
+    [exit-block : CompilerIrBlock
+      (compiler-ir-block
+        "exit"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+          (CompilerIrInstrList.Nil)))]
+    (if (= mode 0)
+      (compiler-ir-block-cons exit-block (CompilerIrBlockList.Nil))
+      (compiler-ir-block-cons
+        (opt-licm-multi-exit-found-block mode)
+        (compiler-ir-block-cons exit-block (CompilerIrBlockList.Nil))))))
+
+(define (opt-licm-multi-exit-test-blocks [mode : i64] [with-store : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-licm-multi-exit-header-block)
+      (compiler-ir-block-cons
+        (opt-licm-multi-exit-body-block mode)
+        (compiler-ir-block-cons
+          (opt-licm-multi-exit-next-block with-store)
+          (opt-licm-multi-exit-tail-blocks mode))))))
+
+(define (opt-licm-multi-exit-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "licm_multi_exit"
+    (opt-licm-multi-exit-test-params)
+    (AstType.I64)
+    15
+    blocks))
+
+(define (opt-licm-multi-exit-count-loads-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-licm-multi-exit-count-loads-seq
+      instrs
+      (+ index 1)
+      count
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Load _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-licm-multi-exit-count-loads
+  [blocks : CompilerIrBlockList]
+  [label-want : String]) : i64
+  (match (opt-cfg-find-block blocks label-want)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-licm-multi-exit-count-loads-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            0)])]))
+
+(define (compiler-optimize-licm-multi-exit-self-test) : i64
+  (let
+    [single : CompilerIrFunction
+      (opt-licm-function
+        (opt-licm-multi-exit-test-function
+          (opt-licm-multi-exit-test-blocks 0 false)))]
+    [single-blocks : CompilerIrBlockList (opt-function-blocks single)]
+    [ret-exit : CompilerIrFunction
+      (opt-licm-function
+        (opt-licm-multi-exit-test-function
+          (opt-licm-multi-exit-test-blocks 1 false)))]
+    [ret-blocks : CompilerIrBlockList (opt-function-blocks ret-exit)]
+    [brk-exit : CompilerIrFunction
+      (opt-licm-function
+        (opt-licm-multi-exit-test-function
+          (opt-licm-multi-exit-test-blocks 2 false)))]
+    [brk-blocks : CompilerIrBlockList (opt-function-blocks brk-exit)]
+    [stored : CompilerIrFunction
+      (opt-licm-function
+        (opt-licm-multi-exit-test-function
+          (opt-licm-multi-exit-test-blocks 0 true)))]
+    [stored-blocks : CompilerIrBlockList (opt-function-blocks stored)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function single))) 1]
+      ;; single-exit search loop: the invariant ptr/len loads hoist; only the
+      ;; varying element load stays in the body.
+      [(not (= (opt-licm-multi-exit-count-loads single-blocks "body") 1)) 2]
+      [(not (= (opt-licm-multi-exit-count-loads single-blocks "entry") 2)) 3]
+      ;; a RETURN-SHAPED side exit (early-return probe that does bounded
+      ;; gep/load/store work then returns -- the put! shape) suppresses the
+      ;; load hoist: short trips make it pure register pressure (see the
+      ;; measured note at opt-licm-apply-loop).
+      [(not (= (opt-licm-multi-exit-count-loads ret-blocks "body") 3)) 4]
+      ;; a BREAK-shaped side exit (continuation calls out to unbounded work)
+      ;; marks a long-trip kernel: the hoist stays.
+      [(not (= (opt-licm-multi-exit-count-loads brk-blocks "body") 1)) 5]
+      [(not (= (opt-licm-multi-exit-count-loads brk-blocks "entry") 2)) 6]
+      ;; an in-loop store blocks the hoist entirely.
+      [(not (= (opt-licm-multi-exit-count-loads stored-blocks "body") 3)) 7]
       [else 42])))
 
 ;; --- affine chain folding self-test -------------------------------------------

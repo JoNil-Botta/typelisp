@@ -1,7 +1,7 @@
 name	ir_count
 benchmark/typelisp/spmd_map	17206635514
 benchmark/c/spmd_map	3382342155
-benchmark/typelisp/spmd_mask	27037943626
+benchmark/typelisp/spmd_mask	19664219055
 benchmark/c/spmd_mask	7069947294
 benchmark/typelisp/spmd_short_tail	14020033355
 benchmark/c/spmd_short_tail	2765122056

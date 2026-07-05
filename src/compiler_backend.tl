@@ -11308,12 +11308,52 @@
           (compiler-backend-sized-reg staging-reg ty)))]
     [_ (CompilerBackendMaybeAsm.No)]))
 
+;; Strength-reduce a three-operand constant multiply: a SIB-scale power of two
+;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
+;; of two whose source already sits in the destination register becomes a bare
+;; `shlq` -- both the same instruction count as the imulq they replace and
+;; strictly cheaper to execute. Every other constant keeps the imulq (a
+;; mov+shl pair would trade latency for count, which the Ir gate weighs).
+;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
+;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
+;; `disp(,%rbp,1)` idiom mem-base-address already relies on.
+(define (compiler-backend-mul-immediate-direct-asm
+  [lhs-reg : String]
+  [dst-home : String]
+  [imm : String]
+  [rhs : CompilerIrValue]) : String
+  (match rhs
+    [(CompilerIrValue.I64 n)
+      (if (or (= n 2) (= n 4) (= n 8))
+        (str_cat.str-cat
+          "    leaq (,"
+          lhs-reg
+          ","
+          (string.int->string n)
+          "), "
+          dst-home
+          "\n")
+        (if (and (> n 8) (string.eq lhs-reg dst-home))
+          (match (compiler-backend-power-of-two-shift n)
+            [(option_i64.Some count)
+              (str_cat.str-cat
+                "    shlq $"
+                (string.int->string count)
+                ", "
+                dst-home
+                "\n")]
+            [(option_i64.None)
+              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])
+          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
+    [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
+
 (define (compiler-backend-emit-binop-direct-immediate
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
   [mnem : String]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
   [ty : AstType]
   [imm : String]) : ResultCompilerBackend
   (let
@@ -11325,7 +11365,7 @@
         [(CompilerIrBinOp.Mul) true]
         [_ false]))
       (ResultCompilerBackend.Ok
-        (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
+        (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
       (if (and
         (not (string.eq lhs-reg ""))
         ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
@@ -11626,6 +11666,7 @@
                 mnem
                 op
                 lhs
+                rhs
                 operand-ty
                 imm))]
           [(CompilerBackendMaybeImmediate.No)
@@ -26233,7 +26274,347 @@
               func-diag
               ""))))]))
 
+;; GAP8: fold a single-use fused-load result straight into the consuming ALU
+;; op's memory operand -- `movq (b,i,8), %t; addq %t, %acc` becomes
+;; `addq (b,i,8), %acc` -- one instruction and one register shorter, exactly
+;; clang's selection for reduction loops. The probe is PURE (no scavenges, so
+;; a rejected fold leaks no emergency-pending registers -- the M-D lesson);
+;; the emitter mirrors emit-load-from-gep's two addressing arms and appends
+;; the ALU line instead of the load. The non-loaded operand lands in the ALU
+;; dst's home FIRST, so the probe rejects any dst-home that aliases an
+;; address operand home, and every scavenge excludes dst-home.
+(defenum CompilerBackendGepLoadAluFold
+  (No)
+  (Some String i64 CompilerIrValue (Box CompilerIrInstrList)))
+
+;; Two-operand memory-form mnemonics only; Mul is excluded (imul mem needs
+;; the two-operand register form and folds worse than the fused load).
+(define (compiler-backend-gep-load-alu-mnemonic [op : CompilerIrBinOp]) : String
+  (match op
+    [(CompilerIrBinOp.Add) "add"]
+    [(CompilerIrBinOp.Sub) "sub"]
+    [(CompilerIrBinOp.BitAnd) "and"]
+    [(CompilerIrBinOp.BitOr) "or"]
+    [(CompilerIrBinOp.BitXor) "xor"]
+    [_ ""]))
+
+(define (compiler-backend-gep-load-alu-probe
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [use-counts : (Array i64)]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [load-dst : i64]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]) : CompilerBackendGepLoadAluFold
+  (if (or
+    (compiler-backend-float-type? load-ty)
+    (not (= (compiler-backend-type-size load-ty) 8))
+    (not (compiler-backend-var-single-use? use-counts load-dst)))
+    (CompilerBackendGepLoadAluFold.No)
+    (match rest
+      [(CompilerIrInstrList.Cons maybe-binop after-binop)
+        (match maybe-binop
+          [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+            (let
+              [mnem : String (compiler-backend-gep-load-alu-mnemonic op)]
+              [dst-home : String
+                (compiler-backend-var-register-home assignments dst)]
+              [base-home : String
+                (compiler-backend-value-scalar-register assignments base)]
+              [offset-home : String
+                (compiler-backend-value-scalar-register assignments offset)]
+              (if (and
+                (not (string.eq mnem ""))
+                (compiler-backend-branch-uses-var? rhs load-dst)
+                (not (compiler-backend-branch-uses-var? lhs load-dst))
+                (not
+                  (compiler-backend-binop-f64? types global-types lhs rhs ty))
+                (=
+                  (compiler-backend-type-size
+                    (compiler-backend-binop-operand-ty
+                      types
+                      global-types
+                      op
+                      lhs
+                      rhs
+                      ty))
+                  8)
+                (not (string.eq dst-home ""))
+                (not (string.eq dst-home base-home))
+                (not (string.eq dst-home offset-home)))
+                (CompilerBackendGepLoadAluFold.Some
+                  mnem
+                  dst
+                  lhs
+                  (box after-binop))
+                (CompilerBackendGepLoadAluFold.No)))]
+          [_ (CompilerBackendGepLoadAluFold.No)])]
+      [_ (CompilerBackendGepLoadAluFold.No)])))
+
+;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
+;; with the ALU destination home.
+(define (compiler-backend-gep-load-alu-index-exclude
+  [base-reg : String]
+  [offset-home : String]
+  [dst-home : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 base-reg)
+      (array-set!
+        a
+        4
+        (if (string.eq offset-home "")
+          base-reg
+          offset-home))
+      (array-set! a 5 dst-home)
+      a)))
+
+(define (compiler-backend-emit-gep-load-alu
+  [assignments : CompilerRegAssignmentList]
+  [mnem : String]
+  [alu-dst : i64]
+  [x : CompilerIrValue]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]) : ResultCompilerBackend
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments alu-dst)]
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+          [base-home : String
+            (compiler-backend-address-base-filter-direct
+              (compiler-backend-value-scalar-register assignments base))]
+          [base-reg : String
+            (if (string.eq base-home "")
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-one-exclude dst-home)
+                1
+                "%r10")
+              base-home)]
+          [addr : String (compiler-backend-base-address disp base-reg)]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            base-reg)
+            [(ResultCompilerBackend.Ok base-asm)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                x
+                dst-home)
+                [(ResultCompilerBackend.Ok x-asm)
+                  (ResultCompilerBackend.Ok
+                    (string.append
+                      base-asm
+                      (string.append
+                        x-asm
+                        (str_cat.str-cat
+                          "    "
+                          mnem
+                          "q "
+                          addr
+                          ", "
+                          dst-home
+                          "\n"))))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))]
+      [(option_i64.None)
+        (let
+          [scale : i64 (compiler-backend-type-size elem-ty)]
+          [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
+          [base-home : String
+            (compiler-backend-address-base-filter
+              (compiler-backend-value-scalar-register assignments base))]
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          [use-base-home? : bool
+            (and sib-scale? (not (string.eq base-home "")))]
+          [base-reg : String
+            (if use-base-home?
+              base-home
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-two-exclude offset-home dst-home)
+                2
+                "%r10"))]
+          [use-offset-home? : bool
+            (and
+              sib-scale?
+              (not (string.eq offset-home ""))
+              (not (string.eq offset-home base-reg)))]
+          [index-reg : String
+            (if use-offset-home?
+              offset-home
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-gep-load-alu-index-exclude
+                  base-reg
+                  offset-home
+                  dst-home)
+                6
+                "%r8"))]
+          [addr : String
+            (compiler-backend-gep-index-address base-reg scale index-reg)]
+          [addr-asm : String
+            (if (string.eq addr "")
+              (compiler-backend-gep-index-base-asm base-reg scale index-reg)
+              "")]
+          [load-addr : String
+            (if (string.eq addr "")
+              (str_cat.str-cat "(" base-reg ")" "")
+              addr)]
+          (match (if use-base-home?
+            (ResultCompilerBackend.Ok "")
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              base
+              base-reg))
+            [(ResultCompilerBackend.Ok base-asm)
+              (match (if use-offset-home?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  offset
+                  index-reg))
+                [(ResultCompilerBackend.Ok offset-asm)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    x
+                    dst-home)
+                    [(ResultCompilerBackend.Ok x-asm)
+                      (ResultCompilerBackend.Ok
+                        (string.append
+                          base-asm
+                          (string.append
+                            offset-asm
+                            (string.append
+                              addr-asm
+                              (string.append
+                                x-asm
+                                (str_cat.str-cat
+                                  "    "
+                                  mnem
+                                  "q "
+                                  load-addr
+                                  ", "
+                                  dst-home
+                                  "\n"))))))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))])))
+
 (define (compiler-backend-emit-fused-gep-load-rest
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [_gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [load-dst : i64]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
+  ;; nothing and falls through to the existing single/pair load fusion.
+  (match (compiler-backend-gep-load-alu-probe
+    assignments
+    types
+    global-types
+    use-counts
+    base
+    offset
+    load-dst
+    load-ty
+    rest)
+    [(CompilerBackendGepLoadAluFold.Some mnem alu-dst x after-binop)
+      (compiler-backend-emit-fused-result-rest
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        (compiler-backend-emit-gep-load-alu
+          assignments
+          mnem
+          alu-dst
+          x
+          base
+          offset
+          elem-ty)
+        (box-get after-binop)
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]
+    [(CompilerBackendGepLoadAluFold.No)
+      (compiler-backend-emit-fused-gep-load-plain-rest
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        _gep-dst
+        base
+        offset
+        elem-ty
+        load-dst
+        load-ty
+        rest
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]))
+
+(define (compiler-backend-emit-fused-gep-load-plain-rest
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : String]

@@ -10,12 +10,13 @@
 (import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)
+(import (hashmap i64 i64) as symbol_map)
 
 (defenum CompilerSymbols
   (CompilerSymbols
-    hashmap.I64I64Map
-    hashmap.I64I64Map
-    hashmap.I64I64Map
+    symbol_map.Map
+    symbol_map.Map
+    symbol_map.Map
     (Array AstDecl)
     (Array String)))
 
@@ -31,7 +32,7 @@
   (CompilerQualifiedName i64 i64))
 
 (defenum CompilerRegistries
-  (CompilerRegistries hashmap.I64I64Map hashmap.I64I64Map))
+  (CompilerRegistries symbol_map.Map symbol_map.Map))
 
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
@@ -112,42 +113,50 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
-(define (compiler-symbol-map-empty) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 256))
+(define (compiler-symbol-map-empty) : symbol_map.Map
+  (symbol_map.with-capacity 256))
+
+(define (compiler-symbol-map-missing-handle) : i64
+  -1)
 
 (define (compiler-symbol-map-lookup-id
-  [map : hashmap.I64I64Map]
+  [map : (& map symbol_map.Map)]
   [name-id : i64]) : option_i64.Option
-  (match (hashmap.i64-i64-map-get map name-id)
-    [(hashmap.I64I64MapFound value) (option_i64.Some value)]
-    [(hashmap.I64I64MapMissing) option_i64.None]))
+  (let
+    [handle : i64
+      (symbol_map.get-value-or map name-id (compiler-symbol-map-missing-handle))]
+    (if (>= handle 0)
+      (option_i64.Some handle)
+      option_i64.None)))
 
-(define (compiler-symbol-map-lookup [map : hashmap.I64I64Map] [name : String]) : option_i64.Option
+(define (compiler-symbol-map-lookup
+  [map : (& map symbol_map.Map)]
+  [name : String]) : option_i64.Option
   (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-contains-id?
-  [map : hashmap.I64I64Map]
+  [map : (& map symbol_map.Map)]
   [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
     [(option_i64.Some _) true]
     [(option_i64.None) false]))
 
 (define (compiler-symbol-map-contains?
-  [map : hashmap.I64I64Map]
+  [map : (& map symbol_map.Map)]
   [name : String]) : bool
   (compiler-symbol-map-contains-id? map (compiler-symbol-name-key-id name)))
 
-(define (compiler-symbol-map-bind-id
-  [map : hashmap.I64I64Map]
+(define (compiler-symbol-map-bind-id!
+  [map : (&mut map symbol_map.Map)]
   [name-id : i64]
-  [handle : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put map name-id handle))
+  [handle : i64]) : unit
+  (symbol_map.insert map name-id handle))
 
-(define (compiler-symbol-map-bind
-  [map : hashmap.I64I64Map]
+(define (compiler-symbol-map-bind!
+  [map : (&mut map symbol_map.Map)]
   [name : String]
-  [handle : i64]) : hashmap.I64I64Map
-  (compiler-symbol-map-bind-id map (compiler-symbol-name-key-id name) handle))
+  [handle : i64]) : unit
+  (compiler-symbol-map-bind-id! map (compiler-symbol-name-key-id name) handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
   (let
@@ -198,7 +207,7 @@
   (match symbols
     [(CompilerSymbols values _ _ _ _)
       (compiler-symbol-map-lookup-id
-        values
+        (& values)
         (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-lookup-type
@@ -212,7 +221,7 @@
   (match symbols
     [(CompilerSymbols _ types _ _ _)
       (compiler-symbol-map-lookup-id
-        types
+        (& types)
         (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-lookup-macro
@@ -226,11 +235,11 @@
   (match symbols
     [(CompilerSymbols _ _ macros _ _)
       (compiler-symbol-map-lookup-id
-        macros
+        (& macros)
         (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-missing-handle) : i64
-  -1)
+  (compiler-symbol-map-missing-handle))
 
 (define (compiler-symbols-handle-found? [handle : i64]) : bool
   (>= handle 0))
@@ -412,14 +421,11 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? values name)
+      (if (compiler-symbol-map-contains? (& values) name)
         symbols
-        (CompilerSymbols
-          (compiler-symbol-map-bind values name handle)
-          types
-          macros
-          decls
-          owner-names))]))
+        (begin
+          (compiler-symbol-map-bind! (&mut values) name handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
@@ -427,14 +433,11 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? types name)
+      (if (compiler-symbol-map-contains? (& types) name)
         symbols
-        (CompilerSymbols
-          values
-          (compiler-symbol-map-bind types name handle)
-          macros
-          decls
-          owner-names))]))
+        (begin
+          (compiler-symbol-map-bind! (&mut types) name handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-add-macro-alias
   [symbols : CompilerSymbols]
@@ -442,14 +445,11 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? macros name)
+      (if (compiler-symbol-map-contains? (& macros) name)
         symbols
-        (CompilerSymbols
-          values
-          types
-          (compiler-symbol-map-bind macros name handle)
-          decls
-          owner-names))]))
+        (begin
+          (compiler-symbol-map-bind! (&mut macros) name handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-remove-macro-alias-if-handle
   [symbols : CompilerSymbols]
@@ -457,15 +457,15 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup macros name)
+      (match (compiler-symbol-map-lookup (& macros) name)
         [(option_i64.Some existing)
           (if (= existing handle)
-            (match (hashmap.i64-i64-map-remove
-              macros
-              (compiler-symbol-name-key-id name))
-              [(hashmap.I64I64MapRemoveOk next-macros)
-                (CompilerSymbols values types next-macros decls owner-names)]
-              [(hashmap.I64I64MapRemoveMissing _) symbols])
+            (if (symbol_map.remove-ok?
+              (symbol_map.remove
+                (&mut macros)
+                (compiler-symbol-name-key-id name)))
+              (CompilerSymbols values types macros decls owner-names)
+              symbols)
             symbols)]
         [(option_i64.None) symbols])]))
 
@@ -475,11 +475,11 @@
   [handle : i64]) : CompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
-      (if (compiler-symbol-map-contains? variants name)
+      (if (compiler-symbol-map-contains? (& variants) name)
         registries
-        (CompilerRegistries
-          (compiler-symbol-map-bind variants name handle)
-          fields))]))
+        (begin
+          (compiler-symbol-map-bind! (&mut variants) name handle)
+          (CompilerRegistries variants fields)))]))
 
 (define (compiler-symbols-add-value
   [symbols : CompilerSymbols]
@@ -498,19 +498,16 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains-id? values name-id)
+      (if (compiler-symbol-map-contains-id? (& values) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-value-message display-name))
-        (if (compiler-symbol-map-contains-id? macros name-id)
+        (if (compiler-symbol-map-contains-id? (& macros) name-id)
           (ResultCompilerSymbols.Err
             (compiler-symbols-duplicate-macro-value-message display-name))
-          (ResultCompilerSymbols.Ok
-            (CompilerSymbols
-              (compiler-symbol-map-bind-id values name-id handle)
-              types
-              macros
-              decls
-              owner-names))))]))
+          (begin
+            (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names)))))]))
 
 (define (compiler-symbols-add-variant-value
   [symbols : CompilerSymbols]
@@ -529,7 +526,7 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup-id values name-id)
+      (match (compiler-symbol-map-lookup-id (& values) name-id)
         [(option_i64.Some existing)
           (if (=
             (compiler-symbol-handle-kind existing)
@@ -539,16 +536,13 @@
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? macros name-id)
+          (if (compiler-symbol-map-contains-id? (& macros) name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols
-                (compiler-symbol-map-bind-id values name-id handle)
-                types
-                macros
-                decls
-                owner-names)))])]))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+              (ResultCompilerSymbols.Ok
+                (CompilerSymbols values types macros decls owner-names))))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-id
   [symbols : CompilerSymbols]
@@ -557,7 +551,7 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup-id values name-id)
+      (match (compiler-symbol-map-lookup-id (& values) name-id)
         [(option_i64.Some existing)
           (if (=
             (compiler-symbol-handle-kind existing)
@@ -566,16 +560,13 @@
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? macros name-id)
+          (if (compiler-symbol-map-contains-id? (& macros) name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols
-                (compiler-symbol-map-bind-id values name-id handle)
-                types
-                macros
-                decls
-                owner-names)))])]))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+              (ResultCompilerSymbols.Ok
+                (CompilerSymbols values types macros decls owner-names))))])]))
 
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
@@ -594,16 +585,13 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains-id? types name-id)
+      (if (compiler-symbol-map-contains-id? (& types) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-type-message display-name))
-        (ResultCompilerSymbols.Ok
-          (CompilerSymbols
-            values
-            (compiler-symbol-map-bind-id types name-id handle)
-            macros
-            decls
-            owner-names)))]))
+        (begin
+          (compiler-symbol-map-bind-id! (&mut types) name-id handle)
+          (ResultCompilerSymbols.Ok
+            (CompilerSymbols values types macros decls owner-names))))]))
 
 (define (compiler-symbols-add-macro
   [symbols : CompilerSymbols]
@@ -622,19 +610,16 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains-id? macros name-id)
+      (if (compiler-symbol-map-contains-id? (& macros) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-macro-message display-name))
-        (if (compiler-symbol-map-contains-id? values name-id)
+        (if (compiler-symbol-map-contains-id? (& values) name-id)
           (ResultCompilerSymbols.Err
             (compiler-symbols-duplicate-macro-value-message display-name))
-          (ResultCompilerSymbols.Ok
-            (CompilerSymbols
-              values
-              types
-              (compiler-symbol-map-bind-id macros name-id handle)
-              decls
-              owner-names))))]))
+          (begin
+            (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names)))))]))
 
 (define (compiler-symbols-handle-from-nonroot-owner?
   [symbols : CompilerSymbols]
@@ -652,32 +637,26 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup-id macros name-id)
+      (match (compiler-symbol-map-lookup-id (& macros) name-id)
         [(option_i64.Some existing)
           (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
-            (if (compiler-symbol-map-contains-id? values name-id)
+            (if (compiler-symbol-map-contains-id? (& values) name-id)
               (ResultCompilerSymbols.Err
                 (compiler-symbols-duplicate-macro-value-message display-name))
-              (ResultCompilerSymbols.Ok
-                (CompilerSymbols
-                  values
-                  types
-                  (compiler-symbol-map-bind-id macros name-id handle)
-                  decls
-                  owner-names)))
+              (begin
+                (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+                (ResultCompilerSymbols.Ok
+                  (CompilerSymbols values types macros decls owner-names))))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-message display-name)))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? values name-id)
+          (if (compiler-symbol-map-contains-id? (& values) name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols
-                values
-                types
-                (compiler-symbol-map-bind-id macros name-id handle)
-                decls
-                owner-names)))])]))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+              (ResultCompilerSymbols.Ok
+                (CompilerSymbols values types macros decls owner-names))))])]))
 
 (define (compiler-symbols-add-root-value-id
   [symbols : CompilerSymbols]
@@ -686,32 +665,26 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup-id values name-id)
+      (match (compiler-symbol-map-lookup-id (& values) name-id)
         [(option_i64.Some existing)
           (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
-            (if (compiler-symbol-map-contains-id? macros name-id)
+            (if (compiler-symbol-map-contains-id? (& macros) name-id)
               (ResultCompilerSymbols.Err
                 (compiler-symbols-duplicate-macro-value-message display-name))
-              (ResultCompilerSymbols.Ok
-                (CompilerSymbols
-                  (compiler-symbol-map-bind-id values name-id handle)
-                  types
-                  macros
-                  decls
-                  owner-names)))
+              (begin
+                (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+                (ResultCompilerSymbols.Ok
+                  (CompilerSymbols values types macros decls owner-names))))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? macros name-id)
+          (if (compiler-symbol-map-contains-id? (& macros) name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols
-                (compiler-symbol-map-bind-id values name-id handle)
-                types
-                macros
-                decls
-                owner-names)))])]))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+              (ResultCompilerSymbols.Ok
+                (CompilerSymbols values types macros decls owner-names))))])]))
 
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
@@ -855,7 +828,7 @@
   (match symbols
     [(CompilerSymbols values _ _ _ _)
       (compiler-symbol-map-lookup-id
-        values
+        (& values)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-symbols-lookup-type-in-module
@@ -874,7 +847,7 @@
   (match symbols
     [(CompilerSymbols _ types _ _ _)
       (compiler-symbol-map-lookup-id
-        types
+        (& types)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-symbols-lookup-macro-in-module
@@ -893,7 +866,7 @@
   (match symbols
     [(CompilerSymbols _ _ macros _ _)
       (compiler-symbol-map-lookup-id
-        macros
+        (& macros)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-symbols-lookup-value-in-module-or
@@ -975,7 +948,7 @@
   (match registries
     [(CompilerRegistries _ fields)
       (compiler-symbol-map-lookup-id
-        fields
+        (& fields)
         (compiler-struct-field-key-id-in-module-by-id
           module-id
           type-name-id
@@ -2418,7 +2391,7 @@
   (match registries
     [(CompilerRegistries variants _)
       (compiler-symbol-map-lookup-id
-        variants
+        (& variants)
         (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-registries-lookup-variant-key-id
@@ -2426,7 +2399,7 @@
   [key-id : i64]) : option_i64.Option
   (match registries
     [(CompilerRegistries variants _)
-      (compiler-symbol-map-lookup-id variants key-id)]))
+      (compiler-symbol-map-lookup-id (& variants) key-id)]))
 
 (define (compiler-registries-lookup-struct-field
   [registries : CompilerRegistries]
@@ -2444,7 +2417,7 @@
   (match registries
     [(CompilerRegistries _ fields)
       (compiler-symbol-map-lookup-id
-        fields
+        (& fields)
         (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]))
 
 (define (compiler-registries-lookup-variant-or
@@ -2499,19 +2472,18 @@
   [variant-index : i64]) : ResultCompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
-      (if (compiler-symbol-map-contains? variants name)
+      (if (compiler-symbol-map-contains? (& variants) name)
         (ResultCompilerRegistries.Err
           (compiler-registries-duplicate-variant-message name))
-        (ResultCompilerRegistries.Ok
-          (CompilerRegistries
-            (compiler-symbol-map-bind
-              variants
-              name
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-enum-variant)
-                enum-index
-                variant-index))
-            fields)))]))
+        (begin
+          (compiler-symbol-map-bind!
+            (&mut variants)
+            name
+            (compiler-registry-make-handle
+              (compiler-symbol-kind-enum-variant)
+              enum-index
+              variant-index))
+          (ResultCompilerRegistries.Ok (CompilerRegistries variants fields))))]))
 
 (define (compiler-registries-add-variant-in-module
   [registries : CompilerRegistries]
@@ -2534,20 +2506,23 @@
         variant-index)]
     (match registries
       [(CompilerRegistries variants fields)
-        (if (compiler-symbol-map-contains-id? variants qualified-key-id)
+        (if (compiler-symbol-map-contains-id? (& variants) qualified-key-id)
           (ResultCompilerRegistries.Err
             (compiler-registries-duplicate-variant-message
               qualified-display-name))
-          (ResultCompilerRegistries.Ok
-            (compiler-registries-add-variant-alias
+          (begin
+            (compiler-symbol-map-bind-id!
+              (&mut variants)
+              qualified-key-id
+              handle)
+            (ResultCompilerRegistries.Ok
               (compiler-registries-add-variant-alias
-                (CompilerRegistries
-                  (compiler-symbol-map-bind-id variants qualified-key-id handle)
-                  fields)
-                (compiler-symbol-module-key module name)
-                handle)
-              name
-              handle)))])))
+                (compiler-registries-add-variant-alias
+                  (CompilerRegistries variants fields)
+                  (compiler-symbol-module-key module name)
+                  handle)
+                name
+                handle))))])))
 
 (define (compiler-registries-add-field
   [registries : CompilerRegistries]
@@ -2577,19 +2552,18 @@
       (let
         [key-id : i64
           (compiler-struct-field-key-id-by-id struct-name-id field-name-id)]
-        (if (compiler-symbol-map-contains-id? fields key-id)
+        (if (compiler-symbol-map-contains-id? (& fields) key-id)
           (ResultCompilerRegistries.Err
             (compiler-registries-duplicate-field-message struct-name field-name))
-          (ResultCompilerRegistries.Ok
-            (CompilerRegistries
-              variants
-              (compiler-symbol-map-bind-id
-                fields
-                key-id
-                (compiler-registry-make-handle
-                  (compiler-symbol-kind-struct-field)
-                  struct-index
-                  field-index))))))]))
+          (begin
+            (compiler-symbol-map-bind-id!
+              (&mut fields)
+              key-id
+              (compiler-registry-make-handle
+                (compiler-symbol-kind-struct-field)
+                struct-index
+                field-index))
+            (ResultCompilerRegistries.Ok (CompilerRegistries variants fields)))))]))
 
 (define (compiler-registries-add-field-alias
   [registries : CompilerRegistries]
@@ -2600,11 +2574,11 @@
     [(CompilerRegistries variants fields)
       (let
         [key-id : i64 (compiler-struct-field-key-id struct-name field-name)]
-        (if (compiler-symbol-map-contains-id? fields key-id)
+        (if (compiler-symbol-map-contains-id? (& fields) key-id)
           registries
-          (CompilerRegistries
-            variants
-            (compiler-symbol-map-bind-id fields key-id handle))))]))
+          (begin
+            (compiler-symbol-map-bind-id! (&mut fields) key-id handle)
+            (CompilerRegistries variants fields))))]))
 
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]

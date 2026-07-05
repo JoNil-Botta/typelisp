@@ -11861,7 +11861,167 @@
       (compiler-backend-gep-load-multi-emergency-preserved-ok?)
       (compiler-backend-gep-store-index-home-preserved-ok?)
       (compiler-backend-store-address-source-home-preserved-ok?)
-      (compiler-backend-win64-gep-offset-rax-home-ok?))))
+      (compiler-backend-win64-gep-offset-rax-home-ok?))
+    (backend-and4
+      (compiler-backend-gep-load-alu-fold-shape-ok?)
+      (compiler-backend-gep-load-alu-fold-rejects-narrow-ok?)
+      (compiler-backend-mul-pow2-lea-shape-ok?)
+      (compiler-backend-mul-pow2-shl-shape-ok?))
+    (compiler-backend-mul-non-pow2-imul-shape-ok?)))
+
+;; GAP8: `Gep; Load(single-use, 8-byte); BinOp Add x v` folds the load into
+;; the ALU memory operand: `addq (base,idx,8), dst` with no separate movq.
+(define (compiler-backend-gep-load-alu-fold-shape-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r8"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%r14"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                5
+                (CompilerRegLocation.Register "%r14"))
+              CompilerRegAssignmentList.Nil))))]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              5
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 3)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 6 (CompilerIrValue.Var 5) (AstType.I64))
+              CompilerIrInstrList.Nil))))
+      assignments
+      7)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    addq (%r12,%r8,8), %r14\n")
+          (not (compiler-backend-string-contains? asm "    movq (%r12,%r8,8)"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))]
+      [(ResultCompilerBackend.Err _) false])))
+
+;; A narrow (u8) load must NOT fold: the memory operand width would not match
+;; the 64-bit ALU op. The fused movzbq load stays.
+(define (compiler-backend-gep-load-alu-fold-rejects-narrow-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r8"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              3
+              (CompilerRegLocation.Register "%rcx"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                4
+                (CompilerRegLocation.Register "%r14"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  5
+                  (CompilerRegLocation.Register "%r14"))
+                CompilerRegAssignmentList.Nil)))))]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              5
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 3)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 6 (CompilerIrValue.Var 5) (AstType.I64))
+              CompilerIrInstrList.Nil))))
+      assignments
+      7)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movzbq (%r12,%r8,1), %rcx\n")
+          (not (compiler-backend-string-contains? asm "    addq (%r12")))]
+      [(ResultCompilerBackend.Err _) false])))
+
+;; GAP8: three-operand constant multiply strength reduction shapes.
+(define (compiler-backend-mul-pow2-test-asm [factor : i64] [dst-reg : String]) : ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        1
+        (CompilerIrBinOp.Mul)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 factor)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        CompilerIrInstrList.Nil))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register dst-reg))
+        CompilerRegAssignmentList.Nil))
+    3))
+
+(define (compiler-backend-mul-pow2-lea-shape-ok?) : bool
+  (match (compiler-backend-mul-pow2-test-asm 8 "%rcx")
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    leaq (,%r12,8), %rcx\n")
+        (not (compiler-backend-string-contains? asm "imulq")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-pow2-shl-shape-ok?) : bool
+  (match (compiler-backend-mul-pow2-test-asm 32 "%r12")
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    shlq $5, %r12\n")
+        (not (compiler-backend-string-contains? asm "imulq")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
+  (match (compiler-backend-mul-pow2-test-asm 24 "%rcx")
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-string-contains? asm "    imulq $24, %r12, %rcx\n")]
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
   (CompilerIrInstr.Syscall

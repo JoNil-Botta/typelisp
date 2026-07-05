@@ -2,6 +2,7 @@
 (import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_backend.tl")
+(import "compiler_parallel_move.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_float.tl")
 (import compiler_intern as ci)
@@ -18465,6 +18466,7 @@
         (compiler-backend-win64-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and
+        (compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)

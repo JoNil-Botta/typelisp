@@ -10,6 +10,7 @@
 (import stdlib.string)
 (import stdlib.hashmap)
 (import "compiler_liveness.tl")
+(import "compiler_parallel_move.tl")
 (cfg test (import stdlib.test))
 
 (defenum CompilerRegStringList
@@ -1011,6 +1012,62 @@
   (match moves
     [(CompilerRegMoveList.Nil) true]
     [_ false]))
+
+(define (compiler-reg-move-parallel-resource [var : i64]) : String
+  (string.append "v:" (string.int->string var)))
+
+(define (compiler-reg-move-parallel-id [src : i64] [dst : i64]) : String
+  (string.append
+    (string.append (string.int->string src) "->")
+    (string.int->string dst)))
+
+(define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : CompilerParallelMoveEdge
+  (match move
+    [(CompilerRegMove.Move src dst _)
+      (ParallelMoveEdge
+        (compiler-reg-move-parallel-id src dst)
+        (compiler-reg-move-parallel-resource dst)
+        ""
+        (compiler-reg-move-parallel-resource src)
+        "")]))
+
+(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveList]) : CompilerParallelMoveEdgeList
+  (match moves
+    [(CompilerRegMoveList.Nil) CompilerParallelMoveNil]
+    [(CompilerRegMoveList.Cons move rest)
+      (compiler-parallel-move-edge-cons
+        (compiler-reg-move-parallel-edge move)
+        (compiler-reg-move-list-parallel-edges (box-get rest)))]))
+
+(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveList]) : CompilerParallelMoveDecision
+  (let
+    [edges : CompilerParallelMoveEdgeList
+      (compiler-reg-move-list-parallel-edges moves)]
+    (compiler-parallel-move-decision edges edges)))
+
+(define (compiler-reg-move-list-parallel-decision-ok?) : bool
+  (let
+    [chain : CompilerRegMoveList
+      (compiler-reg-move-cons
+        (CompilerRegMove.Move 0 1 false)
+        (compiler-reg-move-cons
+          (CompilerRegMove.Move 1 2 false)
+          CompilerRegMoveList.Nil))]
+    [cycle : CompilerRegMoveList
+      (compiler-reg-move-cons
+        (CompilerRegMove.Move 0 1 false)
+        (compiler-reg-move-cons
+          (CompilerRegMove.Move 1 0 false)
+          CompilerRegMoveList.Nil))]
+    (and
+      (match (compiler-reg-move-list-parallel-decision chain)
+        [(CompilerParallelMoveUnblocked id)
+          (string.eq id (compiler-reg-move-parallel-id 1 2))]
+        [_ false])
+      (match (compiler-reg-move-list-parallel-decision cycle)
+        [(CompilerParallelMoveCycle id)
+          (string.eq id (compiler-reg-move-parallel-id 0 1))]
+        [_ false]))))
 
 (define (compiler-reg-move-list-mark-strict
   [moves : CompilerRegMoveList]
@@ -24536,6 +24593,7 @@
                     (compiler-reg-spill-coalesce-function))
                     [(CompilerRegPlan.Plan spill-assignments _ _ _ _ _)
                       (and
+                        (compiler-reg-move-list-parallel-decision-ok?)
                         (compiler-reg-same-location? chain-assignments 0 1)
                         (compiler-reg-same-location? chain-assignments 1 2)
                         (compiler-reg-same-location? phi-assignments 0 1)

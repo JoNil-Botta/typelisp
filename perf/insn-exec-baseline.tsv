@@ -7,9 +7,9 @@ benchmark/typelisp/hashmap_churn	14595241
 benchmark/c/hashmap_churn	4430221
 benchmark/typelisp/hashmap_get	857607809
 benchmark/c/hashmap_get	209785338
-benchmark/typelisp/hashmap_grow	9769628
+benchmark/typelisp/hashmap_grow	9793917
 benchmark/c/hashmap_grow	2048611
-benchmark/typelisp/hashmap_insert	186558004
+benchmark/typelisp/hashmap_insert	186559930
 benchmark/c/hashmap_insert	66066561
 benchmark/typelisp/opt_bytecode_vm	1712001636
 benchmark/c/opt_bytecode_vm	716120437
@@ -19,4 +19,4 @@ benchmark/typelisp/opt_quicksort	879537704
 benchmark/c/opt_quicksort	398486841
 benchmark/typelisp/spmd_reduce	8604973919
 benchmark/c/spmd_reduce	1693929378
-self_compile/compile_cli_opt1	153052547690
+self_compile/compile_cli_opt1	152899649721

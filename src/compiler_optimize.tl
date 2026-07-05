@@ -22950,13 +22950,18 @@
     [(CompilerIrBlockList.Array seq)
       (optimize-block-list-fast (compiler-ir-block-seq-to-list seq))]))
 
-;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
-;; induction, global GVN). Functions with more basic blocks than this skip those
-;; passes at opt-level 2 so a few huge self-host functions cannot blow up compile
-;; time; the linear passes and register allocation still run on them.
-;; 1024 covers the current self-host max (806 blocks in opt-instr-eq) with
-;; headroom while still keeping a finite guard for pathological inputs.
+;; Block-count ceiling for the dominator-based heavy passes (GVN, LICM,
+;; induction, global GVN). Dominance now uses the integer CFG index and idom
+;; Euler ranges, so >1024-block functions can keep the heavy passes. Keep this
+;; raise narrow for now because the same ceiling also bounds self-host inlining
+;; across the heavy-pass gate.
 (define (opt-heavy-pass-block-limit) : i64
+  1026)
+
+;; The inliner uses a separate crossing guard. Raising it with the heavy-pass
+;; limit regresses the measured self-compile path, so keep the old boundary
+;; until the inliner has a cost model that pays for larger callers directly.
+(define (opt-inline-heavy-gate-block-limit) : i64
   1024)
 
 ;; --- self-tail-recursion -> loop (tail-rec-loop) ---------------------------
@@ -25747,13 +25752,10 @@
                   [(CompilerIrFunction.Function _ _ _ _ sroa-blocks)
                     (let
                       ;; #perf: the dominator-based passes (GVN, LICM, induction,
-                      ;; global GVN) are super-linear in block count (their dominance
-                      ;; queries walk string label-sets), so on the handful of huge
-                      ;; self-host functions (hundreds of blocks) they dominate
-                      ;; compile time. Gate them off above a block-count threshold;
-                      ;; register allocation and the linear cleanups still run, so
-                      ;; only the incremental redundancy elimination is skipped on
-                      ;; those few functions, which bounds opt-level-3 compile time.
+                      ;; global GVN) use the integer CFG/dominator index now, so
+                      ;; large inlined functions keep those passes. The remaining
+                      ;; threshold is a pathological-input guard; register
+                      ;; allocation and the linear cleanups still run above it.
                       [run-heavy? : bool
                         (<=
                           (compiler-ir-block-list-count sroa-blocks)
@@ -28197,10 +28199,10 @@
   [added-so-far : i64]
   [added-blocks : i64]) : bool
   (and
-    (<= caller-blocks (opt-heavy-pass-block-limit))
+    (<= caller-blocks (opt-inline-heavy-gate-block-limit))
     (>
       (+ caller-blocks (+ added-so-far added-blocks))
-      (opt-heavy-pass-block-limit))))
+      (opt-inline-heavy-gate-block-limit))))
 
 (define (opt-inline-cost-inline?
   [callee-instrs : i64]
@@ -40470,7 +40472,8 @@
     (opt-inline-cost-inline? 8 0 0 false 64 0)
     (not (opt-inline-cost-inline? 10 3 0 false 10 0))
     (opt-inline-cost-inline? 10 3 0 true 10 0)
-    (not (opt-inline-cost-inline? 1 1 0 true (opt-heavy-pass-block-limit) 0))
+    (not
+      (opt-inline-cost-inline? 1 1 0 true (opt-inline-heavy-gate-block-limit) 0))
     (not (opt-inline-cost-inline? 1 1 0 true 80 32))
     (opt-inline-cost-inline? 8 1 8 false 10 0)
     (not (opt-inline-bounds-inline-ok? true false 1 2))

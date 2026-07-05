@@ -13285,6 +13285,21 @@
 
 ;; Fold the scaled index into base-reg in place for non-SIB scales (1 or odd),
 ;; so a scavenged base register works the same way the old fixed scratch did.
+;; The shift count for a power-of-two scale > 1, or None. Scales are small
+;; positive type sizes, so the scan is bounded.
+(define (compiler-backend-power-of-two-shift [scale : i64]) : option_i64.Option
+  (let
+    [count : i64 0]
+    [value : i64 scale]
+    (begin
+      (while (and (> value 1) (= (% value 2) 0))
+        (begin
+          (set! value (/ value 2))
+          (set! count (+ count 1))))
+      (if (and (= value 1) (> count 0))
+        (option_i64.Some count)
+        (option_i64.None)))))
+
 (define (compiler-backend-gep-index-base-asm
   [base-reg : String]
   [scale : i64]
@@ -13303,9 +13318,31 @@
         base-reg
         "\n"
         "")
-      (string.append
-        (str_cat.str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
-        (str_cat.str-cat "    addq " index-reg ", " base-reg "\n")))))
+      ;; Power-of-two stride (16-byte inline enums/structs are the common
+      ;; case): shift the index in place instead of a multiply. Same operand
+      ;; shape as the imulq it replaces, strictly cheaper to execute.
+      (let
+        [scale-asm : String
+          (match (compiler-backend-power-of-two-shift scale)
+            [(option_i64.Some count)
+              (str_cat.str-cat
+                "    shlq $"
+                (string.int->string count)
+                ", "
+                index-reg
+                "\n"
+                "")]
+            [(option_i64.None)
+              (str_cat.str-cat
+                "    imulq $"
+                (string.int->string scale)
+                ", "
+                index-reg
+                "\n"
+                "")])]
+        (string.append
+          scale-asm
+          (str_cat.str-cat "    addq " index-reg ", " base-reg "\n"))))))
 
 (define (compiler-backend-gep-sib-scale? [scale : i64]) : bool
   (or (= scale 1) (= scale 2) (= scale 4) (= scale 8)))
@@ -32965,6 +33002,15 @@
   (array.make-array i64 65536))
 (define compiler-backend-sweep-disp-arr : (Array i64)
   (array.make-array i64 65536))
+
+;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
+;; rsp-relative bytes as [lo, hi]. Empty (em-lo > em-hi) when the function used
+;; no emergency scavenge slots or has outgoing stack-arg space (whose callee
+;; reads are invisible to the text scan and may alias the emergency window).
+(define compiler-backend-sweep-em-lo-arr : (Array i64)
+  (array.make-array i64 65536))
+(define compiler-backend-sweep-em-hi-arr : (Array i64)
+  (array.make-array i64 65536))
 (define compiler-backend-sweep-sym-bytes : (Array u8)
   (array.make-array u8 4194304))
 (define compiler-backend-sweep-sym-bytes-count : i64
@@ -32993,7 +33039,9 @@
   [symbol : String]
   [lo : i64]
   [hi : i64]
-  [disp : i64]) : unit
+  [disp : i64]
+  [em-lo : i64]
+  [em-hi : i64]) : unit
   (let
     [len : i64 (string.string-length symbol)]
     [sdata : (Ptr u8)
@@ -33020,6 +33068,8 @@
           (array-set! compiler-backend-sweep-lo-arr idx lo)
           (array-set! compiler-backend-sweep-hi-arr idx hi)
           (array-set! compiler-backend-sweep-disp-arr idx disp)
+          (array-set! compiler-backend-sweep-em-lo-arr idx em-lo)
+          (array-set! compiler-backend-sweep-em-hi-arr idx em-hi)
           (set! compiler-backend-sweep-sym-bytes-count (+ start len))
           (set! compiler-backend-sweep-count (+ idx 1)))))))
 
@@ -33035,7 +33085,10 @@
   [symbol : String]
   [frame : i64]
   [push-count : i64]
-  [slot-vars : i64]) : unit
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]) : unit
   (let
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
     [pm : bool (> push-count 0)]
@@ -33047,11 +33100,26 @@
       (if pm
         (+ (* push-count 8) sub-s)
         (+ frame 8))]
+    ;; Emergency scavenge slots live at rbp offset em-slot-offset - 8*i for
+    ;; i in [0, em-used-count); canonical = bias_neg + (negative rbp offset).
+    ;; They are read only by their own restores (visible in the text), EXCEPT
+    ;; when the function has outgoing stack-arg space: arg slots share the
+    ;; frame bottom and are read by callees, so the window stays empty then.
+    [em-hi : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (+ bias-neg em-slot-offset)
+        0)]
+    [em-lo : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (- em-hi (* 8 (- em-used-count 1)))
+        8)]
     (compiler-backend-sweep-record!
       symbol
       (- bias-neg (* 8 slot-vars))
       (- bias-neg 8)
-      disp)))
+      disp
+      em-lo
+      em-hi)))
 
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
@@ -33271,7 +33339,9 @@
   [rend : i64]
   [lo : i64]
   [hi : i64]
-  [disp : i64]) : text_buf.TextBuf
+  [disp : i64]
+  [em-lo : i64]
+  [em-hi : i64]) : text_buf.TextBuf
   (let
     [buf : text_buf.TextBuf out]
     [delta : i64 (- 0 disp)]
@@ -33509,9 +33579,12 @@
                 [ls : i64 (array-ref cand-pos k)]
                 (begin
                   (if (and
-                    (>= c lo)
-                    (<= c hi)
-                    (= (bit-and (- c lo) 7) 0)
+                    (or
+                      (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
+                      (and
+                        (>= c em-lo)
+                        (<= c em-hi)
+                        (= (bit-and (- c em-lo) 7) 0)))
                     (< c watermark))
                     (let
                       [r : i64 0]
@@ -33613,7 +33686,9 @@
                         rend
                         (array-ref compiler-backend-sweep-lo-arr cursor)
                         (array-ref compiler-backend-sweep-hi-arr cursor)
-                        (array-ref compiler-backend-sweep-disp-arr cursor)))
+                        (array-ref compiler-backend-sweep-disp-arr cursor)
+                        (array-ref compiler-backend-sweep-em-lo-arr cursor)
+                        (array-ref compiler-backend-sweep-em-hi-arr cursor)))
                     (set! flush rend)
                     (set! cursor (+ cursor 1))
                     (set! i rend)))
@@ -34210,7 +34285,13 @@
                                     symbol
                                     frame
                                     push-count
-                                    slot-vars))
+                                    slot-vars
+                                    compiler-backend-emergency-slot-offset
+                                    compiler-backend-emergency-used-count
+                                    (compiler-backend-outgoing-frame-space
+                                      target
+                                      emit-blocks-list
+                                      program-index)))
                                 unit)]
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
@@ -42792,7 +42873,165 @@ tl_memchr:
       (compiler-backend-peephole-self-move-operands? src dst)]
     [(CompilerBackendPeepholeMove.NoMove) false]))
 
+;; Zext dedup: the 64-bit destination register of a `movzbq`/`movzbl` line over
+;; [start,end), or "" when the line is not a byte zero-extend into a tracked GP
+;; register. Both forms leave the full 64-bit destination holding a value in
+;; [0,255] (32-bit writes zero the upper half), so a following
+;; `movzbq %<dst-low-byte>, %<dst>` re-extend is an identity.
+(define (compiler-backend-peephole-zext-line-dst
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : String
+  (let
+    [ms : i64 start]
+    (begin
+      (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
+        (set! ms (+ ms 1)))
+      (let
+        [me : i64 ms]
+        (begin
+          (while (and
+            (< me end)
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data me)]
+              (and (>= b 97) (<= b 122))))
+            (set! me (+ me 1)))
+          (if (or
+            (compiler-backend-peephole-range-eq? data ms me "movzbq")
+            (compiler-backend-peephole-range-eq? data ms me "movzbl"))
+            (compiler-backend-peephole-last-operand-reg data ms end)
+            ""))))))
+
+;; True when the line [ns,ne) is exactly `movzbq %B, R` with %B the low-byte
+;; sub-register of R. Paired with a pending byte zero-extend into R, this
+;; re-extend is an identity and is dropped (pair-action 2). The source token
+;; must be a byte register ('l'/'b' suffix); 16/32-bit sub-register tokens and
+;; memory operands never match.
+(define (compiler-backend-peephole-redundant-zext-next?
+  [data : (Ptr u8)]
+  [ns : i64]
+  [ne : i64]
+  [reg : String]) : bool
+  (let
+    [ms : i64 ns]
+    (begin
+      (while (and (< ms ne) (= (compiler-backend-peephole-byte-at data ms) 32))
+        (set! ms (+ ms 1)))
+      (let
+        [me : i64 ms]
+        (begin
+          (while (and
+            (< me ne)
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data me)]
+              (and (>= b 97) (<= b 122))))
+            (set! me (+ me 1)))
+          (if (not (compiler-backend-peephole-range-eq? data ms me "movzbq"))
+            false
+            (let
+              [ts : i64 me]
+              (begin
+                (while (and
+                  (< ts ne)
+                  (= (compiler-backend-peephole-byte-at data ts) 32))
+                  (set! ts (+ ts 1)))
+                (let
+                  [te : i64 ts]
+                  (begin
+                    (while (and
+                      (< te ne)
+                      (let
+                        [b : i64 (compiler-backend-peephole-byte-at data te)]
+                        (or
+                          (= b 37)
+                          (and (>= b 97) (<= b 122))
+                          (and (>= b 48) (<= b 57)))))
+                      (set! te (+ te 1)))
+                    (if (or
+                      (= ts te)
+                      (not (= (compiler-backend-peephole-byte-at data ts) 37)))
+                      false
+                      (let
+                        [last : i64
+                          (compiler-backend-peephole-byte-at data (- te 1))]
+                        (if (not (or (= last 108) (= last 98)))
+                          false
+                          (and
+                            (string.eq
+                              (compiler-backend-peephole-subreg-to-reg
+                                data
+                                ts
+                                te)
+                              reg)
+                            (string.eq
+                              (compiler-backend-peephole-last-operand-reg
+                                data
+                                ms
+                                ne)
+                              reg)))))))))))))))
+
+;; True when pending is a byte zero-extend into register R and next is the
+;; identity re-extend `movzbq %<R-low-byte>, R`.
+(define (compiler-backend-peephole-redundant-zext-pair?
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : bool
+  (let
+    [dst : String
+      (if pending-owned?
+        (let
+          [pdata : (Ptr u8)
+            (unsafe
+              (string-data pending-line))]
+          (compiler-backend-peephole-zext-line-dst
+            pdata
+            0
+            (string.string-length pending-line)))
+        (compiler-backend-peephole-zext-line-dst
+          asm-data
+          pending-start
+          pending-end))]
+    (if (string.eq dst "")
+      false
+      (compiler-backend-peephole-redundant-zext-next?
+        asm-data
+        next-start
+        next-end
+        dst))))
+
 (define (compiler-backend-peephole-pair-action-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : i64
+  (if (compiler-backend-peephole-redundant-zext-pair?
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?
+    next-start
+    next-end)
+    2
+    (compiler-backend-peephole-pair-action-range-movq
+      asm
+      asm-data
+      pending-start
+      pending-end
+      pending-line
+      pending-owned?
+      next-start
+      next-end)))
+
+(define (compiler-backend-peephole-pair-action-range-movq
   [asm : String]
   [asm-data : (Ptr u8)]
   [pending-start : i64]

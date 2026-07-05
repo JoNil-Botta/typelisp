@@ -1295,34 +1295,47 @@
   [path : String]
   [text : String]
   [stdlib-roots : svec.StringVec]) : LspAnalyzeResult
-  (let
-    [lint-diags : json.JsonList (lsp-lint-diagnostics path text stdlib-roots)]
-    (match (compiler-check-source-with-roots path text stdlib-roots)
-      [(ResultCompilerCheck.Ok _)
+  (match (lsp-validate-forms-result text)
+    [(LspValidationResult.Invalid line col msg ctx)
+      (let
+        [message : String (lsp-validation-error-message line col msg ctx)]
         (begin
-          (lsp-publish-diagnostics uri lint-diags)
-          (LspAnalyzeResult "" LspCheckCacheOk))]
-      [(ResultCompilerCheck.Err diag)
-        (let
-          [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
-          [check-cache : LspCheckCache
-            (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))]
-          (if (string.eq diag-uri uri)
-            (begin
-              (lsp-publish-diagnostics
-                uri
-                (lsp-json-list-cons
-                  (lsp-compiler-diagnostic (box-get diag))
-                  lint-diags))
-              (LspAnalyzeResult uri check-cache))
+          (lsp-publish-diagnostics
+            uri
+            (lsp-json-list-cons
+              (lsp-diagnostic line col message (compiler-diagnostic-code-parse))
+              json.JsonListNil))
+          (LspAnalyzeResult uri (LspCheckCacheErr message))))]
+    [(LspValidationResult.Valid)
+      (let
+        [lint-diags : json.JsonList
+          (lsp-lint-diagnostics path text stdlib-roots)]
+        (match (compiler-check-source-with-roots path text stdlib-roots)
+          [(ResultCompilerCheck.Ok _)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
-              (lsp-publish-diagnostics
-                diag-uri
-                (lsp-json-list-cons
-                  (lsp-compiler-diagnostic (box-get diag))
-                  json.JsonListNil))
-              (LspAnalyzeResult diag-uri check-cache))))])))
+              (LspAnalyzeResult "" LspCheckCacheOk))]
+          [(ResultCompilerCheck.Err diag)
+            (let
+              [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
+              [check-cache : LspCheckCache
+                (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))]
+              (if (string.eq diag-uri uri)
+                (begin
+                  (lsp-publish-diagnostics
+                    uri
+                    (lsp-json-list-cons
+                      (lsp-compiler-diagnostic (box-get diag))
+                      lint-diags))
+                  (LspAnalyzeResult uri check-cache))
+                (begin
+                  (lsp-publish-diagnostics uri lint-diags)
+                  (lsp-publish-diagnostics
+                    diag-uri
+                    (lsp-json-list-cons
+                      (lsp-compiler-diagnostic (box-get diag))
+                      json.JsonListNil))
+                  (LspAnalyzeResult diag-uri check-cache))))]))]))
 
 (define (lsp-first-change-text [params : json.Json]) : LspJsonText
   (let
@@ -4774,21 +4787,39 @@
     [(LspCheckCacheInvalid) false]
     [_ true]))
 
+(define (lsp-check-cache-json [check-cache : LspCheckCache]) : json.Json
+  (match check-cache
+    [(LspCheckCacheOk) (lsp-json-object1 "success" (json.JsonBool true))]
+    [(LspCheckCacheErr message)
+      (lsp-json-object2
+        "success"
+        (json.JsonBool false)
+        "error"
+        (json.JsonString message))]
+    [(LspCheckCacheInvalid)
+      (lsp-json-object2
+        "success"
+        (json.JsonBool false)
+        "error"
+        (json.JsonString "Check cache invalid"))]))
+
 (define (lsp-write-check-cache-response
   [id : json.Json]
   [check-cache : LspCheckCache]) : unit
-  (match check-cache
-    [(LspCheckCacheOk)
-      (lsp-write-response id (lsp-json-object1 "success" (json.JsonBool true)))]
-    [(LspCheckCacheErr message)
-      (lsp-write-response
-        id
-        (lsp-json-object2
-          "success"
-          (json.JsonBool false)
-          "error"
-          (json.JsonString message)))]
-    [(LspCheckCacheInvalid) unit]))
+  (lsp-write-response id (lsp-check-cache-json check-cache)))
+
+(define (lsp-check-source-cache
+  [path : String]
+  [text : String]
+  [stdlib-roots : svec.StringVec]) : LspCheckCache
+  (match (lsp-validate-forms-result text)
+    [(LspValidationResult.Valid)
+      (match (compiler-check-source-with-roots path text stdlib-roots)
+        [(ResultCompilerCheck.Ok _) LspCheckCacheOk]
+        [(ResultCompilerCheck.Err diag)
+          (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))])]
+    [(LspValidationResult.Invalid line col msg ctx)
+      (LspCheckCacheErr (lsp-validation-error-message line col msg ctx))]))
 
 (define (lsp-run-check-and-respond
   [id : json.Json]
@@ -4799,27 +4830,11 @@
   [stdlib-roots : svec.StringVec]) : LspHandleResult
   (let
     [check-cache : LspCheckCache
-      (match (compiler-check-source-with-roots path text stdlib-roots)
-        [(ResultCompilerCheck.Ok _)
-          (begin
-            (lsp-write-response
-              id
-              (lsp-json-object1 "success" (json.JsonBool true)))
-            LspCheckCacheOk)]
-        [(ResultCompilerCheck.Err diag)
-          (let
-            [message : String (compiler-diagnostic-message (box-get diag))]
-            (begin
-              (lsp-write-response
-                id
-                (lsp-json-object2
-                  "success"
-                  (json.JsonBool false)
-                  "error"
-                  (json.JsonString message)))
-              (LspCheckCacheErr message)))])]
-    (LspHandleResult.Continue
-      (lsp-documents-set-check-cache docs uri check-cache))))
+      (lsp-check-source-cache path text stdlib-roots)]
+    (begin
+      (lsp-write-check-cache-response id check-cache)
+      (LspHandleResult.Continue
+        (lsp-documents-set-check-cache docs uri check-cache)))))
 
 (define (lsp-handle-tl-check
   [id : json.Json]

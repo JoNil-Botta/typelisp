@@ -1,0 +1,7 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"error\"", "raw_contains": "at line", "raw_not_contains": "LSP request"}
+  ]
+}

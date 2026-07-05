@@ -18875,6 +18875,49 @@
     [(OptLoopBceExpr.Value value) (opt-normalize-scalar-to-i64 value ty)]
     [_ (option_i64.None)]))
 
+(define (opt-range-upper-minus-offset-expr
+  [upper : OptLoopBceExpr]
+  [offset : i64]
+  [ty : AstType]) : OptLoopBceExpr
+  (match (opt-range-expr-i64 upper ty)
+    [(option_i64.Some value)
+      (if (>= value 0)
+        (OptLoopBceExpr.Value (CompilerIrValue.I64 (- value offset)))
+        (OptLoopBceExpr.Bin
+          (CompilerIrBinOp.Sub)
+          (box upper)
+          (box (OptLoopBceExpr.Value (CompilerIrValue.I64 offset)))
+          ty))]
+    [(option_i64.None)
+      (OptLoopBceExpr.Bin
+        (CompilerIrBinOp.Sub)
+        (box upper)
+        (box (OptLoopBceExpr.Value (CompilerIrValue.I64 offset)))
+        ty)]))
+
+(define (opt-range-proves-additive-index-parts-in-range?
+  [facts : OptRangeFacts]
+  [label : String]
+  [base : OptLoopBceExpr]
+  [offset-expr : OptLoopBceExpr]
+  [upper : OptLoopBceExpr]
+  [ty : AstType]
+  [upper-known-nonnegative : bool]) : bool
+  (match (opt-range-expr-i64 offset-expr ty)
+    [(option_i64.Some offset)
+      ;; `base < upper - k` only proves `(base + k) < upper` when the trusted
+      ;; upper length prevents `upper - k` from wrapping upward.
+      (and
+        (> offset 0)
+        upper-known-nonnegative
+        (opt-range-proves-nonnegative? facts label base)
+        (opt-range-proves-less-than?
+          facts
+          label
+          base
+          (opt-range-upper-minus-offset-expr upper offset ty)))]
+    [(option_i64.None) false]))
+
 (define (opt-range-proves-additive-index-in-range?
   [facts : OptRangeFacts]
   [label : String]
@@ -18886,26 +18929,23 @@
       (if (and
         (opt-binop-eq op (CompilerIrBinOp.Add))
         (opt-signed-integer-type? ty))
-        (match (opt-range-expr-i64 (box-get rhs) ty)
-          [(option_i64.Some offset)
-            (let
-              [base : OptLoopBceExpr (box-get lhs)]
-              ;; `base < upper - k` only proves `(base + k) < upper` when the
-              ;; trusted upper length prevents `upper - k` from wrapping upward.
-              (and
-                (> offset 0)
-                upper-known-nonnegative
-                (opt-range-proves-nonnegative? facts label base)
-                (opt-range-proves-less-than?
-                  facts
-                  label
-                  base
-                  (OptLoopBceExpr.Bin
-                    (CompilerIrBinOp.Sub)
-                    (box upper)
-                    (box (OptLoopBceExpr.Value (CompilerIrValue.I64 offset)))
-                    ty))))]
-          [(option_i64.None) false])
+        (or
+          (opt-range-proves-additive-index-parts-in-range?
+            facts
+            label
+            (box-get lhs)
+            (box-get rhs)
+            upper
+            ty
+            upper-known-nonnegative)
+          (opt-range-proves-additive-index-parts-in-range?
+            facts
+            label
+            (box-get rhs)
+            (box-get lhs)
+            upper
+            ty
+            upper-known-nonnegative))
         false)]
     [_ false]))
 
@@ -20042,9 +20082,27 @@
                       range-state)]
                   [(option_i64.None) range-state])]
               [(CompilerIrBinOp.Lt)
-                (if (or range-nonnegative loop-nonnegative)
-                  (opt-loop-bce-state-bind-guard range-state true-label lhs rhs)
-                  range-state)]
+                (let
+                  [lt-range-state : OptLoopBceState
+                    (if loop-nonnegative
+                      (opt-loop-bce-state-bind-ranges
+                        range-state
+                        (opt-range-facts-add-less-than
+                          (opt-range-facts-add-nonnegative
+                            (struct-get range-state ranges)
+                            true-label
+                            lhs)
+                          true-label
+                          lhs
+                          rhs))
+                      range-state)]
+                  (if (or range-nonnegative loop-nonnegative)
+                    (opt-loop-bce-state-bind-guard
+                      lt-range-state
+                      true-label
+                      lhs
+                      rhs)
+                    lt-range-state))]
               [_ range-state]))]
         [(OptLoopBceCmpEnv.Nil) state])]
     [_ state]))
@@ -32524,6 +32582,20 @@
         (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
         (CompilerIrInstrList.Nil)))))
 
+(define (opt-loop-bce-test-affine-header [limit : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        4
+        (CompilerIrBinOp.Lt)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 limit)
+        (AstType.Bool))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+        (CompilerIrInstrList.Nil)))))
+
 (define (opt-loop-bce-test-body) : CompilerIrBlock
   (compiler-ir-block
     "body"
@@ -32565,6 +32637,70 @@
                     (CompilerIrInstr.Jump "header")
                     (CompilerIrInstrList.Nil)))))))))))
 
+(define (opt-loop-bce-test-affine-body-instrs [reversed : bool]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      5
+      (CompilerIrValue.Var 2)
+      (CompilerIrValue.I64 8)
+      (AstType.U8))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Cast
+          7
+          (CompilerIrValue.Var 6)
+          (AstType.I64)
+          (AstType.U64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            15
+            (CompilerIrBinOp.Add)
+            (if reversed
+              (CompilerIrValue.I64 3)
+              (CompilerIrValue.Var 0))
+            (if reversed
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 3))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Cast
+              8
+              (CompilerIrValue.Var 15)
+              (AstType.I64)
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 8)
+                (CompilerIrValue.Var 7)
+                "bounds_ok")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  9
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 9) (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump "header")
+                    (CompilerIrInstrList.Nil)))))))))))
+
+(define (opt-loop-bce-test-affine-body [reversed : bool]) : CompilerIrBlock
+  (compiler-ir-block "body" (opt-loop-bce-test-affine-body-instrs reversed)))
+
+(define (opt-loop-bce-test-affine-call-body [reversed : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call
+        20
+        "touch"
+        (CompilerIrCallArgs.One (CompilerIrValue.Var 2))
+        (AstType.Unit))
+      (opt-loop-bce-test-affine-body-instrs reversed))))
+
 (define (opt-loop-bce-test-exit) : CompilerIrBlock
   (compiler-ir-block
     "exit"
@@ -32579,6 +32715,21 @@
       (opt-loop-bce-test-header)
       (compiler-ir-block-cons
         (opt-loop-bce-test-body)
+        (compiler-ir-block-cons
+          (opt-loop-bce-test-exit)
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-loop-bce-test-affine-blocks
+  [init : i64]
+  [limit : i64]
+  [body : CompilerIrBlock]
+  [with-call : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-test-entry init with-call)
+    (compiler-ir-block-cons
+      (opt-loop-bce-test-affine-header limit)
+      (compiler-ir-block-cons
+        body
         (compiler-ir-block-cons
           (opt-loop-bce-test-exit)
           (CompilerIrBlockList.Nil))))))
@@ -32863,6 +33014,80 @@
                       (CompilerIrValue.Var (+ base 6))
                       (AstType.Char))
                     tail))))))))))
+
+(define (opt-loop-bce-string-test-affine-body-instrs
+  [object-var : i64]
+  [reversed : bool]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      5
+      (CompilerIrValue.Var object-var)
+      (CompilerIrValue.I64 0)
+      (AstType.U8))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.U64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          7
+          (CompilerIrValue.Var object-var)
+          (CompilerIrValue.I64 8)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Cast
+              9
+              (CompilerIrValue.Var 8)
+              (AstType.I64)
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                15
+                (CompilerIrBinOp.Add)
+                (if reversed
+                  (CompilerIrValue.I64 3)
+                  (CompilerIrValue.Var 0))
+                (if reversed
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.I64 3))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Cast
+                  10
+                  (CompilerIrValue.Var 15)
+                  (AstType.I64)
+                  (AstType.U64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (CompilerIrValue.Var 10)
+                    (CompilerIrValue.Var 9)
+                    "str_bounds_ok")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      11
+                      (CompilerIrValue.Var 6)
+                      (CompilerIrValue.Var 15)
+                      (AstType.Char))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Load
+                        12
+                        (CompilerIrValue.Var 11)
+                        (AstType.Char))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          13
+                          (CompilerIrBinOp.Add)
+                          (CompilerIrValue.Var 0)
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Mov
+                            0
+                            (CompilerIrValue.Var 13)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Jump "header")
+                            (CompilerIrInstrList.Nil)))))))))))))))
 
 (define (opt-loop-bce-string-test-body [object-var : i64]) : CompilerIrBlock
   (compiler-ir-block "body" (opt-loop-bce-string-test-body-instrs object-var)))
@@ -33154,6 +33379,47 @@
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-transitive-blocks false)
         (opt-loop-bce-test-summaries false false))]
+    [loop-affine-reversed : i64
+      (opt-loop-bce-test-count
+        (opt-loop-bce-test-affine-blocks
+          0
+          7
+          (opt-loop-bce-test-affine-body true)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [loop-affine-missing-offset-bound : i64
+      (opt-loop-bce-test-count
+        (opt-loop-bce-test-affine-blocks
+          0
+          10
+          (opt-loop-bce-test-affine-body true)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-affine-missing-offset-bound : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (compiler-ir-block
+            "body"
+            (opt-loop-bce-string-test-affine-body-instrs 2 true))
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [loop-affine-negative-init : i64
+      (opt-loop-bce-test-count
+        (opt-loop-bce-test-affine-blocks
+          (- 0 1)
+          7
+          (opt-loop-bce-test-affine-body true)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [loop-affine-call : i64
+      (opt-loop-bce-test-count
+        (opt-loop-bce-test-affine-blocks
+          0
+          7
+          (opt-loop-bce-test-affine-call-body true)
+          false)
+        (opt-loop-bce-test-summaries false false))]
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -33191,6 +33457,11 @@
       [(not (= (opt-count-bounds-instrs index-cast-redef) 2)) 24]
       [(not (= string-transitive 0)) 25]
       [(not (= string-transitive-missing-upper 1)) 26]
+      [(not (= loop-affine-reversed 0)) 27]
+      [(not (= loop-affine-missing-offset-bound 1)) 28]
+      [(not (= string-affine-missing-offset-bound 1)) 29]
+      [(not (= loop-affine-negative-init 1)) 30]
+      [(not (= loop-affine-call 1)) 31]
       [else 42])))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already

@@ -23910,8 +23910,36 @@
     [(CompilerIrInstr.Branch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Phi dst _ _) (>= dst 0)]
-    [(CompilerIrInstr.BoundsCheck _ _ _) false]
+    ;; Bounds checks are inlinable: the instruction remapper freshens the
+    ;; ok-label with the site prefix (the same machinery the single-block
+    ;; bounds path uses), and the multiblock rewrite gates bounds-carrying
+    ;; callees behind opt-inline-bounds-inline-ok? exactly like the
+    ;; single-block path. This is what lets small loop-bearing helpers such
+    ;; as a string-scan or hashmap probe inline into their hot single call
+    ;; site instead of paying a call per iteration.
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ (opt-inline-body-instr-op-ok? instr)]))
+
+(define (opt-inline-instr-seq-has-bounds-check?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BoundsCheck _ _ _) true]
+      [_ (opt-inline-instr-seq-has-bounds-check? instrs (+ index 1))])))
+
+(define (opt-inline-blocks-have-bounds-check? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-inline-instr-seq-has-bounds-check? instrs 0)
+            true
+            (opt-inline-blocks-have-bounds-check? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-inline-blocks-have-bounds-check? (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : CompilerIrInstrSeq]
@@ -25387,23 +25415,43 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? callee census))]
+                ;; Bounds-carrying multiblock callees inline only when
+                ;; ACYCLIC: pulling a whole loop into the caller reshapes it
+                ;; (top-tested, un-rotated) in ways today's shape-sensitive
+                ;; loop-BCE/rotation cannot recover, regressing the hot loop
+                ;; more than the saved call (array_sum +33%, crc32 +67% when
+                ;; loop-bearing helpers were admitted). Revisit together with
+                ;; phi-aware loop rotation.
+                [bounds-ok? : bool
+                  (opt-inline-bounds-inline-ok?
+                    (and (opt-inline-blocks-have-bounds-check? cblocks) true)
+                    absorbable
+                    const-args
+                    np)]
+                [bounds-loop-ok? : bool
+                  (if (opt-inline-blocks-have-bounds-check? cblocks)
+                    (opt-inline-tiny-predicate-acyclic? cblocks)
+                    true)]
                 [inline? : bool
-                  (or
-                    (opt-inline-cost-inline?
-                      callee-instrs
-                      added-blocks
-                      const-args
-                      absorbable
-                      caller-blocks
-                      added-so-far)
-                    (and
-                      tiny-predicate?
-                      (opt-inline-tiny-predicate-cost-inline?
+                  (and
+                    bounds-ok?
+                    bounds-loop-ok?
+                    (or
+                      (opt-inline-cost-inline?
                         callee-instrs
                         added-blocks
                         const-args
+                        absorbable
                         caller-blocks
-                        added-so-far)))]
+                        added-so-far)
+                      (and
+                        tiny-predicate?
+                        (opt-inline-tiny-predicate-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          caller-blocks
+                          added-so-far))))]
                 (if inline?
                   (match (opt-inline-walk-instrs
                     (compiler-ir-instr-list-reverse-onto
@@ -25907,23 +25955,43 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? callee census))]
+                ;; Bounds-carrying multiblock callees inline only when
+                ;; ACYCLIC: pulling a whole loop into the caller reshapes it
+                ;; (top-tested, un-rotated) in ways today's shape-sensitive
+                ;; loop-BCE/rotation cannot recover, regressing the hot loop
+                ;; more than the saved call (array_sum +33%, crc32 +67% when
+                ;; loop-bearing helpers were admitted). Revisit together with
+                ;; phi-aware loop rotation.
+                [bounds-ok? : bool
+                  (opt-inline-bounds-inline-ok?
+                    (and (opt-inline-blocks-have-bounds-check? cblocks) true)
+                    absorbable
+                    const-args
+                    np)]
+                [bounds-loop-ok? : bool
+                  (if (opt-inline-blocks-have-bounds-check? cblocks)
+                    (opt-inline-tiny-predicate-acyclic? cblocks)
+                    true)]
                 [inline? : bool
-                  (or
-                    (opt-inline-cost-inline?
-                      callee-instrs
-                      added-blocks
-                      const-args
-                      absorbable
-                      caller-blocks
-                      added-so-far)
-                    (and
-                      tiny-predicate?
-                      (opt-inline-tiny-predicate-cost-inline?
+                  (and
+                    bounds-ok?
+                    bounds-loop-ok?
+                    (or
+                      (opt-inline-cost-inline?
                         callee-instrs
                         added-blocks
                         const-args
+                        absorbable
                         caller-blocks
-                        added-so-far)))]
+                        added-so-far)
+                      (and
+                        tiny-predicate?
+                        (opt-inline-tiny-predicate-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          caller-blocks
+                          added-so-far))))]
                 (if inline?
                   (match (opt-inline-walk-instrs-with-spans
                     (compiler-ir-instr-list-reverse-onto
@@ -35848,6 +35916,94 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
+;; Multiblock bounds-carrying absorbable callee: with BoundsCheck admitted to
+;; the multiblock instruction set, a single-call-site helper whose body
+;; contains a check must inline (the absorb bonus), with its ok-label
+;; freshened by the site prefix so the caller's labels stay unique.
+(define (opt-inline-mb-bounds-callee) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "mb_bounds"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "idx" (AstType.I64) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 1)
+        CompilerIrParamList.Nil))
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            "mb_ok")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "then"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "else"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-mb-bounds-caller) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "main"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "a" (AstType.I64) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "b" (AstType.I64) 1)
+        CompilerIrParamList.Nil))
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            2
+            "mb_bounds"
+            (CompilerIrCallArgs.Two
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-inline-multiblock-bounds-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons
+          (opt-inline-mb-bounds-caller)
+          (compiler-ir-function-cons
+            (opt-inline-mb-bounds-callee)
+            CompilerIrFunctionList.Nil))
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "mb_bounds") 0)
+            (= (opt-count-bounds-blocks blocks) 1)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptMaybeFunction.No) false])))
+
 (define (opt-inline-mut-param-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "n" (AstType.I64) 0)
@@ -36396,6 +36552,9 @@
                     (unless
                       (compiler-optimize-inline-multiblock-acyclic-ok?)
                       (return 39))
+                    (unless
+                      (compiler-optimize-inline-multiblock-bounds-ok?)
+                      (return 46))
                     (unless
                       (compiler-optimize-inline-mut-param-loop-ok?)
                       (return 44))

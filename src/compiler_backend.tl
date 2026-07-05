@@ -7462,13 +7462,13 @@
             (box
               (compiler-diagnostic-with-message
                 instr-diag
-                "backend: CompilerIrInstr.Pack requires exactly two words (#2386)")))])]
+                "backend: CompilerIrInstr.Pack requires exactly two words")))])]
     [(CompilerIrValueList.Nil)
       (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-with-message
             instr-diag
-            "backend: CompilerIrInstr.Pack requires exactly two words (#2386)")))]))
+            "backend: CompilerIrInstr.Pack requires exactly two words")))]))
 
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -7546,7 +7546,7 @@
         (box
           (compiler-diagnostic-with-message
             instr-diag
-            "backend: CompilerIrInstr.Word src must be a register-group var (#2386)")))]))
+            "backend: CompilerIrInstr.Word src must be a register-group var")))]))
 
 ;; The assembly operand (register name or memory slot) holding word `index`
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
@@ -7561,7 +7561,7 @@
       (box
         (compiler-diagnostic-at-start
           ""
-          "backend: register-group word index must be 0 or 1 (#2386)")))
+          "backend: register-group word index must be 0 or 1")))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
@@ -7575,19 +7575,19 @@
               (box
                 (compiler-diagnostic-at-start
                   ""
-                  "backend: register-group var assigned spill slot (#2386)")))]
+                  "backend: register-group var assigned spill slot")))]
           [(CompilerRegLocation.Register _)
             (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
-                  "backend: register-group var assigned scalar register home (#2386)")))]
+                  "backend: register-group var assigned scalar register home")))]
           [(CompilerRegLocation.Remat _)
             (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
-                  "backend: register-group var rematerialised (#2386)")))])]
+                  "backend: register-group var rematerialised")))])]
       [(CompilerRegMaybeLocation.No)
         (ResultCompilerBackend.Ok
           (compiler-backend-frame-offset
@@ -7630,7 +7630,7 @@
         (box
           (compiler-diagnostic-at-start
             ""
-            "backend: register-group load requires var operand (#2386)")))]))
+            "backend: register-group load requires var operand")))]))
 
 ;; Store a group's two words FROM `reg0`/`reg1` into the group var's home
 ;; (for a call result captured in rax:rdx, or an incoming group parameter).
@@ -7751,7 +7751,7 @@
         (box
           (compiler-diagnostic-at-start
             ""
-            "backend: register-group stack argument requires var operand (#2386)")))]))
+            "backend: register-group stack argument requires var operand")))]))
 
 (define (compiler-backend-group-word-arg-reg
   [target : CompilerBackendTarget]
@@ -7806,7 +7806,7 @@
         (box
           (compiler-diagnostic-at-start
             ""
-            "backend: register-group call argument requires var operand (#2386)")))]))
+            "backend: register-group call argument requires var operand")))]))
 
 (define (compiler-backend-emit-group-word-call-arg
   [target : CompilerBackendTarget]
@@ -7862,7 +7862,7 @@
                 (box
                   (compiler-diagnostic-with-message
                     func-diag
-                    "backend: register-group call argument requires var operand (#2386)")))])]
+                    "backend: register-group call argument requires var operand")))])]
         [(ResultBackendReg.Err message)
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message func-diag message)))]))))

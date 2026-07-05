@@ -771,7 +771,7 @@
   (compiler-diagnostic-with-path diag path))
 
 (define (lower-reference-support-message) : String
-  "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
+  "lower: reference-typed programs require borrow/reference lowering support")
 
 (define (lower-bytes-view-from-parts-name? [name : String]) : bool
   (let
@@ -14003,7 +14003,7 @@
           (= capture-offset offset))])))
 
 (define (lower-unsupported-capture-message) : String
-  "lower: unsupported lambda capture type (#1553)")
+  "lower: unsupported lambda capture type")
 
 (define (lower-capture-support-message [ctx : TcContext] [ty : AstType]) : String
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -22096,7 +22096,7 @@
 (define (lower-c-abi-two-register-return-message [ty : AstType]) : String
   (string.append
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
-    (string.append (tc-type-render ty) "; see #1995")))
+    (tc-type-render ty)))
 
 (define (lower-c-abi-sysv-slot-size [size : i64] [slot-index : i64]) : i64
   (if (= slot-index 0)

@@ -1846,9 +1846,7 @@
                     "compiler-load: GitHub dependency '"
                     (string.append
                       first
-                      (string.append
-                        "' requires fetch support (#1157): "
-                        module-name))))
+                      (string.append "' requires fetch support: " module-name))))
                 (ResultPkgResolve.Ok
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
@@ -10242,9 +10240,7 @@
                     "compiler-load: GitHub dependency '"
                     (string.append
                       alias
-                      (string.append
-                        "' requires fetch support (#1157): "
-                        import-path))))
+                      (string.append "' requires fetch support: " import-path))))
                 (let
                   [norm-rest : String (compiler-load-normalize-path rest)]
                   (if (compiler-load-path-escapes? norm-rest)
@@ -10367,7 +10363,7 @@
       "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl")
     (compiler-load-pkg-resolve-rejects?
       "pkg:remote/src/lib.tl"
-      "compiler-load: GitHub dependency 'remote' requires fetch support (#1157): pkg:remote/src/lib.tl")))
+      "compiler-load: GitHub dependency 'remote' requires fetch support: pkg:remote/src/lib.tl")))
 
 ;: True when `parent-dir dir` yields exactly `expected`.
 (define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool

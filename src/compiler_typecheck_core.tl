@@ -10942,23 +10942,23 @@
 (define (tc-source-type-policy-message [name : String]) : String
   (cond
     [(string.eq name "varying")
-      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
+      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach"]
     [(string.eq name "Varying")
-      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
+      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach"]
     [(string.eq name "Vector")
-      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
+      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal"]
     [(string.eq name "vector")
-      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
+      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal"]
     [(string.eq name "Mask")
-      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
+      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [(string.eq name "mask")
-      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
+      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [else
       (string.append
         "typecheck: unknown type "
         (string.append
           name
-          "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)"))]))
+          "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead"))]))
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl
@@ -12017,7 +12017,7 @@
                   [(ResultTcUnit.Ok)
                     (if (tc-maybe-type-contains-reference? maybe-ret)
                       (ResultTcUnit.Err
-                        "typecheck: returning references requires lifetime support (#804)")
+                        "typecheck: returning references requires lifetime support")
                       (tc-source-expr-policy-ok ctx body))]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
@@ -12323,7 +12323,7 @@
           [(ResultTcUnit.Ok)
             (if (tc-maybe-type-contains-reference? maybe-ty)
               (ResultTcUnit.Err
-                "typecheck: storing references in top-level values requires lifetime support (#804)")
+                "typecheck: storing references in top-level values requires lifetime support")
               (match (tc-source-expr-policy-ok ctx expr)
                 [(ResultTcUnit.Ok)
                   (tc-source-expr-spmd-broadcast-scope-ok expr false)]
@@ -25111,7 +25111,7 @@
         "typecheck: in-arena inside spmd is not supported")]
     [(AstExpr.WithResource _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: resource with is not implemented yet (#907)")]
+        "typecheck: resource with is not implemented yet")]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -50854,7 +50854,7 @@
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
-                            "typecheck: Module macro expansion is not implemented yet (#3153)")))]
+                            "typecheck: Module macro expansion is not implemented yet")))]
                     [(and import-position (tc-macro-result-decls? ret))
                       (ResultMacroDecl.Err
                         (box
@@ -50872,7 +50872,7 @@
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
-                            "typecheck: Decls macro expansion is not implemented yet (#3153)")))]
+                            "typecheck: Decls macro expansion is not implemented yet")))]
                     [(tc-macro-result-module? ret)
                       (ResultMacroDecl.Err
                         (box

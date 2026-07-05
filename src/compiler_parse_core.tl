@@ -401,28 +401,28 @@
     [_ (ResultCompilerCfg.Err "parse: malformed cfg predicate")]))
 
 (define (compiler-parse-abstraction-policy-message) : String
-  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead")
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (cond
     [(string.eq name "varying")
-      "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
+      "parse: public SPMD varying source types are deferred; varying is inferred inside foreach"]
     [(string.eq name "Varying")
-      "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
+      "parse: public SPMD varying source types are deferred; varying is inferred inside foreach"]
     [(string.eq name "Vector")
-      "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
+      "parse: public SPMD vector source types are deferred; vector values remain compiler-internal"]
     [(string.eq name "vector")
-      "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
+      "parse: public SPMD vector source types are deferred; vector values remain compiler-internal"]
     [(string.eq name "Mask")
-      "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
+      "parse: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [(string.eq name "mask")
-      "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
+      "parse: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [else
       (string.append
         "parse: unknown type constructor "
         (string.append
           name
-          "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))]))
+          "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead"))]))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (cond
@@ -10605,7 +10605,7 @@
       (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
       (compiler-parse-error-ok?
         "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead")
       (compiler-parse-ok-with-cfg?
         "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
         private-cfg)

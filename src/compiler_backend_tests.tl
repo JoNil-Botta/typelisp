@@ -4284,7 +4284,7 @@
       [(ResultCompilerBackend.Err diag)
         (string.eq
           (compiler-diagnostic-message (box-get diag))
-          "backend: register-group call argument requires var operand (#2386)")]
+          "backend: register-group call argument requires var operand")]
       [(ResultCompilerBackend.Ok _) false])))
 
 (define (compiler-backend-register-group-fail-closed-ok?) : bool
@@ -4296,17 +4296,17 @@
           (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)
       (CompilerIrValue.Var 0)
-      "backend: register-group var assigned scalar register home (#2386)")
+      "backend: register-group var assigned scalar register home")
     (compiler-backend-register-group-mov-error-ok?
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill 16))
         CompilerRegAssignmentList.Nil)
       (CompilerIrValue.Var 0)
-      "backend: register-group var assigned spill slot (#2386)")
+      "backend: register-group var assigned spill slot")
     (compiler-backend-register-group-mov-error-ok?
       CompilerRegAssignmentList.Nil
       (CompilerIrValue.I64 7)
-      "backend: register-group load requires var operand (#2386)")
+      "backend: register-group load requires var operand")
     (compiler-backend-register-group-call-arg-error-ok?)))
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool

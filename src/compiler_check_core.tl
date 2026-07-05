@@ -711,7 +711,7 @@
   (compiler-check-source-error-ok?
     "tests/private_dynamic_buffer_public.tl"
     (compiler-check-private-dynamic-buffer-public-source)
-    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))
+    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead"))
 
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?

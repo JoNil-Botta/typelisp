@@ -2457,7 +2457,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-global-reference-aggregate-source)
-        "typecheck: storing references in top-level values requires lifetime support (#804)")
+        "typecheck: storing references in top-level values requires lifetime support")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4484,7 +4484,7 @@
     [lambda-return-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-lambda-return-source)
-        "typecheck: returning references requires lifetime support (#804)")]
+        "typecheck: returning references requires lifetime support")]
     [mut-ref-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
     [mut-borrow-ok : bool
@@ -6241,7 +6241,7 @@
     "typecheck: unknown type "
     (string.append
       name
-      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
+      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")))
 
 (define (compiler-typecheck-type-valued-comptime-source) : String
   "(defstruct Point (x i64))
@@ -6268,7 +6268,7 @@
       (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
       (compiler-typecheck-error-ok?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead")
       (compiler-typecheck-ok-with-cfg?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
         private-cfg)

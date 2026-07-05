@@ -77,6 +77,40 @@
 
 (cfg test (import (result-test-user i64 String) as result_i64_string_user))
 
+;; P4/C4.5 author-time canonical instantiations: cover struct and enum element
+;; kinds (scalar/String are covered above) so the whole generated result body is
+;; typechecked in CI for every representative element kind, before any consumer.
+(cfg
+  test
+  (defstruct ResApiPoint
+    (x i64)
+    (y i64)))
+
+(cfg
+  test
+  (defenum ResApiTag
+    (ResApiTagA i64)
+    (ResApiTagB i64)))
+
+(cfg test (import (result ResApiPoint ResApiTag) as result_struct_enum))
+
+(cfg
+  test
+  (test
+    result-macro-struct-and-enum-element-kinds
+    (let
+      [ok-v : result_struct_enum.Result
+        (result_struct_enum.ok (ResApiPoint 1 2))]
+      [err-v : result_struct_enum.Result
+        (result_struct_enum.err (ResApiTagA 5))]
+      (begin
+        (test.assert-true
+          (result_struct_enum.is-ok? (& ok-v))
+          "struct/enum result ok predicate")
+        (test.assert-true
+          (result_struct_enum.is-err? (& err-v))
+          "struct/enum result err predicate")))))
+
 (cfg
   test
   (test

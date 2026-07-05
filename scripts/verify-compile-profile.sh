@@ -44,6 +44,8 @@ GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 RESULT_IMPORT_STDOUT="$WORKDIR/profile-result-import.stdout"
 RESULT_IMPORT_STDERR="$WORKDIR/profile-result-import.stderr"
+CROSS_SINGLE_STDOUT="$WORKDIR/profile-cross-single.stdout"
+CROSS_SINGLE_STDERR="$WORKDIR/profile-cross-single.stderr"
 GEN_IMPORT_INERT_STDOUT="$WORKDIR/profile-generated-import-inert.stdout"
 GEN_IMPORT_INERT_STDERR="$WORKDIR/profile-generated-import-inert.stderr"
 REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
@@ -223,8 +225,8 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_builds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.marker_scans|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_passes|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|"
@@ -340,6 +342,34 @@ assert_profile_counter_eq_in \
     "$RESULT_IMPORT_STDOUT" \
     "$RESULT_IMPORT_STDERR"
 
+echo "[compile-profile] check cross-file single-compilation fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_cross_file_single_compilation.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$CROSS_SINGLE_STDOUT" 2> "$CROSS_SINGLE_STDERR"; then
+    show_failure_logs "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR"
+    fail "profiled cross-file single-compilation fixture check failed"
+fi
+
+# Plan P1 single-compilation invariant: three separate modules import the same
+# (vector i64) instantiation. The program-global memo materializes/typechecks
+# that identity exactly once, so the two later importers are memo hits. A global
+# counter cannot isolate a single identity, but with three identical imports at
+# least two of them must resolve through the memo, and at least one module must
+# have been materialized.
+assert_profile_counter_at_least_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_module_memo_hits" \
+    2 \
+    "$CROSS_SINGLE_STDOUT" \
+    "$CROSS_SINGLE_STDERR"
+assert_profile_counter_at_least_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_module_materializations" \
+    1 \
+    "$CROSS_SINGLE_STDOUT" \
+    "$CROSS_SINGLE_STDERR"
+
 echo "[compile-profile] check inert generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_inert.tl \
     --stdlib-root . \
@@ -376,19 +406,13 @@ assert_contains_in \
     "compile-profile-detail|typecheck.macro_expand|" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
+# The replay-compare + fingerprint machinery is deleted (plan P1): a memoized
+# module is never re-expanded, so those counters no longer exist. The repeated
+# import now resolves through the program-global module memo and is counted as a
+# memo hit instead of a compare pass.
 assert_contains_in \
     "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.generated_compare_passes|0|0|0|0" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_contains_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.generated_fingerprint_cache_hits|0|0|0|0" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_contains_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|0|0|0|0" \
+    "compile-profile|typecheck.macro.generated_module_memo_hits|" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 assert_contains_in \
@@ -401,15 +425,26 @@ assert_contains_in \
     "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
-assert_profile_counter_at_least_in \
+# Plan P3 (C3.1/C3.2): the demand-driven walk forces the generated module import
+# inline in a single traversal, and the repeated structurally-identical import
+# resolves through the program-global memo as a memo hit rather than a re-expand.
+# So this fixture now converges in one pass with no follow-up work -- it no longer
+# exercises a second whole-program pass or module-placeholder follow-up.
+assert_profile_counter_eq_in \
     "$REPLAY_STDERR" \
     "typecheck.macro.fixed_point_passes" \
-    2 \
+    1 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_profile_counter_eq_in \
+    "$REPLAY_STDERR" \
+    "typecheck.macro.fixed_point_followup_module_placeholders" \
+    0 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 assert_profile_counter_at_least_in \
     "$REPLAY_STDERR" \
-    "typecheck.macro.fixed_point_followup_module_placeholders" \
+    "typecheck.macro.generated_module_memo_hits" \
     1 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"

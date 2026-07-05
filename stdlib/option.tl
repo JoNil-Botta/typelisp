@@ -5,17 +5,14 @@
 ;# `(import (option String) as option_string)`.
 (module stdlib.option)
 
-(import stdlib.comptime)
-
 ;: Emit a generated absence-only option module for payload type `T`.
 (defmacro (option [T : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append "stdlib.option.generated." (type-key T)))]
-    [option-name : comptime.Expr (comptime.expr-var "Option")]
-    [none-name : comptime.Expr (comptime.expr-var "Option.None")]
-    [some-name : comptime.Expr (comptime.expr-var "Option.Some")]
+    [module-name : Expr
+      (expr-var (string-append "stdlib.option.generated." (type-key T)))]
+    [option-name : Expr (expr-var "Option")]
+    [none-name : Expr (expr-var "Option.None")]
+    [some-name : Expr (expr-var "Option.Some")]
     `(begin
       (module ,module-name)
       (defenum ,option-name
@@ -61,11 +58,9 @@
   test
   (defmacro (option-test-user [T : type]) : Module
     (let
-      [module-name : comptime.Expr
-        (comptime.expr-var
-          (comptime.string-append
-            "stdlib.option.test_user.generated."
-            (type-key T)))]
+      [module-name : Expr
+        (expr-var
+          (string-append "stdlib.option.test_user.generated." (type-key T)))]
       `(begin
         (module ,module-name)
         (import (option ,T) as local_option)
@@ -73,6 +68,47 @@
           (local_option.value-or value fallback))))))
 
 (cfg test (import (option-test-user i64) as option_i64_user))
+
+;; P4/C4.5 author-time canonical instantiations: cover struct and enum element
+;; kinds (scalar/String are covered above) so the whole generated option body is
+;; typechecked in CI for every representative element kind, before any consumer.
+(cfg
+  test
+  (defstruct OptApiPoint
+    (x i64)
+    (y i64)))
+
+(cfg
+  test
+  (defenum OptApiTag
+    (OptApiTagA i64)
+    (OptApiTagB i64)))
+
+(cfg test (import (option OptApiPoint) as option_point))
+(cfg test (import (option OptApiTag) as option_tag))
+
+(cfg
+  test
+  (test
+    option-macro-struct-and-enum-element-kinds
+    (let
+      [pt-some : option_point.Option (option_point.some (OptApiPoint 3 4))]
+      [pt-none : option_point.Option (option_point.none)]
+      [tag-some : option_tag.Option (option_tag.some (OptApiTagA 7))]
+      [tag-none : option_tag.Option (option_tag.none)]
+      (begin
+        (test.assert-true
+          (option_point.is-some? (& pt-some))
+          "struct option some predicate")
+        (test.assert-true
+          (option_point.is-none? (& pt-none))
+          "struct option none predicate")
+        (test.assert-true
+          (option_tag.is-some? (& tag-some))
+          "enum option some predicate")
+        (test.assert-true
+          (option_tag.is-none? (& tag-none))
+          "enum option none predicate")))))
 
 (cfg
   test

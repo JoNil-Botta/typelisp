@@ -67,7 +67,7 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              (match (macro-expand-then-build-envs
                 generated
                 generated-paths
                 pools
@@ -174,7 +174,7 @@
         (ast-node-pool-context-install! pools)
         (match generated-result
           [(ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (macro-expand-program-with-paths-and-pools-roots-cfg
+            (match (macro-expand-then-build-envs
               generated
               generated-paths
               pools
@@ -214,7 +214,7 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              (match (macro-expand-then-build-envs
                 generated
                 generated-paths
                 pools

@@ -43930,6 +43930,38 @@
               (set! cursor rest))]))
       (macro-decl-list-reverse out-rev))))
 
+(define (macro-decls-missing-generated-visible
+  [generated-body : AstDeclList]
+  [existing-body : AstDeclList]) : AstDeclList
+  (let
+    [cursor : AstDeclList generated-body]
+    [out-rev : AstDeclList (ast-decl-list-new)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (match (macro-generated-visible-name decl)
+                [(SpecMaybeString.Some name)
+                  (match (macro-find-generated-visible-decl existing-body name)
+                    [(MacroMaybeAstDecl.Some _) unit]
+                    [(MacroMaybeAstDecl.No)
+                      (set!
+                        out-rev
+                        (ast-decl-list-prepend-builder decl out-rev))])]
+                [(SpecMaybeString.None) unit])
+              (set! cursor rest))]))
+      (macro-decl-list-reverse out-rev))))
+
+(define (macro-decls-missing-generated-body
+  [generated-body : AstDeclList]
+  [existing-body : AstDeclList]) : AstDeclList
+  (macro-decl-list-append
+    (macro-decls-missing-generated-imports generated-body existing-body)
+    (macro-decls-missing-generated-visible generated-body existing-body)))
+
 (define (macro-module-replay-marker-decls
   [target-module : String]
   [owner-module : String]
@@ -43940,15 +43972,15 @@
   (let
     [marker-decls : AstDeclList
       (macro-module-import-marker-decls target-module alias span)]
-    [missing-imports : AstDeclList
-      (macro-decls-missing-generated-imports generated-body existing-body)]
-    (match (ast-decl-list-step missing-imports)
+    [missing-body : AstDeclList
+      (macro-decls-missing-generated-body generated-body existing-body)]
+    (match (ast-decl-list-step missing-body)
       [(AstDeclListStep.Nil) marker-decls]
       [_
         (macro-decl-list-append
           (ast-decl-list-prepend-builder
             (ast-decl-module target-module)
-            missing-imports)
+            missing-body)
           (ast-decl-list-prepend-builder
             (ast-decl-module owner-module)
             marker-decls))])))
@@ -44018,6 +44050,7 @@
 (defenum MacroGeneratedTargetReplay
   (NoReplay)
   (ReplayCompatible)
+  (ReplayAppendMissing)
   (ReplayIncompatible))
 
 (define macro-generated-fingerprint-cache-capacity : i64
@@ -45032,7 +45065,7 @@
       [(MacroGeneratedTargetReplayScan.NoRelevant)
         (MacroGeneratedTargetReplayScan.MissingOnly)]
       [(MacroGeneratedTargetReplayScan.AllMatched)
-        (MacroGeneratedTargetReplayScan.Incompatible)]
+        (MacroGeneratedTargetReplayScan.MissingOnly)]
       [(MacroGeneratedTargetReplayScan.MissingOnly)
         (MacroGeneratedTargetReplayScan.MissingOnly)]
       [(MacroGeneratedTargetReplayScan.Incompatible)
@@ -45073,6 +45106,8 @@
     (MacroGeneratedTargetReplayScan.NoRelevant))
     [(MacroGeneratedTargetReplayScan.AllMatched)
       (MacroGeneratedTargetReplay.ReplayCompatible)]
+    [(MacroGeneratedTargetReplayScan.MissingOnly)
+      (MacroGeneratedTargetReplay.ReplayAppendMissing)]
     [(MacroGeneratedTargetReplayScan.Incompatible)
       (MacroGeneratedTargetReplay.ReplayIncompatible)]
     [_ (MacroGeneratedTargetReplay.NoReplay)]))
@@ -50324,6 +50359,83 @@
     (string.eq definition-module "stdlib.result")
     (tc-name-base-eq? macro-name "result")))
 
+(define (macro-generated-result-source-helper-at?
+  [source : String]
+  [alias : String]
+  [idx : i64]) : bool
+  (let
+    [alias-len : i64 (string.string-length alias)]
+    [member-start : i64 (+ (+ idx alias-len) 1)]
+    [n : i64 (string.string-length source)]
+    (and
+      (compiler-load-source-qualified-alias-token-at? source alias idx)
+      (< member-start n)
+      (let
+        [member-head : char (string.string-ref source member-start)]
+        (and (>= member-head 'a') (<= member-head 'z'))))))
+
+(define (macro-generated-result-source-enum-only-scan?
+  [source : String]
+  [alias : String]
+  [start : i64]) : bool
+  (let
+    [n : i64 (string.string-length source)]
+    [alias-len : i64 (string.string-length alias)]
+    (if (= alias-len 0)
+      false
+      (let
+        [alias-first : char (string.string-ref alias 0)]
+        [idx : i64 start]
+        [found : bool false]
+        [helper : bool false]
+        (begin
+          (while (and (not helper) (<= (+ idx alias-len) n))
+            (if (and
+              (= (string.string-ref source idx) alias-first)
+              (compiler-load-source-qualified-alias-token-at? source alias idx))
+              (begin
+                (set! found true)
+                (if (macro-generated-result-source-helper-at? source alias idx)
+                  (set! helper true)
+                  unit))
+              unit)
+            (set! idx (+ idx 1)))
+          (and found (not helper)))))))
+
+(define (macro-generated-result-source-enum-only?
+  [decl-path : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]) : bool
+  (match alias
+    [(AstMaybeImportAlias.Some alias-name)
+      (if (string.eq alias-name "")
+        false
+        (match (compiler-load-source-for-lazy-scan decl-path)
+          [(CompilerLoadNoString) false]
+          [(CompilerLoadSomeString source)
+            (macro-generated-result-source-enum-only-scan?
+              source
+              alias-name
+              (compiler-load-source-scan-start span source))]))]
+    [(AstMaybeImportAlias.No) false]))
+
+(cfg
+  test
+  (test
+    macro-generated-result-source-helper-scan
+    (let
+      [enum-source : String
+        "(define (main) : i64 (match value [(r.Ok v) v] [(r.Err _) 0]))"]
+      [helper-source : String "(define (main) : i64 (r.value-or (r.ok 1) 0))"]
+      (begin
+        (test.assert-true
+          (macro-generated-result-source-enum-only-scan? enum-source "r" 0)
+          "result enum-only source should report enum-only use")
+        (test.assert-true
+          (not
+            (macro-generated-result-source-enum-only-scan? helper-source "r" 0))
+          "result helper source should report lowercase helper members")))))
+
 (define (macro-result-var [name : String]) : i64
   (ast-node-push (AstExpr.Var (intern name))))
 
@@ -50486,10 +50598,24 @@
               (macro-result-value-or-decl ok-ty)
               (ast-decl-cons (macro-result-map-decl ok-ty) (ast-decl-list-new)))))))))
 
-(define (macro-result-fast-decls-for-types [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
+(define (macro-result-fast-enum-body [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
+  (ast-decl-cons (macro-result-enum-decl ok-ty err-ty) (ast-decl-list-new)))
+
+(define (macro-result-fast-body-for-surface
+  [ok-ty : AstType]
+  [err-ty : AstType]
+  [enum-only? : bool]) : AstDeclList
+  (if enum-only?
+    (macro-result-fast-enum-body ok-ty err-ty)
+    (macro-result-fast-body ok-ty err-ty)))
+
+(define (macro-result-fast-decls-for-types
+  [ok-ty : AstType]
+  [err-ty : AstType]
+  [enum-only? : bool]) : AstDeclList
   (ast-decl-cons
     (ast-decl-module (macro-result-fast-target-module-for-types ok-ty err-ty))
-    (macro-result-fast-body ok-ty err-ty)))
+    (macro-result-fast-body-for-surface ok-ty err-ty enum-only?)))
 
 (define (macro-result-fast-target-module-for-types
   [ok-ty : AstType]
@@ -50545,6 +50671,7 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [args : AstExprList]
+  [enum-only? : bool]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
   (if (= (struct-get (& args) len) 2)
     (let
@@ -50561,7 +50688,7 @@
             err-expr)
             [(ResultMacroTypeArg.Ok err-ty)
               (ResultMacroParsedDecls.Ok
-                (macro-result-fast-decls-for-types ok-ty err-ty))]
+                (macro-result-fast-decls-for-types ok-ty err-ty enum-only?))]
             [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-result-fast-arity-error call-expr)))
@@ -53454,11 +53581,14 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
+  [use-surface-filter? : bool]
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
     [surface-body : AstDeclList
-      (if (macro-generated-surface-filtered? module macro-name identity)
+      (if (and
+        use-surface-filter?
+        (macro-generated-surface-filtered? module macro-name identity))
         (macro-generated-surface-filter
           orig-decls
           target-module
@@ -53480,6 +53610,7 @@
         (ast-decl-module target-module)
         generated-body)]
     (if (and
+      use-surface-filter?
       (macro-generated-surface-filtered? module macro-name identity)
       (macro-generated-surface-empty? surface-body))
       (let
@@ -53516,7 +53647,13 @@
                     (macro-decls-filter-generated-key-context
                       generated-body
                       identity)))]
-              (if same-body?
+              [append-missing? : bool
+                (match (macro-generated-target-replay
+                  same-identity-body
+                  generated-key-body)
+                  [(MacroGeneratedTargetReplay.ReplayAppendMissing) true]
+                  [_ false])]
+              (if (or same-body? append-missing?)
                 (match (macro-check-generated-import-collisions
                   orig-decls
                   generated-body
@@ -53549,6 +53686,29 @@
                 existing-body
                 generated-key-body)
                 [(MacroGeneratedTargetReplay.ReplayCompatible)
+                  (match (macro-check-generated-import-collisions
+                    orig-decls
+                    generated-body
+                    module
+                    alias
+                    identity)
+                    [CompilerNoString
+                      (let
+                        [expanded : AstDeclList
+                          (macro-module-replay-marker-decls
+                            target-module
+                            module
+                            alias
+                            span
+                            generated-body
+                            existing-body)]
+                        (ResultMacroDeclExpansion.Ok
+                          expanded
+                          (macro-paths-for-decls expanded decl-path)))]
+                    [(CompilerSomeString message)
+                      (ResultMacroDeclExpansion.Err
+                        (box (macro-generated-import-diag span message)))])]
+                [(MacroGeneratedTargetReplay.ReplayAppendMissing)
                   (match (macro-check-generated-import-collisions
                     orig-decls
                     generated-body
@@ -53637,6 +53797,7 @@
   [definition-module : String]
   [macro-env : CtfeEnv]
   [rewrite-imports? : bool]
+  [use-surface-filter? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -53697,6 +53858,7 @@
                         decl-path
                         macro-name
                         identity
+                        use-surface-filter?
                         final-body
                         call-expr))]
                   [_
@@ -53742,6 +53904,7 @@
                     decl-path
                     macro-name
                     identity
+                    use-surface-filter?
                     final-body
                     call-expr))]
               [_
@@ -54012,11 +54175,24 @@
                               call-expr)
                               [(ResultGenKey.Ok identity _)
                                 (let
+                                  [result-macro? : bool
+                                    (macro-result-module-macro?
+                                      macro-name
+                                      definition-module)]
+                                  [result-enum-only? : bool
+                                    (if result-macro?
+                                      (macro-generated-result-source-enum-only?
+                                        decl-path
+                                        alias
+                                        span)
+                                      false)]
                                   [shortcut-target : CompilerMaybeString
-                                    (if (macro-generated-identity-shortcut-safe-params?
-                                      call-ctx
-                                      definition-module
-                                      params)
+                                    (if (and
+                                      (or (not result-macro?) result-enum-only?)
+                                      (macro-generated-identity-shortcut-safe-params?
+                                        call-ctx
+                                        definition-module
+                                        params))
                                       (macro-generated-identity-shortcut-target
                                         orig-decls
                                         identity)
@@ -54035,9 +54211,7 @@
                                             expanded
                                             decl-path)))]
                                     [(CompilerNoString)
-                                      (if (macro-result-module-macro?
-                                        macro-name
-                                        definition-module)
+                                      (if result-macro?
                                         (let
                                           [fast-result : ResultMacroParsedDecls
                                             (begin
@@ -54049,6 +54223,7 @@
                                                 orig-decls
                                                 module
                                                 expanded-args
+                                                result-enum-only?
                                                 call-expr))]
                                           (begin
                                             (cfg
@@ -54073,6 +54248,7 @@
                                                   (ctfe-env-empty-with-pools
                                                     (tc-context-pools call-ctx))
                                                   false
+                                                  (not result-enum-only?)
                                                   generated
                                                   call-expr)]
                                               [(ResultMacroParsedDecls.Err diag)
@@ -54116,6 +54292,7 @@
                                                     macro-env
                                                     (tc-macro-param-list-needs-call-context?
                                                       params)
+                                                    true
                                                     generated
                                                     call-expr)]
                                                 [(ResultMacroParsedDecls.Err

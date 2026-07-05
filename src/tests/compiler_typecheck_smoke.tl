@@ -2638,6 +2638,20 @@
 
 (define (main) : i64 42)")
 
+(define (compiler-typecheck-smoke-result-enum-then-helper-source) : String
+  "(module main)
+(import stdlib.result)
+(import (result i64 String) as r_enum)
+(import (result i64 String) as r_helper)
+
+(define (score [value : r_enum.Result]) : i64
+  (match value
+    [(r_enum.Ok v) v]
+    [(r_enum.Err _) 0]))
+
+(define (main) : i64
+  (+ (score (r_helper.ok 40)) (r_helper.value-or (r_helper.err \"bad\") 2)))")
+
 (define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String
   "(module main)
 (import stdlib.str_cat)
@@ -2869,6 +2883,35 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-result-enum-then-helper-ok?) : bool
+  (let
+    [ok : bool
+      (begin
+        (compiler-load-test-mkdir "target/tc_result_enum_then_helper")
+        (io.write-file
+          "target/tc_result_enum_then_helper/main.tl"
+          (compiler-typecheck-smoke-result-enum-then-helper-source))
+        (match (compiler-load-file-with-paths
+          "target/tc_result_enum_then_helper/main.tl"
+          (sym_i64_env.sym-i64-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (typecheck-compiler-program-with-paths-checked
+              (ast-program decls)
+              paths)
+              [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+              [(ResultCompilerTypecheckChecked.Err diag)
+                (let
+                  [message : String
+                    (compiler-diagnostic-message (box-get diag))]
+                  (begin
+                    (io.stderr-write (& message))
+                    false))])]
+          [(ResultCompilerLoadWithPaths.Err _) false]))]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?) : bool
   (let
     [ok : bool
@@ -2991,6 +3034,9 @@
     (unless
       (compiler-typecheck-smoke-unused-result-import-local-type-ok?)
       (io.panic "typecheck: unused result local type smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-result-enum-then-helper-ok?)
+      (io.panic "typecheck: result enum then helper smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?)
       (io.panic "typecheck: lazy import stdlib.array alias smoke failed"))

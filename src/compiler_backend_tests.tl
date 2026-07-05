@@ -7463,6 +7463,210 @@
     (compiler-backend-avx512-stack-splat-f64-spill-ok?)
     (compiler-backend-register-splat-fallback-ok?)))
 
+(define (compiler-backend-vector-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill -64))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%k1"))
+            CompilerRegAssignmentList.Nil))))))
+
+(define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-load
+    (compiler-backend-vector-spill-assignments)
+    3
+    (CompilerIrValue.Var 0)
+    (CompilerIrValue.I64 0)
+    4
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (string.eq
+        asm
+        "    movq %rdi, %r8\n    vmovdqu (%r8), %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-binop
+    (compiler-backend-vector-spill-assignments)
+    3
+    (CompilerIrBinOp.Add)
+    (CompilerIrValue.Var 3)
+    (CompilerIrValue.Var 2)
+    4
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (string.eq
+        asm
+        "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
+  (match (compiler-backend-emit-avx512-predicated-load
+    (compiler-backend-vector-spill-assignments)
+    3
+    (CompilerIrValue.Var 0)
+    (CompilerIrValue.I64 0)
+    (CompilerIrValue.Var 4)
+    8
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (string.eq
+        asm
+        "    movq %rdi, %r8\n    vmovdqu64 (%r8), %zmm14{%k1}{z}\n    vmovdqu64 %zmm14, -64(%rbp)\n")]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-select-spill-ok?) : bool
+  (match (compiler-backend-emit-avx512-select
+    (compiler-backend-vector-spill-assignments)
+    3
+    (CompilerIrValue.Var 4)
+    (CompilerIrValue.Var 2)
+    (CompilerIrValue.Var 3)
+    8
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (string.eq
+        asm
+        "    vmovdqu64 -64(%rbp), %zmm14\n    vmovdqu64 %zmm6, %zmm14{%k1}\n    vmovdqu64 %zmm14, -64(%rbp)\n")]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx2-vector-reduce-spill-source-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-reduce
+    (compiler-backend-vector-spill-assignments)
+    5
+    (CompilerIrVectorReduceOp.Sum)
+    (CompilerIrValue.Var 3)
+    4
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu -64(%rbp), %ymm14\n")
+        (compiler-backend-string-contains? asm "    vextracti128 $1, %ymm14, ")
+        (compiler-backend-string-contains? asm "    vmovq "))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-vector-reduce-spill-source-ok?) : bool
+  (match (compiler-backend-emit-avx512-vector-reduce
+    (compiler-backend-vector-spill-assignments)
+    5
+    (CompilerIrVectorReduceOp.Sum)
+    (CompilerIrValue.Var 3)
+    8
+    (AstType.I64)
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu64 -64(%rbp), %zmm14\n")
+        (compiler-backend-string-contains? asm "    vextracti64x4 $1, %zmm14, ")
+        (compiler-backend-string-contains? asm "    vmovq "))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-vector-spill-reload-ok?) : bool
+  (and
+    (compiler-backend-avx2-vector-load-spill-dst-ok?)
+    (compiler-backend-avx2-vector-binop-spill-ok?)
+    (compiler-backend-avx512-predicated-load-spill-dst-ok?)
+    (compiler-backend-avx512-select-spill-ok?)
+    (compiler-backend-avx2-vector-reduce-spill-source-ok?)
+    (compiler-backend-avx512-vector-reduce-spill-source-ok?)))
+
+(define (compiler-backend-vector-spill-pressure-source) : String
+  "(define (fill
+  [a0 : (Array i64)]
+  [a1 : (Array i64)]
+  [a2 : (Array i64)]
+  [a3 : (Array i64)]
+  [a4 : (Array i64)]
+  [a5 : (Array i64)]
+  [a6 : (Array i64)]
+  [a7 : (Array i64)]
+  [a8 : (Array i64)]
+  [a9 : (Array i64)]
+  [a10 : (Array i64)]
+  [a11 : (Array i64)]
+  [a12 : (Array i64)]
+  [a13 : (Array i64)]
+  [a14 : (Array i64)]
+  [a15 : (Array i64)]
+  [out : (Array i64)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i
+      (+ (array-ref a0 i)
+        (+ (array-ref a1 i)
+          (+ (array-ref a2 i)
+            (+ (array-ref a3 i)
+              (+ (array-ref a4 i)
+                (+ (array-ref a5 i)
+                  (+ (array-ref a6 i)
+                    (+ (array-ref a7 i)
+                      (+ (array-ref a8 i)
+                        (+ (array-ref a9 i)
+                          (+ (array-ref a10 i)
+                            (+ (array-ref a11 i)
+                              (+ (array-ref a12 i)
+                                (+ (array-ref a13 i)
+                                  (+ (array-ref a14 i)
+                                    (array-ref a15 i)))))))))))))))))))")
+
+(define (compiler-backend-vector-spill-pressure-mode-ok?
+  [lower-mode : CompilerLowerMode]
+  [backend-mode : CompilerBackendMode]
+  [scratch : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-vector-spill-pressure-source)
+    lower-mode)
+    [(ResultCompilerLower.Ok program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (CompilerBackendTarget.Linux)
+        backend-mode
+        spans
+        true)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm scratch)
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector spills are not implemented"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector register home unavailable")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-backend-vector-spill-pressure-ok?) : bool
+  (and
+    (compiler-backend-vector-spill-pressure-mode-ok?
+      (CompilerLowerMode.Avx2)
+      (CompilerBackendMode.Avx2)
+      "%ymm14")
+    (compiler-backend-vector-spill-pressure-mode-ok?
+      (CompilerLowerMode.Avx512)
+      (CompilerBackendMode.Avx512)
+      "%zmm14")))
+
 (define (compiler-backend-simd-address-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
@@ -8658,7 +8862,7 @@
       8
       "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
 
-(define (compiler-backend-vector-call-lifetime-rejects-ok?) : bool
+(define (compiler-backend-vector-call-lifetime-spill-ok?) : bool
   (match (compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
       (compiler-backend-vector-call-lifetime-function))
@@ -8666,11 +8870,15 @@
     (CompilerBackendMode.Avx2)
     (compiler-source-spans-empty)
     true)
-    [(ResultCompilerBackend.Err diag)
-      (string.eq
-        (compiler-diagnostic-message (box-get diag))
-        "backend: vector register home unavailable for load dst; unsupported spill, call, or ABI lifetime")]
-    [(ResultCompilerBackend.Ok _) false]))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    call _tl_side_effect\n")
+        (compiler-backend-string-contains? asm "    vmovdqu %ymm14, 16(%rsp)\n")
+        (compiler-backend-string-contains? asm "    vmovdqu 16(%rsp), %ymm14\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpaddq 16(%rsp), %ymm14, %ymm6\n"))]
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-load-binop-fold-function
   [name : String]
@@ -9022,8 +9230,10 @@
     (compiler-backend-simd-indexed-address-ok?)
     (compiler-backend-simd-indexed-address-users-ok?)
     (compiler-backend-stack-splat-broadcast-ok?)
+    (compiler-backend-vector-spill-reload-ok?)
+    (compiler-backend-vector-spill-pressure-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
-    (compiler-backend-vector-call-lifetime-rejects-ok?)))
+    (compiler-backend-vector-call-lifetime-spill-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

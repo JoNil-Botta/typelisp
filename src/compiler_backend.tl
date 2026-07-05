@@ -178,6 +178,13 @@
   (No)
   (Some String))
 
+(defenum CompilerBackendVectorUse
+  (Use String String))
+
+(defenum ResultBackendVectorUse
+  (Ok CompilerBackendVectorUse)
+  (Err String))
+
 (defenum CompilerBackendPeepholeMove
   (NoMove)
   (Move String String))
@@ -1573,7 +1580,12 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-var-reg assignments dst "load dst" "ymm")
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "load dst"
+      "ymm"
+      (compiler-backend-vector-spill-scratch "ymm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
@@ -1594,7 +1606,15 @@
                       " "
                       addr
                       ", ")
-                    (str_cat.str-cat dst-reg "\n")))))]
+                    (str_cat.str-cat
+                      dst-reg
+                      "\n"
+                      (compiler-backend-vector-store-dst
+                        assignments
+                        dst
+                        "ymm"
+                        elem-ty
+                        dst-reg))))))]
           [(ResultCompilerBackendSimdIndexedAddress.Err message)
             (ResultCompilerBackend.Err
               (box
@@ -1824,11 +1844,26 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-var-reg assignments dst "splat dst" "ymm")
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "splat dst"
+      "ymm"
+      (compiler-backend-vector-spill-scratch "ymm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx2-splat-load assignments dst value elem-ty)
           [(ResultCompilerBackend.Ok load-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat load-asm dst-reg "\n"))]
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                load-asm
+                dst-reg
+                "\n"
+                (compiler-backend-vector-store-dst
+                  assignments
+                  dst
+                  "ymm"
+                  elem-ty
+                  dst-reg)))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
@@ -1846,52 +1881,74 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (match (compiler-backend-avx2-vector-value-reg assignments lhs "lhs")
-    [(ResultBackendReg.Ok lhs-reg)
-      (match (compiler-backend-avx2-vector-value-reg assignments rhs "rhs")
-        [(ResultBackendReg.Ok rhs-reg)
-          (match (compiler-backend-vector-var-reg
+  (match (compiler-backend-vector-register-use
+    assignments
+    lhs
+    "lhs"
+    "ymm"
+    (AstType.I64)
+    (compiler-backend-vector-spill-scratch "ymm" 0))
+    [(ResultBackendVectorUse.Ok lhs-use)
+      (match lhs-use
+        [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+          (match (compiler-backend-vector-register-use
             assignments
-            dst
-            "binop dst"
-            "ymm")
-            [(ResultBackendReg.Ok dst-reg)
-              (ResultCompilerBackend.Ok
-                (string.append
-                  (str_cat.str-cat "    vpsrlq $32, " lhs-reg ", %ymm0\n")
-                  (string.append
-                    (str_cat.str-cat "    vpmuludq " rhs-reg ", %ymm0, %ymm0\n")
-                    (string.append
-                      (str_cat.str-cat "    vpsrlq $32, " rhs-reg ", %ymm1\n")
-                      (string.append
-                        (str_cat.str-cat
-                          "    vpmuludq "
-                          lhs-reg
-                          ", %ymm1, %ymm1\n")
-                        (string.append
-                          "    vpaddq %ymm1, %ymm0, %ymm0\n    vpsllq $32, %ymm0, %ymm0\n"
-                          (string.append
-                            (str_cat.str-cat
-                              "    vpmuludq "
-                              rhs-reg
-                              ", "
-                              lhs-reg
-                              ", ")
-                            (string.append
-                              (str_cat.str-cat dst-reg "\n")
-                              (str_cat.str-cat
-                                "    vpaddq %ymm0, "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n")))))))))]
-            [(ResultBackendReg.Err message)
+            rhs
+            "rhs"
+            "ymm"
+            (AstType.I64)
+            (compiler-backend-vector-spill-scratch "ymm" 1))
+            [(ResultBackendVectorUse.Ok rhs-use)
+              (match rhs-use
+                [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                  (match (compiler-backend-vector-dst-reg
+                    assignments
+                    dst
+                    "binop dst"
+                    "ymm"
+                    (compiler-backend-vector-spill-scratch "ymm" 0))
+                    [(ResultBackendReg.Ok dst-reg)
+                      (let
+                        [body : String
+                          (str_cat.str-cat
+                            "    vpsrlq $32, "
+                            lhs-reg
+                            ", %ymm0\n    vpmuludq "
+                            rhs-reg
+                            ", %ymm0, %ymm0\n    vpsrlq $32, "
+                            rhs-reg
+                            ", %ymm1\n    vpmuludq "
+                            lhs-reg
+                            ", %ymm1, %ymm1\n    vpaddq %ymm1, %ymm0, %ymm0\n    vpsllq $32, %ymm0, %ymm0\n    vpmuludq "
+                            rhs-reg
+                            ", "
+                            lhs-reg
+                            ", "
+                            dst-reg
+                            "\n    vpaddq %ymm0, "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n")]
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            lhs-asm
+                            rhs-asm
+                            body
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              "ymm"
+                              (AstType.I64)
+                              dst-reg))))]
+                    [(ResultBackendReg.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler-diagnostic-with-message instr-diag message)))])])]
+            [(ResultBackendVectorUse.Err message)
               (ResultCompilerBackend.Err
-                (box (compiler-diagnostic-with-message instr-diag message)))])]
-        [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box (compiler-diagnostic-with-message instr-diag message)))])]
-    [(ResultBackendReg.Err message)
+                (box (compiler-diagnostic-with-message instr-diag message)))])])]
+    [(ResultBackendVectorUse.Err message)
       (ResultCompilerBackend.Err
         (box (compiler-diagnostic-with-message instr-diag message)))]))
 
@@ -1921,31 +1978,64 @@
               (compiler-diagnostic-with-message
                 instr-diag
                 "backend: unsupported AVX2 vector binary op")))
-          (match (compiler-backend-avx2-vector-value-reg assignments lhs "lhs")
-            [(ResultBackendReg.Ok lhs-reg)
-              (match (compiler-backend-avx2-vector-value-reg
-                assignments
-                rhs
-                "rhs")
-                [(ResultBackendReg.Ok rhs-reg)
-                  (match (compiler-backend-vector-var-reg
+          (match (compiler-backend-vector-register-use
+            assignments
+            lhs
+            "lhs"
+            "ymm"
+            elem-ty
+            (compiler-backend-vector-spill-scratch "ymm" 0))
+            [(ResultBackendVectorUse.Ok lhs-use)
+              (match lhs-use
+                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                  (match (compiler-backend-vector-memory-or-register-use
                     assignments
-                    dst
-                    "binop dst"
-                    "ymm")
-                    [(ResultBackendReg.Ok dst-reg)
-                      (ResultCompilerBackend.Ok
-                        (string.append
-                          (str_cat.str-cat "    " mnemonic " " rhs-reg ", ")
-                          (str_cat.str-cat lhs-reg ", " dst-reg "\n")))]
-                    [(ResultBackendReg.Err message)
+                    rhs
+                    "rhs"
+                    "ymm"
+                    elem-ty)
+                    [(ResultBackendVectorUse.Ok rhs-use)
+                      (match rhs-use
+                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                          (match (compiler-backend-vector-dst-reg
+                            assignments
+                            dst
+                            "binop dst"
+                            "ymm"
+                            (compiler-backend-vector-spill-scratch "ymm" 0))
+                            [(ResultBackendReg.Ok dst-reg)
+                              (ResultCompilerBackend.Ok
+                                (string.append
+                                  lhs-asm
+                                  (string.append
+                                    rhs-asm
+                                    (str_cat.str-cat
+                                      "    "
+                                      mnemonic
+                                      " "
+                                      rhs-op
+                                      ", "
+                                      lhs-reg
+                                      ", "
+                                      dst-reg
+                                      "\n"
+                                      (compiler-backend-vector-store-dst
+                                        assignments
+                                        dst
+                                        "ymm"
+                                        elem-ty
+                                        dst-reg)))))]
+                            [(ResultBackendReg.Err message)
+                              (ResultCompilerBackend.Err
+                                (box
+                                  (compiler-diagnostic-with-message
+                                    instr-diag
+                                    message)))])])]
+                    [(ResultBackendVectorUse.Err message)
                       (ResultCompilerBackend.Err
                         (box
-                          (compiler-diagnostic-with-message instr-diag message)))])]
-                [(ResultBackendReg.Err message)
-                  (ResultCompilerBackend.Err
-                    (box (compiler-diagnostic-with-message instr-diag message)))])]
-            [(ResultBackendReg.Err message)
+                          (compiler-diagnostic-with-message instr-diag message)))])])]
+            [(ResultBackendVectorUse.Err message)
               (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message instr-diag message)))]))))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
@@ -1970,49 +2060,64 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX2 vector binary op")))
-        (match (compiler-backend-avx2-vector-value-reg
+        (match (compiler-backend-vector-register-use
           assignments
           reg-value
-          "memory binop register operand")
-          [(ResultBackendReg.Ok reg)
-            (match (compiler-backend-vector-var-reg
-              assignments
-              dst
-              "binop dst"
-              "ymm")
-              [(ResultBackendReg.Ok dst-reg)
-                (match (compiler-backend-emit-simd-indexed-address
+          "memory binop register operand"
+          "ymm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "ymm" 0))
+          [(ResultBackendVectorUse.Ok reg-use)
+            (match reg-use
+              [(CompilerBackendVectorUse.Use reg-asm reg)
+                (match (compiler-backend-vector-dst-reg
                   assignments
-                  base
-                  index
-                  elem-ty)
-                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                    (let
-                      [addr-asm : String (struct-get addr-plan asm)]
-                      [addr : String (struct-get addr-plan addr)]
-                      (ResultCompilerBackend.Ok
-                        (string.append
-                          addr-asm
-                          (str_cat.str-cat
-                            "    "
-                            mnemonic
-                            " "
-                            addr
-                            ", "
-                            reg
-                            ", "
-                            dst-reg
-                            "\n"))))]
-                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                  dst
+                  "binop dst"
+                  "ymm"
+                  (compiler-backend-vector-spill-scratch "ymm" 0))
+                  [(ResultBackendReg.Ok dst-reg)
+                    (match (compiler-backend-emit-simd-indexed-address
+                      assignments
+                      base
+                      index
+                      elem-ty)
+                      [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
+                        (let
+                          [addr-asm : String (struct-get addr-plan asm)]
+                          [addr : String (struct-get addr-plan addr)]
+                          (ResultCompilerBackend.Ok
+                            (string.append
+                              reg-asm
+                              (string.append
+                                addr-asm
+                                (str_cat.str-cat
+                                  "    "
+                                  mnemonic
+                                  " "
+                                  addr
+                                  ", "
+                                  reg
+                                  ", "
+                                  dst-reg
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    "ymm"
+                                    elem-ty
+                                    dst-reg))))))]
+                      [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              instr-diag)))])]
+                  [(ResultBackendReg.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
-                          instr-diag)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
@@ -2026,38 +2131,45 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (compiler-backend-avx2-vector-value-reg
+    (match (compiler-backend-vector-register-use
       assignments
       value
-      "store value")
-      [(ResultBackendReg.Ok value-reg)
-        (match (compiler-backend-emit-simd-indexed-address
-          assignments
-          base
-          index
-          elem-ty)
-          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-            (let
-              [addr-asm : String (struct-get addr-plan asm)]
-              [addr : String (struct-get addr-plan addr)]
-              (ResultCompilerBackend.Ok
-                (string.append
-                  addr-asm
-                  (string.append
-                    (str_cat.str-cat
-                      "    "
-                      (compiler-backend-avx2-vector-move elem-ty)
-                      " "
-                      value-reg
-                      ", ")
-                    (str_cat.str-cat addr "\n")))))]
-          [(ResultCompilerBackendSimdIndexedAddress.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
+      "store value"
+      "ymm"
+      elem-ty
+      (compiler-backend-vector-spill-scratch "ymm" 0))
+      [(ResultBackendVectorUse.Ok value-use)
+        (match value-use
+          [(CompilerBackendVectorUse.Use value-asm value-reg)
+            (match (compiler-backend-emit-simd-indexed-address
+              assignments
+              base
+              index
+              elem-ty)
+              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
+                (let
+                  [addr-asm : String (struct-get addr-plan asm)]
+                  [addr : String (struct-get addr-plan addr)]
+                  (ResultCompilerBackend.Ok
+                    (string.append
+                      value-asm
+                      (string.append
+                        addr-asm
+                        (string.append
+                          (str_cat.str-cat
+                            "    "
+                            (compiler-backend-avx2-vector-move elem-ty)
+                            " "
+                            value-reg
+                            ", ")
+                          (str_cat.str-cat addr "\n"))))))]
+              [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])])]
+      [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
@@ -2125,6 +2237,187 @@
     [(AstType.I8) "vmovdqu8"]
     [(AstType.U8) "vmovdqu8"]
     [_ ""]))
+
+(define (compiler-backend-vector-move-for-width
+  [width : String]
+  [elem-ty : AstType]) : String
+  (if (string.eq width "zmm")
+    (compiler-backend-avx512-vector-move elem-ty)
+    (compiler-backend-avx2-vector-move elem-ty)))
+
+(define (compiler-backend-vector-spill-scratch [width : String] [index : i64]) : String
+  (if (string.eq width "zmm")
+    (if (= index 0)
+      "%zmm14"
+      "%zmm15")
+    (if (= index 0)
+      "%ymm14"
+      "%ymm15")))
+
+(define (compiler-backend-vector-reg-lower-ymm [reg : String]) : String
+  (cond
+    [(string.eq reg "%zmm6") "%ymm6"]
+    [(string.eq reg "%zmm7") "%ymm7"]
+    [(string.eq reg "%zmm8") "%ymm8"]
+    [(string.eq reg "%zmm9") "%ymm9"]
+    [(string.eq reg "%zmm10") "%ymm10"]
+    [(string.eq reg "%zmm11") "%ymm11"]
+    [(string.eq reg "%zmm12") "%ymm12"]
+    [(string.eq reg "%zmm13") "%ymm13"]
+    [(string.eq reg "%zmm14") "%ymm14"]
+    [(string.eq reg "%zmm15") "%ymm15"]
+    [(string.eq reg "%ymm6") "%ymm6"]
+    [(string.eq reg "%ymm7") "%ymm7"]
+    [(string.eq reg "%ymm8") "%ymm8"]
+    [(string.eq reg "%ymm9") "%ymm9"]
+    [(string.eq reg "%ymm10") "%ymm10"]
+    [(string.eq reg "%ymm11") "%ymm11"]
+    [(string.eq reg "%ymm12") "%ymm12"]
+    [(string.eq reg "%ymm13") "%ymm13"]
+    [(string.eq reg "%ymm14") "%ymm14"]
+    [(string.eq reg "%ymm15") "%ymm15"]
+    [else ""]))
+
+(define (compiler-backend-vector-reg-lower-xmm [reg : String]) : String
+  (cond
+    [(string.eq reg "%zmm6") "%xmm6"]
+    [(string.eq reg "%zmm7") "%xmm7"]
+    [(string.eq reg "%zmm8") "%xmm8"]
+    [(string.eq reg "%zmm9") "%xmm9"]
+    [(string.eq reg "%zmm10") "%xmm10"]
+    [(string.eq reg "%zmm11") "%xmm11"]
+    [(string.eq reg "%zmm12") "%xmm12"]
+    [(string.eq reg "%zmm13") "%xmm13"]
+    [(string.eq reg "%zmm14") "%xmm14"]
+    [(string.eq reg "%zmm15") "%xmm15"]
+    [(string.eq reg "%ymm6") "%xmm6"]
+    [(string.eq reg "%ymm7") "%xmm7"]
+    [(string.eq reg "%ymm8") "%xmm8"]
+    [(string.eq reg "%ymm9") "%xmm9"]
+    [(string.eq reg "%ymm10") "%xmm10"]
+    [(string.eq reg "%ymm11") "%xmm11"]
+    [(string.eq reg "%ymm12") "%xmm12"]
+    [(string.eq reg "%ymm13") "%xmm13"]
+    [(string.eq reg "%ymm14") "%xmm14"]
+    [(string.eq reg "%ymm15") "%xmm15"]
+    [else ""]))
+
+(define (compiler-backend-vector-unsupported-message
+  [width : String]
+  [role : String]) : String
+  (let
+    [prefix : String
+      (if (string.eq width "zmm")
+        "backend: unsupported AVX-512 vector "
+        "backend: unsupported AVX2 vector ")]
+    (string.append prefix role)))
+
+(define (compiler-backend-vector-var-stack-operand
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : CompilerBackendMaybeStackOperand
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.Spill offset)
+          (CompilerBackendMaybeStackOperand.Some
+            (compiler-backend-frame-offset offset))]
+        [_ CompilerBackendMaybeStackOperand.No])]
+    [(CompilerRegMaybeLocation.No)
+      (CompilerBackendMaybeStackOperand.Some (compiler-backend-slot var))]))
+
+(define (compiler-backend-vector-value-stack-operand
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : CompilerBackendMaybeStackOperand
+  (match value
+    [(CompilerIrValue.Var var)
+      (compiler-backend-vector-var-stack-operand assignments var)]
+    [_ CompilerBackendMaybeStackOperand.No]))
+
+(define (compiler-backend-vector-load-stack-asm
+  [move : String]
+  [operand : String]
+  [reg : String]) : String
+  (str_cat.str-cat "    " move " " operand ", " reg "\n"))
+
+(define (compiler-backend-vector-store-stack-asm
+  [move : String]
+  [reg : String]
+  [operand : String]) : String
+  (str_cat.str-cat "    " move " " reg ", " operand "\n"))
+
+(define (compiler-backend-vector-register-use
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [role : String]
+  [width : String]
+  [elem-ty : AstType]
+  [scratch : String]) : ResultBackendVectorUse
+  (match value
+    [(CompilerIrValue.Var var)
+      (match (compiler-backend-vector-var-stack-operand assignments var)
+        [(CompilerBackendMaybeStackOperand.Some operand)
+          (ResultBackendVectorUse.Ok
+            (CompilerBackendVectorUse.Use
+              (compiler-backend-vector-load-stack-asm
+                (compiler-backend-vector-move-for-width width elem-ty)
+                operand
+                scratch)
+              scratch))]
+        [(CompilerBackendMaybeStackOperand.No)
+          (match (compiler-backend-vector-var-reg assignments var role width)
+            [(ResultBackendReg.Ok reg)
+              (ResultBackendVectorUse.Ok (CompilerBackendVectorUse.Use "" reg))]
+            [(ResultBackendReg.Err message)
+              (ResultBackendVectorUse.Err message)])])]
+    [_
+      (ResultBackendVectorUse.Err
+        (compiler-backend-vector-unsupported-message width role))]))
+
+(define (compiler-backend-vector-memory-or-register-use
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [role : String]
+  [width : String]
+  [_elem-ty : AstType]) : ResultBackendVectorUse
+  (match value
+    [(CompilerIrValue.Var var)
+      (match (compiler-backend-vector-var-stack-operand assignments var)
+        [(CompilerBackendMaybeStackOperand.Some operand)
+          (ResultBackendVectorUse.Ok (CompilerBackendVectorUse.Use "" operand))]
+        [(CompilerBackendMaybeStackOperand.No)
+          (match (compiler-backend-vector-var-reg assignments var role width)
+            [(ResultBackendReg.Ok reg)
+              (ResultBackendVectorUse.Ok (CompilerBackendVectorUse.Use "" reg))]
+            [(ResultBackendReg.Err message)
+              (ResultBackendVectorUse.Err message)])])]
+    [_
+      (ResultBackendVectorUse.Err
+        (compiler-backend-vector-unsupported-message width role))]))
+
+(define (compiler-backend-vector-dst-reg
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [role : String]
+  [width : String]
+  [scratch : String]) : ResultBackendReg
+  (match (compiler-backend-vector-var-stack-operand assignments dst)
+    [(CompilerBackendMaybeStackOperand.Some _) (ResultBackendReg.Ok scratch)]
+    [(CompilerBackendMaybeStackOperand.No)
+      (compiler-backend-vector-var-reg assignments dst role width)]))
+
+(define (compiler-backend-vector-store-dst
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [width : String]
+  [elem-ty : AstType]
+  [reg : String]) : String
+  (match (compiler-backend-vector-var-stack-operand assignments dst)
+    [(CompilerBackendMaybeStackOperand.Some operand)
+      (compiler-backend-vector-store-stack-asm
+        (compiler-backend-vector-move-for-width width elem-ty)
+        reg
+        operand)]
+    [(CompilerBackendMaybeStackOperand.No) ""]))
 
 (define (compiler-backend-avx512-vector-binop-mnemonic
   [op : CompilerIrBinOp]
@@ -2531,7 +2824,12 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-var-reg assignments dst "lane id dst" "zmm")
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "lane id dst"
+      "zmm"
+      (compiler-backend-vector-spill-scratch "zmm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (let
           [data-label : String (compiler-backend-avx512-i64-lane-id-label)]
@@ -2541,16 +2839,23 @@
               data-label
               "(%rip), "
               dst-reg
-              "\n")))]
+              "\n"
+              (compiler-backend-vector-store-dst
+                assignments
+                dst
+                "zmm"
+                elem-ty
+                dst-reg))))]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
-      (match (compiler-backend-vector-var-reg
+      (match (compiler-backend-vector-dst-reg
         assignments
         dst
         "lane id dst"
-        "ymm")
+        "ymm"
+        (compiler-backend-vector-spill-scratch "ymm" 0))
         [(ResultBackendReg.Ok dst-reg)
           (let
             [data-label : String (compiler-backend-avx2-i64-lane-id-label)]
@@ -2560,7 +2865,13 @@
                 data-label
                 "(%rip), "
                 dst-reg
-                "\n")))]
+                "\n"
+                (compiler-backend-vector-store-dst
+                  assignments
+                  dst
+                  "ymm"
+                  elem-ty
+                  dst-reg))))]
         [(ResultBackendReg.Err message)
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])
@@ -2575,7 +2886,12 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-var-reg assignments dst "load dst" "zmm")
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "load dst"
+      "zmm"
+      (compiler-backend-vector-spill-scratch "zmm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
@@ -2596,7 +2912,15 @@
                       " "
                       addr
                       ", ")
-                    (str_cat.str-cat dst-reg "\n")))))]
+                    (str_cat.str-cat
+                      dst-reg
+                      "\n"
+                      (compiler-backend-vector-store-dst
+                        assignments
+                        dst
+                        "zmm"
+                        elem-ty
+                        dst-reg))))))]
           [(ResultCompilerBackendSimdIndexedAddress.Err message)
             (ResultCompilerBackend.Err
               (box
@@ -2616,7 +2940,12 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-var-reg assignments dst "splat dst" "zmm")
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "splat dst"
+      "zmm"
+      (compiler-backend-vector-spill-scratch "zmm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-splat-load
           assignments
@@ -2624,7 +2953,17 @@
           value
           elem-ty)
           [(ResultCompilerBackend.Ok load-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat load-asm dst-reg "\n"))]
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                load-asm
+                dst-reg
+                "\n"
+                (compiler-backend-vector-store-dst
+                  assignments
+                  dst
+                  "zmm"
+                  elem-ty
+                  dst-reg)))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
@@ -2678,31 +3017,62 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector binary op")))
-        (match (compiler-backend-avx512-vector-value-reg assignments lhs "lhs")
-          [(ResultBackendReg.Ok lhs-reg)
-            (match (compiler-backend-avx512-vector-value-reg
-              assignments
-              rhs
-              "rhs")
-              [(ResultBackendReg.Ok rhs-reg)
-                (match (compiler-backend-vector-var-reg
+        (match (compiler-backend-vector-register-use
+          assignments
+          lhs
+          "lhs"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok lhs-use)
+            (match lhs-use
+              [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                (match (compiler-backend-vector-memory-or-register-use
                   assignments
-                  dst
-                  "binop dst"
-                  "zmm")
-                  [(ResultBackendReg.Ok dst-reg)
-                    (ResultCompilerBackend.Ok
-                      (string.append
-                        (str_cat.str-cat "    " mnemonic " " rhs-reg ", ")
-                        (str_cat.str-cat lhs-reg ", " dst-reg "\n")))]
-                  [(ResultBackendReg.Err message)
+                  rhs
+                  "rhs"
+                  "zmm"
+                  elem-ty)
+                  [(ResultBackendVectorUse.Ok rhs-use)
+                    (match rhs-use
+                      [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                        (match (compiler-backend-vector-dst-reg
+                          assignments
+                          dst
+                          "binop dst"
+                          "zmm"
+                          (compiler-backend-vector-spill-scratch "zmm" 0))
+                          [(ResultBackendReg.Ok dst-reg)
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    "
+                                mnemonic
+                                " "
+                                rhs-op
+                                ", "
+                                lhs-reg
+                                ", "
+                                dst-reg
+                                "\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "zmm"
+                                  elem-ty
+                                  dst-reg)))]
+                          [(ResultBackendReg.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-diagnostic-with-message
+                                  instr-diag
+                                  message)))])])]
+                  [(ResultBackendVectorUse.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
@@ -2727,49 +3097,62 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector binary op")))
-        (match (compiler-backend-avx512-vector-value-reg
+        (match (compiler-backend-vector-register-use
           assignments
           reg-value
-          "memory binop register operand")
-          [(ResultBackendReg.Ok reg)
-            (match (compiler-backend-vector-var-reg
-              assignments
-              dst
-              "binop dst"
-              "zmm")
-              [(ResultBackendReg.Ok dst-reg)
-                (match (compiler-backend-emit-simd-indexed-address
+          "memory binop register operand"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok reg-use)
+            (match reg-use
+              [(CompilerBackendVectorUse.Use reg-asm reg)
+                (match (compiler-backend-vector-dst-reg
                   assignments
-                  base
-                  index
-                  elem-ty)
-                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                    (let
-                      [addr-asm : String (struct-get addr-plan asm)]
-                      [addr : String (struct-get addr-plan addr)]
-                      (ResultCompilerBackend.Ok
-                        (string.append
-                          addr-asm
-                          (str_cat.str-cat
-                            "    "
-                            mnemonic
-                            " "
-                            addr
-                            ", "
-                            reg
-                            ", "
-                            dst-reg
-                            "\n"))))]
-                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                  dst
+                  "binop dst"
+                  "zmm"
+                  (compiler-backend-vector-spill-scratch "zmm" 0))
+                  [(ResultBackendReg.Ok dst-reg)
+                    (match (compiler-backend-emit-simd-indexed-address
+                      assignments
+                      base
+                      index
+                      elem-ty)
+                      [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
+                        (let
+                          [addr-asm : String (struct-get addr-plan asm)]
+                          [addr : String (struct-get addr-plan addr)]
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              reg-asm
+                              addr-asm
+                              "    "
+                              mnemonic
+                              " "
+                              addr
+                              ", "
+                              reg
+                              ", "
+                              dst-reg
+                              "\n"
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "zmm"
+                                elem-ty
+                                dst-reg))))]
+                      [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              instr-diag)))])]
+                  [(ResultBackendReg.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
-                          instr-diag)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
@@ -2797,37 +3180,54 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector compare")))
-        (match (compiler-backend-avx512-vector-value-reg
+        (match (compiler-backend-vector-register-use
           assignments
           lhs
-          "cmp lhs")
-          [(ResultBackendReg.Ok lhs-reg)
-            (match (compiler-backend-avx512-vector-value-reg
-              assignments
-              rhs
-              "cmp rhs")
-              [(ResultBackendReg.Ok rhs-reg)
-                (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
-                  [(ResultBackendReg.Ok dst-reg)
-                    (ResultCompilerBackend.Ok
-                      (str_cat.str-cat
-                        "    "
-                        mnemonic
-                        predicate-separator
-                        rhs-reg
-                        ", "
-                        lhs-reg
-                        ", "
-                        dst-reg
-                        "\n"))]
-                  [(ResultBackendReg.Err message)
+          "cmp lhs"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok lhs-use)
+            (match lhs-use
+              [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                (match (compiler-backend-vector-memory-or-register-use
+                  assignments
+                  rhs
+                  "cmp rhs"
+                  "zmm"
+                  elem-ty)
+                  [(ResultBackendVectorUse.Ok rhs-use)
+                    (match rhs-use
+                      [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                        (match (compiler-backend-mask-var-reg
+                          assignments
+                          dst
+                          "cmp dst")
+                          [(ResultBackendReg.Ok dst-reg)
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    "
+                                mnemonic
+                                predicate-separator
+                                rhs-op
+                                ", "
+                                lhs-reg
+                                ", "
+                                dst-reg
+                                "\n"))]
+                          [(ResultBackendReg.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-diagnostic-with-message
+                                  instr-diag
+                                  message)))])])]
+                  [(ResultBackendVectorUse.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
@@ -2841,38 +3241,45 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-avx512-vector-value-reg
+    (match (compiler-backend-vector-register-use
       assignments
       value
-      "store value")
-      [(ResultBackendReg.Ok value-reg)
-        (match (compiler-backend-emit-simd-indexed-address
-          assignments
-          base
-          index
-          elem-ty)
-          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-            (let
-              [addr-asm : String (struct-get addr-plan asm)]
-              [addr : String (struct-get addr-plan addr)]
-              (ResultCompilerBackend.Ok
-                (string.append
-                  addr-asm
-                  (string.append
-                    (str_cat.str-cat
-                      "    "
-                      (compiler-backend-avx512-vector-move elem-ty)
-                      " "
-                      value-reg
-                      ", ")
-                    (str_cat.str-cat addr "\n")))))]
-          [(ResultCompilerBackendSimdIndexedAddress.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
+      "store value"
+      "zmm"
+      elem-ty
+      (compiler-backend-vector-spill-scratch "zmm" 0))
+      [(ResultBackendVectorUse.Ok value-use)
+        (match value-use
+          [(CompilerBackendVectorUse.Use value-asm value-reg)
+            (match (compiler-backend-emit-simd-indexed-address
+              assignments
+              base
+              index
+              elem-ty)
+              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
+                (let
+                  [addr-asm : String (struct-get addr-plan asm)]
+                  [addr : String (struct-get addr-plan addr)]
+                  (ResultCompilerBackend.Ok
+                    (string.append
+                      value-asm
+                      (string.append
+                        addr-asm
+                        (string.append
+                          (str_cat.str-cat
+                            "    "
+                            (compiler-backend-avx512-vector-move elem-ty)
+                            " "
+                            value-reg
+                            ", ")
+                          (str_cat.str-cat addr "\n"))))))]
+              [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])])]
+      [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
@@ -3350,11 +3757,12 @@
           mask
           "load mask")
           [(ResultBackendReg.Ok mask-reg)
-            (match (compiler-backend-vector-var-reg
+            (match (compiler-backend-vector-dst-reg
               assignments
               dst
               "load dst"
-              "zmm")
+              "zmm"
+              (compiler-backend-vector-spill-scratch "zmm" 0))
               [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   assignments
@@ -3377,7 +3785,13 @@
                             dst-reg
                             "{"
                             mask-reg
-                            "}{z}\n"))))]
+                            "}{z}\n"
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              "zmm"
+                              elem-ty
+                              dst-reg)))))]
                   [(ResultCompilerBackendSimdIndexedAddress.Err message)
                     (ResultCompilerBackend.Err
                       (box
@@ -3413,48 +3827,55 @@
         instr-diag)]
     [_
       (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-        (match (compiler-backend-avx512-vector-value-reg
+        (match (compiler-backend-vector-register-use
           assignments
           value
-          "store value")
-          [(ResultBackendReg.Ok value-reg)
-            (match (compiler-backend-avx512-mask-value-reg
-              assignments
-              mask
-              "store mask")
-              [(ResultBackendReg.Ok mask-reg)
-                (match (compiler-backend-emit-simd-indexed-address
+          "store value"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok value-use)
+            (match value-use
+              [(CompilerBackendVectorUse.Use value-asm value-reg)
+                (match (compiler-backend-avx512-mask-value-reg
                   assignments
-                  base
-                  index
-                  elem-ty)
-                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                    (let
-                      [addr-asm : String (struct-get addr-plan asm)]
-                      [addr : String (struct-get addr-plan addr)]
-                      (ResultCompilerBackend.Ok
-                        (string.append
-                          addr-asm
-                          (str_cat.str-cat
-                            "    "
-                            (compiler-backend-avx512-vector-move elem-ty)
-                            " "
-                            value-reg
-                            ", "
-                            addr
-                            "{"
-                            mask-reg
-                            "}\n"))))]
-                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                  mask
+                  "store mask")
+                  [(ResultBackendReg.Ok mask-reg)
+                    (match (compiler-backend-emit-simd-indexed-address
+                      assignments
+                      base
+                      index
+                      elem-ty)
+                      [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
+                        (let
+                          [addr-asm : String (struct-get addr-plan asm)]
+                          [addr : String (struct-get addr-plan addr)]
+                          (ResultCompilerBackend.Ok
+                            (string.append
+                              value-asm
+                              (str_cat.str-cat
+                                addr-asm
+                                "    "
+                                (compiler-backend-avx512-vector-move elem-ty)
+                                " "
+                                value-reg
+                                ", "
+                                addr
+                                "{"
+                                mask-reg
+                                "}\n"))))]
+                      [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              instr-diag)))])]
+                  [(ResultBackendReg.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
-                          instr-diag)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])
         (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))]))
@@ -3841,120 +4262,168 @@
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (let
       [move : String (compiler-backend-avx512-vector-move elem-ty)]
+      [false-stack? : bool
+        (match (compiler-backend-vector-value-stack-operand
+          assignments
+          on-false)
+          [(CompilerBackendMaybeStackOperand.Some _) true]
+          [(CompilerBackendMaybeStackOperand.No) false])]
+      [true-stack? : bool
+        (match (compiler-backend-vector-value-stack-operand assignments on-true)
+          [(CompilerBackendMaybeStackOperand.Some _) true]
+          [(CompilerBackendMaybeStackOperand.No) false])]
       (if (= (string.string-length move) 0)
         (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 select type")))
-        (match (compiler-backend-avx512-vector-value-reg
+        (match (compiler-backend-vector-register-use
           assignments
           on-false
-          "select false")
-          [(ResultBackendReg.Ok false-reg)
-            (match (compiler-backend-avx512-vector-value-reg
-              assignments
-              on-true
-              "select true")
-              [(ResultBackendReg.Ok true-reg)
-                (match (compiler-backend-avx512-mask-value-reg
+          "select false"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok false-use)
+            (match false-use
+              [(CompilerBackendVectorUse.Use false-asm false-reg)
+                (match (compiler-backend-vector-register-use
                   assignments
-                  mask
-                  "select mask")
-                  [(ResultBackendReg.Ok mask-reg)
-                    (match (compiler-backend-vector-var-reg
-                      assignments
-                      dst
-                      "select dst"
-                      "zmm")
-                      [(ResultBackendReg.Ok dst-reg)
-                        (if (and
-                          (string.eq (& dst-reg) (& true-reg))
-                          (not (string.eq (& true-reg) (& false-reg))))
-                          (match (compiler-backend-vector-temp-zmm
-                            assignments
-                            dst-reg
-                            true-reg
-                            false-reg
-                            "select true alias")
-                            [(ResultBackendReg.Ok temp-reg)
-                              (ResultCompilerBackend.Ok
-                                (str_cat.str-cat
-                                  "    "
-                                  move
-                                  " "
-                                  true-reg
-                                  ", "
-                                  temp-reg
-                                  "\n"
-                                  "    "
-                                  move
-                                  " "
-                                  false-reg
-                                  ", "
-                                  dst-reg
-                                  "\n"
-                                  "    "
-                                  move
-                                  " "
-                                  temp-reg
-                                  ", "
-                                  dst-reg
-                                  "{"
-                                  mask-reg
-                                  "}\n"))]
-                            [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])
-                          (ResultCompilerBackend.Ok
-                            (if (string.eq (& true-reg) (& false-reg))
-                              (if (string.eq (& dst-reg) (& false-reg))
-                                ""
-                                (str_cat.str-cat
-                                  "    "
-                                  move
-                                  " "
-                                  false-reg
-                                  ", "
-                                  dst-reg
-                                  "\n"))
-                              (str_cat.str-cat
-                                (if (string.eq (& dst-reg) (& false-reg))
-                                  ""
-                                  (str_cat.str-cat
-                                    "    "
-                                    move
-                                    " "
-                                    false-reg
-                                    ", "
-                                    dst-reg
-                                    "\n"))
-                                "    "
-                                move
-                                " "
-                                true-reg
-                                ", "
-                                dst-reg
-                                "{"
-                                mask-reg
-                                "}\n"))))]
-                      [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])]
-                  [(ResultBackendReg.Err message)
+                  on-true
+                  "select true"
+                  "zmm"
+                  elem-ty
+                  (compiler-backend-vector-spill-scratch "zmm" 1))
+                  [(ResultBackendVectorUse.Ok true-use)
+                    (match true-use
+                      [(CompilerBackendVectorUse.Use true-asm true-reg)
+                        (match (compiler-backend-avx512-mask-value-reg
+                          assignments
+                          mask
+                          "select mask")
+                          [(ResultBackendReg.Ok mask-reg)
+                            (match (compiler-backend-vector-dst-reg
+                              assignments
+                              dst
+                              "select dst"
+                              "zmm"
+                              (compiler-backend-vector-spill-scratch "zmm" 0))
+                              [(ResultBackendReg.Ok dst-reg)
+                                (let
+                                  [prefix-asm : String
+                                    (str_cat.str-cat false-asm true-asm)]
+                                  [store-asm : String
+                                    (compiler-backend-vector-store-dst
+                                      assignments
+                                      dst
+                                      "zmm"
+                                      elem-ty
+                                      dst-reg)]
+                                  (if (and
+                                    (string.eq (& dst-reg) (& true-reg))
+                                    (not (string.eq (& true-reg) (& false-reg))))
+                                    (match (if (or false-stack? true-stack?)
+                                      (ResultBackendReg.Ok
+                                        (compiler-backend-vector-spill-scratch
+                                          "zmm"
+                                          1))
+                                      (compiler-backend-vector-temp-zmm
+                                        assignments
+                                        dst-reg
+                                        true-reg
+                                        false-reg
+                                        "select true alias"))
+                                      [(ResultBackendReg.Ok temp-reg)
+                                        (ResultCompilerBackend.Ok
+                                          (str_cat.str-cat
+                                            prefix-asm
+                                            "    "
+                                            move
+                                            " "
+                                            true-reg
+                                            ", "
+                                            temp-reg
+                                            "\n    "
+                                            move
+                                            " "
+                                            false-reg
+                                            ", "
+                                            dst-reg
+                                            "\n    "
+                                            move
+                                            " "
+                                            temp-reg
+                                            ", "
+                                            dst-reg
+                                            "{"
+                                            mask-reg
+                                            "}\n"
+                                            store-asm))]
+                                      [(ResultBackendReg.Err message)
+                                        (ResultCompilerBackend.Err
+                                          (box
+                                            (compiler-diagnostic-with-message
+                                              instr-diag
+                                              message)))])
+                                    (ResultCompilerBackend.Ok
+                                      (str_cat.str-cat
+                                        prefix-asm
+                                        (if (string.eq
+                                          (& true-reg)
+                                          (& false-reg))
+                                          (if (string.eq
+                                            (& dst-reg)
+                                            (& false-reg))
+                                            ""
+                                            (str_cat.str-cat
+                                              "    "
+                                              move
+                                              " "
+                                              false-reg
+                                              ", "
+                                              dst-reg
+                                              "\n"))
+                                          (str_cat.str-cat
+                                            (if (string.eq
+                                              (& dst-reg)
+                                              (& false-reg))
+                                              ""
+                                              (str_cat.str-cat
+                                                "    "
+                                                move
+                                                " "
+                                                false-reg
+                                                ", "
+                                                dst-reg
+                                                "\n"))
+                                            "    "
+                                            move
+                                            " "
+                                            true-reg
+                                            ", "
+                                            dst-reg
+                                            "{"
+                                            mask-reg
+                                            "}\n"))
+                                        store-asm))))]
+                              [(ResultBackendReg.Err message)
+                                (ResultCompilerBackend.Err
+                                  (box
+                                    (compiler-diagnostic-with-message
+                                      instr-diag
+                                      message)))])]
+                          [(ResultBackendReg.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-diagnostic-with-message
+                                  instr-diag
+                                  message)))])])]
+                  [(ResultBackendVectorUse.Err message)
                     (ResultCompilerBackend.Err
                       (box
-                        (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ResultBackendReg.Err message)
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
@@ -6394,16 +6863,18 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX2 vector reduction")))
-        (match src
-          [(CompilerIrValue.Var src-var)
-            (match (compiler-backend-vector-var-home
-              assignments
-              src-var
-              "reduce source")
-              [(ResultBackendReg.Ok src-home)
+        (match (compiler-backend-vector-register-use
+          assignments
+          src
+          "reduce source"
+          "ymm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "ymm" 0))
+          [(ResultBackendVectorUse.Ok src-use)
+            (match src-use
+              [(CompilerBackendVectorUse.Use src-asm ymm)
                 (let
-                  [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
-                  [xmm : String (compiler-backend-vector-home-to-xmm src-home)]
+                  [xmm : String (compiler-backend-vector-reg-lower-xmm ymm)]
                   [no-exclude : (Array String) (array.make-array String 0)]
                   [acc-xmm : String
                     (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
@@ -6413,9 +6884,7 @@
                       (compiler-backend-one-exclude acc-xmm)
                       1
                       "%xmm3")]
-                  (if (or
-                    (= (string.string-length ymm) 0)
-                    (= (string.string-length xmm) 0))
+                  (if (= (string.string-length xmm) 0)
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message
@@ -6423,7 +6892,8 @@
                           (compiler-backend-vector-home-unavailable
                             "reduce source"))))
                     (ResultCompilerBackend.Ok
-                      (string.append
+                      (str_cat.str-cat
+                        src-asm
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
                           mnemonic
                           ymm
@@ -6435,16 +6905,10 @@
                           assignments
                           dst
                           elem-ty
-                          acc-xmm)))))]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [_
+                          acc-xmm)))))])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
-              (box
-                (compiler-diagnostic-with-message
-                  instr-diag
-                  "backend: unsupported AVX2 vector reduce source")))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-avx512-vector-reduce-horizontal-asm
@@ -6632,16 +7096,18 @@
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector reduction")))
-        (match src
-          [(CompilerIrValue.Var src-var)
-            (match (compiler-backend-vector-var-home
-              assignments
-              src-var
-              "reduce source")
-              [(ResultBackendReg.Ok src-home)
+        (match (compiler-backend-vector-register-use
+          assignments
+          src
+          "reduce source"
+          "zmm"
+          elem-ty
+          (compiler-backend-vector-spill-scratch "zmm" 0))
+          [(ResultBackendVectorUse.Ok src-use)
+            (match src-use
+              [(CompilerBackendVectorUse.Use src-asm zmm)
                 (let
-                  [zmm : String (compiler-backend-vector-home-to-zmm src-home)]
-                  [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
+                  [ymm : String (compiler-backend-vector-reg-lower-ymm zmm)]
                   [no-exclude : (Array String) (make-array String 0)]
                   [acc-xmm : String
                     (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
@@ -6653,7 +7119,6 @@
                       "%xmm3")]
                   [acc-ymm : String (compiler-backend-xmm-to-ymm acc-xmm)]
                   (if (or
-                    (= (string.string-length zmm) 0)
                     (= (string.string-length ymm) 0)
                     (= (string.string-length acc-ymm) 0))
                     (ResultCompilerBackend.Err
@@ -6663,7 +7128,8 @@
                           (compiler-backend-vector-home-unavailable
                             "reduce source"))))
                     (ResultCompilerBackend.Ok
-                      (string.append
+                      (str_cat.str-cat
+                        src-asm
                         (compiler-backend-avx512-vector-reduce-horizontal-asm
                           mnemonic
                           zmm
@@ -6676,16 +7142,10 @@
                           assignments
                           dst
                           elem-ty
-                          acc-xmm)))))]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [_
+                          acc-xmm)))))])]
+          [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
-              (box
-                (compiler-diagnostic-with-message
-                  instr-diag
-                  "backend: unsupported AVX-512 vector reduce source")))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan

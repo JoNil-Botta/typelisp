@@ -1,4 +1,4 @@
-;# Iterator protocol conventions and scalar range iterators (#3514).
+;# Iterator protocol conventions and scalar range iterators.
 ;#
 ;# TypeLisp does not use traits or generic interfaces for iterator dispatch.
 ;# The stdlib iterator protocol is a module-level convention for future macros:
@@ -10,8 +10,7 @@
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning
-;# `Done`. Migrating these monomorphic `*Next` enums to the generated
-;# `(option T)` module belongs with the option user-migration work (#3214).
+;# `Done`.
 ;#
 ;# ```typelisp
 ;# (import stdlib.iterator as iter)

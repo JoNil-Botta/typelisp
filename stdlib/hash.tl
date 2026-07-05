@@ -1,4 +1,4 @@
-;# Deterministic hash helpers for stdlib collections (#815).
+;# Deterministic hash helpers for stdlib collections.
 ;#
 ;# This module provides stable, non-cryptographic hash building blocks for
 ;# future maps, sets, intern tables, and compiler data structures. Hash values

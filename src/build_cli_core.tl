@@ -1,4 +1,4 @@
-;; build_cli_core.tl - Selfhost build command logic (#622, #1339).
+;; build_cli_core.tl - Selfhost build command logic.
 ;;
 ;; Source-file builds assemble and link in-process through stdlib fs/process
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
@@ -1123,7 +1123,7 @@
       (build-package-lib-path-profile manifest-dir name profile target)]))
 
 ;; The v1 tlci path is target-independent because package images are
-;; metadata-only host compile-time interfaces today. Runtime artifacts still
+;; metadata-only host compile-time interfaces. Runtime artifacts still
 ;; carry the selected target through their filename/extension.
 (define (build-package-artifact-paths
   [manifest-dir : String]

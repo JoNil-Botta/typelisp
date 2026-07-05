@@ -1,4 +1,4 @@
-;# stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools (#850).
+;# stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools.
 ;#
 ;# Provides recoverable current-directory and temporary-directory APIs, path-join,
 ;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
@@ -161,8 +161,8 @@
               (ptr-cast buf : (Ptr u8))))
           count)))))
 
-;: Windows kernel32 bindings backing the directory/file primitives (#2142
-;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
+;: Windows kernel32 bindings backing the directory/file primitives, replacing
+;: the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
 (cfg
   windows
   (extern (fs-win-create-directory [arg0 : (Ptr u8)] [arg1 : i64]) : i32 (:symbol "CreateDirectoryA")))
@@ -230,8 +230,8 @@
 ;: Windows `GetCurrentDirectoryA` binding for current-directory lookup.
 (extern (fs-windows-get-current-directory [arg0 : u32] [arg1 : (MutPtr u8)]) : u32 (:symbol "GetCurrentDirectoryA"))
 
-;: Windows kernel32 binding for path moves (#2142 slice 1), replacing the
-;: former `rename` CRT-ABI shim.
+;: Windows kernel32 binding for path moves, replacing the former `rename`
+;: CRT-ABI shim.
 (cfg
   windows
   (extern (fs-win-move-file-ex [arg0 : (Ptr u8)] [arg1 : (Ptr u8)] [arg2 : i32]) : i32 (:symbol "MoveFileExA")))
@@ -1590,8 +1590,7 @@
       [root : String (stdlib.fs.temp-root)]
       (stdlib.fs.create-temp-dir-loop (& root) prefix (stdlib.fs.process-id) 0))))
 
-;; Inline coverage migrated from stdlib/tests/fs_api.tl and
-;; stdlib/tests/fs_path_join_many_api.tl (#3085).
+;; Inline test coverage.
 (cfg
   test
   (define (fs-test-fail [message : String]) : unit
@@ -2483,7 +2482,7 @@
           "second"
           "third"
           "read-dir split vec preserves payload order")
-        ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
+        ;; Pure path-string helpers (separator-agnostic; `/` cases are
         ;; stable on both Linux and Windows).
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-dirname "src/app/main.tl")

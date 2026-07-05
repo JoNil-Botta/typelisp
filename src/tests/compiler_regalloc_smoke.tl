@@ -1,4 +1,4 @@
-;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl (#554).
+;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl.
 (import "../compiler_liveness.tl")
 (import "../compiler_regalloc.tl")
 

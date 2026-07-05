@@ -1,4 +1,4 @@
-;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
+;; build_run_core.tl - Shared selfhost source build/run execution helpers.
 (import "compiler_driver_core.tl")
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
@@ -297,7 +297,7 @@
     (process.args-empty)))
 
 ;; Wrap a list of fully-resolved archive/object paths (e.g. package dependency
-;; static archives, #1155) as link inputs. They are passed verbatim as raw args
+;; static archives) as link inputs. They are passed verbatim as raw args
 ;; so both `ld` and MSVC `link.exe` treat them as positional inputs.
 (define (source-tool-link-inputs-from-archives
   [archives : process.ProcessStringList]) : SourceToolLinkInputs

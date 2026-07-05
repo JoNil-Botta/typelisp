@@ -1,4 +1,4 @@
-;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
+;# TypeLisp lint engine + source cleanup rules.
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
 ;# findings. The rules flag body-only nested `let` forms, single-expression
@@ -27,7 +27,7 @@
 
 ;: Stable rule id for the dormant nested-`if`-ladder rule. Rule ids are the
 ;: suppression key (`;; lint-allow: <rule-id>`) and the registry key, so this
-;: remains registered even while #2579 keeps bootstrap source on nested `if`.
+;: remains registered even while bootstrap source stays on nested `if`.
 (define (lint-rule-nested-if-ladder-id) : String
   "nested-if-ladder")
 
@@ -2429,8 +2429,7 @@
   (match kind
     [(AstImportKind.Module) true]
     ;; Legacy path imports with no explicit module alias still bring
-    ;; unqualified names into scope, so skip them until #2453/#2454 remove that
-    ;; transitional surface.
+    ;; unqualified names into scope, so skip them.
     [(AstImportKind.Path)
       (match expected
         [(AstMaybeModuleName.Some _) true]
@@ -8198,8 +8197,7 @@
       ;; A maximal else-`if` ladder of length >= threshold is flagged once
       ;; at its head, carrying the ladder depth; lint-walk-ladder then
       ;; descends the else-chain (walking each cond/then) without
-      ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
-      ;; rule is active.
+      ;; re-emitting.
       [(and (>= ladder threshold) all-exit-ladder)
         (lint-walk-ladder
           (AstExpr.If

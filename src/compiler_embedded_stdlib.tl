@@ -1,4 +1,4 @@
-;; compiler_embedded_stdlib.tl - Checked-in stdlib source payloads (#1509).
+;; compiler_embedded_stdlib.tl - Checked-in stdlib source payloads.
 (import stdlib.string)
 
 (defenum CompilerEmbeddedStdlibSource

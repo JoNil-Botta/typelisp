@@ -1,4 +1,4 @@
-;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
+;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector as svec)
@@ -544,7 +544,7 @@
       (i64vec.push (&mut items) 1)
       (i64vec.len (& items)))))")
 
-;; Compatibility alias fixture for #3772. The qualified stdlib.array path is
+;; Compatibility alias fixture for the __tl_dyn-array alias. The qualified stdlib.array path is
 ;; covered by compiler-check-implicit-core-prelude-source above.
 (define (compiler-check-private-dynamic-buffer-public-source) : String
   "(define (main) : i64
@@ -711,7 +711,7 @@
   (compiler-check-source-error-ok?
     "tests/private_dynamic_buffer_public.tl"
     (compiler-check-private-dynamic-buffer-public-source)
-    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))
+    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead"))
 
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?

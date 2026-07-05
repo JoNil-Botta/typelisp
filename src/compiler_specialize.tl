@@ -1,4 +1,4 @@
-;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
+;; compiler_specialize.tl - Selfhost comptime function specialization.
 (import stdlib.array)
 (import "compiler_parse_core.tl")
 (import "compiler_ctfe.tl")
@@ -32,9 +32,8 @@
   (values (Array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
-;; #2613: the specialization cache (key -> generated function name) is a
-;; generated hashmap.StringStringMap; the former SpecCache linked list made every
-;; lookup a linear scan.
+;; The specialization cache (key -> generated function name) is a
+;; generated hashmap.StringStringMap so lookups avoid a linear scan.
 (defenum SpecState
   (State AstDeclList hashmap.StringStringMap CtfeEnv AstNodePoolContext))
 
@@ -5398,7 +5397,7 @@
         (spec-substitute-type (ast-ty-mut-ptr (AstType.Var (intern "T"))) subs)
         (ast-ty-mut-ptr (AstType.I64))))))
 
-;: Deterministic specialized name + stable specialization key (#1043, mirrors
+;: Deterministic specialized name + stable specialization key (mirrors
 ;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
 ;: is a pure function of the template name and comptime argument values, so
 ;: identical args produce identical names, distinct type args never collide,
@@ -5513,7 +5512,7 @@
 (define (main) : (Array i64)
   (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
 
-;: Specialization reuse (#1043, mirrors src/specialize.rs reuse coverage): two
+;: Specialization reuse (mirrors src/specialize.rs reuse coverage): two
 ;: identical `alloc (type i64)` requests collapse to a single shared
 ;: `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
 ;: `alloc` template is removed.
@@ -5536,7 +5535,7 @@
         [(ResultSpecProgram.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
-;: Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
+;: Type substitution (mirrors src/specialize.rs substitution coverage):
 ;: `spec-substitute-type` replaces a mapped type variable with its bound type,
 ;: recurses through compound types (Ptr/DynArray/function), and leaves an
 ;: unmapped variable unchanged (the SpecMaybeString.None lookup branch). Complements
@@ -5571,7 +5570,7 @@
         (spec-type-key (spec-substitute-type (AstType.Var (intern "U")) subs))
         "var_U"))))
 
-;: Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
+;: Value (comptime-argument) substitution (mirrors src/specialize.rs
 ;: substitution coverage): `spec-substitute-values-expr` replaces a variable
 ;: bound to a comptime value with that value's literal, leaves unmapped
 ;: variables and literals unchanged, and recurses through compound expressions.

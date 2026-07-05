@@ -1,4 +1,4 @@
-;; format_doc.tl - Small document algebra for the self-hosted formatter (#213).
+;; format_doc.tl - Small document algebra for the self-hosted formatter.
 ;;
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them

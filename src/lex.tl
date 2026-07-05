@@ -1,8 +1,8 @@
 ;; lex.tl - The TypeLisp-syntax (s-expression) lexer factored out as a
-;; `main`-less, importable module (refs #27/#44).
+;; `main`-less, importable module.
 ;;
 ;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for the reader, refs #44/#81).
+;; Why this module exists (the module signal for the reader).
 ;; --------------------------------------------------------------------------
 ;; `lexer.tl` is the *demo* program for the s-expression lexer: it carries a
 ;; `main` that lexes a sample and tallies its symbols. But the next front-end
@@ -10,7 +10,7 @@
 ;; lexer's `lex : (-> String (Array token.Token))` rather than re-derive it, and it
 ;; carries its own `main` (read tokens into a recursive `Sexpr` tree, fold it).
 ;;
-;; The module loader (#44) is whole-program: it concatenates every imported
+;; The module loader is whole-program: it concatenates every imported
 ;; module's declarations into a single program, then runs the unchanged
 ;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
 ;; `main` and are loaded together produce a duplicate `main` symbol - the known
@@ -584,7 +584,7 @@
   (lex-into-spanned src toks (make-array i64 (array-length toks))))
 
 ;; Core scanner. Fills `toks` with the token stream and, in parallel, records
-;; each token's starting byte index into `starts[count]` (#599). The plain token
+;; each token's starting byte index into `starts[count]`. The plain token
 ;; path uses this through `lex-into`; `lex-spanned-result` uses a direct scanner
 ;; that records line/column positions while tokenizing. Returns the token count
 ;; (excluding the trailing `token.Token.End`).
@@ -1052,7 +1052,7 @@
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
 
-;; ---- Spanned token stream (#599) --------------------------------------------
+;; ---- Spanned token stream ----------------------------------------------------
 ;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
 ;; paired with the 1-based line/column of its starting byte; the trailing
 ;; `token.Token.End`

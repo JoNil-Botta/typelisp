@@ -10,8 +10,7 @@
 ;# Usage: `(import stdlib.json)`
 ;#
 ;# Parsed values, list nodes, decoded strings, and serialized strings are
-;# ordinary TypeLisp heap values. They are allocated in the active arena once
-;# scoped arenas are enabled, and in the default program-lifetime arena today.
+;# ordinary TypeLisp heap values allocated in the active arena.
 ;#
 ;# ```typelisp
 ;# (import stdlib.json)
@@ -561,7 +560,7 @@
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
-;: Only tab, newline, carriage return, and printable ASCII are supported today.
+;: Only tab, newline, carriage return, and printable ASCII are supported.
 ;: Successful decoded strings allocate in the active arena.
 (define (codepoint-string [code : i64]) : JsonCodepointStringResult
   (cond

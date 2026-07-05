@@ -1,4 +1,4 @@
-;; compiler_clone.tl - synthesize clone$<Type> helpers (#1633).
+;; compiler_clone.tl - synthesize clone$<Type> helpers.
 ;;
 ;; `(clone x)` is the canonical deep-copy and the canonical way to escape an
 ;; arena. The lowerer dispatches `(clone x)` to `clone$<type-of-x>` for named

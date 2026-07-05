@@ -1,4 +1,4 @@
-;; format_cst.tl - Neutral formatter CST over format_tokens.tl (#326).
+;; format_cst.tl - Neutral formatter CST over format_tokens.tl.
 ;;
 ;; The CST keeps enough shape for a formatter without committing to final
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,

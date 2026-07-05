@@ -1,4 +1,4 @@
-;# Generated deque family (collections v1, #1549/#2797).
+;# Generated deque family (collections v1).
 ;#
 ;# `(deque T)` emits a growable, owned double-ended queue module for element
 ;# type `T`, backed by a circular `(Array T)`. Queue-style callers use

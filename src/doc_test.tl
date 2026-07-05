@@ -1,4 +1,4 @@
-;; doc_test.tl - Self-hosted TypeLisp doctest extraction (#722) + runner (#724).
+;; doc_test.tl - Self-hosted TypeLisp doctest extraction + runner.
 ;;
 ;; Extraction pulls TypeLisp fenced examples from public doc comments, mirroring
 ;; the public doc scanning policy: module docs (`;#`) are scanned as standalone
@@ -6,8 +6,8 @@
 ;; declaration, blank physical lines are tolerated between doc comment lines,
 ;; ordinary comments are ignored, and unattached item docs are dropped.
 ;;
-;; The runner (#724/#1322) checks extracted examples through the in-memory
-;; virtual-source loader/typechecker (`compiler-check-source`, #723), and runs
+;; The runner checks extracted examples through the in-memory
+;; virtual-source loader/typechecker (`compiler-check-source`), and runs
 ;; `typelisp run` / `tl run` examples through the self-hosted build/run
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
@@ -1016,7 +1016,7 @@
         [(DocTestScanState.State examples errors _)
           (DocTestExtraction.Extraction examples errors)]))))
 
-;; --- runner (#724) ----------------------------------------------------------
+;; --- runner --------------------------------------------------------------------
 ;; A single doctest failure: the doc'd source path, the fence's 1-based source
 ;; line, the example index (`-1` for a fence-level extraction error that has no
 ;; example), and a human-readable reason (the rendered diagnostic when one is
@@ -2398,7 +2398,7 @@
           (return (io.panic "doc-test: runnable malformed smoke mismatch")))
         42)]))
 
-;; --- runner self-test (#724) ------------------------------------------------
+;; --- runner self-test -----------------------------------------------------------
 ;; A normal example whose body fails to typecheck (i64 return, bool body).
 (define (doc-test-run-unexpected-error-source) : String
   ";# ```typelisp
@@ -2885,7 +2885,7 @@ typecheck: return type mismatch"))]
       (return (io.panic "doc-test-run: package walk long-list mismatch")))
     42))
 
-;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both
+;; Combined smoke: extraction then runner. Returns 42 iff both
 ;; self-test batteries pass.
 (define (doc-test-smoke-all) : i64
   (begin

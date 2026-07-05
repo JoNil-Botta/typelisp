@@ -202,7 +202,7 @@
         (set! x (+ x 1)))
       (if (> x 44) x 0))))")
 
-;; SysV call with more than six integer args (#750): args 7+ spill to the
+;; SysV call with more than six integer args: args 7+ spill to the
 ;; stack. `add8` reads its last two (stack-passed) params, exercising both the
 ;; outgoing stack stores at the call and the incoming stack reads in the callee.
 (define (compiler-backend-stack-int-args-source) : String
@@ -219,7 +219,7 @@
 (define (main) : i64
   (+ 0 (add8 1 2 3 4 5 6 7 8)))")
 
-;; SysV call with more than eight f64 args (#750): xmm0..xmm7 then stack.
+;; SysV call with more than eight f64 args: xmm0..xmm7 then stack.
 (define (compiler-backend-stack-f64-args-source) : String
   "(define (sum10
   [a : f64]
@@ -236,7 +236,7 @@
 (define (main) : i64
   (if (< (sum10 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0) 20.0) 1 0))")
 
-;; Mixed int/f64 call that exhausts both banks and spills (#750): the integer
+;; Mixed int/f64 call that exhausts both banks and spills: the integer
 ;; and float register indexes advance independently under System V. There are 7
 ;; integer args (rdi..r9 then one stacked) and 9 f64 args (xmm0..xmm7 then one
 ;; stacked); `mix` returns the sum of the two stack-passed args.
@@ -262,7 +262,7 @@
 (define (main) : i64
   (+ 0 (mix 1 2 3 4 5 6 7 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0)))")
 
-;; #750 RUN-LEVEL witness source: a self-contained program that exercises all
+;; RUN-LEVEL witness source: a self-contained program that exercises all
 ;; three spill paths (integer, f64, and mixed) and returns 96 only when every
 ;; stack-passed argument arrives with the correct value and ordering. Emitted by
 ;; the stack-args fixture, then assembled, linked, and run by the integration
@@ -1842,8 +1842,8 @@
           "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n"))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Backend-owned replacement for the string runtime helper emission tests
-;; (#1044/#2064): non-allocating string parsing/equality still use backend
+;; Backend-owned replacement for the string runtime helper emission tests:
+;; non-allocating string parsing/equality still use backend
 ;; runtime helpers, while migrated allocating public helpers stay as ordinary
 ;; source-level calls instead of pulling in legacy helper bodies.
 (define (compiler-backend-string-runtime-source) : String
@@ -2267,7 +2267,7 @@
       (if (= (wide-score via-ptr) 52) 42 2)
       1)))")
 
-;; #2357: the Win64 sret aggregate-RETURN path (#2481) is adopted. Returning a
+;; The Win64 sret aggregate-RETURN path: returning a
 ;; 9-16B register-group from a C function reserves a caller sret buffer (passed
 ;; as a scalar-pointer hidden first arg) and materializes the result back into
 ;; the 2-word register group (see lower-c-abi-finish-call-result). Assert the
@@ -2331,7 +2331,7 @@
           asm
           "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-register-indirect-call? asm)
-        ;; #2357: with inline-by-value aggregates (#1867) a WideArg construction
+        ;; With inline-by-value aggregates, a WideArg construction
         ;; no longer heap-allocates -- the value is built in inline storage. So
         ;; the two by-value call sites need exactly the two 16-byte byref buffers
         ;; the Win64 ABI requires (down from four, when each construction also
@@ -3092,8 +3092,8 @@
           (not (compiler-backend-string-contains? asm ".extern .L_tl_abort\n")))]
       [(ResultCompilerBackend.Err _) false])))
 
-;; Backend-owned replacement for the Rust `string.string-ref` emit-shape checks
-;; (#1417): source-level string indexing should keep literal string data, use an
+;; Backend-owned replacement for the Rust `string.string-ref` emit-shape checks:
+;; source-level string indexing should keep literal string data, use an
 ;; unsigned bounds check, call the out-of-bounds helper, and zero-extend the
 ;; selected byte into the char result.
 (define (compiler-backend-string-ref-source) : String
@@ -3135,7 +3135,7 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
-          ;; #1867 sret ABI: aggregate returns write the caller's sret slot
+          ;; sret ABI: aggregate returns write the caller's sret slot
           ;; instead of arena-allocating a 16-byte object.
           (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains?
@@ -3264,7 +3264,7 @@
       [(ResultCompilerBackend.Err _) false])))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
-;; checks from the legacy backend suite (#1354/#1413).
+;; checks from the legacy backend suite.
 (define (compiler-backend-aggregate-return-source) : String
   "(defenum Shape (Circle i64) (Square i64) (Nothing))
 (defstruct Point (x i64) (y i64))
@@ -3281,7 +3281,7 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
-          ;; #1867 sret ABI: struct/enum returns write the result through the
+          ;; sret ABI: struct/enum returns write the result through the
           ;; caller-provided sret slot -- no per-return arena allocation.
           (= (compiler-backend-alloc-call-count asm) 0)
           (not (compiler-backend-string-contains-alloc-size? asm 16))
@@ -3325,7 +3325,7 @@
     [init-symbol : String (string.append "_tl___global_init_" name)]
     (and
       (backend-and4
-        ;; #2386: a register-group global (e.g. `pair`) reserves 16 inline bytes;
+        ;; A register-group global (e.g. `pair`) reserves 16 inline bytes;
         ;; an 8-byte handle/scalar global reserves 8. Accept either.
         (or
           (compiler-backend-string-contains?
@@ -3350,7 +3350,7 @@
         (compiler-backend-string-contains?
           asm
           (str_cat.str-cat "    movq " symbol "(%rip), %r10\n"))
-        ;; #2386: a register-group global is read via its address.
+        ;; A register-group global is read via its address.
         (compiler-backend-string-contains?
           asm
           (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n"))))))
@@ -3383,7 +3383,7 @@
     (compiler-backend-aggregate-return-shape-ok?)
     (compiler-backend-aggregate-global-init-shape-ok?)))
 
-;; Backend-owned replacement for closure/lambda emit-shape checks (#1415).
+;; Backend-owned replacement for closure/lambda emit-shape checks.
 ;; The source uses synthetic lambda lowered names because AstExpr.Lambda lowering
 ;; is tracked separately; this pins the backend descriptor, adapter, and
 ;; indirect-call shape produced by the same IR names.
@@ -3510,7 +3510,7 @@
             "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
         (backend-and8
           (compiler-backend-string-contains? asm "tl_alloc:\n")
-          ;; #1867 sret ABI: only the heap-backed (Array) closure return
+          ;; sret ABI: only the heap-backed (Array) closure return
           ;; still allocates; Box/Pair/String returns use sret/static data.
           (>= (compiler-backend-alloc-call-count asm) 1)
           (>=
@@ -3543,7 +3543,7 @@
     (compiler-backend-closure-aggregate-return-shape-ok?)))
 
 (define (compiler-backend-enum-match-ok?) : bool
-  ;; #2386: `Maybe (None) (Some i64)` is a 16-byte register-resident enum, so the
+  ;; `Maybe (None) (Some i64)` is a 16-byte register-resident enum, so the
   ;; tag is matched on a register-held word (no `cmpq $0, (%r10)` heap deref) and
   ;; the payload is read from word1 rather than `8(%r10)`. Those memory-shape
   ;; assertions are obsolete; what remains representation-agnostic is that the
@@ -3579,7 +3579,7 @@
         (or
           (compiler-backend-string-contains? asm "_tl_calc")
           (compiler-backend-string-contains? asm "_tl_f"))
-        ;; #107: FPO (M-G3 stage 2) makes frame refs rsp-relative; params spill
+        ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; params spill
         ;; to rsp slots and the spilled sum is reloaded into a scratch (%r8),
         ;; leaving the product in %rax.
         (compiler-backend-string-contains? asm "    movq %rdi, 56(%rsp)\n")
@@ -3595,7 +3595,7 @@
   (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
     [(ResultCompilerBackend.Ok asm)
       (backend-and8
-        ;; #107: FPO (M-G3 stage 2) rsp-relative frame slots (a=32, b=16, sum=8).
+        ;; FPO (M-G3 stage 2) rsp-relative frame slots (a=32, b=16, sum=8).
         (compiler-backend-string-contains? asm "main:\n")
         (compiler-backend-string-contains? asm "    movsd 32(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    addsd 16(%rsp), %xmm2\n")
@@ -3814,7 +3814,7 @@
               (compiler-backend-string-contains?
                 asm
                 "    movq %r12, _tl_g5b(%rip)\n")
-              ;; #107: %rbp is now the 6th callee-saved register (M-G3 stage 2),
+              ;; %rbp is now the 6th callee-saved register (M-G3 stage 2),
               ;; so the call-spanning var 4 is homed in %rbp instead of being
               ;; rematerialised into caller-saved %r9d after the call; var 6
               ;; (the 7th, coldest) is still the rematerialised one in %r9d.
@@ -4284,7 +4284,7 @@
       [(ResultCompilerBackend.Err diag)
         (string.eq
           (compiler-diagnostic-message (box-get diag))
-          "backend: register-group call argument requires var operand (#2386)")]
+          "backend: register-group call argument requires var operand")]
       [(ResultCompilerBackend.Ok _) false])))
 
 (define (compiler-backend-register-group-fail-closed-ok?) : bool
@@ -4296,17 +4296,17 @@
           (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)
       (CompilerIrValue.Var 0)
-      "backend: register-group var assigned scalar register home (#2386)")
+      "backend: register-group var assigned scalar register home")
     (compiler-backend-register-group-mov-error-ok?
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill 16))
         CompilerRegAssignmentList.Nil)
       (CompilerIrValue.Var 0)
-      "backend: register-group var assigned spill slot (#2386)")
+      "backend: register-group var assigned spill slot")
     (compiler-backend-register-group-mov-error-ok?
       CompilerRegAssignmentList.Nil
       (CompilerIrValue.I64 7)
-      "backend: register-group load requires var operand (#2386)")
+      "backend: register-group load requires var operand")
     (compiler-backend-register-group-call-arg-error-ok?)))
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
@@ -6212,7 +6212,7 @@
     [(ResultBackendReg.Ok _) false]
     [(ResultBackendReg.Err _) true]))
 
-;; The target model (#646/#647): per-target arg registers / shadow space /
+;; The target model: per-target arg registers / shadow space /
 ;; entry symbol; the Linux path is byte-identical to the default emitter and the
 ;; Windows path emits ABI-shaped user-function assembly and runtime helpers
 ;; without Linux syscalls.
@@ -6345,7 +6345,7 @@
           (compiler-backend-string-contains? asm ".globl main\n")
           (not (compiler-backend-string-contains? asm "\n_start:\n"))
           (not (compiler-backend-string-contains? asm "syscall\n"))
-          ;; #107: Win64 keeps %rbp for the frame, but M-G3 stage-1 rsp-rebase
+          ;; Win64 keeps %rbp for the frame, but M-G3 stage-1 rsp-rebase
           ;; makes local param slots rsp-relative; the positive incoming
           ;; stack-arg 48(%rbp) stays on %rbp.
           (compiler-backend-string-contains? asm "    movq %rcx, 88(%rsp)\n")
@@ -6392,7 +6392,7 @@
         [kernel-io
           : bool
           ;; tl_alloc obtains memory via VirtualAlloc and, on exhaustion,
-          ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler (#2221) —
+          ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler —
           ;; it no longer inlines a kernel32 WriteFile for the OOM message.
           (backend-and4
             (compiler-backend-string-contains? asm ".globl tl_alloc\n")
@@ -6500,7 +6500,7 @@
               asm
               "    sub $32, %rsp\n    call tl_region_abort\n"))
           ;; The out-of-memory abort moved to the `tl_oom_abort` runtime-prelude
-          ;; handler (#2221): the allocator's abort path now tail-jumps to it
+          ;; handler: the allocator's abort path now tail-jumps to it
           ;; instead of inlining the kernel32 GetStdHandle/WriteFile/ExitProcess
           ;; write (the former `.L_tl_win_write_abort` helper is gone).
           (backend-and4
@@ -6706,7 +6706,7 @@
     (compiler-backend-switch-test-program))
     [(ResultCompilerBackend.Ok asm)
       (and
-        ;; #107: FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
         (compiler-backend-string-contains? asm "    movq 8(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $2, %r8\n")
         (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
@@ -6780,7 +6780,7 @@
     (compiler-backend-switch-base-test-program))
     [(ResultCompilerBackend.Ok asm)
       (and
-        ;; #107: FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
         (compiler-backend-string-contains? asm "    movq 8(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    subq $4, %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $1, %r8\n")
@@ -7001,7 +7001,7 @@
       "backend: unsupported float binary op"
       34
       9)
-    ;; #1044: an f64 unary op other than negation is rejected (mirrors the
+    ;; An f64 unary op other than negation is rejected (mirrors the
     ;; f64-binary-op reject; only CompilerIrUnOp.Neg has an f64 lowering).
     (compiler-backend-instr-diagnostic-case-ok?
       (CompilerIrInstr.UnOp
@@ -7237,7 +7237,7 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
-;; #107: FPO (M-G3) is applied at backend emission for ALL modes (incl. AVX2/512),
+;; FPO (M-G3) is applied at backend emission for ALL modes (incl. AVX2/512),
 ;; so the spilled uniform-scalar broadcast source is rsp-relative now: the map
 ;; fixture's INTEGER scalar spills to 40(%rsp), its FLOAT scalar (f64/f32, passed
 ;; in xmm) to 48(%rsp), and the zip fixture's scalar to 48(%rsp).
@@ -10545,7 +10545,7 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
-        ;; #107: GAP2a folds the const gep displacement (+8) directly into every
+        ;; GAP2a folds the const gep displacement (+8) directly into every
         ;; CopyBytes chunk DST address, so the `addq $8, %r10` staging disappears
         ;; and the chunks store to 8(%r10)/24(%r10).
         (compiler-backend-string-contains? asm "    movups %xmm2, 8(%r10)\n")
@@ -10989,7 +10989,7 @@
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
         [(ResultCompilerBackend.Err _) false])]
-    ;; #107: the pair case leaves var 1 UNASSIGNED (spilled), so its store source
+    ;; The pair case leaves var 1 UNASSIGNED (spilled), so its store source
     ;; is loaded through a SCAVENGED scratch. emit-test-instrs is not hermetic
     ;; w.r.t. the shared scavenge state (it saves/restores by reference while
     ;; emit-instrs mutates in place), so that scratch is %r9 in isolation but %rcx
@@ -12072,7 +12072,7 @@
     (backend-and8
       (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
       (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
-      ;; #107: cpuid clobbers %rbx; the campaign preserves the caller's %rbx in a
+      ;; cpuid clobbers %rbx; the campaign preserves the caller's %rbx in a
       ;; scavenged free reg (%r8 here, none of r8-r15 touched by cpuid) instead
       ;; of pushq/popq %rbx (the no-stack-staging goal).
       (compiler-backend-instr-contains? instr "    movq %rbx, %r8\n")
@@ -12844,7 +12844,7 @@
     [(ResultCompilerBackend.Err _) false]))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
-;; trap (#528) reaches the backend as a `call tl_oob_abort`.
+;; trap reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (main) : i64 0)")
@@ -12855,8 +12855,8 @@
       (compiler-backend-string-contains? asm "call tl_oob_abort")]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Fixed-size array set/ref emit-shape coverage (#1416). The source takes the
-;; fixed array as a parameter; a separate literal source below covers #3580's
+;; Fixed-size array set/ref emit-shape coverage. The source takes the
+;; fixed array as a parameter; a separate literal source below covers the
 ;; stack/local fixed-array storage path.
 (define (compiler-backend-fixed-array-source) : String
   "(define (use-fixed [a : (Array i64 3)]) : i64
@@ -12873,7 +12873,7 @@
           (or
             (compiler-backend-string-contains? asm "_tl_use_fixed")
             (compiler-backend-string-contains? asm "_tl_f"))
-          ;; #107: the fixed-array bounds check now materialises the index in
+          ;; The fixed-array bounds check now materialises the index in
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (compiler-backend-string-contains? asm "    cmpq $3, %r10\n")
           (not (compiler-backend-string-contains? asm "    movl $3, %r11d\n"))
@@ -13069,7 +13069,7 @@
     (__tl_string_length (path-separator))))")
 
 ;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
-;; implements them in TypeLisp (#2142 follow-up). A program that externs the
+;; implements them in TypeLisp. A program that externs the
 ;; legacy `tl_env_var_exists` / `tl_env_var_value` / `_tl_env_path_separator`
 ;; symbols therefore sees them as plain undefined externs (`.extern …`), with no
 ;; backend-emitted definition and no `getenv`/`strlen` shim calls.
@@ -13519,7 +13519,7 @@
     (compiler-backend-windows-fs-current-dir-extern-only-source-ok?
       (compiler-backend-fs-current-dir-extern-source))))
 
-;; A refutable literal payload match (#651) lowers to a payload comparison that
+;; A refutable literal payload match lowers to a payload comparison that
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
 (define (compiler-backend-literal-payload-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -13530,7 +13530,7 @@
     [None 5]))
 (define (main) : i64 (classify (Some 0)))")
 
-;; Confirm the refutable literal payload (#651) reaches valid assembly: the
+;; Confirm the refutable literal payload reaches valid assembly: the
 ;; function compiles and emits a `payload_ok` block (the in-bounds branch of the
 ;; payload comparison). `compiler-backend-asm-ok?` is smoke-source specific, so
 ;; check source-specific markers instead.
@@ -13567,7 +13567,7 @@
         (not (compiler-backend-string-contains? asm "    .double "))
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (compiler-backend-string-contains? asm "    movsd %xmm1, ")
-        ;; #107: FPO rsp-relative frame slot (the y param spills to 16(%rsp)).
+        ;; FPO rsp-relative frame slot (the y param spills to 16(%rsp)).
         (compiler-backend-string-contains? asm "    addsd 16(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    subsd 16(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    ucomisd 16(%rsp), %xmm2\n")
@@ -13754,7 +13754,7 @@
             (AstType.F32)
             (compiler-backend-test-f32-bits "11.0")))
         (not (compiler-backend-string-contains? asm "    .float "))
-        ;; #107: FPO rsp-relative frame slot (the b:f32 local spills to 176(%rsp)).
+        ;; FPO rsp-relative frame slot (the b:f32 local spills to 176(%rsp)).
         (compiler-backend-string-contains? asm "    ucomiss 176(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    addss 176(%rsp), %xmm2\n")
         (compiler-backend-string-contains? asm "    setb %r8b\n")
@@ -14285,7 +14285,7 @@
         (not (compiler-backend-string-contains? asm "%r8")))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
+;; Backend-owned replacement for the Rust bool logic codegen checks:
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
 (define (compiler-backend-bool-and-source) : String
@@ -14466,7 +14466,7 @@
         (compiler-backend-direct-compare-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
-;; forms (#1353).
+;; forms.
 (define (compiler-backend-scalar-wide-source) : String
   "(define (xor64 [a : i64] [b : i64]) : i64 (bit-xor a b))
 (define (shl64 [a : i64] [b : i64]) : i64 (shl a b))
@@ -14969,7 +14969,7 @@
         (compiler-backend-string-contains?
           asm
           "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
-        ;; #107: M-F folds the power-of-2 modulo mask into an immediate `andq`
+        ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
         (compiler-backend-string-contains? asm "    andq $7, %rax\n")
         (not (compiler-backend-string-contains? asm "    idivq %r8\n"))
@@ -15263,7 +15263,7 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Backend-owned narrow integer instruction selection coverage (#1393). These
+;; Backend-owned narrow integer instruction selection coverage. These
 ;; checks pin the operand width and signedness-sensitive forms that source-level
 ;; execution tests do not distinguish.
 (define (compiler-backend-narrow-scalar-instr-ok?) : bool
@@ -15393,7 +15393,7 @@
     (AstType.Bool))
     [(ResultCompilerBackend.Ok asm)
       (and
-        ;; #107: the 64-bit global compare now materialises in %r9 (scratch reg
+        ;; The 64-bit global compare now materialises in %r9 (scratch reg
         ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
         (compiler-backend-string-contains? asm "    cmpq %r8, %r9\n")
         (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
@@ -15451,7 +15451,7 @@
     (compiler-backend-global-compare-program))
     [(ResultCompilerBackend.Ok asm)
       (and
-        ;; #107: the 64-bit global compare now materialises in %r9 (scratch reg
+        ;; The 64-bit global compare now materialises in %r9 (scratch reg
         ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
         (compiler-backend-string-contains? asm "    cmpq %r8, %r9\n")
         (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
@@ -15500,7 +15500,7 @@
   (match (compiler-backend-emit-source (compiler-backend-f64-abi-source))
     [(ResultCompilerBackend.Ok asm)
       (backend-and8
-        ;; #107: FPO rsp-relative frame slots (second's n at 8(%rsp); half's x
+        ;; FPO rsp-relative frame slots (second's n at 8(%rsp); half's x
         ;; f64 param spills from %xmm0 to 24(%rsp), divisor 2.0 at 16(%rsp)).
         (compiler-backend-string-contains? asm "    movq %rdi, 8(%rsp)\n")
         (compiler-backend-string-contains? asm "    movsd %xmm0, 24(%rsp)\n")
@@ -15517,7 +15517,7 @@
         (not (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Windows f64 ABI emit-shape coverage (#1456): the first four positional
+;; Windows f64 ABI emit-shape coverage: the first four positional
 ;; f64 args use xmm0..xmm3, the fifth is stacked after the 32-byte shadow
 ;; space, and f64 returns remain in xmm0.
 (define (compiler-backend-win64-f64-abi-source) : String
@@ -15542,7 +15542,7 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
-          ;; #107: Win64 keeps %rbp for the prologue/SEH frame, but the M-G3
+          ;; Win64 keeps %rbp for the prologue/SEH frame, but the M-G3
           ;; stage-1 rsp-rebase makes local frame slots rsp-relative (negative
           ;; -N(%rbp) -> M(%rsp)); the positive incoming stack-arg offset
           ;; 48(%rbp) stays on %rbp (caller memory, still valid).
@@ -15558,7 +15558,7 @@
           (compiler-backend-string-contains? asm "    call _tl_f")
           (compiler-backend-string-contains? asm "    call _tl_sum5")
           (compiler-backend-string-contains? asm "    call _tl_call5"))
-        ;; #107: the f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
+        ;; The f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
         (compiler-backend-string-contains? asm "    movsd %xmm0, 56(%rsp)\n")
         (not (compiler-backend-string-contains? asm "too many call args"))
         (not (compiler-backend-string-contains? asm "    syscall"))
@@ -15669,7 +15669,7 @@
     (compiler-backend-register-f32-aggregate-target-ok?
       (CompilerBackendTarget.Windows))))
 
-;; #750: a SysV call with seven integer args no longer rejects as "too many
+;; A SysV call with seven integer args no longer rejects as "too many
 ;; call args". Source-level numeric literals are lowered into locals before
 ;; call-arg emission, so the 7th and 8th args still exercise the variable
 ;; stack-store path while `add8` reads them back from 16(%rbp)/24(%rbp).
@@ -15686,7 +15686,7 @@
 (define (compiler-backend-stack-int-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-int-args-source))
     [(ResultCompilerBackend.Ok asm)
-      ;; #107: under FPO the outgoing stack-arg area is reserved once in the
+      ;; Under FPO the outgoing stack-arg area is reserved once in the
       ;; prologue (no per-call `subq $16`/`addq $16`); both stack args are
       ;; stored to 0(%rsp)/8(%rsp), and the callee reads the incoming stack args
       ;; rsp-relative (96/104(%rsp)) instead of positive 16/24(%rbp). The
@@ -15713,7 +15713,7 @@
               "    movq 104(%rsp), %rax\n"))))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
+;; A SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
 ;; stack through a scavenged GP bit-copy; the callee reads them back via movsd
 ;; from the incoming stack slots.
 (define (compiler-backend-stack-f64-args-ok?) : bool
@@ -15721,7 +15721,7 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
-        ;; #107: FPO reserves the outgoing stack-arg area in the prologue (no
+        ;; FPO reserves the outgoing stack-arg area in the prologue (no
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
         ;; bit-copies and the callee reads incoming f64 stack args rsp-relative
         ;; (112/120(%rsp)) instead of positive 16/24(%rbp).
@@ -15735,7 +15735,7 @@
           (compiler-backend-string-contains? asm "    movsd 120(%rsp), %xmm0\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; #750: a mixed call spilling one int and one f64 keeps the integer and float
+;; A mixed call spilling one int and one f64 keeps the integer and float
 ;; register banks independent and uses the right scratch register for each
 ;; spilled arg.
 (define (compiler-backend-stack-mixed-args-ok?) : bool
@@ -15749,7 +15749,7 @@
         (compiler-backend-stack-mix-call-ok? asm))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; #750: the Windows positional ABI still reserves 32-byte shadow space, stacks
+;; The Windows positional ABI still reserves 32-byte shadow space, stacks
 ;; args after the first four, and stores them after the shadow space.
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (match (compiler-backend-emit-source-for-target
@@ -16026,7 +16026,7 @@
         (compiler-backend-direct-tail-call-identity-elided? target asm))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; #107: under FPO the source params spill to rsp-relative slots whose offsets
+;; Under FPO the source params spill to rsp-relative slots whose offsets
 ;; depend on each fixture's frame size (and target), so slot0/slot1 are passed
 ;; per call site instead of the old fixed -8/-16(%rbp). A "" slot1 means the
 ;; second param is not spilled (correctly optimised away — e.g. the `finish x x`
@@ -16054,7 +16054,7 @@
               (compiler-backend-direct-tail-call-param-store reg1 slot1)))))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; #107: under FPO the f64 params spill to rsp-relative slots (offsets differ by
+;; Under FPO the f64 params spill to rsp-relative slots (offsets differ by
 ;; target), passed per call site instead of the old fixed -8/-16(%rbp).
 (define (compiler-backend-direct-tail-call-f64-keeps-spills?
   [target : CompilerBackendTarget]
@@ -16081,7 +16081,7 @@
   (if (compiler-backend-target-windows? target)
     ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 72(%rbp).
     "    movq %r10, 72(%rbp)\n"
-    ;; #107: FPO makes the Linux outgoing tail stack-arg store rsp-relative.
+    ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 104(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-stack-target-ok?
@@ -16125,7 +16125,7 @@
   (if (compiler-backend-target-windows? target)
     ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 136(%rbp).
     "    movq %r10, 136(%rbp)\n"
-    ;; #107: FPO makes the Linux outgoing tail stack-arg store rsp-relative.
+    ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 168(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-mixed-target-ok?
@@ -16848,7 +16848,7 @@
             (compiler-backend-string-contains? asm "    movq (%r10), %rax\n"))))]
     [(ResultCompilerBackend.Err _) false]))
 
-;; Backend emit-shape coverage for arena-owned boxes (#1443). `(box 42)`
+;; Backend emit-shape coverage for arena-owned boxes. `(box 42)`
 ;; allocates `size-of(i64)` = 8 bytes via `tl_alloc` and stores the boxed value
 ;; into that storage; `(box-get b)` loads the value back through the box pointer.
 ;; Boxes reuse the existing `tl_alloc` / pointer store/load paths (no new IR or
@@ -16998,7 +16998,7 @@
     (compiler-backend-inline-fast-alloc-multi-size-target-ok?
       (CompilerBackendTarget.Windows))))
 
-;; Backend emit-shape coverage for local tuple construction/ref (#1414).
+;; Backend emit-shape coverage for local tuple construction/ref.
 ;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
 ;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
 (define (compiler-backend-tuple-source) : String
@@ -17055,7 +17055,7 @@
         (= (compiler-backend-alloc-call-count asm) 1)
         ;; (box Nil) heap-allocates a full inline ListI64 value: tag (8) plus
         ;; the largest variant payload Cons(i64, (Box ListI64)) = 16, so 24
-        ;; bytes. With default-inline aggregates (#1867) the box holds the
+        ;; bytes. With default-inline aggregates the box holds the
         ;; inline value, not an 8-byte handle.
         (compiler-backend-string-contains-alloc-size? asm 24)
         (compiler-backend-string-contains? asm "    leaq -")
@@ -17067,7 +17067,7 @@
   (match (compiler-backend-emit-source
     (compiler-lower-inline-hot-loop-struct-source))
     [(ResultCompilerBackend.Ok asm)
-      ;; #2386: the loop's 16-byte `Pair` is now a register-resident group (built
+      ;; The loop's 16-byte `Pair` is now a register-resident group (built
       ;; and read in registers), so the loop body neither heap-allocates nor needs
       ;; a stack-slot address for it.
       (backend-and4
@@ -17112,7 +17112,7 @@
       (backend-and4
         (compiler-backend-string-contains? asm "main:\n")
         (>= (compiler-backend-string-count asm "    call ") 6)
-        ;; #1867 sret ABI: aggregate args/returns pass by caller slot pointer
+        ;; sret ABI: aggregate args/returns pass by caller slot pointer
         ;; and inline construction is stack storage -- no arena allocation.
         (= (compiler-backend-alloc-call-count asm) 0)
         (not
@@ -17132,7 +17132,7 @@
     (compiler-lower-inline-aggregate-copy-source)
     target)
     [(ResultCompilerBackend.Ok asm)
-      ;; #2386: `Pair` is a 16-byte all-integer struct, so it is register-resident
+      ;; `Pair` is a 16-byte all-integer struct, so it is register-resident
       ;; -- `id-pair` is a register-pair passthrough that carries both words in
       ;; registers end-to-end. The function is still emitted, but it does NOT do
       ;; the old pointer-load / pointer-store byte-copy ("(%r11), %rax" then

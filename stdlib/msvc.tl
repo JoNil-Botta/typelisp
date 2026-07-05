@@ -1,4 +1,4 @@
-;# MSVC tool discovery (#855): find link.exe and its command environment.
+;# MSVC tool discovery: find link.exe and its command environment.
 ;#
 ;# Detect an already-configured MSVC command environment (a Developer Command
 ;# Prompt or equivalent) first. If that is absent, scan the standard Visual
@@ -559,7 +559,7 @@
   (let
     [result : MsvcMaybeToolset (MsvcNoToolset)]
     (begin
-      ;; Keep the explicit result local until aggregate match-arm returns are fixed (#3524).
+      ;; Keep the explicit result local: aggregate match-arm returns are not supported.
       (match (fs.try-read-dir-vec (& parent))
         [(fs.OkIoStringVector entries)
           (set! result (toolset-scan-entries entries 0 parent tool "" "" false))]

@@ -1,12 +1,11 @@
 ;; compiler_optimize_smoke.tl - Runnable smoke for compiler_optimize.tl
-;; (#543 constant folding, #544 dead-code elimination, #546 common
-;; subexpression elimination, #545 copy propagation, #924 strength reduction,
-;; #925 typed constant/cast folding, #926 CFG simplification, #930 bounds-check
-;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, #923
-;; fixed-point iteration, self-tail-recursion lowering, #1348 sparse conditional
-;; constant propagation, #1489 aggregate stack promotion, #1349 global value
-;; numbering/cross-block copy propagation, and #1801 conservative loop-invariant
-;; code motion).
+;; (constant folding, dead-code elimination, common subexpression elimination,
+;; copy propagation, strength reduction, typed constant/cast folding, CFG
+;; simplification, bounds-check elimination, CFG/dominance/SSA verification,
+;; opt-level policy, fixed-point iteration, self-tail-recursion lowering,
+;; sparse conditional constant propagation, aggregate stack promotion, global
+;; value numbering/cross-block copy propagation, and conservative
+;; loop-invariant code motion).
 ;;
 ;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
 ;; reduces safe algebraic identities, eliminates an unused pure temporary,
@@ -445,7 +444,7 @@
         "bounds_ok.1"
         (CompilerIrInstrList.Nil)))))
 
-;; #930 element-store survival: a `StorePtr` whose target is the object's tracked
+;; Element-store survival: a `StorePtr` whose target is the object's tracked
 ;; length-slot pointer (var 10) changes the length and must clear the facts (the
 ;; 2nd check survives -> count 2). A `StorePtr` to any other pointer (var 99, an
 ;; array element) cannot change the length, so the facts survive and the 2nd

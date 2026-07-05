@@ -1,4 +1,4 @@
-;; doc_html.tl - Deterministic HTML renderer for extracted docs (#870).
+;; doc_html.tl - Deterministic HTML renderer for extracted docs.
 ;;
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`

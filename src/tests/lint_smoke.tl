@@ -1,4 +1,4 @@
-;; lint_smoke.tl - Runnable smoke for lint_core.tl (#1163).
+;; lint_smoke.tl - Runnable smoke for lint_core.tl.
 (import stdlib.string)
 (import "../lint_core.tl")
 

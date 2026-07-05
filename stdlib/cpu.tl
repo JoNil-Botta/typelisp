@@ -1,10 +1,9 @@
 ;# stdlib/cpu.tl - host CPU SIMD ISA detection via the cpuid/xgetbv primitives.
 ;#
-;# Mirrors the retired scripts/simd_cpuid_probe.c (refs #1168, built on the
-;# #1167 cpuid/xgetbv instructions). A SIMD ISA is reported "runnable"
-;# only when BOTH the CPUID feature bit AND the OS XSAVE state enablement (XCR0
-;# via XGETBV) are present -- i.e. the running host can actually execute it, not
-;# merely that the CPU advertises the feature.
+;# A SIMD ISA is reported "runnable" only when BOTH the CPUID feature bit AND
+;# the OS XSAVE state enablement (XCR0 via XGETBV) are present -- i.e. the
+;# running host can actually execute it, not merely that the CPU advertises
+;# the feature.
 ;#
 ;# `(cpuid leaf subleaf)` returns a (Tuple i32 i32 i32 i32) of (eax ebx ecx edx);
 ;# `(xgetbv index)` returns the 64-bit XCR value. Register values are widened to

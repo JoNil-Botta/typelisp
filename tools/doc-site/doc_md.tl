@@ -1,5 +1,5 @@
-;; doc_md.tl - Constrained-Markdown scanner and HTML renderer for #871's
-;; language reference renderer (#1276). Splits the SPEC.md/README.md subset into
+;; doc_md.tl - Constrained-Markdown scanner and HTML renderer for the
+;; language reference pages. Splits the SPEC.md/README.md subset into
 ;; typed blocks and converts block/inline constructs to escaped HTML:
 ;;   `code`  -> <code>...</code>
 ;;   *em*    -> <em>...</em>     (also _em_)

@@ -1,4 +1,4 @@
-;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes (#3871).
+;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
 (import stdlib.io)
 (import stdlib.vector as svec)
 (import "../compiler_load.tl")

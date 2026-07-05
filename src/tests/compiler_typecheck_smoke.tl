@@ -1,4 +1,4 @@
-;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl (#426).
+;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
 (import stdlib.io)
 (import stdlib.vector as svec)
 (import "../compiler_typecheck.tl")
@@ -1614,7 +1614,7 @@
       "typecheck: module macro identity extension incompatible failed")))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
-;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
+;; bodies. The macro-output serializer round-trips arithmetic,
 ;; struct-get, array.make-array, array.ref/array-set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with

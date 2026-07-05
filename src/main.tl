@@ -11,7 +11,7 @@
 ;; inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`; each
 ;; `*-run-from` entry parses its own arguments starting at index 2.
 ;;
-;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
+;; This is the shipped Rust-free stage0 dispatcher: the toolchain
 ;; needs neither a host-language compiler driver nor per-command driver
 ;; recompilation. Every command shares the single full typechecker frontend
 ;; (`compiler_check_core` ->

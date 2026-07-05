@@ -3425,7 +3425,7 @@
                       ;; panics/aborts, which exits 134) is a test
                       ;; FAILURE, not a host crash: report the raw status
                       ;; above, but exit cleanly with 1 so CI does not retry
-                      ;; it as a transient #1204 segfault.
+                      ;; it as a transient host segfault.
                       (if (= status 0)
                         0
                         1)))]
@@ -4357,7 +4357,7 @@
           [source : String (svec.string-vec-get (& paths) cursor "")]
           ;; Match compile --batch: isolate each entry in a destroyable scratch
           ;; arena. Lexical arena rewind keeps overflow chunks retired until the
-          ;; owning arena is destroyed (#2441), so destroying the entry arena is
+          ;; owning arena is destroyed, so destroying the entry arena is
           ;; required for long one-process batches to stay bounded.
           [entry-result : i64
             (tltest-run-batch-check-path source roots backend-target)]

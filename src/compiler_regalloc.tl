@@ -1,4 +1,4 @@
-;; compiler_regalloc.tl - Planning-only scalar register allocation (#554).
+;; compiler_regalloc.tl - Planning-only scalar register allocation.
 ;;
 ;; This pass mirrors the legacy backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
@@ -18,7 +18,7 @@
 
 (defenum CompilerRegLocation
   (Register String)
-  ;; #2386: a 2-word register-group value lives in two GP registers (word0,
+  ;; A 2-word register-group value lives in two GP registers (word0,
   ;; word1). A group that cannot get two registers spills to a 16-byte slot,
   ;; represented as the ordinary CompilerRegLocation.Spill (the backend reads the second
   ;; word at offset-8 using the program word-count map).
@@ -1651,7 +1651,7 @@
           point)
         (set! index (+ index 1))))))
 
-;; #3489 (PR1): note a live point into the per-var SEGMENTS only, WITHOUT
+;; Note a live point into the per-var SEGMENTS only, WITHOUT
 ;; touching the coarse [start,end] interval. Bridges pass-through liveness so a
 ;; value live ACROSS an instruction is one continuous segment. Coarse already
 ;; spans this interior point (min..max), so leaving it untouched keeps the
@@ -1733,7 +1733,7 @@
       (compiler-live-instr-uses instr)
       0
       point)
-    ;; #3489 (PR1): bridge live-after values into the SEGMENT at `point` (LLVM
+    ;; Bridge live-after values into the SEGMENT at `point` (LLVM
     ;; SlotIndex semantics: a value live-OUT of this instruction is live AT it),
     ;; making a pass-through value one continuous segment instead of degenerate
     ;; single-point segments that wrongly fail the half-open overlap test. A value
@@ -3766,15 +3766,14 @@
   [intervals : CompilerRegIntervalList]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ params _ _ blocks)
-      ;; #107 (case c): besides call-spanning floats, call-spanning VECTOR and
+      ;; Besides call-spanning floats, call-spanning VECTOR and
       ;; MASK vars must also stay ineligible -- their register classes
       ;; (%ymm/%zmm, %k) are caller-saved-only with no SIMD save/restore rewrite,
-      ;; so a value kept across a call would be clobbered. b97814cac replaced the
-      ;; old blanket call-live exclusion with float-only mark-float-spanning to
-      ;; re-admit call-spanning INTEGERS (which win the callee-saved GP pool --
-      ;; sound) but as a side effect also re-admitted vectors/masks (unsound: they
-      ;; won a caller-saved vector reg across a call). This re-excludes them
-      ;; without reverting the integer win. Both marks are no-ops in call-free
+      ;; so a value kept across a call would be clobbered. The exclusion is
+      ;; per-class rather than a blanket call-live exclusion: call-spanning
+      ;; INTEGERS stay eligible (they win the callee-saved GP pool -- sound),
+      ;; while vectors/masks would win a caller-saved vector reg across a call
+      ;; (unsound). Both marks are no-ops in call-free
       ;; vectorised leaf loops (the only shape the auto-vectorizer emits), so real
       ;; AVX codegen is unchanged.
       (match (compiler-reg-function-vector-mask-defs func)
@@ -4068,7 +4067,7 @@
         (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
 
-;; #3489 (PR4) -> general hole-filling: is `reg` held by an active value that
+;; General hole-filling: is `reg` held by an active value that
 ;; conflicts with `var`? Two same-register values conflict iff their live
 ;; SEGMENTS overlap. This is sound for EVERY candidate because the allocator runs
 ;; on the merged-root index, where each candidate carries complete segments -- a
@@ -4107,7 +4106,7 @@
               var
               hole-aware-vars))])]))
 
-;; #3489 (PR4): first register not in conflict with `var` over its live segments
+;; First register not in conflict with `var` over its live segments
 ;; (CompilerRegMaybeString.No if every register is occupied by an interfering value).
 (define (compiler-reg-first-free-register-holes
   [regs : CompilerRegStringList]
@@ -4143,7 +4142,7 @@
             (CompilerRegMaybeActive.Some other)
             (CompilerRegMaybeActive.Some item))])]))
 
-;; #2386: furthest-ending active var that is NOT a 2-word register-group var.
+;; Furthest-ending active var that is NOT a 2-word register-group var.
 ;; Spilling is only ever applied to scalar (single-register) vars; a group var
 ;; occupies a register PAIR and cannot be evicted to a single 8-byte spill slot
 ;; without corrupting word1, so it must never be chosen as a spill victim. Group
@@ -4447,10 +4446,9 @@
           [(CompilerRegMaybeInterval.No) true])]
       [(CompilerRegMaybeInterval.No) true])))
 
-;; #3486 infrastructure: answer interference from per-var live segments when both
-;; sides have segment data, with the old coarse interval as the conservative
-;; fallback. Allocation still calls compiler-reg-vars-interfere-index? until the
-;; policy changes that consume holes are proven independently.
+;; Answer interference from per-var live segments when both
+;; sides have segment data, with the coarse interval as the conservative
+;; fallback.
 (define (compiler-reg-vars-interfere-segmented-index?
   [intervals : CompilerRegIntervalIndex]
   [left : i64]
@@ -4754,7 +4752,7 @@
 ;; SOUNDNESS: only DIRECT `CompilerIrInstr.Mov dst (CompilerIrValue.Var src)` copies with
 ;; def-count[dst]==def-count[src]==1 enter the same-value relation. Phi inputs
 ;; (path-dependent) and multi-def vars -- the loop-carried set!/back-edge values
-;; that are the #3489 fibonacci/four_acc/bce_sum miscompile class -- are EXCLUDED
+;; that are the fibonacci/four_acc/bce_sum miscompile class -- are EXCLUDED
 ;; because loop-carried values are lowered to phis or carry multiple defs and so
 ;; are never single-def direct copies. The relaxation only WAIVES interference
 ;; for proven same-value pairs; the geometry predicate is unchanged, and the
@@ -5675,7 +5673,8 @@
 ;; cross pair non-interfering; the class is type-homogeneous and src/dst types are
 ;; already checked), so the coalescing RESULT is identical -- only the common
 ;; disjoint case takes the fast path. When extents overlap, the exact
-;; classes-compatible? check still decides, preserving #3489 semantics precisely.
+;; classes-compatible? check still decides, preserving coalescing semantics
+;; precisely.
 (define (compiler-reg-coalesce-init-coarse!
   [root-start : (Array i64)]
   [root-end : (Array i64)]
@@ -6390,7 +6389,7 @@
 ;; remat-use-site-ok? remains conservative (the bounds-check cmp's scavenged
 ;; scratch could clobber a single-instruction remat home).
 ;;
-;; IrInstrPack is ALSO not a clobber point (#122-class generalization). A Pack
+;; IrInstrPack is ALSO not a clobber point. A Pack
 ;; (the 16-byte register-resident aggregate build for Maybe/Pair/tuple) never
 ;; clobbers a caller-saved register holding another live value:
 ;; compiler-backend-emit-pack-words takes a pure register-move fast path into the
@@ -12145,7 +12144,7 @@
               (compiler-live-set-insert ineligible var)
               ineligible))])]))
 
-;; #107: mark every var that is a member of `member-set` AND whose live interval
+;; Mark every var that is a member of `member-set` AND whose live interval
 ;; spans a call point as ineligible. Used by the SIMD planner to keep
 ;; call-spanning VECTOR and MASK values out of registers: those classes
 ;; (%ymm/%zmm, %k) are caller-saved-only and have no save/restore rewrite, so a
@@ -12171,7 +12170,7 @@
               (compiler-live-set-insert ineligible var)
               ineligible))])]))
 
-;; #2386: the set of 2-word register-group vars in a function -- those defined by
+;; The set of 2-word register-group vars in a function -- those defined by
 ;; CompilerIrInstr.Pack and those read by CompilerIrInstr.Word (the group value being extracted),
 ;; closed over Mov/Phi copies. These vars need TWO general-purpose registers.
 (define (compiler-reg-group-vars-instr
@@ -12211,7 +12210,7 @@
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-group-vars-blocks set (compiler-ir-block-seq-to-list seq))]))
 
-;; #2386: a Phi merging group values, or a Mov copying one, must mark its dst (and
+;; A Phi merging group values, or a Mov copying one, must mark its dst (and
 ;; the other endpoints) as a group var too -- otherwise the merged value gets a
 ;; single register and word1 is dropped. Group-ness flows both ways across these
 ;; copies, so we close the seed set over them to a fixpoint below.
@@ -12264,7 +12263,7 @@
         set)]
     [_ set]))
 
-;; #2386: iterate the instruction SEQ in place by index. The fixpoint re-runs the
+;; Iterate the instruction SEQ in place by index. The fixpoint re-runs the
 ;; propagation pass once per round; materializing each block's instr-seq to a list
 ;; every round (compiler-ir-instr-seq-to-list) allocated O(rounds * instrs) of
 ;; transient list nodes per function, which on the largest functions overflowed
@@ -12310,7 +12309,7 @@
       next
       (compiler-reg-group-vars-fixpoint next blocks))))
 
-;; #2386: program-wide aggregate-type-name -> machine-word count map, mirroring
+;; Program-wide aggregate-type-name -> machine-word count map, mirroring
 ;; CompilerBackendProgramIndex.group-word-counts. The backend sets this once
 ;; before per-function planning (compiler-reg-set-group-counts!). It lets the
 ;; register allocator recognise a 2-word register-group value by its TYPE even
@@ -12399,7 +12398,7 @@
           (compiler-reg-group-vars-blocks (compiler-live-set-empty) blocks))
         blocks)]))
 
-;; #3489 (PR2): LLVM-style coalescing-by-rename. LLVM removes a copy by renaming
+;; LLVM-style coalescing-by-rename. LLVM removes a copy by renaming
 ;; the two virtual registers into ONE, so a coalesced class is a single value the
 ;; allocator places atomically. Here: collapse each coalesce class to its root
 ;; var. `compiler-reg-merged-root-index` returns an interval index in which ONLY
@@ -12489,7 +12488,7 @@
     (begin
       (compiler-reg-fill-i64-array root-starts -1)
       (compiler-reg-fill-i64-array root-ends -1)
-      ;; #3489 (PR4): make-array does NOT zero object slots to Nil, so every
+      ;; make-array does NOT zero object slots to Nil, so every
       ;; root-segs entry MUST be initialised before the prepend accumulation --
       ;; otherwise the union list's tail is a garbage pointer and iterating it
       ;; later (interference check / call-spanning shadow) dereferences it.
@@ -12519,7 +12518,7 @@
                 (if (> (array-ref orig-ends v) (array-ref root-ends rr))
                   (array-set! root-ends rr (array-ref orig-ends v))
                   unit)
-                ;; #3489 (PR4) + #3788: the root carries the UNION of its
+                ;; The root carries the UNION of its
                 ;; members' segments. Normal coalescing only merges
                 ;; non-interfering members, but same-value coalescing deliberately
                 ;; admits overlapping members, so keep the root segment list
@@ -12599,7 +12598,7 @@
         0
         (compiler-live-set-empty)))))
 
-;; #3489 (PR2): expand a per-root assignment table to all original vars -- every
+;; Expand a per-root assignment table to all original vars -- every
 ;; member of a coalesce class inherits its root's location (register or spill
 ;; slot). This realises the coalesce: the copy `member <- root` becomes
 ;; src-reg == dst-reg and is dropped at emission. A var whose root got no
@@ -12659,7 +12658,7 @@
     (array.make-array i64 0)
     CompilerRegOccupantSplitNil))
 
-;; #3489 (PR2): the spill-weight eviction scores a candidate by its use count,
+;; The spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
 ;; least-used member of the class (e.g. a phi result used once), so the eviction
 ;; underweights a hot coalesced loop value and spills it (crc32's accumulator).
@@ -14820,9 +14819,9 @@
   (let
     [moves
       : CompilerRegMoveList
-      ;; #3489 (PR3): phi back-edge moves NON-strict so loop-carried phi/copy
-      ;; pairs coalesce (then merge into one root via PR2). SIMD already passed
-      ;; false here; only the scalar-opt2 plan gains the loop coalescing.
+      ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
+      ;; (then merge into one root via coalescing-by-rename). SIMD already
+      ;; passed false here; only the scalar-opt2 plan gains the loop coalescing.
       ;; M-C (part 1): the scalar-opt2 path additionally harvests width-64 int
       ;; casts as copies (appended at the tail; see function-moves-with-casts),
       ;; so the bounds-check index temps can coalesce with their sources. The
@@ -14847,7 +14846,7 @@
     ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
     ;; identical value and may coalesce even when their live segments overlap.
     ;; Vars spanning a modeled caller-clobber point stay out of the same-value
-    ;; relation for now; their save/restore and regmask constraints are already
+    ;; relation; their save/restore and regmask constraints are already
     ;; represented by normal interference and must not be bypassed by an overlap
     ;; waiver.
     [sv-parents
@@ -14896,7 +14895,7 @@
           (array-length (struct-get coalesce-index starts))
           sv-parents)
         (CompilerRegCoalesceMap (array.make-array i64 0)))]
-    ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run
+    ;; Collapse coalesce classes to one root candidate each, and run
     ;; the allocation passes over those roots with an EMPTY coalesce map (the
     ;; merge already realised coalescing, so no per-member coalesce-location is
     ;; needed). SIMD/AVX (allow-caller-saved-zero-call = false) builds no coalesce
@@ -14980,7 +14979,7 @@
         func
         coalesce
         (array-length (struct-get interval-index starts)))]
-    ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
+    ;; The effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
     ;; parameter that must stay stack/ABI-homed; on Windows that let a stack
@@ -15011,7 +15010,7 @@
       (compiler-reg-callee-saved-integer-registers-for-abi abi)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
-    ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
+    ;; Loop-depth-weighted use counts drive spill-weight eviction on the
     ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
     ;; discriminator). An empty array selects the original furthest-end policy,
     ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
@@ -15024,8 +15023,8 @@
         ;; use only the ABI callee-saved suffix and so oversubscribe even below
         ;; the full scalar pool size -- got an empty weight array and fell back to var-id
         ;; order, keeping the rematerialisable constant in a register and spilling
-        ;; a more expensive non-remat value. Always scoring fixes that (#3489 PR2:
-        ;; each coalesced class scored by its hottest member). The discounted
+        ;; a more expensive non-remat value. Always scoring fixes that (each
+        ;; coalesced class scored by its hottest member). The discounted
         ;; weight is combined with the RAW use-density as a tie-break (combine-
         ;; spill-weights) so that among equal-discounted values the genuinely
         ;; coldest one spills, not an arbitrary tied one.
@@ -15192,7 +15191,7 @@
     ;; SplitKit removed: CompilerRegPlan still carries an (empty) split-plan
     ;; field, but nothing populates or consumes it.
     [split-plan : CompilerRegSplitPlan (compiler-reg-split-plan-empty)]
-    ;; #3489 (PR2): the passes above assigned class ROOTS; expand so every member
+    ;; The passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.
     [final-assignments : CompilerRegAssignmentTable
@@ -15473,7 +15472,7 @@
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
 
-;; --- stack-slot compaction and storage coloring (#2598) ---------------------
+;; --- stack-slot compaction and storage coloring -----------------------------
 ;; One frame slot per raw IR variable wastes most of the frame once register
 ;; allocation has moved many values into registers. The scalar pass renumbers
 ;; stack-resident scalar variables into a dense frame-slot prefix after regalloc,
@@ -17381,7 +17380,7 @@
             remap
             (compiler-reg-max slot-count param-floor)))])))
 
-;; --- var-id remap application (#2598) --------------------------------------
+;; --- var-id remap application ----------------------------------------------
 ;; The backend computes stack slots from variable ids at many emission sites,
 ;; so compaction is applied by rewriting var ids in the IR: each stack-resident
 ;; variable id becomes its dense slot id and the formula slot follows. Pinned
@@ -24140,7 +24139,7 @@
       (array-set! parents 3 2)
       (array-set! parents 4 4)
       (let
-        ;; #3489 -> general hole-filling: the allocator runs on the merged-root
+        ;; General hole-filling: the allocator runs on the merged-root
         ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
         ;; its own live range, a class root the union of its members'. Every
         ;; segment hole is therefore genuine deadness, so ANY value may reuse an

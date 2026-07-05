@@ -1,4 +1,4 @@
-;; Self-hosted formatter special-form rule smoke test (#367).
+;; Self-hosted formatter special-form rule smoke test.
 (import "../format_rules.tl")
 (import "../format_rules_doc_compat.tl")
 

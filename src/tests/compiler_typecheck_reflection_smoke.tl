@@ -1,4 +1,4 @@
-;; compiler_typecheck_reflection_smoke.tl - Focused comptime reflection typecheck smoke (#913).
+;; compiler_typecheck_reflection_smoke.tl - Focused comptime reflection typecheck smoke.
 (import "../compiler_typecheck.tl")
 
 (define (main) : i64

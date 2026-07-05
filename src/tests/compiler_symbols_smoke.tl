@@ -1,4 +1,4 @@
-;; compiler_symbols_smoke.tl - Runnable smoke for compiler_symbols.tl (#405).
+;; compiler_symbols_smoke.tl - Runnable smoke for compiler_symbols.tl.
 (import "../compiler_symbols.tl")
 
 (define (main) : i64

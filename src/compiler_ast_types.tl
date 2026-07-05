@@ -1,23 +1,20 @@
-;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST (#334).
+;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST.
 ;;
 ;; This module is intentionally separate from ast_types.tl, which remains the
 ;; smaller compile_smoke AST. The types below mirror Rust's src/ast.rs and
-;; src/types.rs closely enough for the future Sexpr -> real-AST parser to target
-;; them without committing to typechecking, lowering, or code generation yet.
-;;
-;; Deferred on purpose: parser result/error wrappers, typechecker registries,
-;; inferred types, and lowered IR metadata. Source spans are represented as data
-;; but later parser work decides when they are populated.
+;; src/types.rs closely enough for the Sexpr -> real-AST parser to target them.
+;; Parser result/error wrappers, typechecker registries, inferred types, and
+;; lowered IR metadata live elsewhere.
 (import compiler_intern as ci)
 (import stdlib.array)
 
-;; #2357: arena access for the node-pool grow paths -- a regrown pool array must
+;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
 ;; (which gets destroyed, leaving the global pool dangling). arena.tl has no
 ;; imports, so this adds no cycle.
 (import stdlib.arena)
 
-;; #2604: hash/equality helpers for the ty-node hash-consing table below.
+;; Hash/equality helpers for the ty-node hash-consing table below.
 (import stdlib.hash)
 (import stdlib.string)
 
@@ -226,7 +223,7 @@
   (Bytes)
   (Unit)
   (Never)
-  ;; User-facing macro code-as-data type (#1135). This is a single concrete
+  ;; User-facing macro code-as-data type. This is a single concrete
   ;; compile-time-only type; the produced runtime type is tracked internally by
   ;; CTFE values, not as a source-level type parameter.
   (Expr)
@@ -410,15 +407,15 @@
 (defenum AstLambda
   (Lambda AstParamList AstMaybeType i64))
 
-;; Boxed payload for `AstExpr.SpmdScan` (#3299). With ten fields including two
+;; Boxed payload for `AstExpr.SpmdScan`. With ten fields including two
 ;; inline `AstType`s, the variant is 152 B -- the largest `AstExpr` variant,
 ;; which sets the size of every node in the flat pool. spmd-scan is rare, so
 ;; boxing its payload collapses the variant to one word and shrinks every node.
 (defenum AstSpmdScan
   (Scan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
 
-;; Boxed payloads for the 104 B AstExpr tier (after #3313/#3317 brought the
-;; node to 104 B). AstExpr.Let inlines AstLetBindingList; AstExpr.SpmdReduce has
+;; Boxed payloads for the 104 B AstExpr tier.
+;; AstExpr.Let inlines AstLetBindingList; AstExpr.SpmdReduce has
 ;; an inline AstType plus six scalars. Boxing both drops the node to 80 B.
 (defenum AstLet
   (Let AstLetBindingList i64))
@@ -426,8 +423,8 @@
 (defenum AstSpmdReduce
   (Reduce AstReduceOp i64 AstType i64 i64 i64 i64))
 
-;; Boxed payloads for the 80 B AstExpr tier (after #3313/#3317/#3325 brought
-;; the node to 80 B). AstExpr.Foreach inlines an AstType plus four scalars;
+;; Boxed payloads for the 80 B AstExpr tier.
+;; AstExpr.Foreach inlines an AstType plus four scalars;
 ;; AstExpr.WithResource inlines two list heads. Boxing both drops the node to
 ;; 56 B (bounded by the AstType-carrying variants like Cast/Ann/Init).
 (defenum AstForeach
@@ -436,8 +433,8 @@
 (defenum AstWithResource
   (WithResource AstResourceBindingList AstExprList))
 
-;; Boxed payload for `AstExpr.Match`. After boxing AstExpr.Lambda/AstExpr.SpmdScan
-;; (#3313), `AstExpr.Match i64 AstMatchArmList` is the largest variant at 112 B
+;; Boxed payload for `AstExpr.Match`. After boxing AstExpr.Lambda/AstExpr.SpmdScan,
+;; `AstExpr.Match i64 AstMatchArmList` is the largest variant at 112 B
 ;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
 ;; Boxing it collapses the variant to one word, dropping the node to 104 B.
 (defenum AstMatch
@@ -464,9 +461,9 @@
   (StringRef i64 i64)
   (While i64 i64)
   (Begin AstExprList)
-  ;; `(unsafe expr+)` (#1053): a `begin`-like block that additionally marks an
-  ;; unsafe context (v1 has the same runtime/type behavior as `begin`; the
-  ;; unsafe-context flag is consumed by later raw-pointer ops, #955).
+  ;; `(unsafe expr+)`: a `begin`-like block that additionally marks an
+  ;; unsafe context (same runtime/type behavior as `begin`; the
+  ;; unsafe-context flag is consumed by later raw-pointer ops).
   (Unsafe AstExprList)
   (Set i64 i64)
   (Ann i64 AstType)
@@ -497,10 +494,10 @@
   ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
   (Init AstMaybeType)
-  ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
-  ;; type-checked (as the inner expression's type); evaluation lands in #719.
+  ;; Compile-time evaluation form `(comptime expr)`. Parsed and
+  ;; type-checked (as the inner expression's type); evaluated by CTFE.
   (Comptime i64)
-  ;; Macro quote syntax (#1136). The reader desugars prefix quote tokens into
+  ;; Macro quote syntax. The reader desugars prefix quote tokens into
   ;; these list-headed forms before parsing:
   ;;   'x       -> (quote x)
   ;;   `x       -> (quasiquote x)
@@ -514,7 +511,7 @@
   ;; only inside call argument lists. Ordinary typechecking rejects this node;
   ;; macro binding consumes it for `ExprClause` operands.
   (BracketClause AstExprList)
-  ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
+  ;; Narrow Result-like propagation form `(try expr)`. The
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
   (Try i64)
@@ -526,11 +523,11 @@
   (Break)
   (Continue)
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
-  ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
+  ;; `(MutPtr U)`. Lowers to a pointer-sized zero; type is `T`.
   (PtrNull AstType)
-  ;; Null check `(ptr-null? p)` on a raw pointer (#1054). Result is `bool`.
+  ;; Null check `(ptr-null? p)` on a raw pointer. Result is `bool`.
   (PtrNullCheck i64)
-  ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
+  ;; Unsafe raw-pointer operations. The typechecker admits these only
   ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
   (PtrAddrOf i64)
   (PtrRead i64)
@@ -563,7 +560,7 @@
   ;; translate errno.
   (Syscall AstExprList))
 
-;; --- flat AST node pool (flat-node rewrite; owner directive "do the hard thing")
+;; --- flat AST node pool ---
 ;; AstExpr nodes live in one growable pool, referenced by AstNodeId (an index)
 ;; instead of i64. This makes the expression AST a flat array: parsing
 ;; appends nodes (no per-node box), traversal indexes the pool (cache-friendly),
@@ -571,15 +568,15 @@
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
 ;; reusing one backing array; AstNodeId values stay valid because the pool only
 ;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
-;; error). #2604/#2357: start below the old 4M slot baseline while staying large
-;; enough for current selfhost-sized programs to avoid persistent growth arrays.
+;; error). The initial capacity is sized large
+;; enough for selfhost-sized programs to avoid persistent growth arrays.
 ;; Two flat globals (array + count) rather than a reassigned struct: the hot
 ;; push/get paths are inlined everywhere, and a global-struct reassign in that
 ;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
 (define ast-node-pool-slots : (Array AstExpr)
   (array.make-array AstExpr 3145728))
 
-;; #2357: the program (base) arena, captured at global-init while it is the
+;; The program (base) arena, captured at global-init while it is the
 ;; active arena (the pool make-array above proves an allocation has happened, so
 ;; this is the real base handle, not the pre-allocation 0 sentinel). The node
 ;; pools live here for the whole program; a grow MUST allocate the new backing
@@ -607,7 +604,7 @@
   ast-node-pool-count)
 
 ;: Grow the pool's backing array to at least double its current capacity.
-;; #2357: allocate the new backing array in the persistent base arena (see
+;; Allocate the new backing array in the persistent base arena (see
 ;; node-pool-base-arena) so it survives destruction of any scratch arena active
 ;; when the grow fires.
 (define (ast-node-pool-grow!) : unit
@@ -662,8 +659,8 @@
 
 ;: Read the node at `id`.
 ;;
-;; #2357: this MUST stay `array-ref`, not a raw `(ptr-read (ptr-offset (ptr-cast
-;; (array-data ...) : (Ptr AstExpr)) id))`. With #1867 inline-by-value aggregates
+;; This MUST stay `array-ref`, not a raw `(ptr-read (ptr-offset (ptr-cast
+;; (array-data ...) : (Ptr AstExpr)) id))`. With inline-by-value aggregates
 ;; `AstExpr` is a multi-word value; `array-ref` lowers with the correct element
 ;; stride/size, whereas the raw ptr-offset path scales by a fixed word and adds a
 ;; spurious load, reading garbage and corrupting the pool read.
@@ -832,8 +829,8 @@
 ;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). The pool is
 ;; pre-sized for real inputs and fails closed when exhausted because global array
 ;; reassignment in this hot path has triggered opt2 miscompiles.
-;; #2604: with hash-consed pushes (below) the unique-node count for a cli.tl
-;; sized program is a tiny fraction of the former 4M+ duplicated nodes, so the
+;; With hash-consed pushes (below) the unique-node count for a cli.tl
+;; sized program is a tiny fraction of the duplicated-node count, so the
 ;; pool starts small; the proven grow path remains as backstop.
 (define ty-node-pool-slots : (Array AstType)
   (array.make-array AstType 262144))
@@ -857,12 +854,11 @@
 
 ;: Grow the pool's backing array to at least double its current capacity.
 ;;
-;; #2357: restored from feat-aggregate-inline. main fail-closed this pool because
-;; the global-array reassignment here had tripped opt2 miscompiles -- but that was
+;; The global-array reassignment here had tripped opt2 miscompiles -- but that was
 ;; with the raw-ptr `ty-node-get` (now `array-ref`, see below) whose in-place alias
 ;; broke when the backing array was reassigned. With `array-ref` the reassignment
 ;; is safe (same pattern `ast-node-pool-grow!` already uses), and growing is needed
-;; because #1867 inline-aggregate type resolution pushes more nodes (cli.tl/test.tl
+;; because inline-aggregate type resolution pushes more nodes (cli.tl/test.tl
 ;; exceed the old fixed 4M cap). Growing keeps the compile.tl bootstrap at its ~4M
 ;; footprint (no growth) while letting larger programs proceed.
 (define (ty-node-pool-grow!) : unit
@@ -895,8 +891,8 @@
       (set! node-pool-base-arena head-arena)
       (set! ty-node-pool-slots new-slots))))
 
-;; #2596: payload copies for stored nodes. The pool array is persistent
-;; (#2357) and `ty-node-push` dedup compares later candidates against stored
+;; Payload copies for stored nodes. The pool array is persistent
+;; and `ty-node-push` dedup compares later candidates against stored
 ;; nodes, so a stored node must never embed a String, lifetime spine, or
 ;; type-list spine allocated in a transient scratch arena (per-function
 ;; typecheck arenas): after the scratch rewinds, the next dedup probe would
@@ -1263,7 +1259,7 @@
         (ast-node-pool-active-context-capture-type!)
         id))))
 
-;; --- ty-node hash-consing (#2604) -------------------------------------------
+;; --- ty-node hash-consing ----------------------------------------------------
 ;; Type nodes are immutable (`ty-node-set!` has no callers) and constructed
 ;; bottom-up, so identical subtrees can share one id: children are already
 ;; deduplicated when their parent is pushed, which makes shallow field
@@ -1620,7 +1616,7 @@
 
 ;: Read the type node at `id`.
 ;;
-;; #2357: MUST stay `array-ref` (see `ast-node-get`): with #1867 inline-by-value
+;; MUST stay `array-ref` (see `ast-node-get`): with inline-by-value
 ;; `AstType` is a multi-word value, and the raw ptr-offset/ptr-read path mis-scales
 ;; the element stride and reads garbage. `array-ref` lowers with the right size.
 (define (ty-node-get-active [id : i64]) : AstType
@@ -1890,7 +1886,7 @@
 ;; truncating any live nodes. Pushes after this rebuild the index from the
 ;; current node prefix, so a stale dedup entry inherited from a prior batch
 ;; entry's pool snapshot can never resolve to an id whose slot now holds an
-;; unrelated node (#3677).
+;; unrelated node.
 (define (ast-node-pool-context-type-dedup-clear! [pools : AstNodePoolContext]) : unit
   (array-set!
     (struct-get pools type-pool)
@@ -7413,7 +7409,7 @@
                     [_ false])))]
             [_ false]))])))
 
-;; #2357: the ty-node pool now grows on demand (see ty-node-pool-grow!) rather
+;; The ty-node pool grows on demand (see ty-node-pool-grow!) rather
 ;; than failing closed, so a push at capacity allocates a larger backing array and
 ;; assigns the next sequential id -- it never exhausts. Verify that growth.
 (define (compiler-ast-type-pool-exhaustion-smoke?) : bool

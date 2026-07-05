@@ -1,4 +1,4 @@
-;; doc_extract.tl - Self-hosted TypeLisp doc comment extractor (#387).
+;; doc_extract.tl - Self-hosted TypeLisp doc comment extractor.
 ;;
 ;; Public docs use explicit semicolon markers:
 ;;   ;#   module/file doc line, collected separately

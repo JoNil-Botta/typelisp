@@ -1,4 +1,4 @@
-;; doc_site_core.tl - Static documentation site builder core (#964, #1296).
+;; doc_site_core.tl - Static documentation site builder core.
 ;;
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML

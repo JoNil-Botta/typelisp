@@ -17961,6 +17961,65 @@
             (ResultTcType.Ok (ast-ty-ref lifetime referent-ty))])]
       [(ResultTcBorrowPlace.Err message) (ResultTcType.Err message)])))
 
+;; Body-local memo for a call argument's non-contextual inferred type, keyed by
+;; the argument's Spanned payload node id. Call arguments are re-inferred by the
+;; lifetime-substitution pass, the effective-arg (auto-borrow) rewrite, and the
+;; move/borrow-check passes; without a memo each nesting level of a call chain
+;; re-walks its whole argument subtree, which is exponential in nesting depth.
+;; The facts live in the per-function-body tc-body-type-fact table (populated
+;; while recording, dropped by tc-body-type-facts-clear!), so entries never leak
+;; across bodies. Unlike tc-body-type-fact-lookup this lookup also hits during
+;; the recording phase: the redundant walks it collapses run at the same program
+;; point with the same environment as the walk that recorded the fact, so the
+;; recorded type is exactly the type a re-walk would recompute.
+(define (tc-call-arg-fact-key [arg : AstExpr]) : i64
+  (match arg
+    [(AstExpr.Spanned inner-box _) inner-box]
+    [_ -1]))
+
+(define (tc-call-arg-fact-lookup [key : i64]) : TcBodyTypeFact
+  (if (and
+    (>= key 0)
+    (or tc-body-type-facts-recording tc-body-type-facts-consuming))
+    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids key)
+      [(hashmap.I64I64MapFound slot)
+        (if (and (>= slot 0) (< slot tc-body-type-fact-count))
+          (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
+          (TcBodyTypeFact.Miss))]
+      [(hashmap.I64I64MapMissing) (TcBodyTypeFact.Miss)])
+    (TcBodyTypeFact.Miss)))
+
+(define (tc-call-arg-expr-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]) : ResultTcType
+  (let
+    [key : i64 (tc-call-arg-fact-key arg)]
+    (match (tc-call-arg-fact-lookup key)
+      [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
+      [(TcBodyTypeFact.Miss)
+        (match (tc-expr ctx env arg)
+          [(ResultTcType.Ok ty)
+            (begin
+              (if (>= key 0)
+                (tc-body-type-fact-record! key ty)
+                unit)
+              (ResultTcType.Ok ty))]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+
+;; A formal that resolves to a type with no reference lifetimes and no
+;; struct/enum lifetime arguments cannot contribute lifetime bindings to the
+;; call substitution, so the substitution pass may skip inferring that
+;; argument's type entirely (tc-check-call-args typechecks every argument right
+;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
+;; behind an alias are still seen.
+(define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : AstType]) : bool
+  (match (tc-type-collect-reference-lifetimes-into
+    (tc-resolve-type ctx want)
+    TcStringList.Nil)
+    [(TcStringList.Nil) true]
+    [_ false]))
+
 (define (tc-call-effective-arg-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -17972,7 +18031,7 @@
         (let
           [name-text : String (intern-str name)]
           (if (tc-dotted-local-field-name-id? env name)
-            (match (tc-expr ctx env arg)
+            (match (tc-call-arg-expr-type ctx env arg)
               [(ResultTcType.Ok got)
                 (if (tc-call-actual-reference? ctx got)
                   (ResultTcType.Ok got)
@@ -17983,7 +18042,7 @@
                 (tc-call-effective-var-arg-type ctx name-text got)]
               [(ResultTcType.Err message) (ResultTcType.Err message)])))]
       [_
-        (match (tc-expr ctx env arg)
+        (match (tc-call-arg-expr-type ctx env arg)
           [(ResultTcType.Ok got)
             (if (tc-call-actual-reference? ctx got)
               (ResultTcType.Ok got)
@@ -18021,7 +18080,7 @@
           (let
             [name-text : String (intern-str name)]
             (if (tc-dotted-local-field-name-id? env name)
-              (match (tc-expr ctx env arg)
+              (match (tc-call-arg-expr-type ctx env arg)
                 [(ResultTcType.Ok got)
                   (if (tc-call-actual-reference? ctx got)
                     (ResultTcExpr.Ok arg)
@@ -18035,7 +18094,7 @@
                   (tc-call-effective-var-arg-expr ctx name-text got arg)]
                 [(ResultTcType.Err message) (ResultTcExpr.Err message)])))]
         [_
-          (match (tc-expr ctx env arg)
+          (match (tc-call-arg-expr-type ctx env arg)
             [(ResultTcType.Ok got)
               (if (tc-call-actual-reference? ctx got)
                 (ResultTcExpr.Ok arg)
@@ -18083,28 +18142,37 @@
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
           (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
-        (match (tc-call-effective-arg-type ctx env arg want)
-          [(ResultTcType.Ok got)
-            (match (tc-infer-lifetime-subst-from-type
-              ctx
-              lifetimes
-              subst
-              want
-              got)
-              [(ResultTcLifetimeSubst.Ok next-subst)
-                (tc-infer-call-lifetime-subst-at
-                  ctx
-                  env
-                  args
-                  params
-                  (+ index 1)
-                  lifetimes
-                  next-subst)]
-              [(ResultTcLifetimeSubst.Err message)
-                (ResultTcLifetimeSubst.Err
-                  (tc-locate-error-at-expr arg message))])]
-          [(ResultTcType.Err message)
-            (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))])))))
+        (if (tc-lifetime-subst-formal-inert? ctx want)
+          (tc-infer-call-lifetime-subst-at
+            ctx
+            env
+            args
+            params
+            (+ index 1)
+            lifetimes
+            subst)
+          (match (tc-call-effective-arg-type ctx env arg want)
+            [(ResultTcType.Ok got)
+              (match (tc-infer-lifetime-subst-from-type
+                ctx
+                lifetimes
+                subst
+                want
+                got)
+                [(ResultTcLifetimeSubst.Ok next-subst)
+                  (tc-infer-call-lifetime-subst-at
+                    ctx
+                    env
+                    args
+                    params
+                    (+ index 1)
+                    lifetimes
+                    next-subst)]
+                [(ResultTcLifetimeSubst.Err message)
+                  (ResultTcLifetimeSubst.Err
+                    (tc-locate-error-at-expr arg message))])]
+            [(ResultTcType.Err message)
+              (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]

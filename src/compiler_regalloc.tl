@@ -4234,6 +4234,129 @@
     ;; equal ones as different only forgoes a copy elision (never unsound).
     [(CompilerRegLocation.Remat _) false]))
 
+(define (compiler-reg-location-uses-register?
+  [location : CompilerRegLocation]
+  [reg : String]) : bool
+  (match location
+    [(CompilerRegLocation.Register found) (string.eq found reg)]
+    [(CompilerRegLocation.RegisterPair a b)
+      (or (string.eq a reg) (string.eq b reg))]
+    [(CompilerRegLocation.Spill _) false]
+    [(CompilerRegLocation.Remat _) false]))
+
+(define (compiler-reg-location-primary-register
+  [location : CompilerRegLocation]) : String
+  (match location
+    [(CompilerRegLocation.Register found) found]
+    [(CompilerRegLocation.RegisterPair first _) first]
+    [_ ""]))
+
+(define (compiler-reg-assignment-index-var-uses-register?
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var : i64]
+  [reg : String]) : bool
+  (match (compiler-reg-assignment-index-lookup assignment-index var)
+    [(CompilerRegMaybeLocation.Some location)
+      (compiler-reg-location-uses-register? location reg)]
+    [(CompilerRegMaybeLocation.No) false]))
+
+(define (compiler-reg-assignment-index-primary-register-home
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var : i64]) : String
+  (match (compiler-reg-assignment-index-lookup assignment-index var)
+    [(CompilerRegMaybeLocation.Some location)
+      (compiler-reg-location-primary-register location)]
+    [(CompilerRegMaybeLocation.No) ""]))
+
+(define (compiler-reg-assignments-use-register?
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : bool
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment _ location)
+          (if (compiler-reg-location-uses-register? location reg)
+            true
+            (compiler-reg-assignments-use-register? (box-get rest) reg))])]))
+
+(define (compiler-reg-var-live-at-point?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [var : i64]
+  [point : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length starts))
+    (< var (array-length ends))
+    (>= (array-ref starts var) 0)
+    (<= (array-ref starts var) point)
+    (<= point (array-ref ends var))))
+
+(define (compiler-reg-var-live-over-range?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [var : i64]
+  [lo : i64]
+  [hi : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length starts))
+    (< var (array-length ends))
+    (>= (array-ref starts var) 0)
+    (>= (array-ref ends var) 0)
+    (<= (array-ref starts var) hi)
+    (<= lo (array-ref ends var))))
+
+(define (compiler-reg-assignment-index-register-free-at-point?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]
+  [point : i64]
+  [reg : String]) : bool
+  (let
+    [v : i64 0]
+    [free : bool true]
+    (begin
+      (while (and (< v vars) free)
+        (begin
+          (if (and
+            (compiler-reg-var-live-at-point? starts ends v point)
+            (compiler-reg-assignment-index-var-uses-register?
+              assignment-index
+              v
+              reg))
+            (set! free false)
+            unit)
+          (set! v (+ v 1))))
+      free)))
+
+(define (compiler-reg-assignment-index-register-free-over-range?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]
+  [lo : i64]
+  [hi : i64]
+  [reg : String]) : bool
+  (let
+    [v : i64 0]
+    [free : bool true]
+    (begin
+      (while (and (< v vars) free)
+        (begin
+          (if (and
+            (compiler-reg-var-live-over-range? starts ends v lo hi)
+            (compiler-reg-assignment-index-var-uses-register?
+              assignment-index
+              v
+              reg))
+            (set! free false)
+            unit)
+          (set! v (+ v 1))))
+      free)))
+
 (define (compiler-reg-interval-lookup
   [intervals : CompilerRegIntervalList]
   [var : i64]) : CompilerRegMaybeInterval
@@ -18645,11 +18768,7 @@
   [reg : String]) : bool
   (match maybe-location
     [(CompilerRegMaybeLocation.Some location)
-      (match location
-        [(CompilerRegLocation.Register found) (string.eq found reg)]
-        [(CompilerRegLocation.RegisterPair a b)
-          (or (string.eq a reg) (string.eq b reg))]
-        [_ false])]
+      (compiler-reg-location-uses-register? location reg)]
     [_ false]))
 
 (define (compiler-reg-location-spill-offset?
@@ -23472,9 +23591,12 @@
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-insert
         (compiler-reg-assignment-insert
-          CompilerRegAssignmentList.Nil
-          1
-          (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-insert
+            CompilerRegAssignmentList.Nil
+            1
+            (CompilerRegLocation.Register "%r12"))
+          4
+          (CompilerRegLocation.RegisterPair "%r13" "%r14"))
         3
         (CompilerRegLocation.Spill 24))]
     [intervals : CompilerRegIntervalList
@@ -23492,15 +23614,20 @@
     [assignment-table : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-insert
-          (compiler-reg-assignment-table-make 5)
-          1
-          (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-table-insert
+            (compiler-reg-assignment-table-make 5)
+            1
+            (CompilerRegLocation.Register "%r12"))
+          4
+          (CompilerRegLocation.RegisterPair "%r13" "%r14"))
         3
         (CompilerRegLocation.Spill 24))]
     [assignment-table-list : CompilerRegAssignmentList
       (compiler-reg-assignment-table-to-list assignment-table)]
     [interval-index : CompilerRegIntervalIndex
       (compiler-reg-interval-index-build intervals 5)]
+    [starts : (Array i64) (struct-get interval-index starts)]
+    [ends : (Array i64) (struct-get interval-index ends)]
     [assignment-hit-ok : bool
       (match (compiler-reg-assignment-index-lookup assignment-index 1)
         [(CompilerRegMaybeLocation.Some location)
@@ -23593,6 +23720,66 @@
           2
           -1
           (CompilerRegLocation.Register "%r12")))]
+    [shared-query-ok : bool
+      (and
+        (compiler-reg-location-uses-register?
+          (CompilerRegLocation.RegisterPair "%r13" "%r14")
+          "%r14")
+        (not
+          (compiler-reg-location-uses-register?
+            (CompilerRegLocation.RegisterPair "%r13" "%r14")
+            "%r15"))
+        (compiler-reg-assignment-index-var-uses-register?
+          assignment-index
+          1
+          "%r12")
+        (compiler-reg-assignment-index-var-uses-register?
+          assignment-index
+          4
+          "%r14")
+        (string.eq
+          (compiler-reg-assignment-index-primary-register-home
+            assignment-index
+            4)
+          "%r13")
+        (compiler-reg-assignments-use-register? assignments "%r14")
+        (not (compiler-reg-assignments-use-register? assignments "%r15"))
+        (compiler-reg-var-live-at-point? starts ends 1 3)
+        (not (compiler-reg-var-live-at-point? starts ends 1 6))
+        (compiler-reg-var-live-over-range? starts ends 1 5 7)
+        (not (compiler-reg-var-live-over-range? starts ends 1 6 7))
+        (not
+          (compiler-reg-assignment-index-register-free-at-point?
+            starts
+            ends
+            assignment-index
+            5
+            3
+            "%r12"))
+        (compiler-reg-assignment-index-register-free-at-point?
+          starts
+          ends
+          assignment-index
+          5
+          6
+          "%r12")
+        (not
+          (compiler-reg-assignment-index-register-free-over-range?
+            starts
+            ends
+            assignment-index
+            5
+            3
+            4
+            "%r14"))
+        (compiler-reg-assignment-index-register-free-over-range?
+          starts
+          ends
+          assignment-index
+          5
+          0
+          0
+          "%r12"))]
     (and
       assignment-hit-ok
       assignment-miss-ok
@@ -23606,7 +23793,8 @@
       interval-first-ok
       interference-ok
       conflict-ok
-      table-conflict-ok)))
+      table-conflict-ok
+      shared-query-ok)))
 
 (define (compiler-reg-segmented-interference-ok?) : bool
   (let

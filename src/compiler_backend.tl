@@ -3976,21 +3976,7 @@
 (define (compiler-backend-plan-uses-reg?
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment _ location)
-          (match location
-            [(CompilerRegLocation.Register found)
-              (if (string.eq found reg)
-                true
-                (compiler-backend-plan-uses-reg? (box-get rest) reg))]
-            [(CompilerRegLocation.RegisterPair a b)
-              (if (or (string.eq a reg) (string.eq b reg))
-                true
-                (compiler-backend-plan-uses-reg? (box-get rest) reg))]
-            [_ (compiler-backend-plan-uses-reg? (box-get rest) reg)])])]))
+  (compiler-reg-assignments-use-register? assignments reg))
 
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : CompilerRegAssignmentList]) : bool
@@ -30283,15 +30269,7 @@
   [assignment-index : CompilerRegAssignmentIndex]
   [v : i64]
   [reg : String]) : bool
-  (match (compiler-reg-assignment-index-lookup assignment-index v)
-    [(CompilerRegMaybeLocation.Some loc)
-      (match loc
-        [(CompilerRegLocation.Register home) (string.eq home reg)]
-        [(CompilerRegLocation.RegisterPair a b)
-          (or (string.eq a reg) (string.eq b reg))]
-        [(CompilerRegLocation.Spill _) false]
-        [(CompilerRegLocation.Remat _) false])]
-    [(CompilerRegMaybeLocation.No) false]))
+  (compiler-reg-assignment-index-var-uses-register? assignment-index v reg))
 
 (define (compiler-backend-scavenge-reg-bit [reg : String]) : i64
   (cond
@@ -30646,13 +30624,7 @@
 (define (compiler-backend-var-register-home-index
   [assignment-index : CompilerRegAssignmentIndex]
   [var : i64]) : String
-  (match (compiler-reg-assignment-index-lookup assignment-index var)
-    [(CompilerRegMaybeLocation.Some location)
-      (match location
-        [(CompilerRegLocation.Register r) r]
-        [(CompilerRegLocation.RegisterPair r _) r]
-        [_ ""])]
-    [_ ""]))
+  (compiler-reg-assignment-index-primary-register-home assignment-index var))
 
 (defstruct CompilerBackendScavengeAssignmentIndex
   (index CompilerRegAssignmentIndex)
@@ -30731,21 +30703,13 @@
     [vars : i64]
     [point : i64]
     [reg : String]) : bool
-    (let
-      [v : i64 0]
-      [free : bool true]
-      (begin
-        (while (and (< v vars) free)
-          (begin
-            (if (and
-              (>= (array-ref starts v) 0)
-              (<= (array-ref starts v) point)
-              (<= point (array-ref ends v))
-              (compiler-backend-scavenge-var-holds? assignment-index v reg))
-              (set! free false)
-              unit)
-            (set! v (+ v 1))))
-        free))))
+    (compiler-reg-assignment-index-register-free-at-point?
+      starts
+      ends
+      assignment-index
+      vars
+      point
+      reg)))
 
 (cfg
   scavenge-self-check
@@ -30756,21 +30720,14 @@
     [vars : i64]
     [point : i64]
     [reg : String]) : bool
-    (and
-      (compiler-backend-scavenge-free-at-point?
-        starts
-        ends
-        assignment-index
-        vars
-        point
-        reg)
-      (compiler-backend-scavenge-free-at-point?
-        starts
-        ends
-        assignment-index
-        vars
-        (+ point 1)
-        reg))))
+    (compiler-reg-assignment-index-register-free-over-range?
+      starts
+      ends
+      assignment-index
+      vars
+      point
+      (+ point 1)
+      reg)))
 
 ;; Register scavenger context (step 15b). Holds the FINAL-IR per-var live
 ;; intervals + assignments for the function currently being emitted, so the

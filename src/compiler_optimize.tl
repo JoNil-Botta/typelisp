@@ -13063,6 +13063,780 @@
         frame
         (opt-loop-rotation-blocks blocks))]))
 
+;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
+;;
+;; The pre-SSA rotation pass (#2458) never fires on lowered while-loops: their
+;; preheaders are synthesized by the loop-preheaders pass (#2457), which runs
+;; after scalar SSA construction, so nested/inner loops stay top-tested (a
+;; guard block plus a jump back on every iteration) and loop BCE misses the
+;; facts it derives from the rotated shape. This pass rotates one SSA-form
+;; natural loop per invocation (the surrounding fixpoint handles the rest):
+;; the header's phis move to the top of the loop-body block, the header's
+;; side-effect-free guard prefix plus conditional branch is cloned into the
+;; preheader and the latch with fresh destinations (phi uses remapped to that
+;; edge's input value), loop-carried values used after the loop are merged
+;; through fresh exit phis, and the header block is replaced by an empty
+;; landing block on the preheader guard's loop edge. The landing block keeps a
+;; dedicated single-successor preheader for the rotated loop (the guard makes
+;; the old preheader multi-successor), so LICM can still hoist loop-invariant
+;; work in the same pipeline iteration; the moved phis take their preheader
+;; input from the landing block, while the exit phis keep the direct
+;; preheader/latch edges. The rewrite is verifier-gated; any rejected shape or
+;; failed verify returns the input function unchanged.
+(defenum OptRotateSsaPhiRecs
+  (Nil)
+  (Cons i64 CompilerIrValue CompilerIrValue AstType (Box OptRotateSsaPhiRecs)))
+
+(defenum OptRotateSsaMaybePhiRecs
+  (No)
+  (Some OptRotateSsaPhiRecs))
+
+(defstruct OptRotateSsaShape
+  (phis CompilerIrInstrList)
+  (recs OptRotateSsaPhiRecs)
+  (guard CompilerIrInstrList)
+  (cond-value CompilerIrValue)
+  (true-label String)
+  (false-label String)
+  (body-label String)
+  (exit-label String))
+
+(defenum OptRotateSsaMaybeShape
+  (No)
+  (Some OptRotateSsaShape))
+
+(defenum OptRotateSsaClone
+  (Clone CompilerIrInstrList i64))
+
+(defenum OptRotateSsaExitPhis
+  (Result CompilerIrInstrList OptCopyEnv i64))
+
+(defenum OptRotateSsaRewrite
+  (No)
+  (Some CompilerIrBlockList i64))
+
+(defstruct OptRotateSsaPlan
+  (header String)
+  (preheader String)
+  (latch String)
+  (land-label String)
+  (body-label String)
+  (exit-label String)
+  (body OptLabelSet)
+  (phis CompilerIrInstrList)
+  (preheader-guard CompilerIrInstrList)
+  (latch-guard CompilerIrInstrList)
+  (exit-phis CompilerIrInstrList)
+  (exit-env OptCopyEnv))
+
+(define (opt-rotate-ssa-land-label [header : String]) : String
+  (string.append header "__rotate_land"))
+
+(define (opt-rotate-ssa-block-limit) : i64
+  512)
+
+(define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : String]) : bool
+  (and (= (opt-label-count set) 1) (opt-label-contains set label)))
+
+(define (opt-rotate-ssa-leading-phi-end
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    index
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ _ _)
+        (opt-rotate-ssa-leading-phi-end instrs (+ index 1))]
+      [_ index])))
+
+;; Each header phi must carry exactly the two loop-edge inputs {preheader,
+;; latch}; the record keeps (dst, preheader input, latch input, type).
+(define (opt-rotate-ssa-phi-recs
+  [phis : CompilerIrInstrList]
+  [preheader : String]
+  [latch : String]) : OptRotateSsaMaybePhiRecs
+  (match phis
+    [(CompilerIrInstrList.Nil)
+      (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))]
+    [(CompilerIrInstrList.Cons instr rest)
+      (match (opt-rotate-ssa-phi-recs (box-get rest) preheader latch)
+        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
+        [(OptRotateSsaMaybePhiRecs.Some recs)
+          (match instr
+            [(CompilerIrInstr.Phi dst inputs ty)
+              (match inputs
+                [(CompilerIrPhiInputList.Cons first-value first-label rest1)
+                  (match (box-get rest1)
+                    [(CompilerIrPhiInputList.Cons
+                        second-value
+                        second-label
+                        rest2)
+                      (match (box-get rest2)
+                        [(CompilerIrPhiInputList.Nil)
+                          (cond
+                            [(and
+                                (string.eq first-label preheader)
+                                (string.eq second-label latch))
+                              (OptRotateSsaMaybePhiRecs.Some
+                                (OptRotateSsaPhiRecs.Cons
+                                  dst
+                                  first-value
+                                  second-value
+                                  ty
+                                  (box recs)))]
+                            [(and
+                                (string.eq first-label latch)
+                                (string.eq second-label preheader))
+                              (OptRotateSsaMaybePhiRecs.Some
+                                (OptRotateSsaPhiRecs.Cons
+                                  dst
+                                  second-value
+                                  first-value
+                                  ty
+                                  (box recs)))]
+                            [else (OptRotateSsaMaybePhiRecs.No)])]
+                        [_ (OptRotateSsaMaybePhiRecs.No)])]
+                    [_ (OptRotateSsaMaybePhiRecs.No)])]
+                [_ (OptRotateSsaMaybePhiRecs.No)])]
+            [_ (OptRotateSsaMaybePhiRecs.No)])])]))
+
+(define (opt-rotate-ssa-shape-from-branch
+  [instrs : CompilerIrInstrSeq]
+  [phi-end : i64]
+  [last : i64]
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [body : OptLabelSet]
+  [cond-value : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]) : OptRotateSsaMaybeShape
+  (let
+    [true-is-body : bool
+      (and
+        (opt-loop-rotation-body-target? body header true-label)
+        (opt-loop-rotation-exit-target? body false-label))]
+    [false-is-body : bool
+      (and
+        (opt-loop-rotation-body-target? body header false-label)
+        (opt-loop-rotation-exit-target? body true-label))]
+    (if (or true-is-body false-is-body)
+      (match (opt-rotate-ssa-phi-recs
+        (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
+        preheader
+        latch)
+        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybeShape.No)]
+        [(OptRotateSsaMaybePhiRecs.Some recs)
+          (OptRotateSsaMaybeShape.Some
+            (OptRotateSsaShape
+              (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
+              recs
+              (opt-loop-rotation-prefix-before-final-from instrs phi-end last)
+              cond-value
+              true-label
+              false-label
+              (if true-is-body
+                true-label
+                false-label)
+              (if true-is-body
+                false-label
+                true-label)))])
+      (OptRotateSsaMaybeShape.No))))
+
+;; Header shape: leading phis (zero or more), then a whitelisted pure guard
+;; prefix (possibly empty), then a conditional branch with one arm into the
+;; loop body (never the header itself: self-loops are already rotated) and one
+;; arm out of it.
+(define (opt-rotate-ssa-header-shape
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [body : OptLabelSet]) : OptRotateSsaMaybeShape
+  (match (opt-cfg-find-block blocks header)
+    [(OptMaybeBlock.No) (OptRotateSsaMaybeShape.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (<= count 0)
+              (OptRotateSsaMaybeShape.No)
+              (let
+                [last : i64 (- count 1)]
+                [phi-end : i64 (opt-rotate-ssa-leading-phi-end instrs 0)]
+                (if (not
+                  (opt-loop-rotation-header-prefix-ok? instrs phi-end last))
+                  (OptRotateSsaMaybeShape.No)
+                  (match (compiler-ir-instr-seq-ref instrs last)
+                    [(CompilerIrInstr.Branch cond-value true-label false-label)
+                      (opt-rotate-ssa-shape-from-branch
+                        instrs
+                        phi-end
+                        last
+                        header
+                        preheader
+                        latch
+                        body
+                        cond-value
+                        true-label
+                        false-label)]
+                    [_ (OptRotateSsaMaybeShape.No)])))))])]))
+
+(define (opt-rotate-ssa-instr-seq-has-phi?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ _ _) true]
+      [_ (opt-rotate-ssa-instr-seq-has-phi? instrs (+ index 1))])))
+
+;; The rewrite prepends phis to the body and exit blocks; a pre-existing phi
+;; there would have a single input labeled with the deleted header, so such
+;; blocks are rejected (a missing block is rejected too).
+(define (opt-rotate-ssa-block-has-phi?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) true]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-rotate-ssa-instr-seq-has-phi? instrs 0)])]))
+
+;; Reject break-style side exits: no loop-body block other than the header may
+;; branch to the exit label.
+(define (opt-rotate-ssa-body-avoids-exit?
+  [pred-map : OptPredMap]
+  [body : OptLabelSet]
+  [header : String]
+  [exit-label : String]) : bool
+  (match body
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (and
+        (or
+          (string.eq label header)
+          (not
+            (opt-label-contains
+              (opt-pred-map-successors pred-map label)
+              exit-label)))
+        (opt-rotate-ssa-body-avoids-exit?
+          pred-map
+          (box-get rest)
+          header
+          exit-label))]))
+
+(define (opt-rotate-ssa-uses-except-header
+  [set : hashmap.I64I64Map]
+  [blocks : CompilerIrBlockList]
+  [header : String]) : hashmap.I64I64Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (opt-rotate-ssa-uses-except-header
+            (if (string.eq label header)
+              set
+              (opt-collect-instr-seq-uses set instrs))
+            (box-get rest)
+            header)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-uses-except-header
+        set
+        (compiler-ir-block-seq-to-list seq)
+        header)]))
+
+(define (opt-rotate-ssa-uses-outside-body
+  [set : hashmap.I64I64Map]
+  [blocks : CompilerIrBlockList]
+  [body : OptLabelSet]) : hashmap.I64I64Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (opt-rotate-ssa-uses-outside-body
+            (if (opt-label-contains body label)
+              set
+              (opt-collect-instr-seq-uses set instrs))
+            (box-get rest)
+            body)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-uses-outside-body
+        set
+        (compiler-ir-block-seq-to-list seq)
+        body)]))
+
+(define (opt-rotate-ssa-instr-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [_ (- 0 1)]))
+
+;; The guard prefix is deleted with the header and only re-materialized with
+;; fresh destinations, so every guard destination must be used exclusively
+;; inside the header by the guard/branch itself; `uses` covers all other
+;; blocks plus the header's own phi inputs.
+(define (opt-rotate-ssa-guard-dsts-local?
+  [guard : CompilerIrInstrList]
+  [uses : hashmap.I64I64Map]) : bool
+  (match guard
+    [(CompilerIrInstrList.Nil) true]
+    [(CompilerIrInstrList.Cons instr rest)
+      (let
+        [dst : i64 (opt-rotate-ssa-instr-dst instr)]
+        (and
+          (>= dst 0)
+          (not (opt-used-contains uses dst))
+          (opt-rotate-ssa-guard-dsts-local? (box-get rest) uses)))]))
+
+;; Map each header-phi destination to the input value carried by one loop
+;; edge: the preheader input for the preheader clone, the latch input for the
+;; latch clone.
+(define (opt-rotate-ssa-edge-env [recs : OptRotateSsaPhiRecs] [use-init : bool]) : OptCopyEnv
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) (OptCopyEnv.Nil)]
+    [(OptRotateSsaPhiRecs.Cons dst init back _ rest)
+      (OptCopyEnv.Cons
+        dst
+        (if use-init
+          init
+          back)
+        (box (opt-rotate-ssa-edge-env (box-get rest) use-init)))]))
+
+(define (opt-rotate-ssa-clone-guard-instr
+  [env : OptCopyEnv]
+  [dst : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov _ src ty)
+      (CompilerIrInstr.Mov dst (opt-copy-resolve env src) ty)]
+    [(CompilerIrInstr.Cast _ src from-ty to-ty)
+      (CompilerIrInstr.Cast dst (opt-copy-resolve env src) from-ty to-ty)]
+    [(CompilerIrInstr.Bitcast _ src from-ty to-ty)
+      (CompilerIrInstr.Bitcast dst (opt-copy-resolve env src) from-ty to-ty)]
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        dst
+        op
+        (opt-copy-resolve env lhs)
+        (opt-copy-resolve env rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp _ op src ty)
+      (CompilerIrInstr.UnOp dst op (opt-copy-resolve env src) ty)]
+    ;; Unreachable: the guard prefix is restricted to the whitelist above; the
+    ;; post-rewrite verifier rejects any duplicate definition this would leave.
+    [_ instr]))
+
+;; Clone the guard prefix with fresh destinations, remapping intra-guard uses
+;; of earlier guard destinations to their fresh clones and phi-destination
+;; uses through the edge env, then end with the header's branch (same arm
+;; orientation) on the remapped condition.
+(define (opt-rotate-ssa-clone-guard
+  [env : OptCopyEnv]
+  [guard : CompilerIrInstrList]
+  [cond-value : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]
+  [next-var : i64]) : OptRotateSsaClone
+  (match guard
+    [(CompilerIrInstrList.Nil)
+      (OptRotateSsaClone.Clone
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch
+            (opt-copy-resolve env cond-value)
+            true-label
+            false-label)
+          (CompilerIrInstrList.Nil))
+        next-var)]
+    [(CompilerIrInstrList.Cons instr rest)
+      (let
+        [cloned : CompilerIrInstr
+          (opt-rotate-ssa-clone-guard-instr env next-var instr)]
+        [next-env : OptCopyEnv
+          (OptCopyEnv.Cons
+            (opt-rotate-ssa-instr-dst instr)
+            (CompilerIrValue.Var next-var)
+            (box env))]
+        (match (opt-rotate-ssa-clone-guard
+          next-env
+          (box-get rest)
+          cond-value
+          true-label
+          false-label
+          (+ next-var 1))
+          [(OptRotateSsaClone.Clone cloned-rest out-var)
+            (OptRotateSsaClone.Clone
+              (compiler-ir-instr-cons cloned cloned-rest)
+              out-var)]))]))
+
+;; Rebuild the header phis for the top of the loop-body block: same
+;; destinations, initial input relabeled to the landing block (the body's new
+;; preheader-side predecessor), latch input unchanged.
+(define (opt-rotate-ssa-moved-phis
+  [recs : OptRotateSsaPhiRecs]
+  [land-label : String]
+  [latch : String]) : CompilerIrInstrList
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) (CompilerIrInstrList.Nil)]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          dst
+          (compiler-ir-phi-input-cons
+            init
+            land-label
+            (compiler-ir-phi-input-cons back latch (CompilerIrPhiInputList.Nil)))
+          ty)
+        (opt-rotate-ssa-moved-phis (box-get rest) land-label latch))]))
+
+;; For each header phi whose destination is used outside the loop body, mint a
+;; fresh exit phi merging the same edge inputs at the exit block, and record
+;; the destination remap for the outside-use rewrite.
+(define (opt-rotate-ssa-exit-phis
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : hashmap.I64I64Map]
+  [preheader : String]
+  [latch : String]
+  [next-var : i64]) : OptRotateSsaExitPhis
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil)
+      (OptRotateSsaExitPhis.Result
+        (CompilerIrInstrList.Nil)
+        (OptCopyEnv.Nil)
+        next-var)]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (if (opt-used-contains outside-uses dst)
+        (match (opt-rotate-ssa-exit-phis
+          (box-get rest)
+          outside-uses
+          preheader
+          latch
+          (+ next-var 1))
+          [(OptRotateSsaExitPhis.Result phis env out-var)
+            (OptRotateSsaExitPhis.Result
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Phi
+                  next-var
+                  (compiler-ir-phi-input-cons
+                    init
+                    preheader
+                    (compiler-ir-phi-input-cons
+                      back
+                      latch
+                      (CompilerIrPhiInputList.Nil)))
+                  ty)
+                phis)
+              (OptCopyEnv.Cons dst (CompilerIrValue.Var next-var) (box env))
+              out-var)])
+        (opt-rotate-ssa-exit-phis
+          (box-get rest)
+          outside-uses
+          preheader
+          latch
+          next-var))]))
+
+(define (opt-rotate-ssa-subst-phi-inputs
+  [env : OptCopyEnv]
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-copy-resolve env value)
+        label
+        (opt-rotate-ssa-subst-phi-inputs env (box-get rest)))]))
+
+;; Outside-the-loop use rewriting must also rewrite phi inputs (the block-local
+;; copy substitution deliberately skips them), so wrap opt-copy-subst-instr.
+(define (opt-rotate-ssa-subst-instr
+  [env : OptCopyEnv]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi dst (opt-rotate-ssa-subst-phi-inputs env inputs) ty)]
+    [_ (opt-copy-subst-instr env instr)]))
+
+(define (opt-rotate-ssa-subst-instrs
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-ir-instr-cons
+        (opt-rotate-ssa-subst-instr env instr)
+        (opt-rotate-ssa-subst-instrs env (box-get rest)))]))
+
+(define (opt-rotate-ssa-replace-final-jump
+  [instrs : CompilerIrInstrList]
+  [guard : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(CompilerIrInstrList.Nil) guard]
+    [(CompilerIrInstrList.Cons instr rest)
+      (match (box-get rest)
+        [(CompilerIrInstrList.Nil) guard]
+        [_
+          (compiler-ir-instr-cons
+            instr
+            (opt-rotate-ssa-replace-final-jump (box-get rest) guard))])]))
+
+(define (opt-rotate-ssa-block-touched?
+  [plan : OptRotateSsaPlan]
+  [label : String]) : bool
+  (or
+    (string.eq label (struct-get plan preheader))
+    (string.eq label (struct-get plan latch))
+    (string.eq label (struct-get plan body-label))
+    (string.eq label (struct-get plan exit-label))
+    (and
+      (not (opt-label-contains (struct-get plan body) label))
+      (match (struct-get plan exit-env)
+        [(OptCopyEnv.Nil) false]
+        [_ true]))))
+
+(define (opt-rotate-ssa-rewrite-instrs
+  [plan : OptRotateSsaPlan]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (let
+    [base : CompilerIrInstrList
+      (if (opt-label-contains (struct-get plan body) label)
+        (compiler-ir-instr-seq-to-list instrs)
+        (opt-rotate-ssa-subst-instrs
+          (struct-get plan exit-env)
+          (compiler-ir-instr-seq-to-list instrs)))]
+    [retargeted : CompilerIrInstrList
+      (cond
+        [(string.eq label (struct-get plan preheader))
+          (opt-rotate-ssa-replace-final-jump
+            base
+            (struct-get plan preheader-guard))]
+        [(string.eq label (struct-get plan latch))
+          (opt-rotate-ssa-replace-final-jump base (struct-get plan latch-guard))]
+        [else base])]
+    (cond
+      [(string.eq label (struct-get plan body-label))
+        (opt-aggregate-instr-list-append (struct-get plan phis) retargeted)]
+      [(string.eq label (struct-get plan exit-label))
+        (opt-aggregate-instr-list-append (struct-get plan exit-phis) retargeted)]
+      [else retargeted])))
+
+;; The deleted header's slot in the block list is reused for the landing
+;; block, keeping the layout deterministic; the accepted shape guarantees no
+;; block falls through into that position (the preheader and latch end with an
+;; explicit jump and any other fallthrough predecessor was rejected).
+(define (opt-rotate-ssa-rewrite-blocks
+  [plan : OptRotateSsaPlan]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (if (string.eq label (struct-get plan header))
+              (compiler-ir-block
+                (struct-get plan land-label)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump (struct-get plan body-label))
+                  (CompilerIrInstrList.Nil)))
+              (if (opt-rotate-ssa-block-touched? plan label)
+                (compiler-ir-block
+                  label
+                  (opt-rotate-ssa-rewrite-instrs plan label instrs))
+                block))
+            (opt-rotate-ssa-rewrite-blocks plan (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-rewrite-blocks plan (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-rotate-ssa-apply
+  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [frame : i64]
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [body : OptLabelSet]
+  [shape : OptRotateSsaShape]) : OptRotateSsaRewrite
+  (let
+    [body-label : String (struct-get shape body-label)]
+    [exit-label : String (struct-get shape exit-label)]
+    [land-label : String (opt-rotate-ssa-land-label header)]
+    [phis : CompilerIrInstrList (struct-get shape phis)]
+    [recs : OptRotateSsaPhiRecs (struct-get shape recs)]
+    [guard : CompilerIrInstrList (struct-get shape guard)]
+    (if (and
+      (not (string.eq exit-label preheader))
+      (not (opt-cfg-block-exists? blocks land-label))
+      (opt-rotate-ssa-only-label?
+        (opt-pred-map-lookup pred-map body-label)
+        header)
+      (opt-rotate-ssa-only-label?
+        (opt-pred-map-lookup pred-map exit-label)
+        header)
+      (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
+      (not (opt-rotate-ssa-block-has-phi? blocks body-label))
+      (not (opt-rotate-ssa-block-has-phi? blocks exit-label))
+      (opt-rotate-ssa-guard-dsts-local?
+        guard
+        (opt-rotate-ssa-uses-except-header
+          (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) phis)
+          blocks
+          header)))
+      ;; The preheader clone's loop arm targets the landing block instead of
+      ;; the body so the rotated loop keeps a dedicated single-successor
+      ;; preheader for LICM; the latch clone branches straight to the body.
+      (match (opt-rotate-ssa-clone-guard
+        (opt-rotate-ssa-edge-env recs true)
+        guard
+        (struct-get shape cond-value)
+        (if (string.eq (struct-get shape true-label) body-label)
+          land-label
+          (struct-get shape true-label))
+        (if (string.eq (struct-get shape false-label) body-label)
+          land-label
+          (struct-get shape false-label))
+        frame)
+        [(OptRotateSsaClone.Clone preheader-guard after-preheader)
+          (match (opt-rotate-ssa-clone-guard
+            (opt-rotate-ssa-edge-env recs false)
+            guard
+            (struct-get shape cond-value)
+            (struct-get shape true-label)
+            (struct-get shape false-label)
+            after-preheader)
+            [(OptRotateSsaClone.Clone latch-guard after-latch)
+              (match (opt-rotate-ssa-exit-phis
+                recs
+                (opt-rotate-ssa-uses-outside-body
+                  (hashmap.i64-i64-map-with-capacity 64)
+                  blocks
+                  body)
+                preheader
+                latch
+                after-latch)
+                [(OptRotateSsaExitPhis.Result exit-phis exit-env next-frame)
+                  (OptRotateSsaRewrite.Some
+                    (opt-rotate-ssa-rewrite-blocks
+                      (OptRotateSsaPlan
+                        header
+                        preheader
+                        latch
+                        land-label
+                        body-label
+                        exit-label
+                        body
+                        (opt-rotate-ssa-moved-phis recs land-label latch)
+                        preheader-guard
+                        latch-guard
+                        exit-phis
+                        exit-env)
+                      blocks)
+                    next-frame)])])])
+      (OptRotateSsaRewrite.No))))
+
+(define (opt-rotate-ssa-loop
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptRotateSsaRewrite
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) (OptRotateSsaRewrite.No)]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [header : String (opt-natural-loop-header loop)]
+        [latch : String (opt-natural-loop-latch loop)]
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [pred-map : OptPredMap (struct-get context pred-map)]
+        [header-preds : OptLabelSet (opt-pred-map-lookup pred-map header)]
+        (if (and
+          (not (string.eq header latch))
+          (opt-rotate-ssa-only-label?
+            (opt-pred-map-successors pred-map preheader)
+            header)
+          (opt-loop-rotation-edge-compatible? blocks preheader header)
+          (opt-loop-rotation-edge-compatible? blocks latch header)
+          (= (opt-label-count header-preds) 2)
+          (opt-label-contains header-preds preheader)
+          (opt-label-contains header-preds latch))
+          (match (opt-rotate-ssa-header-shape
+            blocks
+            header
+            preheader
+            latch
+            body)
+            [(OptRotateSsaMaybeShape.No) (OptRotateSsaRewrite.No)]
+            [(OptRotateSsaMaybeShape.Some shape)
+              (opt-rotate-ssa-apply
+                blocks
+                pred-map
+                frame
+                header
+                preheader
+                latch
+                body
+                shape)])
+          (OptRotateSsaRewrite.No)))]))
+
+(define (opt-rotate-ssa-loops
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [loops : OptNaturalLoopList]) : OptRotateSsaRewrite
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptRotateSsaRewrite.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-rotate-ssa-loop blocks context frame loop)
+        [(OptRotateSsaRewrite.Some next-blocks next-frame)
+          (OptRotateSsaRewrite.Some next-blocks next-frame)]
+        [(OptRotateSsaRewrite.No)
+          (opt-rotate-ssa-loops blocks context frame (box-get rest))])]))
+
+(define (opt-rotate-ssa-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (> (compiler-ir-block-list-count blocks) (opt-rotate-ssa-block-limit))
+        (OptFunctionCtxResult.Result func context)
+        (match (opt-verify-function-with-context func context)
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-rotate-ssa-loops
+              blocks
+              context
+              frame
+              (opt-cfg-natural-loops-with-context blocks context))
+              [(OptRotateSsaRewrite.No)
+                (OptFunctionCtxResult.Result func context)]
+              [(OptRotateSsaRewrite.Some next-blocks next-frame)
+                (let
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      next-frame
+                      next-blocks)]
+                  ;; Rotation rewires the CFG, so build one fresh context for
+                  ;; the rewritten blocks, reuse it for the post-pass verify,
+                  ;; and hand it back for the next pass. Any verifier rejection
+                  ;; falls back to the input function unchanged.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)]))])]
+          [(ResultCompilerOptimizeVerify.Err _)
+            (OptFunctionCtxResult.Result func context)]))]))
+
 ;; --- conservative loop-invariant code motion (#1801) ------------------------
 ;;
 ;; LICM is verifier-gated. It moves non-trapping scalar `BinOp`/`UnOp`
@@ -23243,8 +24017,8 @@
                       [_t-preheaders : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
-                      ;; the preheaders -> scratch_reset -> licm -> induction ->
-                      ;; unroll -> global_gvn chain.
+                      ;; the preheaders -> rotate_ssa -> scratch_reset -> licm ->
+                      ;; induction -> unroll -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
                       ;; so the context the pass builds for its post-pass verify
                       ;; is exactly what the next pass needs for its entry verify
@@ -23286,14 +24060,36 @@
                             name
                             _t-preheaders)
                           unit)]
+                      [_t-rotate-ssa : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [rotate-ssa-result : OptFunctionCtxResult
+                        (if run-heavy?
+                          (opt-rotate-ssa-function-with-context-result
+                            preheaders-context
+                            preheaders)
+                          preheaders-result)]
+                      [rotate-ssa : CompilerIrFunction
+                        (match rotate-ssa-result
+                          [(OptFunctionCtxResult.Result f _) f])]
+                      [rotate-ssa-context : OptCfgContext
+                        (match rotate-ssa-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-rotate-ssa : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "rotate_ssa"
+                            name
+                            _t-rotate-ssa)
+                          unit)]
                       [_t-scratch-reset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-scratch-reset-function-with-context-result
-                            preheaders-context
-                            preheaders)
-                          preheaders-result)]
+                            rotate-ssa-context
+                            rotate-ssa)
+                          rotate-ssa-result)]
                       [scratch-reset : CompilerIrFunction
                         (match scratch-reset-result
                           [(OptFunctionCtxResult.Result f _) f])]
@@ -26710,16 +27506,20 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? callee census))]
-                ;; Bounds-carrying multiblock callees inline only when
-                ;; ACYCLIC: pulling a whole loop into the caller reshapes it
-                ;; (top-tested, un-rotated) in ways today's shape-sensitive
-                ;; loop-BCE/rotation cannot recover, regressing the hot loop
-                ;; more than the saved call (array_sum +33%, crc32 +67% when
-                ;; loop-bearing helpers were admitted). Revisit together with
-                ;; phi-aware loop rotation.
+                ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
+                ;; Lifting this with rotate_ssa in place was measured and
+                ;; still regressed (array_sum +50%, crc32 +67%, vm +15%):
+                ;; rotation restores the bottom-tested shape inside the
+                ;; caller, but loop-BCE runs before it in the pipeline and
+                ;; never re-derives the merged loops' range facts, so the
+                ;; per-iteration bounds checks come back and the merged
+                ;; function's pressure grows. A standalone loop function is
+                ;; still systematically better optimized than the same loop
+                ;; inlined; lift this only after BCE learns the rotated
+                ;; merged shapes (or runs after rotation).
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
-                    (and (opt-inline-blocks-have-bounds-check? cblocks) true)
+                    (opt-inline-blocks-have-bounds-check? cblocks)
                     absorbable
                     const-args
                     np)]
@@ -27250,16 +28050,20 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? callee census))]
-                ;; Bounds-carrying multiblock callees inline only when
-                ;; ACYCLIC: pulling a whole loop into the caller reshapes it
-                ;; (top-tested, un-rotated) in ways today's shape-sensitive
-                ;; loop-BCE/rotation cannot recover, regressing the hot loop
-                ;; more than the saved call (array_sum +33%, crc32 +67% when
-                ;; loop-bearing helpers were admitted). Revisit together with
-                ;; phi-aware loop rotation.
+                ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
+                ;; Lifting this with rotate_ssa in place was measured and
+                ;; still regressed (array_sum +50%, crc32 +67%, vm +15%):
+                ;; rotation restores the bottom-tested shape inside the
+                ;; caller, but loop-BCE runs before it in the pipeline and
+                ;; never re-derives the merged loops' range facts, so the
+                ;; per-iteration bounds checks come back and the merged
+                ;; function's pressure grows. A standalone loop function is
+                ;; still systematically better optimized than the same loop
+                ;; inlined; lift this only after BCE learns the rotated
+                ;; merged shapes (or runs after rotation).
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
-                    (and (opt-inline-blocks-have-bounds-check? cblocks) true)
+                    (opt-inline-blocks-have-bounds-check? cblocks)
                     absorbable
                     const-args
                     np)]
@@ -42804,6 +43608,151 @@
                         (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
                       (CompilerIrInstrList.Nil)))
                   (CompilerIrBlockList.Nil))))))))))
+
+;; Fixture for the post-SSA rotation pass: `entry` is the single-successor
+;; preheader, `header` carries one loop phi plus a pure guard and the loop
+;; branch, `body` increments the phi, `latch` jumps back unconditionally, and
+;; `exit` returns the phi (exercising the exit-phi path). With `side-exit`
+;; the body branches straight to `exit`, which must reject the rotation.
+(define (opt-rotate-ssa-test-blocks [side-exit : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            1
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.I64 0)
+              "entry"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 2)
+                "latch"
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              3
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 0)
+              (AstType.Bool))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "body" "exit")
+              (CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              2
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (if side-exit
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Bool true)
+                  "latch"
+                  "exit")
+                (CompilerIrInstrList.Nil))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "latch")
+                (CompilerIrInstrList.Nil)))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "latch"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                (CompilerIrInstrList.Nil)))
+            (CompilerIrBlockList.Nil)))))))
+
+(define (opt-rotate-ssa-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "rotate_ssa"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "n" (AstType.I64) 0)
+      (CompilerIrParamList.Nil))
+    (AstType.I64)
+    4
+    blocks))
+
+(define (opt-rotate-ssa-test-run [side-exit : bool]) : CompilerIrFunction
+  (let
+    [blocks : CompilerIrBlockList (opt-rotate-ssa-test-blocks side-exit)]
+    (match (opt-rotate-ssa-function-with-context-result
+      (opt-cfg-context-build blocks)
+      (opt-rotate-ssa-test-function blocks))
+      [(OptFunctionCtxResult.Result next _) next])))
+
+(define (opt-rotate-ssa-test-starts-with-phi?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (<= (compiler-ir-instr-seq-count instrs) 0)
+            false
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Phi _ _ _) true]
+              [_ false]))])]))
+
+(define (opt-rotate-ssa-test-single-jump-to?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Jump jump-target)
+                (string.eq jump-target target)]
+              [_ false])
+            false)])]))
+
+(define (compiler-optimize-rotate-ssa-self-test) : i64
+  (let
+    [rotated : CompilerIrFunction (opt-rotate-ssa-test-run false)]
+    [rotated-blocks : CompilerIrBlockList (opt-function-blocks rotated)]
+    [side-exit : CompilerIrFunction (opt-rotate-ssa-test-run true)]
+    [side-exit-blocks : CompilerIrBlockList (opt-function-blocks side-exit)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function rotated))) 1]
+      [(opt-block-list-has-label? rotated-blocks "header") 2]
+      [(not (= (compiler-ir-block-list-count rotated-blocks) 5)) 3]
+      [(not (opt-rotate-ssa-test-starts-with-phi? rotated-blocks "exit")) 4]
+      [(not (opt-rotate-ssa-test-starts-with-phi? rotated-blocks "body")) 5]
+      [(not
+          (opt-rotate-ssa-test-single-jump-to?
+            rotated-blocks
+            "header__rotate_land"
+            "body"))
+        6]
+      [(not (> (opt-function-frame rotated) 4)) 7]
+      [(not
+          (opt-block-list-eq side-exit-blocks (opt-rotate-ssa-test-blocks true)))
+        8]
+      [(not (= (compiler-ir-block-list-count side-exit-blocks) 5)) 9]
+      [(not (opt-block-list-has-label? side-exit-blocks "header")) 10]
+      [else 42])))
 
 (define (compiler-optimize-ssa-self-test) : i64
   (let

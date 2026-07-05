@@ -5,7 +5,7 @@ benchmark/typelisp/spmd_mask	27038251808
 benchmark/c/spmd_mask	7069947294
 benchmark/typelisp/spmd_short_tail	15021038338
 benchmark/c/spmd_short_tail	2765122056
-benchmark/typelisp/spmd_zip	23352505206
+benchmark/typelisp/spmd_zip	23353105206
 benchmark/c/spmd_zip	10755170829
-benchmark/typelisp/string_scan	11275000523
+benchmark/typelisp/string_scan	10400000488
 benchmark/c/string_scan	4850115726

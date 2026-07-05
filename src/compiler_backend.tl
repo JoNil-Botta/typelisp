@@ -30762,24 +30762,64 @@
   [reg : String]) : bool
   (compiler-reg-assignment-index-var-uses-register? assignment-index v reg))
 
+;; Character-dispatch register-name -> scavenge bit. The scavenger queries
+;; this per emitted operand; the string.eq ladder paid up to fifteen string
+;; compares per call. Length plus three character reads decide every case,
+;; with identical results (unknown names map to 0).
 (define (compiler-backend-scavenge-reg-bit [reg : String]) : i64
-  (cond
-    [(string.eq reg "%r9") 1]
-    [(string.eq reg "%rcx") 2]
-    [(string.eq reg "%rdx") 4]
-    [(string.eq reg "%r10") 8]
-    [(string.eq reg "%r11") 16]
-    [(string.eq reg "%r8") 32]
-    [(string.eq reg "%r12") 64]
-    [(string.eq reg "%r13") 128]
-    [(string.eq reg "%r14") 256]
-    [(string.eq reg "%r15") 512]
-    [(string.eq reg "%rbx") 1024]
-    [(string.eq reg "%xmm2") 2048]
-    [(string.eq reg "%xmm3") 4096]
-    [(string.eq reg "%xmm4") 8192]
-    [(string.eq reg "%xmm5") 16384]
-    [else 0]))
+  (let
+    [n : i64 (string.string-length reg)]
+    (cond
+      [(or (< n 3) (> n 5)) 0]
+      [(not (= (string.string-ref reg 0) '%')) 0]
+      [(= n 3)
+        (if (= (string.string-ref reg 1) 'r')
+          (cond
+            [(= (string.string-ref reg 2) '9') 1]
+            [(= (string.string-ref reg 2) '8') 32]
+            [else 0])
+          0)]
+      [(= n 4)
+        (if (= (string.string-ref reg 1) 'r')
+          (let
+            [c2 : char (string.string-ref reg 2)]
+            [c3 : char (string.string-ref reg 3)]
+            (cond
+              [(= c2 'c')
+                (if (= c3 'x')
+                  2
+                  0)]
+              [(= c2 'd')
+                (if (= c3 'x')
+                  4
+                  0)]
+              [(= c2 'b')
+                (if (= c3 'x')
+                  1024
+                  0)]
+              [(= c2 '1')
+                (cond
+                  [(= c3 '0') 8]
+                  [(= c3 '1') 16]
+                  [(= c3 '2') 64]
+                  [(= c3 '3') 128]
+                  [(= c3 '4') 256]
+                  [(= c3 '5') 512]
+                  [else 0])]
+              [else 0]))
+          0)]
+      [else
+        (if (and
+          (= (string.string-ref reg 1) 'x')
+          (= (string.string-ref reg 2) 'm')
+          (= (string.string-ref reg 3) 'm'))
+          (cond
+            [(= (string.string-ref reg 4) '2') 2048]
+            [(= (string.string-ref reg 4) '3') 4096]
+            [(= (string.string-ref reg 4) '4') 8192]
+            [(= (string.string-ref reg 4) '5') 16384]
+            [else 0])
+          0)])))
 
 (define compiler-backend-scavenge-reg-bit-count : i64
   15)

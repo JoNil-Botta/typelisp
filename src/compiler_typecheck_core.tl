@@ -9432,41 +9432,188 @@
     (= (intern-qualified-base-id lookup-id) (tc-name-id base))
     (tc-stdlib-string-module-name? (intern-qualified-module lookup-id))))
 
+;; --- per-epoch module -> decl-position index ----------------------------------
+;; tc-module-local-env-list and tc-decl-list-module-imports-stdlib-string? both
+;; filter the whole-program decl list down to one module by scanning every
+;; declaration and tracking (module NAME) markers, re-paying O(program) AstDecl
+;; copies per query. This CSR index maps module ids to program-order decl
+;; positions (module markers excluded); consumers keep their own per-decl match
+;; arms, so they process exactly the subsequence the full scan would have. The
+;; program view changes at in-pass splice rebuilds, so validity is stamped by
+;; (len, offset, intern generation) and dropped by macro-alias-derived-cache-
+;; reset! (the same per-splice/per-program boundary as the alias caches); a
+;; single-decl splice that preserves the list length also preserves every
+;; module's positions (memo markers never add or remove module markers), so
+;; the stamp is sufficient. Backing storage lives in a dedicated arena (the
+;; tc-hygiene-module-env-cache-arena idiom) because queries run while
+;; transient scratch arenas are active.
+(define tc-module-decl-index-ready : bool
+  false)
+(define tc-module-decl-index-decl-count : i64
+  -1)
+(define tc-module-decl-index-decl-offset : i64
+  -1)
+(define tc-module-decl-index-generation : i64
+  -1)
+(define tc-module-decl-index-arena : i64
+  0)
+(define tc-module-decl-index-modules : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define tc-module-decl-index-starts : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-decl-index-ends : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-decl-index-positions : (Array i64)
+  (array.make-array i64 0))
+
+(define (tc-module-decl-index-reset!) : unit
+  (begin
+    (set! tc-module-decl-index-ready false)
+    (set! tc-module-decl-index-decl-count -1)
+    (set! tc-module-decl-index-decl-offset -1)
+    ;; The stale array/map globals are never read while ready is false (every
+    ;; consumer goes through ensure!), so destroying their arena here is safe.
+    (if (= tc-module-decl-index-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy tc-module-decl-index-arena))
+        (set! tc-module-decl-index-arena 0)))))
+
+(define (tc-module-decl-index-ensure! [decls : AstDeclList]) : unit
+  (if (and
+    tc-module-decl-index-ready
+    (= tc-module-decl-index-decl-count (struct-get decls len))
+    (= tc-module-decl-index-decl-offset (struct-get decls offset))
+    (= tc-module-decl-index-generation (intern-generation)))
+    unit
+    (let
+      [count : i64 (struct-get decls len)]
+      [decl-offset : i64 (struct-get decls offset)]
+      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [empty-module-id : i64 (intern "")]
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [_make-arena : unit
+        (if (= tc-module-decl-index-arena 0)
+          (set! tc-module-decl-index-arena (arena.tl_arena_make))
+          unit)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set tc-module-decl-index-arena))]
+      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [module-count : i64 0]
+      [counts : (Array i64) (array.make-array i64 (+ count 1))]
+      [starts : (Array i64) (array.make-array i64 (+ count 1))]
+      [ends : (Array i64) (array.make-array i64 (+ count 1))]
+      [positions : (Array i64) (array.make-array i64 (+ count 1))]
+      [cur-module-id : i64 empty-module-id]
+      [i : i64 0]
+      [running : i64 0]
+      (begin
+        ;; Pass 1: assign a dense slot per module id and count its decls.
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (let
+                  [slot : i64
+                    (match (hashmap.i64-i64-map-get modules cur-module-id)
+                      [(hashmap.I64I64MapFound found-slot) found-slot]
+                      [(hashmap.I64I64MapMissing)
+                        (let
+                          [new-slot : i64 module-count]
+                          (begin
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                new-slot))
+                            (set! module-count (+ module-count 1))
+                            new-slot))])]
+                  (array-set! counts slot (+ (array-ref counts slot) 1)))])
+            (set! i (+ i 1))))
+        ;; Prefix sums: starts fixed, ends double as fill cursors below.
+        (set! i 0)
+        (while (< i module-count)
+          (begin
+            (array-set! starts i running)
+            (array-set! ends i running)
+            (set! running (+ running (array-ref counts i)))
+            (set! i (+ i 1))))
+        ;; Pass 2: fill program-order positions per module slot.
+        (set! cur-module-id empty-module-id)
+        (set! i 0)
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (hashmap.i64-i64-map-get modules cur-module-id)
+                  [(hashmap.I64I64MapFound slot)
+                    (let
+                      [cursor : i64 (array-ref ends slot)]
+                      (begin
+                        (array-set! positions cursor i)
+                        (array-set! ends slot (+ cursor 1))))]
+                  [(hashmap.I64I64MapMissing) unit])])
+            (set! i (+ i 1))))
+        (set! tc-module-decl-index-modules modules)
+        (set! tc-module-decl-index-starts starts)
+        (set! tc-module-decl-index-ends ends)
+        (set! tc-module-decl-index-positions positions)
+        (set! tc-module-decl-index-decl-count count)
+        (set! tc-module-decl-index-decl-offset decl-offset)
+        (set! tc-module-decl-index-generation (intern-generation))
+        ;; The arena head advances as it grows; re-capture it so reset!
+        ;; destroys the whole chain, then restore the caller's arena.
+        (set! tc-module-decl-index-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set prev-arena))
+        (set! tc-module-decl-index-ready true)))))
+
+;; Dense slot for a module id, or -1 when the module owns no declarations.
+(define (tc-module-decl-index-slot [module-id : i64]) : i64
+  (match (hashmap.i64-i64-map-get tc-module-decl-index-modules module-id)
+    [(hashmap.I64I64MapFound slot) slot]
+    [(hashmap.I64I64MapMissing) -1]))
+
 (define (tc-decl-list-module-imports-stdlib-string?
   [decls : AstDeclList]
   [target-module-id : i64]
   [current-module-id : i64]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest-box)
+  (let
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
+    [_unused-module-id : i64 current-module-id]
+    [slot : i64 (tc-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      false
       (let
-        [rest : AstDeclList rest-box]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-decl-list-module-imports-stdlib-string?
-              rest
-              target-module-id
-              next-module)]
-          [(AstDecl.Import
-              (AstImportSpec.Spec
-                _
-                _
-                (AstMaybeModuleName.Some import-module)
-                _
-                _))
-            (if (and
-              (= current-module-id target-module-id)
-              (tc-stdlib-string-module-name? import-module))
-              true
-              (tc-decl-list-module-imports-stdlib-string?
-                rest
-                target-module-id
-                current-module-id))]
-          [_
-            (tc-decl-list-module-imports-stdlib-string?
-              rest
-              target-module-id
-              current-module-id)]))]))
+        [j : i64 (array-ref tc-module-decl-index-starts slot)]
+        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< j end))
+            (begin
+              (match (array-ref
+                (struct-get decls slots)
+                (+
+                  (struct-get decls offset)
+                  (array-ref tc-module-decl-index-positions j)))
+                [(AstDecl.Import
+                    (AstImportSpec.Spec
+                      _
+                      _
+                      (AstMaybeModuleName.Some import-module)
+                      _
+                      _))
+                  (if (tc-stdlib-string-module-name? import-module)
+                    (set! found true)
+                    unit)]
+                [_ unit])
+              (set! j (+ j 1))))
+          found)))))
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (match ctx
@@ -16304,32 +16451,45 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [target-module : String]
-  [module : String]) : ResultTcEnv
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (ResultTcEnv.Ok env)]
-    [(AstDeclListStep.Cons decl rest)
+  [_module : String]) : ResultTcEnv
+  (let
+    [_ensure : unit (tc-module-decl-index-ensure! decls)]
+    [slot : i64 (tc-module-decl-index-slot (intern target-module))]
+    (if (< slot 0)
+      (ResultTcEnv.Ok env)
       (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-module-local-env-list
-              ctx
-              rest
-              env
-              target-module
-              (intern-str next-module))]
-          [_
-            (if (string.eq module target-module)
-              (match (tc-module-local-env-add-decl ctx env target-module decl)
-                [(ResultTcEnv.Ok next-env)
-                  (tc-module-local-env-list
-                    ctx
-                    rest
-                    next-env
-                    target-module
-                    module)]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])
-              (tc-module-local-env-list ctx rest env target-module module))]))]))
+        [j : i64 (array-ref tc-module-decl-index-starts slot)]
+        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [cur-env : TcTypeEnv env]
+        [message : String ""]
+        [ok : bool true]
+        (begin
+          (while (and ok (< j end))
+            (let
+              [decl : AstDecl
+                (array-ref
+                  (struct-get decls slots)
+                  (+
+                    (struct-get decls offset)
+                    (array-ref tc-module-decl-index-positions j)))]
+              (begin
+                (match decl
+                  [(AstDecl.Module _) unit]
+                  [_
+                    (match (tc-module-local-env-add-decl
+                      ctx
+                      cur-env
+                      target-module
+                      decl)
+                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                      [(ResultTcEnv.Err step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])])
+                (set! j (+ j 1)))))
+          (if ok
+            (ResultTcEnv.Ok cur-env)
+            (ResultTcEnv.Err message)))))))
 
 (define (tc-module-local-env
   [ctx : TcContext]
@@ -18506,14 +18666,52 @@
         (not (tc-name-local-bound-before-module? env base))
         (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
 
+;; Allocation-free equivalent of
+;;   (string.eq text (compiler-symbol-module-key module base))
+;; for non-empty modules: the arena-safety checks run per call expression, and
+;; building the module/base key string allocated on every one of them.
+(define (tc-module-key-text-matches?
+  [text : String]
+  [module : String]
+  [base : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [module-len : i64 (string.string-length module)]
+    [base-len : i64 (string.string-length base)]
+    (if (not (= text-len (+ module-len (+ base-len 1))))
+      false
+      (if (not (= (string.string-ref text module-len) '/'))
+        false
+        (let
+          [ok : bool true]
+          [i : i64 0]
+          (begin
+            (while (and ok (< i module-len))
+              (begin
+                (if (= (string.string-ref text i) (string.string-ref module i))
+                  unit
+                  (set! ok false))
+                (set! i (+ i 1))))
+            (set! i 0)
+            (while (and ok (< i base-len))
+              (begin
+                (if (=
+                  (string.string-ref text (+ module-len (+ 1 i)))
+                  (string.string-ref base i))
+                  unit
+                  (set! ok false))
+                (set! i (+ i 1))))
+            ok))))))
+
 (define (tc-arena-canonical-call-name?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
   [base : String]) : bool
-  (string.eq
+  (tc-module-key-text-matches?
     (tc-call-builtin-lookup-name ctx env name)
-    (compiler-symbol-module-key (tc-arena-module-name) base)))
+    (tc-arena-module-name)
+    base))
 
 (define (tc-arena-safe-call-name?
   [ctx : TcContext]
@@ -47020,19 +47218,32 @@
 ;; qualifier unchanged). Inserts stop at half load -- only memoization, never
 ;; correctness, degrades.
 (define macro-alias-cache-capacity : i64
-  4096)
+  16384)
 (define macro-alias-cache-module-keys : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-qualifier-keys : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-values : (Array i64)
-  (array.make-array i64 4096))
+  (array.make-array i64 16384))
 (define macro-alias-cache-count : i64
   0)
 (define macro-alias-cache-generation : i64
   -1)
 (define macro-alias-cache-ready : bool
   false)
+
+;; Eager-index state (see macro-alias-cache-build!): built records that the
+;; one-pass index ran for this generation; complete records that every aliased
+;; import fit under the half-load insert cap, making a table miss a definitive
+;; "no alias import" answer.
+(define macro-alias-cache-built : bool
+  false)
+(define macro-alias-cache-complete : bool
+  false)
+(define macro-alias-cache-built-decl-count : i64
+  -1)
+(define macro-alias-cache-built-decl-offset : i64
+  -1)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
 (define macro-unqualified-import-cache-module-keys : (Array i64)
@@ -47061,6 +47272,18 @@
 (define macro-flat-import-target-cache-ready : bool
   false)
 
+;; Eager-index state: built records the one-pass build ran this generation;
+;; complete records every module fit under the half-load insert cap, making a
+;; table miss a definitive "no flat imports" answer.
+(define macro-flat-import-target-cache-built : bool
+  false)
+(define macro-flat-import-target-cache-complete : bool
+  false)
+(define macro-flat-import-target-cache-built-decl-count : i64
+  -1)
+(define macro-flat-import-target-cache-built-decl-offset : i64
+  -1)
+
 ;; The mapping is program-derived, so the cache must not survive into the next
 ;; program of a multi-program process (smoke batteries, REPL, LSP, package
 ;; builds). macro-expand-program and the REPL typecheck entry reset it at the
@@ -47068,6 +47291,7 @@
 ;; the intern generation gate additionally covers intern-reset! boundaries.
 (define (macro-alias-derived-cache-reset!) : unit
   (begin
+    (tc-module-decl-index-reset!)
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
@@ -47208,6 +47432,8 @@
             (set! i (+ i 1))))
         (set! macro-flat-import-target-cache-count 0)
         (set! macro-flat-import-target-cache-generation (intern-generation))
+        (set! macro-flat-import-target-cache-built false)
+        (set! macro-flat-import-target-cache-complete false)
         (set! macro-flat-import-target-cache-ready true)))))
 
 (define (macro-flat-import-target-cache-bucket [module-id : i64]) : i64
@@ -47368,24 +47594,146 @@
             (set! index (+ index 1)))))
       (macro-flat-import-target-list-reverse cur-targets))))
 
+;; Overwrite the stored list for a module id already present in the table
+;; (macro-flat-import-target-cache-put! keeps existing entries untouched).
+(define (macro-flat-import-target-cache-overwrite!
+  [module-id : i64]
+  [targets : MacroFlatImportTargetList]) : unit
+  (let
+    [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
+    [module-key : i64 (+ module-id 1)]
+    [steps : i64 0]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-flat-import-target-cache-capacity))
+        (let
+          [slot : i64
+            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+          (if (= slot module-key)
+            (begin
+              (array-set! macro-flat-import-target-cache-values cursor targets)
+              (set! done true))
+            (if (= slot 0)
+              (set! done true)
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-flat-import-target-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      unit)))
+
+;; One-pass eager build of every module's flat-import target list. Each
+;; per-module cache miss used to rescan the ENTIRE declaration list (with a
+;; ~100B AstDecl unwrap copy per declaration), and the cache resets at every
+;; in-pass splice rebuild, so a self-compile re-paid those whole-program scans
+;; per module per epoch. Lists are accumulated newest-first in program order
+;; and reversed on store, matching macro-flat-import-targets-from-list's
+;; add-then-reverse order exactly. If the table's half-load insert cap is hit,
+;; complete stays false and misses fall back to the exact scan, so only
+;; memoization -- never correctness -- degrades.
+(define (macro-flat-import-target-cache-build! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 (intern "")]
+    [truncated : bool false]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+              (match maybe-alias
+                [(AstMaybeImportAlias.Some alias)
+                  (if (= (string.string-length alias) 0)
+                    (match expected
+                      [(AstMaybeModuleName.Some target-module)
+                        (let
+                          [target-id : i64 (intern target-module)]
+                          (if (= target-id cur-module-id)
+                            unit
+                            (match (macro-flat-import-target-cache-get
+                              cur-module-id)
+                              [(MacroFlatImportTargetCacheLookup.Hit existing)
+                                (macro-flat-import-target-cache-overwrite!
+                                  cur-module-id
+                                  (macro-flat-import-target-list-add
+                                    existing
+                                    target-id))]
+                              [(MacroFlatImportTargetCacheLookup.Missing)
+                                (if (>=
+                                  (* macro-flat-import-target-cache-count 2)
+                                  macro-flat-import-target-cache-capacity)
+                                  (set! truncated true)
+                                  (macro-flat-import-target-cache-put!
+                                    cur-module-id
+                                    (macro-flat-import-target-list-add
+                                      (MacroFlatImportTargetList.Nil)
+                                      target-id)))])))]
+                      [(AstMaybeModuleName.No) unit])
+                    unit)]
+                [(AstMaybeImportAlias.No) unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      ;; Reverse each accumulated list into program order.
+      (set! i 0)
+      (while (< i macro-flat-import-target-cache-capacity)
+        (begin
+          (if (= (array-ref macro-flat-import-target-cache-module-keys i) 0)
+            unit
+            (array-set!
+              macro-flat-import-target-cache-values
+              i
+              (macro-flat-import-target-list-reverse
+                (array-ref macro-flat-import-target-cache-values i))))
+          (set! i (+ i 1))))
+      (set! macro-flat-import-target-cache-built true)
+      (set!
+        macro-flat-import-target-cache-built-decl-count
+        (ast-decl-list-len (& decls)))
+      (set!
+        macro-flat-import-target-cache-built-decl-offset
+        (struct-get decls offset))
+      (set! macro-flat-import-target-cache-complete (not truncated)))))
+
 (define (macro-flat-import-targets
   [decls : AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
   (begin
     (macro-flat-import-target-cache-ensure!)
+    (if macro-flat-import-target-cache-built
+      unit
+      (macro-flat-import-target-cache-build! decls))
     (match (macro-flat-import-target-cache-get current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
-        (let
-          [targets : MacroFlatImportTargetList
-            (macro-flat-import-targets-from-list
-              decls
-              current-module-id
-              (intern "")
-              (MacroFlatImportTargetList.Nil))]
-          (begin
-            (macro-flat-import-target-cache-put! current-module-id targets)
-            targets))])))
+        ;; Same batch-safety rule as the alias index: a definitive empty
+        ;; answer requires the build to match this decl-list shape.
+        (if (and
+          macro-flat-import-target-cache-complete
+          (=
+            macro-flat-import-target-cache-built-decl-count
+            (ast-decl-list-len (& decls)))
+          (=
+            macro-flat-import-target-cache-built-decl-offset
+            (struct-get decls offset)))
+          (MacroFlatImportTargetList.Nil)
+          (let
+            [targets : MacroFlatImportTargetList
+              (macro-flat-import-targets-from-list
+                decls
+                current-module-id
+                (intern "")
+                (MacroFlatImportTargetList.Nil))]
+            (begin
+              (macro-flat-import-target-cache-put! current-module-id targets)
+              targets)))])))
 
 (define (macro-alias-cache-ensure!) : unit
   (if (if macro-alias-cache-ready
@@ -47401,6 +47749,8 @@
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (intern-generation))
+        (set! macro-alias-cache-built false)
+        (set! macro-alias-cache-complete false)
         (set! macro-alias-cache-ready true)))))
 
 (define (macro-alias-cache-bucket [module-id : i64] [qualifier-id : i64]) : i64
@@ -47481,38 +47831,101 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
+;; One-pass eager index over the program's aliased imports: record every
+;; (module, alias) -> target mapping in program order (first import wins,
+;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
+;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
+;; reset at every in-pass splice rebuild, so a self-compile re-paid those
+;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
+;; hundreds of times. One pass makes every later query O(1); if the table's
+;; half-load insert cap is ever hit, complete stays false and misses fall back
+;; to the exact scan, so only memoization -- never correctness -- degrades.
+(define (macro-alias-cache-build! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 (intern "")]
+    [truncated : bool false]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+              (match maybe-alias
+                [(AstMaybeImportAlias.Some alias)
+                  (let
+                    [target-id : i64
+                      (match expected
+                        [(AstMaybeModuleName.Some target) (intern target)]
+                        [(AstMaybeModuleName.No) (intern alias)])]
+                    (if (>=
+                      (* macro-alias-cache-count 2)
+                      macro-alias-cache-capacity)
+                      (set! truncated true)
+                      (macro-alias-cache-put!
+                        cur-module-id
+                        (intern alias)
+                        target-id)))]
+                [(AstMaybeImportAlias.No) unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
+      (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
+      (set! macro-alias-cache-complete (not truncated)))))
+
 (define (macro-import-alias-target-cached-id
   [decls : AstDeclList]
   [current-module-id : i64]
   [qualifier-id : i64]) : TcMaybeString
   (begin
     (macro-alias-cache-ensure!)
+    (if macro-alias-cache-built
+      unit
+      (macro-alias-cache-build! decls))
     (let
+      ;; Batch/REPL compiles can reuse this process without a per-program
+      ;; reset; the old lazy design tolerated stale positives (module names
+      ;; are distinct across programs) because every miss rescanned the
+      ;; CURRENT decl list. A definitive eager miss is therefore only
+      ;; trustworthy when the index was built over this same decl-list shape.
+      [complete-here : bool
+        (and
+          macro-alias-cache-complete
+          (= macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
+          (= macro-alias-cache-built-decl-offset (struct-get decls offset)))]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
-      (if (= cached -2)
-        (let
-          [qualifier : String (intern-str qualifier-id)]
-          (match (macro-import-alias-target-ids
-            decls
-            current-module-id
-            qualifier
-            (intern ""))
-            [(TcMaybeString.Some target)
-              (let
-                [target-id : i64 (intern target)]
+      (cond
+        [(and (= cached -2) complete-here)
+          ;; The eager index saw every aliased import, so a miss is a
+          ;; definitive "no alias import for this (module, qualifier)".
+          (TcMaybeString.No)]
+        [(= cached -2)
+          (let
+            [qualifier : String (intern-str qualifier-id)]
+            (match (macro-import-alias-target-ids
+              decls
+              current-module-id
+              qualifier
+              (intern ""))
+              [(TcMaybeString.Some target)
+                (let
+                  [target-id : i64 (intern target)]
+                  (begin
+                    (macro-alias-cache-put!
+                      current-module-id
+                      qualifier-id
+                      target-id)
+                    (TcMaybeString.Some target)))]
+              [(TcMaybeString.No)
                 (begin
-                  (macro-alias-cache-put!
-                    current-module-id
-                    qualifier-id
-                    target-id)
-                  (TcMaybeString.Some target)))]
-            [(TcMaybeString.No)
-              (begin
-                (macro-alias-cache-put! current-module-id qualifier-id -1)
-                (TcMaybeString.No))]))
-        (if (< cached 0)
-          (TcMaybeString.No)
-          (TcMaybeString.Some (intern-str cached)))))))
+                  (macro-alias-cache-put! current-module-id qualifier-id -1)
+                  (TcMaybeString.No))]))]
+        [(< cached 0) (TcMaybeString.No)]
+        [else (TcMaybeString.Some (intern-str cached))]))))
 
 (define (macro-import-alias-target-cached
   [decls : AstDeclList]

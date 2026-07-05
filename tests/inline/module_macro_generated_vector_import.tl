@@ -32,7 +32,10 @@
 
 (test
   generated-module-body-imports-vector-module-macro
-  (test.assert-i64-eq (user.score 7 0) 42 "generated module imported vector macro"))
+  (test.assert-i64-eq
+    (user.score 7 0)
+    42
+    "generated module imported vector macro"))
 
 (test
   generated-module-body-imports-string-vector-module-macro

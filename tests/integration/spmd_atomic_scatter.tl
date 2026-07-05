@@ -38,7 +38,10 @@
       (begin
         (array-set! old64 i (atomic.atomic-i64-fetch-add! out64 bucket (+ i 1)))
         (atomic.atomic-i32-add! out32 bucket (cast (+ i 1) : i32))
-        (array-set! old32 i (atomic.atomic-i32-fetch-add! serial32 0 (cast 1 : i32)))))))
+        (array-set!
+          old32
+          i
+          (atomic.atomic-i32-fetch-add! serial32 0 (cast 1 : i32)))))))
 
 (define (snapshot-loads
   [ix : (Array i64)]

@@ -33,10 +33,13 @@
         (+
           (score-bool (string.eq (array-ref (struct-get bundle fixed) 0) "f0"))
           (+
-            (score-bool (string.eq (array-ref (struct-get bundle fixed) 1) "f1"))
+            (score-bool
+              (string.eq (array-ref (struct-get bundle fixed) 1) "f1"))
             (+
-              (score-bool (string.eq (array-ref (struct-get bundle items) 0) "d0"))
-              (score-bool (string.eq (array-ref (struct-get bundle items) 1) "d1")))))))))
+              (score-bool
+                (string.eq (array-ref (struct-get bundle items) 0) "d0"))
+              (score-bool
+                (string.eq (array-ref (struct-get bundle items) 1) "d1")))))))))
 
 (define (make-bundle [items : (Array String)]) : Bundle
   (Bundle

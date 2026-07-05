@@ -1,6 +1,7 @@
 ;; module_macro_generated_vector_import_exported.tl - exported module macros keep
 ;; their defining-module lookup context for generated body imports.
 (import stdlib.test)
+
 ;; Retained for #2454 path-import compatibility: the provider module name does
 ;; not map to this same-directory helper path.
 (import "module_macro_vector_provider.tl" module tests.module_macro_vector_provider as provider)

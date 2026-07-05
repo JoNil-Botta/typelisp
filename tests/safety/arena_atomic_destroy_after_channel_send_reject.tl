@@ -10,7 +10,8 @@
       [(ChannelStringCreateOk channel)
         (let
           [message : String (in-arena owner (string.append "owned" "-message"))]
-          [sent : ChannelStringSendResult (sync.channel-string-send channel message)]
+          [sent : ChannelStringSendResult
+            (sync.channel-string-send channel message)]
           (begin
             (arena.destroy-safe! owner)
             (match sent

@@ -38,7 +38,10 @@
   dotted-stdlib-vector-import-exposes-bare-vector-module-macro
   (let
     [items : direct.Vec (direct.new)]
-    (test.assert-i64-eq (direct.len (& items)) 0 "dotted stdlib vector bare import")))
+    (test.assert-i64-eq
+      (direct.len (& items))
+      0
+      "dotted stdlib vector bare import")))
 
 (test
   generated-module-body-imports-dotted-stdlib-vector-then-bare-vector

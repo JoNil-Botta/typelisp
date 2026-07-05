@@ -84,7 +84,10 @@
   (let
     [v : iv.IntVec (iv.int-vec-new)]
     (begin
-      (test.assert-i64-eq (iv.int-vec-len v) 0 "fresh generated vector is empty")
+      (test.assert-i64-eq
+        (iv.int-vec-len v)
+        0
+        "fresh generated vector is empty")
       (test.assert-i64-eq
         (iv.int-vec-capacity v)
         4
@@ -104,14 +107,20 @@
         "capacity doubles when pushing past the initial reservation")
       (test.assert-i64-eq (iv.int-vec-get v 0) 0 "element 0 survives growth")
       (test.assert-i64-eq (iv.int-vec-get v 7) 49 "element 7 survives growth")
-      (test.assert-i64-eq (iv.int-vec-get v 9) 81 "last element survives growth"))))
+      (test.assert-i64-eq
+        (iv.int-vec-get v 9)
+        81
+        "last element survives growth"))))
 
 (test
   generated-module-vector-set-overwrites
   (let
     [v : iv.IntVec (iv.int-vec-set (int-vec-fill 5) 2 999)]
     (begin
-      (test.assert-i64-eq (iv.int-vec-get v 2) 999 "set overwrites the indexed slot")
+      (test.assert-i64-eq
+        (iv.int-vec-get v 2)
+        999
+        "set overwrites the indexed slot")
       (test.assert-i64-eq (iv.int-vec-get v 1) 1 "set leaves neighbours intact")
       (test.assert-i64-eq (iv.int-vec-len v) 5 "set preserves length"))))
 

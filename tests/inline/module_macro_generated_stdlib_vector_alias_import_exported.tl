@@ -2,6 +2,7 @@
 ;; module macros keep their defining-module dotted import context for bare
 ;; generated body imports of `(vector T)`.
 (import stdlib.test)
+
 ;; Retained for #2454 path-import compatibility: the provider module name does
 ;; not map to this same-directory helper path.
 (import "module_macro_stdlib_vector_alias_provider.tl" module tests.module_macro_stdlib_vector_alias_provider as provider)

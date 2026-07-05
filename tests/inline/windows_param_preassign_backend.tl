@@ -1,6 +1,7 @@
 ;; windows_param_preassign_backend.tl - backend smoke for #3493's Win64
 ;; incoming scalar parameter homes.
 (import stdlib.io)
+
 ;; Retained for #2454 path-import compatibility: compiler_backend.tl is raw
 ;; source without a resolvable top-level module name.
 (import "../../src/compiler_backend.tl")

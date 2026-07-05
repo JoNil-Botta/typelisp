@@ -16,7 +16,9 @@
   (NoEscape))
 
 (define (piece [seed : i64] [slot : i64]) : String
-  (string.append (string.append "escape:" (string.int->string seed)) (string.append ":" (string.int->string slot))))
+  (string.append
+    (string.append "escape:" (string.int->string seed))
+    (string.append ":" (string.int->string slot))))
 
 (define (make-items [seed : i64]) : (Array String)
   (let

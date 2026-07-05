@@ -80,7 +80,8 @@
           (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async unsupported message"))]
-    [(process.OkProcessChild _) (io.panic "process async should be unsupported")]))
+    [(process.OkProcessChild _)
+      (io.panic "process async should be unsupported")]))
 
 (define (assert-process-output-unsupported
   [result : process.ResultProcessOutput]) : unit

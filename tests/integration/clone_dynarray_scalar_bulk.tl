@@ -79,7 +79,9 @@
             (begin
               (unsafe
                 (arena.destroy scratch))
-              (and (string.eq (array-ref copy 0) "s0") (string.eq (array-ref copy 1) "s1")))))))))
+              (and
+                (string.eq (array-ref copy 0) "s0")
+                (string.eq (array-ref copy 1) "s1")))))))))
 
 (define (main) : i64
   (let

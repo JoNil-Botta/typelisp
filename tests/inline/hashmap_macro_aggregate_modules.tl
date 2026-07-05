@@ -15,7 +15,9 @@
     [m : map_nested_i64.Map (map_nested_i64.with-capacity 2)]
     (begin
       (test.assert-i64-eq (map_nested_i64.len m) 0 "fresh aggregate-key len")
-      (test.assert-true (map_nested_i64.is-empty? m) "fresh aggregate-key empty")
+      (test.assert-true
+        (map_nested_i64.is-empty? m)
+        "fresh aggregate-key empty")
       (map_nested_i64.insert (&mut m) alpha 10)
       (map_nested_i64.insert (&mut m) beta 20)
       (test.assert-i64-eq (map_nested_i64.len m) 2 "aggregate-key insert len")

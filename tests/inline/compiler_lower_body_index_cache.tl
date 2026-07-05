@@ -1,6 +1,7 @@
 ;; Regression for stale lowerer global-name cache use during prune body indexing.
 (import stdlib.io)
 (import stdlib.test)
+
 ;; Retained for #2454 path-import compatibility: compiler_lower.tl is raw source
 ;; without a resolvable top-level module name.
 (import "../../src/compiler_lower.tl")

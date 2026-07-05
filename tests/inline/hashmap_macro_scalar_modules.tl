@@ -19,13 +19,19 @@
     [beta : String "beta"]
     [m : map_string_string.Map (map_string_string.with-capacity 2)]
     (begin
-      (test.assert-i64-eq (map_string_string.len (& m)) 0 "fresh StringString len")
+      (test.assert-i64-eq
+        (map_string_string.len (& m))
+        0
+        "fresh StringString len")
       (test.assert-true
         (map_string_string.is-empty? (& m))
         "fresh StringString empty")
       (map_string_string.insert (&mut m) "alpha" "red")
       (map_string_string.insert (&mut m) "beta" "amber")
-      (test.assert-i64-eq (map_string_string.len (& m)) 2 "StringString insert len")
+      (test.assert-i64-eq
+        (map_string_string.len (& m))
+        2
+        "StringString insert len")
       (assert-owned-string-eq
         (map_string_string.lookup-value-or
           (map_string_string.get (& m) "alpha")
@@ -102,7 +108,10 @@
       (map_string_string.insert (&mut m) "k3" "v3")
       (map_string_string.insert (&mut m) "k4" "v4")
       (map_string_string.insert (&mut m) "k5" "v5")
-      (test.assert-i64-eq (map_string_string.len (& m)) 6 "StringString growth len")
+      (test.assert-i64-eq
+        (map_string_string.len (& m))
+        6
+        "StringString growth len")
       (test.assert-true
         (>= (map_string_string.capacity (& m)) 8)
         "StringString growth capacity")
@@ -135,7 +144,9 @@
       (test.assert-true
         (map_i64_i64.remove-ok? (map_i64_i64.remove (&mut m) 2))
         "I64I64 remove")
-      (test.assert-false (map_i64_i64.contains? (& m) 2) "I64I64 removed absent")
+      (test.assert-false
+        (map_i64_i64.contains? (& m) 2)
+        "I64I64 removed absent")
       (match (map_i64_i64.entry-or-insert (&mut m) 2 22)
         [(map_i64_i64.EntryOrInsertInserted value)
           (test.assert-i64-eq value 22 "I64I64 inserted value")]
@@ -182,7 +193,9 @@
       (map_i64_i64.insert (&mut m) 4 4)
       (map_i64_i64.insert (&mut m) 5 5)
       (test.assert-i64-eq (map_i64_i64.len (& m)) 6 "I64I64 growth len")
-      (test.assert-true (>= (map_i64_i64.capacity (& m)) 8) "I64I64 growth capacity")
+      (test.assert-true
+        (>= (map_i64_i64.capacity (& m)) 8)
+        "I64I64 growth capacity")
       (test.assert-i64-eq
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 5) -1)
         5
@@ -194,7 +207,9 @@
     [m : map_i64_string.Map (map_i64_string.with-capacity 2)]
     (begin
       (test.assert-i64-eq (map_i64_string.len (& m)) 0 "fresh I64String len")
-      (test.assert-true (map_i64_string.is-empty? (& m)) "fresh I64String empty")
+      (test.assert-true
+        (map_i64_string.is-empty? (& m))
+        "fresh I64String empty")
       (map_i64_string.insert (&mut m) 1 "one")
       (map_i64_string.insert (&mut m) 2 "two")
       (test.assert-i64-eq (map_i64_string.len (& m)) 2 "I64String insert len")

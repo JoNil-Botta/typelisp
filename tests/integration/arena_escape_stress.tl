@@ -123,7 +123,9 @@
     (let
       [escaped : String (escape-string n)]
       [noise : StressList (escape-list 8 (+ n 1000))]
-      (if (and (string.eq escaped (payload n 999)) (list-ok? noise 8 (+ n 1000)))
+      (if (and
+        (string.eq escaped (payload n 999))
+        (list-ok? noise 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
         0))))
 

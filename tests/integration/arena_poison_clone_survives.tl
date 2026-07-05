@@ -16,7 +16,8 @@
       (unsafe
         (arena.set! scratch))
       (let
-        [source : PoisonPayload (PoisonPayload (string.append "poison" "ok") 34)]
+        [source : PoisonPayload
+          (PoisonPayload (string.append "poison" "ok") 34)]
         (begin
           (unsafe
             (arena.set! outer))

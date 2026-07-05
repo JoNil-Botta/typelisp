@@ -71,7 +71,13 @@
           (match (pvec.pop (&mut v))
             [(pvec.Pop.Ok value)
               (begin
-                (test.assert-i64-eq (pair-score value) 1 "struct vector pop value")
-                (test.assert-i64-eq (pvec.len (& v)) 2 "struct vector pop shrinks"))]
+                (test.assert-i64-eq
+                  (pair-score value)
+                  1
+                  "struct vector pop value")
+                (test.assert-i64-eq
+                  (pvec.len (& v))
+                  2
+                  "struct vector pop shrinks"))]
             [pvec.Pop.Empty
               (test.assert-true false "struct vector pop should return a value")]))))))

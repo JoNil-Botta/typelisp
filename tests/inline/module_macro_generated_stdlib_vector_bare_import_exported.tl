@@ -2,6 +2,7 @@
 ;; module macros keep their defining-module lookup context for bare generated
 ;; body imports of stdlib `(vector T)`.
 (import stdlib.test)
+
 ;; Retained for #2454 path-import compatibility: the provider module name does
 ;; not map to this same-directory helper path.
 (import "module_macro_stdlib_vector_bare_provider.tl" module tests.module_macro_stdlib_vector_bare_provider as provider)

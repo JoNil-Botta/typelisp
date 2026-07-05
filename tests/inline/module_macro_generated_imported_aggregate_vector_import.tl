@@ -17,4 +17,7 @@
 
 (test
   generated-module-imported-aggregate-vector
-  (test.assert-i64-eq (user.score) 0 "generated module imported aggregate vector"))
+  (test.assert-i64-eq
+    (user.score)
+    0
+    "generated module imported aggregate vector"))

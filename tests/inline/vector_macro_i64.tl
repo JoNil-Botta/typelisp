@@ -55,7 +55,10 @@
         -1
         "i64 vector macro negative fallback")
       (ivec.set (&mut v) 2 99)
-      (test.assert-i64-eq (ivec.get (& v) 2 -1) 99 "i64 vector macro set in place")
+      (test.assert-i64-eq
+        (ivec.get (& v) 2 -1)
+        99
+        "i64 vector macro set in place")
       (test.assert-i64-eq (ivec.len (& v)) 9 "i64 vector macro set keeps len"))))
 
 (test
@@ -72,8 +75,14 @@
           (ivec.extend (&mut v) (& src) 2)
           (ivec.reverse! (&mut v))
           (test.assert-i64-eq (ivec.len (& v)) 5 "extend mutates vector length")
-          (test.assert-i64-eq (ivec.get (& v) 0 -1) 5 "reverse mutates first slot")
-          (test.assert-i64-eq (ivec.get (& v) 4 -1) 4 "reverse mutates last slot")
+          (test.assert-i64-eq
+            (ivec.get (& v) 0 -1)
+            5
+            "reverse mutates first slot")
+          (test.assert-i64-eq
+            (ivec.get (& v) 4 -1)
+            4
+            "reverse mutates last slot")
           (test.assert-i64-eq
             (ivec.fold (& v) 0 vector-macro-i64-add)
             24
@@ -82,7 +91,10 @@
             [mapped : ivec.Vec (ivec.map (& v) vector-macro-i64-triple)]
             [snapshot : (Array i64) (ivec.to-array (& mapped))]
             (begin
-              (test.assert-i64-eq (ivec.len (& mapped)) 5 "map preserves length")
+              (test.assert-i64-eq
+                (ivec.len (& mapped))
+                5
+                "map preserves length")
               (test.assert-i64-eq
                 (array-ref snapshot 0)
                 15
@@ -94,8 +106,12 @@
                 [(ivec.Pop.Ok value)
                   (begin
                     (test.assert-i64-eq value 4 "pop returns last value")
-                    (test.assert-i64-eq (ivec.len (& v)) 4 "pop shrinks in place"))]
-                [ivec.Pop.Empty (test.assert-true false "pop should return a value")]))))))))
+                    (test.assert-i64-eq
+                      (ivec.len (& v))
+                      4
+                      "pop shrinks in place"))]
+                [ivec.Pop.Empty
+                  (test.assert-true false "pop should return a value")]))))))))
 
 (test
   vector-macro-string-alias
@@ -107,11 +123,19 @@
       (svec.push (&mut words) "beta")
       (svec.set (&mut words) 1 "bee")
       (test.assert-i64-eq (svec.len (& words)) 2 "aliased string vector length")
-      (test.assert-true (svec.contains? (& words) "bee") "aliased string contains")
+      (test.assert-true
+        (svec.contains? (& words) "bee")
+        "aliased string contains")
       (match (svec.pop (&mut words))
         [(svec.Pop.Ok value)
           (begin
-            (test.assert-string-eq (& value) (& expected) "aliased string pop value")
-            (test.assert-i64-eq (svec.len (& words)) 1 "aliased string pop shrinks"))]
+            (test.assert-string-eq
+              (& value)
+              (& expected)
+              "aliased string pop value")
+            (test.assert-i64-eq
+              (svec.len (& words))
+              1
+              "aliased string pop shrinks"))]
         [svec.Pop.Empty
           (test.assert-true false "aliased string pop should return a value")]))))

@@ -116,7 +116,10 @@
     [v : IntVec (int-vec-new)]
     (begin
       (test.assert-i64-eq (int-vec-len v) 0 "fresh generated vector is empty")
-      (test.assert-i64-eq (int-vec-capacity v) 4 "fresh generated vector reserves 4"))))
+      (test.assert-i64-eq
+        (int-vec-capacity v)
+        4
+        "fresh generated vector reserves 4"))))
 
 (test
   generated-vector-push-grows-past-capacity
@@ -139,7 +142,10 @@
   (let
     [v : IntVec (int-vec-set (int-vec-fill 5) 2 999)]
     (begin
-      (test.assert-i64-eq (int-vec-get v 2) 999 "set overwrites the indexed slot")
+      (test.assert-i64-eq
+        (int-vec-get v 2)
+        999
+        "set overwrites the indexed slot")
       (test.assert-i64-eq (int-vec-get v 1) 1 "set leaves neighbours intact")
       (test.assert-i64-eq (int-vec-len v) 5 "set preserves length"))))
 

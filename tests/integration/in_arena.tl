@@ -6,7 +6,9 @@
   (in-arena
     scratch
     (begin
-      (test.assert-true (arena.eq? (arena.current) scratch) "in-arena active target")
+      (test.assert-true
+        (arena.eq? (arena.current) scratch)
+        "in-arena active target")
       (string.append "arena:" (string.int->string 42)))))
 
 (define (main) : i64

@@ -4087,11 +4087,7 @@
                       (lsp-json-number (- result-col 1))))
                   (LspHandleResult.Continue docs))
                 (begin
-                  (lsp-write-declaration-context-error
-                    id
-                    decls
-                    name
-                    "Form not found")
+                  (lsp-write-declaration-not-found-error id decls name)
                   (LspHandleResult.Continue docs)))))]
         [(LspJsonText.Missing)
           (begin
@@ -4330,12 +4326,47 @@
     col
     "No form found at position"))
 
+(define lsp-declaration-context-name-cap : i64
+  32)
+
+(define (lsp-decls-to-name-list-capped
+  [decls : LspDeclList]
+  [idx : i64]
+  [remaining : i64]) : json.JsonList
+  (if (or (>= idx (lsp-decl-list-len (& decls))) (<= remaining 0))
+    json.JsonListNil
+    (let
+      [entry : LspDeclEntry
+        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+      [name : String (struct-get entry name)]
+      (lsp-json-list-cons
+        (json.JsonString name)
+        (lsp-decls-to-name-list-capped decls (+ idx 1) (- remaining 1))))))
+
+(define (lsp-common-prefix-len [left : String] [right : String]) : i64
+  (let
+    [left-len : i64 (string.string-length left)]
+    [right-len : i64 (string.string-length right)]
+    [limit : i64
+      (if (< left-len right-len)
+        left-len
+        right-len)]
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (< i limit) (not done))
+        (if (= (string.string-ref left i) (string.string-ref right i))
+          (set! i (+ i 1))
+          (set! done true)))
+      i)))
+
 (define (lsp-decl-name-similar? [needle : String] [name : String]) : bool
   (if (or (= (string.string-length needle) 0) (= (string.string-length name) 0))
     false
     (or
       (string.contains (& name) (& needle))
-      (string.contains (& needle) (& name)))))
+      (string.contains (& needle) (& name))
+      (>= (lsp-common-prefix-len needle name) 2))))
 
 (define (lsp-decls-to-similar-name-list
   [decls : LspDeclList]
@@ -4354,20 +4385,36 @@
         rest))))
 
 (define (lsp-declaration-context-json [decls : LspDeclList] [name : String]) : json.Json
-  (lsp-json-object
-    (lsp-json-member
-      "requestedName"
-      (json.JsonString name)
+  (let
+    [all-name-count : i64 (lsp-decl-list-len (& decls))]
+    (lsp-json-object
       (lsp-json-member
-        "similarNames"
-        (lsp-json-array (lsp-decls-to-similar-name-list decls 0 name))
+        "requestedName"
+        (json.JsonString name)
         (lsp-json-member
-          "allNames"
-          (lsp-json-array (lsp-decls-to-name-list decls 0))
+          "similarNames"
+          (lsp-json-array (lsp-decls-to-similar-name-list decls 0 name))
           (lsp-json-member
-            "declarationCount"
-            (lsp-json-number (lsp-decl-list-len (& decls)))
-            json.JsonMemberListNil))))))
+            "allNames"
+            (lsp-json-array
+              (lsp-decls-to-name-list-capped
+                decls
+                0
+                lsp-declaration-context-name-cap))
+            (lsp-json-member
+              "allNameCount"
+              (lsp-json-number all-name-count)
+              (lsp-json-member
+                "allNamesTruncated"
+                (json.JsonBool
+                  (> all-name-count lsp-declaration-context-name-cap))
+                (lsp-json-member
+                  "allNameLimit"
+                  (lsp-json-number lsp-declaration-context-name-cap)
+                  (lsp-json-member
+                    "declarationCount"
+                    (lsp-json-number all-name-count)
+                    json.JsonMemberListNil))))))))))
 
 (define (lsp-declaration-not-found-message [name : String]) : String
   (if (= (string.string-length name) 0)
@@ -6378,6 +6425,31 @@
   (unless
     (lsp-documents-cache-bound-smoke-ok?)
     (io.panic "lsp-documents-cache-bound failed")))
+
+(define (lsp-declaration-context-smoke-ok?) : bool
+  (let
+    [text : String
+      "(define (n00) : i64 0)\n(define (n01) : i64 1)\n(define (n02) : i64 2)\n(define (n03) : i64 3)\n(define (n04) : i64 4)\n(define (n05) : i64 5)\n(define (n06) : i64 6)\n(define (n07) : i64 7)\n(define (n08) : i64 8)\n(define (n09) : i64 9)\n(define (n10) : i64 10)\n(define (n11) : i64 11)\n(define (n12) : i64 12)\n(define (n13) : i64 13)\n(define (n14) : i64 14)\n(define (n15) : i64 15)\n(define (n16) : i64 16)\n(define (n17) : i64 17)\n(define (n18) : i64 18)\n(define (n19) : i64 19)\n(define (n20) : i64 20)\n(define (n21) : i64 21)\n(define (n22) : i64 22)\n(define (n23) : i64 23)\n(define (n24) : i64 24)\n(define (n25) : i64 25)\n(define (n26) : i64 26)\n(define (n27) : i64 27)\n(define (n28) : i64 28)\n(define (n29) : i64 29)\n(define (n30) : i64 30)\n(define (n31) : i64 31)\n(define (n32) : i64 32)\n(define (n33) : i64 33)\n"]
+    [decls : LspDeclList (lsp-scan-decls text)]
+    [context-text : String
+      (json.stringify (lsp-declaration-context-json decls "n3x"))]
+    [all-name-count-fragment : String "\"allNameCount\":34"]
+    [truncated-fragment : String "\"allNamesTruncated\":true"]
+    [limit-fragment : String "\"allNameLimit\":32"]
+    [similar-fragment : String "\"similarNames\":[\"n30\""]
+    (and
+      (lsp-decl-name-similar? "foz" "foo")
+      (not (lsp-decl-name-similar? "zzz" "foo"))
+      (string.contains (& context-text) (& all-name-count-fragment))
+      (string.contains (& context-text) (& truncated-fragment))
+      (string.contains (& context-text) (& limit-fragment))
+      (string.contains (& context-text) (& similar-fragment)))))
+
+(test
+  lsp-declaration-context-smoke
+  (unless
+    (lsp-declaration-context-smoke-ok?)
+    (io.panic "lsp-declaration-context-smoke failed")))
 
 ;; Position-based editing helpers
 ;; Find start index of innermost form containing offset. Returns -1 if not found.

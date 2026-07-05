@@ -4,6 +4,8 @@
   "message_checks": [
     {"jsonpath_id": 2, "raw_contains": "\"line\":0", "raw_contains": "\"character\":9"},
     {"jsonpath_id": 3, "raw_contains": "\"line\":2", "raw_contains": "\"character\":11"},
-    {"jsonpath_id": 4, "raw_contains": "\"code\":-32600", "raw_contains": "Form not found"}
+    {"jsonpath_id": 4, "raw_contains": "\"code\":-32600", "raw_contains": "Declaration 'foo' not found", "raw_contains": "\"context\"", "raw_contains": "\"requestedName\":\"foo\"", "raw_contains": "\"similarNames\":[\"foo\"]", "raw_contains": "\"allNames\"", "raw_contains": "\"allNameCount\":3", "raw_contains": "\"allNamesTruncated\":false"},
+    {"jsonpath_id": 5, "raw_contains": "\"code\":-32600", "raw_contains": "Declaration 'foz' not found", "raw_contains": "\"requestedName\":\"foz\"", "raw_contains": "\"similarNames\":[\"foo\"]", "raw_contains": "\"allNames\"", "raw_contains": "\"allNameCount\":3", "raw_contains": "\"allNamesTruncated\":false"},
+    {"jsonpath_id": 6, "raw_contains": "\"code\":-32600", "raw_contains": "Declaration 'zzz' not found", "raw_contains": "\"requestedName\":\"zzz\"", "raw_contains": "\"similarNames\":[]", "raw_contains": "\"allNames\"", "raw_contains": "\"allNameCount\":3", "raw_contains": "\"allNamesTruncated\":false"}
   ]
 }

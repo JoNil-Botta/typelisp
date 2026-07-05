@@ -2842,7 +2842,7 @@
     unit))
 
 (define (tc-topenv-membership-mark-bound! [name-id : i64]) : unit
-  (if (and tc-topenv-membership-active (and (>= name-id 0) (< name-id 262144)))
+  (if (and tc-topenv-membership-active (>= name-id 0) (< name-id 262144))
     (array-set!
       tc-topenv-membership-bound-slots
       name-id
@@ -4138,22 +4138,23 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnv
-  (if (and
-    tc-topenv-membership-active
-    (not (tc-topenv-membership-maybe? name-id)))
-    ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
-    (begin
-      (tc-topenv-membership-mark-bound! name-id)
-      (tc-bind-id env name-id ty))
-    (if (and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
+  (cond
+    [(and
+        tc-topenv-membership-active
+        (not (tc-topenv-membership-maybe? name-id)))
+      ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
+      (begin
+        (tc-topenv-membership-mark-bound! name-id)
+        (tc-bind-id env name-id ty))]
+    [(and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
       ;; Provably bound by an earlier spine-joining bind this build: skip
       ;; without the O(spine) scan (the scan would find that binding).
-      env
-      (if (tc-name-bound-id? env name-id)
-        env
-        (begin
-          (tc-topenv-membership-mark-bound! name-id)
-          (tc-bind-id env name-id ty))))))
+      env]
+    [(tc-name-bound-id? env name-id) env]
+    [else
+      (begin
+        (tc-topenv-membership-mark-bound! name-id)
+        (tc-bind-id env name-id ty))]))
 
 (define (tc-module-name-id [module : String] [name-id : i64]) : i64
   (if (= (string.string-length module) 0)

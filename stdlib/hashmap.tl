@@ -631,6 +631,13 @@
                 (match lookup
                   [(LookupFound value) value]
                   [(LookupMissing) fallback]))
+              (define (get-value-or
+                [map : (& map Map)]
+                [key : i64]
+                [fallback : i64]) : i64
+                (match (base.i64-i64-map-get-ref (& (struct-get map inner)) key)
+                  [(base.I64I64MapFound value) value]
+                  [(base.I64I64MapMissing) fallback]))
               (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
                   map)
                 (BorrowedValueMissing))

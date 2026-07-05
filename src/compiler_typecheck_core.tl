@@ -42707,11 +42707,11 @@
   "")
 
 ;; Set of macro (and compat-guard) names callable in the program. Used as a
-;; cheap, allocation-free pre-filter in the macro-use detector so the common
-;; case (a plain function call whose name is not a macro) avoids the allocating
-;; module-key lookup in `macro-call-decl`. Populated once per expansion run.
-(define macro-expand-macro-names : TcStringList
-  (TcStringList.Nil))
+;; cheap pre-filter in the macro-use detector so the common case (a plain
+;; function call whose name is not a macro) avoids the allocating module-key
+;; lookup in `macro-call-decl`. Populated once per expansion run.
+(define macro-expand-macro-name-set : hashmap.StringI64Map
+  (hashmap.string-i64-map-with-capacity 128))
 
 ;; Macro names whose transformer bodies can call `expr-type`. Only those macros
 ;; need fixed `Expr` operands to carry produced type metadata.
@@ -46354,6 +46354,23 @@
       (tc-string-list-add
         (tc-string-list-add (TcStringList.Nil) "when")
         "unless"))))
+
+(define (macro-name-set-add-all
+  [names : TcStringList]
+  [set : hashmap.StringI64Map]) : hashmap.StringI64Map
+  (match names
+    [(TcStringList.Nil) set]
+    [(TcStringList.Cons name rest)
+      (let
+        [_inserted : bool
+          (hashmap.string-i64-map-insert-if-absent! (&mut set) name 1)]
+        (macro-name-set-add-all (box-get rest) set))]))
+
+(define (macro-name-set-from-list [names : TcStringList]) : hashmap.StringI64Map
+  (macro-name-set-add-all names (hashmap.string-i64-map-with-capacity 128)))
+
+(define (macro-expand-set-macro-names! [names : TcStringList]) : unit
+  (set! macro-expand-macro-name-set (macro-name-set-from-list names)))
 
 (define (macro-surface-decl-macro-in-module?
   [decl : CompilerLoadSurfaceDecl]
@@ -51822,25 +51839,28 @@
   [set : MacroGeneratedSurfaceNameSet]) : i64
   (hashmap.string-i64-map-len (macro-generated-surface-name-set-map set)))
 
+(define (macro-generated-surface-name-set-contains-id?
+  [set : MacroGeneratedSurfaceNameSet]
+  [name : i64]) : bool
+  (macro-generated-surface-name-set-contains? set (intern-str name)))
+
 (define (macro-generated-surface-name-set-contains?
   [set : MacroGeneratedSurfaceNameSet]
   [name : String]) : bool
-  (hashmap.string-i64-map-contains?
-    (macro-generated-surface-name-set-map set)
-    name))
+  (hashmap.string-i64-map-contains-borrowed-ref?
+    (& (struct-get set map))
+    (& name)))
 
 (define (macro-generated-surface-name-set-add
   [set : MacroGeneratedSurfaceNameSet]
   [name : String]) : MacroGeneratedSurfaceNameSet
-  (if (or
-    (string.eq name "")
-    (macro-generated-surface-name-set-contains? set name))
+  (if (string.eq name "")
     set
-    (MacroGeneratedSurfaceNameSet
-      (hashmap.string-i64-map-put
-        (macro-generated-surface-name-set-map set)
-        name
-        1))))
+    (let
+      [next : hashmap.StringI64Map (struct-get set map)]
+      [_inserted : bool
+        (hashmap.string-i64-map-insert-if-absent! (&mut next) name 1)]
+      (MacroGeneratedSurfaceNameSet next))))
 
 (define (macro-generated-surface-name-set-add-id
   [set : MacroGeneratedSurfaceNameSet]
@@ -53316,7 +53336,7 @@
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
         (or
-          (macro-generated-surface-name-set-contains? needed (intern-str name))
+          (macro-generated-surface-name-set-contains-id? needed name)
           (macro-generated-surface-variant-list-needed-at?
             variants
             needed
@@ -54568,7 +54588,9 @@
   (let
     [base : String (macro-call-callee-base-name name)]
     (or
-      (tc-string-list-contains macro-expand-macro-names base)
+      (hashmap.string-i64-map-contains-borrowed-ref?
+        (& macro-expand-macro-name-set)
+        (& base))
       (string.eq base "when")
       (string.eq base "unless"))))
 
@@ -56793,7 +56815,7 @@
           [has-visible-macro-call : bool
             (if has-summary-macro-import
               (begin
-                (set! macro-expand-macro-names prescan-macro-names)
+                (macro-expand-set-macro-names! prescan-macro-names)
                 (macro-program-might-fire-expression-macro? decls))
               false)]
           (begin
@@ -56836,8 +56858,7 @@
                       [(ResultCompilerRegistries.Ok registries)
                         (begin
                           (set! macro-expand-active-module "")
-                          (set!
-                            macro-expand-macro-names
+                          (macro-expand-set-macro-names!
                             (macro-collect-visible-macro-names decls))
                           (let
                             [ctx : TcContext
@@ -57452,7 +57473,7 @@
               [has-visible-macro-call : bool
                 (if has-summary-macro-import
                   (begin
-                    (set! macro-expand-macro-names prescan-macro-names)
+                    (macro-expand-set-macro-names! prescan-macro-names)
                     (macro-program-might-fire-expression-macro? decls))
                   false)]
               (begin
@@ -57481,8 +57502,7 @@
                         [(ResultCompilerRegistries.Ok registries)
                           (begin
                             (set! macro-expand-active-module "")
-                            (set!
-                              macro-expand-macro-names
+                            (macro-expand-set-macro-names!
                               (macro-collect-visible-macro-names decls))
                             (let
                               [ctx : TcContext
@@ -59500,7 +59520,7 @@
           (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
         (set! tc-hygiene-module-env-cache-arena 0)))
     (set! macro-expand-active-module "")
-    (set! macro-expand-macro-names (TcStringList.Nil))
+    (macro-expand-set-macro-names! (TcStringList.Nil))
     (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))

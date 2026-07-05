@@ -1,4 +1,5 @@
 ; generated_option_result_families.tl - Generated Option/Result family modules.
+;; lint-allow: unused-import
 (import stdlib.string)
 (import stdlib.option)
 (import stdlib.result)

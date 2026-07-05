@@ -2,6 +2,7 @@
 ; (#631). Returned closures read after the creator frame has gone away, so each
 ; case only passes if capture snapshots fixed-array storage and rewrites nested
 ; aggregate handles onto the heap.
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defstruct Point

@@ -1,4 +1,6 @@
 (import stdlib.thread)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (define (main) : i64

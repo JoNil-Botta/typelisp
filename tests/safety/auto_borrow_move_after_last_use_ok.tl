@@ -1,3 +1,4 @@
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (define (len [text : (& text str)]) : i64

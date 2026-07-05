@@ -1,5 +1,3 @@
-(import stdlib.io)
-
 ;; FORCING TEST for GAP5 (post-emission dead frame-store sweep).
 ;;
 ;; A call/syscall result is stored to its dst-home frame slot unconditionally

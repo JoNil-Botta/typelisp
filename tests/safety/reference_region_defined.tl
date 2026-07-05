@@ -2,7 +2,7 @@
 ;: arena allocations that return region-free scalars are valid safe code.
 (import stdlib.string)
 
-(define (take-ref [r : (& n i64)]) : unit
+(define (take-ref [_r : (& n i64)]) : unit
   unit)
 
 (define (main [n : i64]) : i64

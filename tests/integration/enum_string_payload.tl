@@ -4,6 +4,7 @@
 ;; capability a real lexer needs for identifier/keyword tokens (`TIdent`,
 ;; refs #27); arrays of such tokens and building an identifier substring from
 ;; the source remain separate gaps.
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defenum Token

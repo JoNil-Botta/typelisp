@@ -10,7 +10,7 @@
   (AtomicThreadMessageText AtomicThreadText)
   (AtomicThreadMessageNone))
 
-(define (atomic-thread-message-score [message : AtomicThreadMessage]) : i64
+(define (atomic-thread-message-score [_message : AtomicThreadMessage]) : i64
   6)
 
 (define (main) : i64
@@ -20,7 +20,7 @@
       (in-arena
         owner
         (AtomicThreadMessageText (AtomicThreadText (string.append "atom" "ic"))))]
-    [spawn : thread_i64.SpawnResult
+    [_spawn : thread_i64.SpawnResult
       (thread_i64.spawn
         (lambda () : i64
           (atomic-thread-message-score message)))]

@@ -1,5 +1,3 @@
-(import stdlib.io)
-
 ;; FORCING TEST for SCAV3 (redundant same-block save/reload elision via precise
 ;; owner-map single-dest recognition).
 ;;

@@ -4,8 +4,6 @@
 ;; proves the disambiguation rule: a genuine zero-arg `define`d function `(bias)`
 ;; still CALLS the function (it is bound as a function type, not an enum type),
 ;; while `(Red)` / `(Green)` construct their nullary variants.
-(import stdlib.io)
-
 (defenum Color
   (Red)
   (Green)

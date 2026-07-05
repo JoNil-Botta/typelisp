@@ -1,4 +1,6 @@
 (import stdlib.serialize)
+
+;; lint-allow: unused-import
 (import serialize_missing_extra_decls_hook_format as bad)
 
 (defstruct Sample

@@ -1,5 +1,7 @@
 (import stdlib.thread)
 (import (thread.handle bool) as thread_bool)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (define (main) : i64

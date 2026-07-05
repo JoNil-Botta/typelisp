@@ -1,6 +1,7 @@
 ;; refs #2356/#2608: a lifetime-parameterized enum carrying a borrowed str
 ;; payload is returned by value, survives unrelated stack churn, and projects
 ;; the borrowed payload from the correct inline slot.
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defenum BorrowedChoice

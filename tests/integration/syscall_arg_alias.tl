@@ -1,4 +1,3 @@
-(import stdlib.io)
 (import stdlib.string)
 
 ;; Forcing test for the Linux syscall argument-register parallel move (audit #95).

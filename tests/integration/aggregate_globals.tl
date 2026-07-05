@@ -1,5 +1,6 @@
 ; refs #331: aggregate globals are initialized through hidden runtime
 ; initializer functions, whose returned pointers are stored before main.
+;; lint-allow: unused-import
 (import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)

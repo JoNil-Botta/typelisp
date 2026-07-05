@@ -1,4 +1,6 @@
 (import stdlib.array)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defstruct Pair

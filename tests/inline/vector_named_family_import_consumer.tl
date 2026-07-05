@@ -1,5 +1,4 @@
 ;; vector_named_family_import_consumer.tl - imported named vector-family generated names remain visible.
-(import stdlib.test)
 (import stdlib.io)
 
 ;; Retained for #2454 path-import compatibility: this fixture checks that a path

@@ -1,5 +1,7 @@
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defstruct ThreadText

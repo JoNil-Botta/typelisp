@@ -7,6 +7,7 @@
 ; through -- `lower-supported-capture-type?` rejected it and the program failed
 ; to compile. Each case reads a scalar out of a captured parameterized
 ; aggregate; `main` yields 42 only if every case holds.
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defenum RefChoice

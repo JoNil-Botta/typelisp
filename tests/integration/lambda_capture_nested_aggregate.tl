@@ -2,6 +2,8 @@
 ; Returned closures read through copied nested handles after the creator frame
 ; has returned. `main` yields 42 only if every case holds.
 (import stdlib.array)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 (defstruct Label

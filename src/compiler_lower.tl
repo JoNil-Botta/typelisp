@@ -30366,7 +30366,9 @@
 (define (lower-avx512-bool-lanes [mode : CompilerLowerMode]) : i64
   (if (lower-mode-avx512? mode)
     64
-    0))
+    (if (lower-mode-avx2? mode)
+      32
+      0)))
 
 (define (lower-simd-lanes-for-elem [mode : CompilerLowerMode] [ty : AstType]) : i64
   (match mode
@@ -33274,43 +33276,54 @@
   [type-env : TcTypeEnv]
   [index : String]
   [body : AstExpr]) : LowerMaybeMaskedVectorMap
-  (if (and
-    (lower-mode-avx512? mode)
-    (or
+  (let
+    [varying-if : bool
       (lower-masked-vector-body-has-varying-if?
         ctx
         mode
         env
         type-env
         index
-        body)
+        body)]
+    [varying-while : bool
       (lower-masked-vector-body-has-varying-while?
         ctx
         mode
         env
         type-env
         index
-        body)
+        body)]
+    [varying-match : bool
       (lower-masked-vector-body-has-varying-match?
         ctx
         mode
         env
         type-env
         index
-        body)
+        body)]
+    [bool-array-lane : bool
       (lower-masked-vector-body-has-bool-array-lane?
         ctx
         env
         type-env
         index
-        body)))
-    (let
-      [lanes : i64
-        (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
-      (if (> lanes 0)
-        (LowerMaybeMaskedVectorMap.Some lanes)
-        (LowerMaybeMaskedVectorMap.No)))
-    (LowerMaybeMaskedVectorMap.No)))
+        body)]
+    (if (or
+      (and
+        (lower-mode-avx512? mode)
+        (or varying-if varying-while varying-match bool-array-lane))
+      (and
+        (lower-mode-avx2? mode)
+        varying-if
+        (not varying-while)
+        (not varying-match)))
+      (let
+        [lanes : i64
+          (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
+        (if (> lanes 0)
+          (LowerMaybeMaskedVectorMap.Some lanes)
+          (LowerMaybeMaskedVectorMap.No)))
+      (LowerMaybeMaskedVectorMap.No))))
 
 (define (lower-masked-vector-array-vars
   [ctx : TcContext]
@@ -54711,32 +54724,45 @@
               true))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
+(define (compiler-lower-avx2-masked-if-source-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [select-count : i64
+              (lower-test-function-select-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            (and
+              (= load-count 0)
+              (= store-count 0)
+              (> (+ (+ pred-load-count pred-store-count) select-count) 0)
+              (= tail-mask-count 2)))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-avx2-masked-if-shape-ok?) : bool
   (and
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-offset-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-index-value-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-index-mod-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-value-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-avx512-masked-if-nested-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-masked-if-diagnostic))))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-source))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-offset-source))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-index-value-source))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-index-mod-source))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-value-source))
+    (compiler-lower-avx2-masked-if-source-shape-ok?
+      (compiler-lower-avx512-masked-if-nested-source))))
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
@@ -54797,7 +54823,7 @@
     (compiler-lower-avx512-masked-if-index-mod-shape-ok?)
     (compiler-lower-avx512-masked-if-value-shape-ok?)
     (compiler-lower-avx512-masked-if-nested-shape-ok?)
-    (compiler-lower-avx2-masked-if-diagnostic-ok?)))
+    (compiler-lower-avx2-masked-if-shape-ok?)))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?
   [src : String]

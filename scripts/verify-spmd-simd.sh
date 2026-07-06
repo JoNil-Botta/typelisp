@@ -120,38 +120,11 @@ spmd_mode_expected_compile_diagnostic() {
     _prog=$1
     _mode=$2
     case "$_prog:$_mode" in
-        tests/spmd/masked_if_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_offset_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_index_value_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_index_mod_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_value_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_value_types.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_nested_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/masked_if_i16_u16.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
         tests/spmd/inline_helper_shadow_i64.tl:avx2 | tests/spmd/inline_helper_shadow_i64.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;
         tests/spmd/i8_mul_reject.tl:avx2 | tests/spmd/i8_mul_reject.tl:avx512)
             printf '%s\n' "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying"
-            ;;
-        tests/spmd/inline_helper_masked_if_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/spmd/masked_if_match_i64.tl:avx2)
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"

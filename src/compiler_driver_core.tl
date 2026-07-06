@@ -701,6 +701,13 @@
     (lower-ir-arena-release!)
     unit))
 
+;; Once lowering has produced IR, optimizer/backend no longer consult the
+;; typecheck/macro CTFE caches. Drop them before the backend's large assembly
+;; buffers are allocated so self-compiles do not carry dead layout metadata and
+;; macro/typecheck scratch state through codegen.
+(define (compiler-driver-release-typecheck-caches-after-lower!) : unit
+  (compiler-typecheck-reset-file-state!))
+
 ;; Package builds may run TLci, direct-object, and doctest passes after an
 ;; assembly emit while keeping the loaded AST alive. A full file-state reset
 ;; would invalidate those loaded pools, but the lowered IR has already been
@@ -742,6 +749,7 @@
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -823,6 +831,7 @@
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -887,6 +896,7 @@
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -948,6 +958,7 @@
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -1628,10 +1639,6 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
-            [defer-source-destroy? : bool
-              (and
-                release-source-pools?
-                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1650,9 +1657,7 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (if defer-source-destroy?
-                    0
-                    source-pools-arena))
+                  source-pools-arena)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1679,13 +1684,6 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
-                unit)]
-            [_destroy-deferred-source : unit
-              (if (and defer-source-destroy? dest-committed?)
-                (begin
-                  (compiler-typecheck-ctfe-env-cache-clear!)
-                  (unsafe
-                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?
@@ -1749,10 +1747,6 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
-            [defer-source-destroy? : bool
-              (and
-                release-source-pools?
-                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1771,9 +1765,7 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (if defer-source-destroy?
-                    0
-                    source-pools-arena))
+                  source-pools-arena)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1800,13 +1792,6 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
-                unit)]
-            [_destroy-deferred-source : unit
-              (if (and defer-source-destroy? dest-committed?)
-                (begin
-                  (compiler-typecheck-ctfe-env-cache-clear!)
-                  (unsafe
-                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?
@@ -2435,16 +2420,18 @@
   (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-    (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram.Program optimized _)
-        (begin
-          (compiler-driver-release-lowered-ir! opt-level)
-          (if (ast-node-pool-reader-type-exhausted?)
-            (ResultCompilerDriver.Err
-              (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-            (ResultCompilerDriver.Ok
-              (compiler-driver-ir-summary-render
-                (compiler-ir-program-summary optimized)))))])))
+    (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram.Program optimized _)
+          (begin
+            (compiler-driver-release-lowered-ir! opt-level)
+            (if (ast-node-pool-reader-type-exhausted?)
+              (ResultCompilerDriver.Err
+                (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
+              (ResultCompilerDriver.Ok
+                (compiler-driver-ir-summary-render
+                  (compiler-ir-program-summary optimized)))))]))))
 
 (define (compiler-driver-emit-ir-summary-lowered-result-with-level
   [lowered : ResultCompilerDriverLowered]

@@ -539,10 +539,12 @@
 ;: transparent.
 (define (lint-ladder-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-ladder-length inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-ladder-length inner))])]
     [(AstExpr.If _ _ else-branch-box)
       (let
         [else-branch : AstExpr (ast-node-get else-branch-box)]
@@ -551,10 +553,12 @@
 
 (define (lint-return-path-chain-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-return-path-chain-length inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-return-path-chain-length inner))])]
     [(AstExpr.If _ then-branch-box _)
       (let
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -563,10 +567,12 @@
 
 (define (lint-unit-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-unit-expr? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-unit-expr? inner))])]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Unit) true]
@@ -578,10 +584,12 @@
 
 (define (lint-not-call? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-not-call? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-not-call? inner))])]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -596,10 +604,12 @@
 
 (define (lint-return-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-return-expr? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-return-expr? inner))])]
     [(AstExpr.Return _) true]
     [(AstExpr.Break) true]
     [(AstExpr.Continue) true]
@@ -621,10 +631,12 @@
 
 (define (lint-return-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-return-branch? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-return-branch? inner))])]
     [(AstExpr.Return _) true]
     [(AstExpr.Break) true]
     [(AstExpr.Continue) true]
@@ -635,10 +647,12 @@
 ;: and terminal else all exit via return, break, or continue.
 (define (lint-all-exit-ladder-tail? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-all-exit-ladder-tail? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-all-exit-ladder-tail? inner))])]
     [(AstExpr.If _ then-branch-box else-branch-box)
       (let
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -650,10 +664,12 @@
 
 (define (lint-side-effect-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-side-effect-branch? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-side-effect-branch? inner))])]
     [(AstExpr.Set _ _) true]
     [(AstExpr.ArraySet _ _ _) true]
     [(AstExpr.ArrayPush _ _) true]
@@ -685,10 +701,12 @@
 
 (define (lint-guard-ladder-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-guard-ladder-branch? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-guard-ladder-branch? inner))])]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Unit) true]
@@ -714,10 +732,12 @@
 
 (define (lint-value-ladder-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-value-ladder-branch? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-value-ladder-branch? inner))])]
     [(AstExpr.Literal literal)
       (match literal
         [(AstLiteral.Unit) false]
@@ -729,15 +749,21 @@
     [(AstExpr.TupleRef _ _) true]
     [(AstExpr.Array _) true]
     [(AstExpr.DynArray _) true]
-    [(AstExpr.MakeArray _ _) true]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ _) true])]
     [(AstExpr.ArrayRef _ _) true]
     [(AstExpr.StringRef _ _) true]
     [(AstExpr.StructGet _ _) true]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-value-ladder-branch? inner))]
-    [(AstExpr.Cast _ _) true]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-value-ladder-branch? inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed _ _) true])]
     [(AstExpr.PtrNull _) true]
     [(AstExpr.PtrNullCheck _) true]
     [(AstExpr.PtrRead _) true]
@@ -745,7 +771,9 @@
     [(AstExpr.BoxGet _) true]
     [(AstExpr.BoxTake _) true]
     [(AstExpr.TypeLiteral _) true]
-    [(AstExpr.Init _) true]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) true])]
     [(AstExpr.Begin exprs) (lint-expr-list-last-value-branch? exprs)]
     [_ false]))
 
@@ -753,10 +781,12 @@
   (and
     (lint-guard-ladder-branch? then-branch)
     (match else-branch
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (lint-if-ladder-guard? then-branch inner))]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (ast-node-get inner-box)]
+              (lint-if-ladder-guard? then-branch inner))])]
       [(AstExpr.If _ nested-then-box nested-else-box)
         (let
           [nested-then : AstExpr (ast-node-get nested-then-box)]
@@ -768,10 +798,12 @@
   (and
     (lint-value-ladder-branch? then-branch)
     (match else-branch
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (lint-if-ladder-value? then-branch inner))]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (ast-node-get inner-box)]
+              (lint-if-ladder-value? then-branch inner))])]
       [(AstExpr.If _ nested-then-box nested-else-box)
         (let
           [nested-then : AstExpr (ast-node-get nested-then-box)]
@@ -942,7 +974,9 @@
 
 (define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
   (match expr
-    [(AstExpr.Spanned _ span) span]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned _ span) span])]
     [_ (lint-no-span)]))
 
 (define (lint-terminal-callee-name? [text : String]) : bool
@@ -958,10 +992,12 @@
 
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-terminal-callee? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-terminal-callee? inner))])]
     [(AstExpr.Var name)
       (let
         [text : String (intern-str name)]
@@ -970,18 +1006,24 @@
 
 (define (lint-terminal-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-terminal-expr? inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-terminal-expr? inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-terminal-expr? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-terminal-expr? inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-terminal-expr? inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-terminal-expr? inner))])]
     [(AstExpr.Return _) true]
     [(AstExpr.Call func-box _)
       (let
@@ -991,18 +1033,24 @@
 
 (define (lint-diverging-call-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-diverging-call-expr? inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-diverging-call-expr? inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-diverging-call-expr? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-diverging-call-expr? inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-diverging-call-expr? inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-diverging-call-expr? inner))])]
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -1038,10 +1086,12 @@
 
 (define (lint-no-effect-pure-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-no-effect-pure-expr? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-no-effect-pure-expr? inner))])]
     [(AstExpr.Literal lit) (lint-no-effect-pure-literal? lit)]
     [(AstExpr.Var _) true]
     [(AstExpr.TypeLiteral _) true]
@@ -1057,14 +1107,18 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-no-effect-pure-expr? inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-no-effect-pure-expr? inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-no-effect-pure-expr? inner))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-no-effect-pure-expr? inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-no-effect-pure-expr? inner))])]
     [(AstExpr.PtrNull _) true]
     [_ false]))
 
@@ -1132,10 +1186,12 @@
 
 (define (lint-and-or-func-op [func : AstExpr]) : String
   (match func
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-and-or-func-op inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-and-or-func-op inner))])]
     [(AstExpr.Var name) (lint-and-or-op-name (intern-str name))]
     [_ ""]))
 
@@ -1150,10 +1206,12 @@
 
 (define (lint-transitional-core-macro-qualified-name [func : AstExpr]) : String
   (match func
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-transitional-core-macro-qualified-name inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-transitional-core-macro-qualified-name inner))])]
     [(AstExpr.Var name)
       (let
         [text : String (intern-str name)]
@@ -1189,10 +1247,12 @@
 
 (define (lint-str-cat-func? [func : AstExpr]) : bool
   (match func
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-str-cat-func? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-str-cat-func? inner))])]
     [(AstExpr.Var name) (string.eq (intern-str name) "str-cat")]
     [_ false]))
 
@@ -1264,10 +1324,12 @@
 
 (define (lint-expr-render [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-expr-render inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-expr-render inner))])]
     [(AstExpr.Var name) (intern-str name)]
     [(AstExpr.Literal lit) (lint-literal-render lit)]
     [(AstExpr.Call func-box args)
@@ -1295,10 +1357,12 @@
 
 (define (lint-and-or-call-kind? [op : String] [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-and-or-call-kind? op inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-and-or-call-kind? op inner))])]
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -1322,10 +1386,12 @@
 
 (define (lint-str-cat-call? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-str-cat-call? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-str-cat-call? inner))])]
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -1348,10 +1414,12 @@
 
 (define (lint-cascading-and-or-flat-arg-render [op : String] [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-cascading-and-or-flat-arg-render op inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-cascading-and-or-flat-arg-render op inner))])]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -1379,10 +1447,12 @@
 
 (define (lint-cascading-and-or-flat-arg-count [op : String] [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-cascading-and-or-flat-arg-count op inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-cascading-and-or-flat-arg-count op inner))])]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -1866,8 +1936,10 @@
   [alias : String]
   [module-name : String]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lint-expr-uses-import? (ast-node-get inner-box) alias module-name)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lint-expr-uses-import? (ast-node-get inner-box) alias module-name)])]
     [(AstExpr.Literal _) false]
     [(AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(AstExpr.Binary _ left right)
@@ -1911,10 +1983,12 @@
       (lint-expr-list-uses-import? exprs alias module-name)]
     [(AstExpr.DynArray exprs)
       (lint-expr-list-uses-import? exprs alias module-name)]
-    [(AstExpr.MakeArray elem len)
-      (if (lint-type-uses-import? elem alias module-name)
-        true
-        (lint-expr-uses-import? (ast-node-get len) alias module-name))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray elem len)
+          (if (lint-type-uses-import? elem alias module-name)
+            true
+            (lint-expr-uses-import? (ast-node-get len) alias module-name))])]
     [(AstExpr.ArrayRef array index)
       (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
         true
@@ -1951,16 +2025,22 @@
       (if (lint-name-id-uses-import? target alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExpr.Ann inner ty)
-      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
-        true
-        (lint-type-uses-import? ty alias module-name))]
-    [(AstExpr.Cast inner ty)
-      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
-        true
-        (lint-type-uses-import? ty alias module-name))]
-    [(AstExpr.Borrow _ _ place)
-      (lint-expr-uses-import? (ast-node-get place) alias module-name)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
+            true
+            (lint-type-uses-import? ty alias module-name))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
+            true
+            (lint-type-uses-import? ty alias module-name))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-expr-uses-import? (ast-node-get place) alias module-name)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -2050,8 +2130,10 @@
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
     [(AstExpr.TypeLiteral ty) (lint-type-uses-import? ty alias module-name)]
-    [(AstExpr.Init maybe-ty)
-      (lint-maybe-type-uses-import? maybe-ty alias module-name)]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (lint-maybe-type-uses-import? maybe-ty alias module-name)])]
     [(AstExpr.Comptime inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExpr.Quote inner)
@@ -2093,22 +2175,26 @@
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get offset) alias module-name)))]
-    [(AstExpr.PtrCast ptr ty)
-      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
-        true
-        (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
-          true
-          (lint-type-uses-import? ty alias module-name)))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr ty)
+          (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+            true
+            (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+              true
+              (lint-type-uses-import? ty alias module-name)))])]
     [(AstExpr.PtrToInt ptr)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
-    [(AstExpr.IntToPtr value ty)
-      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
-        true
-        (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
-          true
-          (lint-type-uses-import? ty alias module-name)))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value ty)
+          (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+            true
+            (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+              true
+              (lint-type-uses-import? ty alias module-name)))])]
     [(AstExpr.StringData inner)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
@@ -2815,8 +2901,10 @@
 
 (define (lint-copy-on-update-expr-var-name [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-copy-on-update-expr-var-name (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-copy-on-update-expr-var-name (ast-node-get inner))])]
     [(AstExpr.Var name) (intern-str name)]
     [_ ""]))
 
@@ -2825,11 +2913,13 @@
   [field-name : String]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-copy-on-update-copied-field?
-        target-name
-        field-name
-        (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-copy-on-update-copied-field?
+            target-name
+            field-name
+            (ast-node-get inner))])]
     [(AstExpr.StructGet receiver field)
       (and
         (string.eq
@@ -2918,24 +3008,30 @@
     (if (or (string.eq type-name "") (lint-underscore-prefixed? target-name))
       state
       (match value
-        [(AstExpr.Spanned inner _)
-          (lint-copy-on-update-add-set-if-needed
-            target
-            (ast-node-get inner)
-            span
-            state)]
-        [(AstExpr.Ann inner _)
-          (lint-copy-on-update-add-set-if-needed
-            target
-            (ast-node-get inner)
-            span
-            state)]
-        [(AstExpr.Cast inner _)
-          (lint-copy-on-update-add-set-if-needed
-            target
-            (ast-node-get inner)
-            span
-            state)]
+        [(AstExpr.Spanned spanned_payload)
+          (match (box-get spanned_payload)
+            [(AstSpanned.Spanned inner _)
+              (lint-copy-on-update-add-set-if-needed
+                target
+                (ast-node-get inner)
+                span
+                state)])]
+        [(AstExpr.Ann ann_payload)
+          (match (box-get ann_payload)
+            [(AstTypedExpr.Typed inner _)
+              (lint-copy-on-update-add-set-if-needed
+                target
+                (ast-node-get inner)
+                span
+                state)])]
+        [(AstExpr.Cast cast_payload)
+          (match (box-get cast_payload)
+            [(AstTypedExpr.Typed inner _)
+              (lint-copy-on-update-add-set-if-needed
+                target
+                (ast-node-get inner)
+                span
+                state)])]
         [(AstExpr.Call callee args)
           (let
             [callee-name : String
@@ -2969,26 +3065,32 @@
   [state : LintCopyOnUpdateState]
   [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-copy-on-update-init-type-name state (ast-node-get inner))]
-    [(AstExpr.Ann inner ty)
-      (let
-        [annotated : String
-          (lint-copy-on-update-struct-name-from-type
-            (struct-get state shapes)
-            ty)]
-        (if (string.eq annotated "")
-          (lint-copy-on-update-init-type-name state (ast-node-get inner))
-          annotated))]
-    [(AstExpr.Cast inner ty)
-      (let
-        [casted : String
-          (lint-copy-on-update-struct-name-from-type
-            (struct-get state shapes)
-            ty)]
-        (if (string.eq casted "")
-          (lint-copy-on-update-init-type-name state (ast-node-get inner))
-          casted))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-copy-on-update-init-type-name state (ast-node-get inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (let
+            [annotated : String
+              (lint-copy-on-update-struct-name-from-type
+                (struct-get state shapes)
+                ty)]
+            (if (string.eq annotated "")
+              (lint-copy-on-update-init-type-name state (ast-node-get inner))
+              annotated))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (let
+            [casted : String
+              (lint-copy-on-update-struct-name-from-type
+                (struct-get state shapes)
+                ty)]
+            (if (string.eq casted "")
+              (lint-copy-on-update-init-type-name state (ast-node-get inner))
+              casted))])]
     [(AstExpr.Call callee _)
       (let
         [callee-name : String
@@ -3136,8 +3238,10 @@
   [state : LintCopyOnUpdateState]
   [span : AstSourceSpan]) : LintCopyOnUpdateState
   (match expr
-    [(AstExpr.Spanned inner inner-span)
-      (lint-copy-on-update-expr (ast-node-get inner) state inner-span)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner inner-span)
+          (lint-copy-on-update-expr (ast-node-get inner) state inner-span)])]
     [(AstExpr.Binary _ left right)
       (lint-copy-on-update-expr
         (ast-node-get right)
@@ -3185,8 +3289,10 @@
       (lint-copy-on-update-expr (ast-node-get tuple) state span)]
     [(AstExpr.Array exprs) (lint-copy-on-update-expr-list exprs state)]
     [(AstExpr.DynArray exprs) (lint-copy-on-update-expr-list exprs state)]
-    [(AstExpr.MakeArray _ len)
-      (lint-copy-on-update-expr (ast-node-get len) state span)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-copy-on-update-expr (ast-node-get len) state span)])]
     [(AstExpr.ArrayRef array index)
       (lint-copy-on-update-expr
         (ast-node-get index)
@@ -3223,12 +3329,18 @@
         (ast-node-get value)
         span
         (lint-copy-on-update-expr (ast-node-get value) state span))]
-    [(AstExpr.Ann inner _)
-      (lint-copy-on-update-expr (ast-node-get inner) state span)]
-    [(AstExpr.Cast inner _)
-      (lint-copy-on-update-expr (ast-node-get inner) state span)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-copy-on-update-expr (ast-node-get place) state span)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-copy-on-update-expr (ast-node-get inner) state span)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-copy-on-update-expr (ast-node-get inner) state span)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-copy-on-update-expr (ast-node-get place) state span)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -3445,8 +3557,10 @@
 
 (define (lint-prefer-dotted-field-receiver-name [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-prefer-dotted-field-receiver-name (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-prefer-dotted-field-receiver-name (ast-node-get inner))])]
     [(AstExpr.Var name-id)
       (let
         [name : String (intern-str name-id)]
@@ -3457,8 +3571,10 @@
 
 (define (lint-prefer-dotted-field-chain-receiver? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-prefer-dotted-field-chain-receiver? (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-prefer-dotted-field-chain-receiver? (ast-node-get inner))])]
     [(AstExpr.StructGet _ _) true]
     [_ false]))
 
@@ -3630,8 +3746,10 @@
   [span : AstSourceSpan]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner inner-span)
-      (lint-prefer-dotted-field-expr (ast-node-get inner) inner-span acc)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner inner-span)
+          (lint-prefer-dotted-field-expr (ast-node-get inner) inner-span acc)])]
     [(AstExpr.Binary _ left right)
       (lint-prefer-dotted-field-expr
         (ast-node-get right)
@@ -3667,8 +3785,10 @@
       (lint-prefer-dotted-field-expr (ast-node-get tuple) (lint-no-span) acc)]
     [(AstExpr.Array exprs) (lint-prefer-dotted-field-expr-list exprs acc)]
     [(AstExpr.DynArray exprs) (lint-prefer-dotted-field-expr-list exprs acc)]
-    [(AstExpr.MakeArray _ len)
-      (lint-prefer-dotted-field-expr (ast-node-get len) (lint-no-span) acc)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-prefer-dotted-field-expr (ast-node-get len) (lint-no-span) acc)])]
     [(AstExpr.ArrayRef array index)
       (lint-prefer-dotted-field-expr
         (ast-node-get index)
@@ -3704,12 +3824,27 @@
     [(AstExpr.Unsafe exprs) (lint-prefer-dotted-field-expr-list exprs acc)]
     [(AstExpr.Set _ value)
       (lint-prefer-dotted-field-expr (ast-node-get value) (lint-no-span) acc)]
-    [(AstExpr.Ann inner _)
-      (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
-    [(AstExpr.Cast inner _)
-      (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-prefer-dotted-field-expr (ast-node-get place) (lint-no-span) acc)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-prefer-dotted-field-expr
+            (ast-node-get inner)
+            (lint-no-span)
+            acc)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-prefer-dotted-field-expr
+            (ast-node-get inner)
+            (lint-no-span)
+            acc)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-prefer-dotted-field-expr
+            (ast-node-get place)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -3856,12 +3991,19 @@
         (ast-node-get offset)
         (lint-no-span)
         (lint-prefer-dotted-field-expr (ast-node-get ptr) (lint-no-span) acc))]
-    [(AstExpr.PtrCast ptr _)
-      (lint-prefer-dotted-field-expr (ast-node-get ptr) (lint-no-span) acc)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr _)
+          (lint-prefer-dotted-field-expr (ast-node-get ptr) (lint-no-span) acc)])]
     [(AstExpr.PtrToInt ptr)
       (lint-prefer-dotted-field-expr (ast-node-get ptr) (lint-no-span) acc)]
-    [(AstExpr.IntToPtr value _)
-      (lint-prefer-dotted-field-expr (ast-node-get value) (lint-no-span) acc)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value _)
+          (lint-prefer-dotted-field-expr
+            (ast-node-get value)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.StringData inner)
       (lint-prefer-dotted-field-expr (ast-node-get inner) (lint-no-span) acc)]
     [(AstExpr.StringFromBytes ptr len)
@@ -3988,11 +4130,13 @@
   [_span : AstSourceSpan]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner inner-span)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get inner)
-        inner-span
-        acc)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner inner-span)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get inner)
+            inner-span
+            acc)])]
     [(AstExpr.Binary _ left right)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast-node-get right)
@@ -4049,11 +4193,13 @@
       (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
     [(AstExpr.DynArray exprs)
       (lint-prefer-dotted-field-quasiquote-expr-list exprs acc)]
-    [(AstExpr.MakeArray _ len)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get len)
-        (lint-no-span)
-        acc)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get len)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.ArrayRef array index)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast-node-get index)
@@ -4106,21 +4252,27 @@
         (ast-node-get value)
         (lint-no-span)
         acc)]
-    [(AstExpr.Ann inner _)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get inner)
-        (lint-no-span)
-        acc)]
-    [(AstExpr.Cast inner _)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get inner)
-        (lint-no-span)
-        acc)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get place)
-        (lint-no-span)
-        acc)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get inner)
+            (lint-no-span)
+            acc)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get inner)
+            (lint-no-span)
+            acc)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get place)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -4308,21 +4460,25 @@
           (ast-node-get ptr)
           (lint-no-span)
           acc))]
-    [(AstExpr.PtrCast ptr _)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get ptr)
-        (lint-no-span)
-        acc)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr _)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get ptr)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.PtrToInt ptr)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast-node-get ptr)
         (lint-no-span)
         acc)]
-    [(AstExpr.IntToPtr value _)
-      (lint-prefer-dotted-field-quasiquote-expr
-        (ast-node-get value)
-        (lint-no-span)
-        acc)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value _)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get value)
+            (lint-no-span)
+            acc)])]
     [(AstExpr.StringData inner)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast-node-get inner)
@@ -4583,10 +4739,14 @@
 
 (define (lint-single-element-array-int-literal? [expr : AstExpr] [value : i64]) : bool
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-single-element-array-int-literal? (ast-node-get inner) value)]
-    [(AstExpr.Ann inner _)
-      (lint-single-element-array-int-literal? (ast-node-get inner) value)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-single-element-array-int-literal? (ast-node-get inner) value)])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-single-element-array-int-literal? (ast-node-get inner) value)])]
     [(AstExpr.Literal lit)
       (and
         (> (string.string-length (ast-lit-int-text lit)) 0)
@@ -4598,15 +4758,19 @@
 
 (define (lint-single-element-array-callee-name [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-single-element-array-callee-name (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-single-element-array-callee-name (ast-node-get inner))])]
     [(AstExpr.Var name) (intern-str name)]
     [_ ""]))
 
 (define (lint-single-element-array-var-name [expr : AstExpr]) : String
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-single-element-array-var-name (ast-node-get inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-single-element-array-var-name (ast-node-get inner))])]
     [(AstExpr.Var name) (intern-str name)]
     [_ ""]))
 
@@ -4646,12 +4810,18 @@
 
 (define (lint-single-element-array-make-array-one? [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-single-element-array-make-array-one? (ast-node-get inner))]
-    [(AstExpr.Ann inner _)
-      (lint-single-element-array-make-array-one? (ast-node-get inner))]
-    [(AstExpr.MakeArray _ len)
-      (lint-single-element-array-int-literal? (ast-node-get len) 1)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-single-element-array-make-array-one? (ast-node-get inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-single-element-array-make-array-one? (ast-node-get inner))])]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-single-element-array-int-literal? (ast-node-get len) 1)])]
     [(AstExpr.Call func args)
       (and
         (lint-single-element-array-make-array-callee?
@@ -4882,8 +5052,10 @@
   [expr : AstExpr]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-single-element-array-expr (ast-node-get inner) state)])]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name)
       (lint-single-element-array-note-var state (intern-str name))]
@@ -4926,8 +5098,10 @@
       (lint-single-element-array-expr (ast-node-get tuple) state)]
     [(AstExpr.Array exprs) (lint-single-element-array-expr-list exprs state)]
     [(AstExpr.DynArray exprs) (lint-single-element-array-expr-list exprs state)]
-    [(AstExpr.MakeArray _ len)
-      (lint-single-element-array-expr (ast-node-get len) state)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-single-element-array-expr (ast-node-get len) state)])]
     [(AstExpr.ArrayRef array index)
       (let
         [name : String
@@ -4976,12 +5150,18 @@
       (lint-single-element-array-expr
         (ast-node-get value)
         (lint-single-element-array-note-var state (intern-str target)))]
-    [(AstExpr.Ann inner _)
-      (lint-single-element-array-expr (ast-node-get inner) state)]
-    [(AstExpr.Cast inner _)
-      (lint-single-element-array-expr (ast-node-get inner) state)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-single-element-array-expr (ast-node-get place) state)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-single-element-array-expr (ast-node-get inner) state)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-single-element-array-expr (ast-node-get inner) state)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-single-element-array-expr (ast-node-get place) state)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -5061,7 +5241,9 @@
         (ast-node-get value)
         (lint-single-element-array-expr (ast-node-get inner) state))]
     [(AstExpr.TypeLiteral _) state]
-    [(AstExpr.Init _) state]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) state])]
     [(AstExpr.Comptime inner)
       (lint-single-element-array-expr (ast-node-get inner) state)]
     [(AstExpr.Quote _) state]
@@ -5093,12 +5275,16 @@
       (lint-single-element-array-expr
         (ast-node-get offset)
         (lint-single-element-array-expr (ast-node-get ptr) state))]
-    [(AstExpr.PtrCast ptr _)
-      (lint-single-element-array-expr (ast-node-get ptr) state)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr _)
+          (lint-single-element-array-expr (ast-node-get ptr) state)])]
     [(AstExpr.PtrToInt ptr)
       (lint-single-element-array-expr (ast-node-get ptr) state)]
-    [(AstExpr.IntToPtr value _)
-      (lint-single-element-array-expr (ast-node-get value) state)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value _)
+          (lint-single-element-array-expr (ast-node-get value) state)])]
     [(AstExpr.StringData inner)
       (lint-single-element-array-expr (ast-node-get inner) state)]
     [(AstExpr.StringFromBytes ptr len)
@@ -5355,8 +5541,10 @@
   [expr : AstExpr]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lint-unused-assignment-note-reads (ast-node-get inner-box) state)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lint-unused-assignment-note-reads (ast-node-get inner-box) state)])]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name) (lint-unused-assignment-read-id state name)]
     [(AstExpr.Binary _ left right)
@@ -5395,8 +5583,10 @@
     [(AstExpr.Array exprs) (lint-unused-assignment-note-reads-list exprs state)]
     [(AstExpr.DynArray exprs)
       (lint-unused-assignment-note-reads-list exprs state)]
-    [(AstExpr.MakeArray _ len)
-      (lint-unused-assignment-note-reads (ast-node-get len) state)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-unused-assignment-note-reads (ast-node-get len) state)])]
     [(AstExpr.ArrayRef array index)
       (lint-unused-assignment-note-reads
         (ast-node-get index)
@@ -5425,12 +5615,18 @@
       (lint-unused-assignment-note-reads-list exprs state)]
     [(AstExpr.Set _ value)
       (lint-unused-assignment-note-reads (ast-node-get value) state)]
-    [(AstExpr.Ann inner _)
-      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExpr.Cast inner _)
-      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-unused-assignment-note-reads (ast-node-get place) state)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-unused-assignment-note-reads (ast-node-get inner) state)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-unused-assignment-note-reads (ast-node-get inner) state)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-unused-assignment-note-reads (ast-node-get place) state)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -5516,7 +5712,9 @@
         (ast-node-get value)
         (lint-unused-assignment-note-reads (ast-node-get inner) state))]
     [(AstExpr.TypeLiteral _) state]
-    [(AstExpr.Init _) state]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) state])]
     [(AstExpr.Comptime inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExpr.Quote _) state]
@@ -5548,12 +5746,16 @@
       (lint-unused-assignment-note-reads
         (ast-node-get offset)
         (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
-    [(AstExpr.PtrCast ptr _)
-      (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr _)
+          (lint-unused-assignment-note-reads (ast-node-get ptr) state)])]
     [(AstExpr.PtrToInt ptr)
       (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
-    [(AstExpr.IntToPtr value _)
-      (lint-unused-assignment-note-reads (ast-node-get value) state)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value _)
+          (lint-unused-assignment-note-reads (ast-node-get value) state)])]
     [(AstExpr.StringData inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExpr.StringFromBytes ptr len)
@@ -5683,8 +5885,13 @@
   [state : LintUnusedAssignmentState]
   [span : AstSourceSpan]) : LintUnusedAssignmentState
   (match expr
-    [(AstExpr.Spanned inner-box inner-span)
-      (lint-unused-assignment-expr (ast-node-get inner-box) state inner-span)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box inner-span)
+          (lint-unused-assignment-expr
+            (ast-node-get inner-box)
+            state
+            inner-span)])]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body)
@@ -6120,16 +6327,20 @@
   [expr : AstExpr]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match expr
-    [(AstExpr.Spanned inner span)
-      (match (ast-node-get inner)
-        [(AstExpr.Call func args)
-          (lint-redundant-function-name-quoted-call
-            (lint-redundant-function-name-callee (ast-node-get func))
-            args
-            span
-            state)]
-        [_
-          (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)])]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner span)
+          (match (ast-node-get inner)
+            [(AstExpr.Call func args)
+              (lint-redundant-function-name-quoted-call
+                (lint-redundant-function-name-callee (ast-node-get func))
+                args
+                span
+                state)]
+            [_
+              (lint-redundant-function-name-quoted-expr
+                (ast-node-get inner)
+                state)])])]
     [(AstExpr.Call func args)
       (lint-redundant-function-name-quoted-call
         (lint-redundant-function-name-callee (ast-node-get func))
@@ -6162,8 +6373,10 @@
   [expr : AstExpr]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match expr
-    [(AstExpr.Spanned inner _)
-      (lint-redundant-function-name-macro-expr (ast-node-get inner) state)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _)
+          (lint-redundant-function-name-macro-expr (ast-node-get inner) state)])]
     [(AstExpr.Quote inner)
       (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
     [(AstExpr.Quasiquote inner)
@@ -6828,8 +7041,10 @@
   [expr : AstExpr]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lint-unused-variable-quasiquote-expr (ast-node-get inner-box) state)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lint-unused-variable-quasiquote-expr (ast-node-get inner-box) state)])]
     [(AstExpr.Unquote inner)
       (lint-unused-variable-expr
         (ast-node-get inner)
@@ -6874,8 +7089,10 @@
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(AstExpr.DynArray exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(AstExpr.MakeArray _ len)
-      (lint-unused-variable-quasiquote-expr (ast-node-get len) state)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len)
+          (lint-unused-variable-quasiquote-expr (ast-node-get len) state)])]
     [(AstExpr.ArrayRef array index)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get index)
@@ -6904,12 +7121,18 @@
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(AstExpr.Set _ value)
       (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
-    [(AstExpr.Ann inner _)
-      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExpr.Cast inner _)
-      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExpr.Borrow _ _ place)
-      (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner _)
+          (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place)
+          (lint-unused-variable-quasiquote-expr (ast-node-get place) state)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -7019,12 +7242,16 @@
       (lint-unused-variable-quasiquote-expr
         (ast-node-get offset)
         (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
-    [(AstExpr.PtrCast ptr _)
-      (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr _)
+          (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)])]
     [(AstExpr.PtrToInt ptr)
       (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
-    [(AstExpr.IntToPtr value _)
-      (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value _)
+          (lint-unused-variable-quasiquote-expr (ast-node-get value) state)])]
     [(AstExpr.StringData inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
     [(AstExpr.StringFromBytes ptr len)
@@ -7247,8 +7474,10 @@
   [state : LintUnusedVariableState]
   [span : AstSourceSpan]) : LintUnusedVariableState
   (match expr
-    [(AstExpr.Spanned inner-box inner-span)
-      (lint-unused-variable-expr (ast-node-get inner-box) state inner-span)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box inner-span)
+          (lint-unused-variable-expr (ast-node-get inner-box) state inner-span)])]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name) (lint-unused-variable-read-var-id state name)]
     [(AstExpr.Binary _ left right)
@@ -7288,11 +7517,13 @@
       (lint-unused-variable-expr (ast-node-get tuple) state span)]
     [(AstExpr.Array exprs) (lint-unused-variable-expr-list exprs state)]
     [(AstExpr.DynArray exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExpr.MakeArray ty len)
-      (lint-unused-variable-expr
-        (ast-node-get len)
-        (lint-unused-variable-type ty state)
-        span)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray ty len)
+          (lint-unused-variable-expr
+            (ast-node-get len)
+            (lint-unused-variable-type ty state)
+            span)])]
     [(AstExpr.ArrayRef array index)
       (lint-unused-variable-expr
         (ast-node-get index)
@@ -7325,19 +7556,25 @@
     [(AstExpr.Unsafe exprs) (lint-unused-variable-expr-list exprs state)]
     [(AstExpr.Set _ value)
       (lint-unused-variable-expr (ast-node-get value) state span)]
-    [(AstExpr.Ann inner ty)
-      (lint-unused-variable-type
-        ty
-        (lint-unused-variable-expr (ast-node-get inner) state span))]
-    [(AstExpr.Cast inner ty)
-      (lint-unused-variable-type
-        ty
-        (lint-unused-variable-expr (ast-node-get inner) state span))]
-    [(AstExpr.Borrow _ lifetime place)
-      (lint-unused-variable-expr
-        (ast-node-get place)
-        (lint-unused-variable-borrow-lifetime lifetime state)
-        span)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (lint-unused-variable-type
+            ty
+            (lint-unused-variable-expr (ast-node-get inner) state span))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (lint-unused-variable-type
+            ty
+            (lint-unused-variable-expr (ast-node-get inner) state span))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ lifetime place)
+          (lint-unused-variable-expr
+            (ast-node-get place)
+            (lint-unused-variable-borrow-lifetime lifetime state)
+            span)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
@@ -7466,7 +7703,10 @@
         (lint-unused-variable-expr (ast-node-get inner) state span)
         span)]
     [(AstExpr.TypeLiteral ty) (lint-unused-variable-type ty state)]
-    [(AstExpr.Init maybe-ty) (lint-unused-variable-maybe-type maybe-ty state)]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (lint-unused-variable-maybe-type maybe-ty state)])]
     [(AstExpr.Comptime inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.Quote _) state]
@@ -7500,16 +7740,20 @@
         (ast-node-get offset)
         (lint-unused-variable-expr (ast-node-get ptr) state span)
         span)]
-    [(AstExpr.PtrCast ptr ty)
-      (lint-unused-variable-type
-        ty
-        (lint-unused-variable-expr (ast-node-get ptr) state span))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr ty)
+          (lint-unused-variable-type
+            ty
+            (lint-unused-variable-expr (ast-node-get ptr) state span))])]
     [(AstExpr.PtrToInt ptr)
       (lint-unused-variable-expr (ast-node-get ptr) state span)]
-    [(AstExpr.IntToPtr value ty)
-      (lint-unused-variable-type
-        ty
-        (lint-unused-variable-expr (ast-node-get value) state span))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value ty)
+          (lint-unused-variable-type
+            ty
+            (lint-unused-variable-expr (ast-node-get value) state span))])]
     [(AstExpr.StringData inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.StringFromBytes ptr len)
@@ -7782,17 +8026,19 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match inner
-          [(AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
-          [(AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
-          [(AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
-          [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match inner
+              [(AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
+              [(AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
+              [(AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
+              [(AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
+              [(AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
+              [(AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
+              [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))])]
     [(AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
     [(AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
     [(AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
@@ -7961,19 +8207,23 @@
 
 (define (lint-nested-let-body? [body : AstExpr]) : bool
   (match body
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-nested-let-body? inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-nested-let-body? inner))])]
     [(AstExpr.Let _) true]
     [_ false]))
 
 (define (lint-nested-let-shadows? [outer : AstLetBindingList] [body : AstExpr]) : bool
   (match body
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-nested-let-shadows? outer inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-nested-let-shadows? outer inner))])]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let inner-bindings _)
@@ -8081,10 +8331,12 @@
   [tail-return-path : bool]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-ladder inner threshold tail-return-path acc))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-ladder inner threshold tail-return-path acc))])]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -8113,10 +8365,12 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-return-path-chain inner threshold acc))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-return-path-chain inner threshold acc))])]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -8316,39 +8570,41 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box span)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match inner
-          [(AstExpr.If cond-box then-branch-box else-branch-box)
-            (let
-              [cond : AstExpr (ast-node-get cond-box)]
-              [then-branch : AstExpr (ast-node-get then-branch-box)]
-              [else-branch : AstExpr (ast-node-get else-branch-box)]
-              (lint-walk-if
-                cond
-                then-branch
-                else-branch
-                span
-                true
-                threshold
-                acc))]
-          [(AstExpr.Let let-box)
-            (match (box-get let-box)
-              [(AstLet.Let bindings body-box)
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box span)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match inner
+              [(AstExpr.If cond-box then-branch-box else-branch-box)
                 (let
-                  [body : AstExpr (ast-node-get body-box)]
-                  (lint-walk-tail-let bindings body span threshold acc))])]
-          [(AstExpr.Call func-box args)
-            (let
-              [func : AstExpr (ast-node-get func-box)]
-              (lint-walk-call func args span threshold acc))]
-          [(AstExpr.Begin exprs)
-            (lint-walk-tail-sequence-expr-list
-              exprs
-              threshold
-              (lint-add-single-begin exprs span acc))]
-          [_ (lint-walk-tail-expr inner threshold acc)]))]
+                  [cond : AstExpr (ast-node-get cond-box)]
+                  [then-branch : AstExpr (ast-node-get then-branch-box)]
+                  [else-branch : AstExpr (ast-node-get else-branch-box)]
+                  (lint-walk-if
+                    cond
+                    then-branch
+                    else-branch
+                    span
+                    true
+                    threshold
+                    acc))]
+              [(AstExpr.Let let-box)
+                (match (box-get let-box)
+                  [(AstLet.Let bindings body-box)
+                    (let
+                      [body : AstExpr (ast-node-get body-box)]
+                      (lint-walk-tail-let bindings body span threshold acc))])]
+              [(AstExpr.Call func-box args)
+                (let
+                  [func : AstExpr (ast-node-get func-box)]
+                  (lint-walk-call func args span threshold acc))]
+              [(AstExpr.Begin exprs)
+                (lint-walk-tail-sequence-expr-list
+                  exprs
+                  threshold
+                  (lint-add-single-begin exprs span acc))]
+              [_ (lint-walk-tail-expr inner threshold acc)]))])]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -8380,14 +8636,18 @@
         threshold
         (lint-add-single-begin exprs (lint-no-span) acc))]
     [(AstExpr.Unsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-tail-expr inner threshold acc))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-tail-expr inner threshold acc))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-tail-expr inner threshold acc))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-tail-expr inner threshold acc))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -8434,12 +8694,14 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (if (lint-and-or-call-kind? op inner)
-          (lint-walk-and-or-skip-expr op inner threshold acc)
-          (lint-walk-expr expr threshold acc)))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (if (lint-and-or-call-kind? op inner)
+              (lint-walk-and-or-skip-expr op inner threshold acc)
+              (lint-walk-expr expr threshold acc)))])]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -8503,43 +8765,47 @@
 ;: need source locations.
 (define (lint-walk-expr [expr : AstExpr] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExpr.Spanned inner-box span)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match inner
-          [(AstExpr.If cond-box then-branch-box else-branch-box)
-            (let
-              [cond : AstExpr (ast-node-get cond-box)]
-              [then-branch : AstExpr (ast-node-get then-branch-box)]
-              [else-branch : AstExpr (ast-node-get else-branch-box)]
-              (lint-walk-if
-                cond
-                then-branch
-                else-branch
-                span
-                false
-                threshold
-                acc))]
-          [(AstExpr.Let let-box)
-            (match (box-get let-box)
-              [(AstLet.Let bindings body-box)
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box span)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match inner
+              [(AstExpr.If cond-box then-branch-box else-branch-box)
                 (let
-                  [body : AstExpr (ast-node-get body-box)]
-                  (lint-walk-let bindings body span threshold acc))])]
-          [(AstExpr.Call func-box args)
-            (let
-              [func : AstExpr (ast-node-get func-box)]
-              (lint-walk-call func args span threshold acc))]
-          [(AstExpr.Begin exprs)
-            (lint-walk-value-sequence-expr-list
-              exprs
-              threshold
-              (lint-add-single-begin exprs span acc))]
-          [_ (lint-walk-expr inner threshold acc)]))]
+                  [cond : AstExpr (ast-node-get cond-box)]
+                  [then-branch : AstExpr (ast-node-get then-branch-box)]
+                  [else-branch : AstExpr (ast-node-get else-branch-box)]
+                  (lint-walk-if
+                    cond
+                    then-branch
+                    else-branch
+                    span
+                    false
+                    threshold
+                    acc))]
+              [(AstExpr.Let let-box)
+                (match (box-get let-box)
+                  [(AstLet.Let bindings body-box)
+                    (let
+                      [body : AstExpr (ast-node-get body-box)]
+                      (lint-walk-let bindings body span threshold acc))])]
+              [(AstExpr.Call func-box args)
+                (let
+                  [func : AstExpr (ast-node-get func-box)]
+                  (lint-walk-call func args span threshold acc))]
+              [(AstExpr.Begin exprs)
+                (lint-walk-value-sequence-expr-list
+                  exprs
+                  threshold
+                  (lint-add-single-begin exprs span acc))]
+              [_ (lint-walk-expr inner threshold acc)]))])]
     [(AstExpr.Literal _) acc]
     [(AstExpr.Var _) acc]
     [(AstExpr.TypeLiteral _) acc]
-    [(AstExpr.Init _) acc]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) acc])]
     [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -8587,10 +8853,12 @@
         (lint-walk-expr tuple threshold acc))]
     [(AstExpr.Array exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExpr.DynArray exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExpr.MakeArray _ len-box)
-      (let
-        [len : AstExpr (ast-node-get len-box)]
-        (lint-walk-expr len threshold acc))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (let
+            [len : AstExpr (ast-node-get len-box)]
+            (lint-walk-expr len threshold acc))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -8631,18 +8899,24 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold acc))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-expr inner threshold acc))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lint-walk-expr inner threshold acc))]
-    [(AstExpr.Borrow _ _ place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (lint-walk-expr place threshold acc))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-expr inner threshold acc))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (lint-walk-expr inner threshold acc))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (lint-walk-expr place threshold acc))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -8822,18 +9096,22 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc)))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (lint-walk-expr ptr threshold acc))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (let
+            [ptr : AstExpr (ast-node-get ptr-box)]
+            (lint-walk-expr ptr threshold acc))])]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lint-walk-expr ptr threshold acc))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lint-walk-expr value threshold acc))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            (lint-walk-expr value threshold acc))])]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

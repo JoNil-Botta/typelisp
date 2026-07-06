@@ -256,10 +256,12 @@
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExpr.Spanned inner-id _)
-      (compiler-driver-state-smoke-context-expr-unspan
-        pools
-        (ast-node-pool-context-expr-get pools inner-id))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-id _)
+          (compiler-driver-state-smoke-context-expr-unspan
+            pools
+            (ast-node-pool-context-expr-get pools inner-id))])]
     [_ expr]))
 
 (define (compiler-driver-state-smoke-context-type-u8?

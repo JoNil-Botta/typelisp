@@ -507,8 +507,12 @@
         (doc-ast-expr-list-source args)
         ")")]
     [(AstExpr.TypeLiteral ty) (doc-cat3 "(type " (doc-ast-type-source ty) ")")]
-    [(AstExpr.Ann inner _) (doc-ast-expr-source inner)]
-    [(AstExpr.Spanned inner _) (doc-ast-expr-source inner)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner _) (doc-ast-expr-source inner)])]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner _) (doc-ast-expr-source inner)])]
     [_ "..."]))
 
 (define (doc-macro-import-example-fallback) : DocMacroImportExample

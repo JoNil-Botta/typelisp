@@ -1173,10 +1173,12 @@
 
 (define (tltest-reach-mark-expr [expr : AstExpr] [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tltest-reach-mark-expr inner names))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (tltest-reach-mark-expr inner names))])]
     [(AstExpr.Literal _) names]
     [(AstExpr.Var name) (tltest-reach-mark-source-name names (intern-str name))]
     [(AstExpr.Binary _ left-box right-box)
@@ -1233,10 +1235,12 @@
         (tltest-reach-mark-expr tuple names))]
     [(AstExpr.Array exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExpr.DynArray exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExpr.MakeArray _ len-box)
-      (let
-        [len : AstExpr (ast-node-get len-box)]
-        (tltest-reach-mark-expr len names))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (let
+            [len : AstExpr (ast-node-get len-box)]
+            (tltest-reach-mark-expr len names))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -1273,18 +1277,24 @@
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-source-name names (intern-str name))))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tltest-reach-mark-expr inner names))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tltest-reach-mark-expr inner names))]
-    [(AstExpr.Borrow _ _ place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tltest-reach-mark-expr place names))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (tltest-reach-mark-expr inner names))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (tltest-reach-mark-expr inner names))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (tltest-reach-mark-expr place names))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -1405,12 +1415,16 @@
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr inner names)))]
-    [(AstExpr.Borrow _ _ place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tltest-reach-mark-expr place names))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (tltest-reach-mark-expr place names))])]
     [(AstExpr.TypeLiteral _) names]
-    [(AstExpr.Init _) names]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) names])]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1462,18 +1476,22 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names)))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tltest-reach-mark-expr ptr names))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (let
+            [ptr : AstExpr (ast-node-get ptr-box)]
+            (tltest-reach-mark-expr ptr names))])]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tltest-reach-mark-expr value names))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            (tltest-reach-mark-expr value names))])]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

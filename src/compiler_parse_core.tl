@@ -8418,33 +8418,43 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match body
-                [(AstExpr.Spanned inner-box body-span)
-                  (let
-                    [inner : AstExpr (ast-node-get inner-box)]
-                    (match inner
-                      [(AstExpr.Binary _ _ right-box)
-                        (let
-                          [right : AstExpr (ast-node-get right-box)]
-                          (match right
-                            [(AstExpr.Spanned right-inner-box right-span)
-                              (let
-                                [right-inner : AstExpr
-                                  (ast-node-get right-inner-box)]
-                                (match right-inner
-                                  [(AstExpr.Binary _ _ _)
-                                    (and
-                                      (=
-                                        (ast-source-span-start-line body-span)
-                                        1)
-                                      (=
-                                        (ast-source-span-start-line right-span)
-                                        1)
-                                      (>
-                                        (ast-source-span-start-col right-span)
-                                        (ast-source-span-start-col body-span)))]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
+                [(AstExpr.Spanned spanned_payload)
+                  (match (box-get spanned_payload)
+                    [(AstSpanned.Spanned inner-box body-span)
+                      (let
+                        [inner : AstExpr (ast-node-get inner-box)]
+                        (match inner
+                          [(AstExpr.Binary _ _ right-box)
+                            (let
+                              [right : AstExpr (ast-node-get right-box)]
+                              (match right
+                                [(AstExpr.Spanned spanned_payload)
+                                  (match (box-get spanned_payload)
+                                    [(AstSpanned.Spanned
+                                        right-inner-box
+                                        right-span)
+                                      (let
+                                        [right-inner : AstExpr
+                                          (ast-node-get right-inner-box)]
+                                        (match right-inner
+                                          [(AstExpr.Binary _ _ _)
+                                            (and
+                                              (=
+                                                (ast-source-span-start-line
+                                                  body-span)
+                                                1)
+                                              (=
+                                                (ast-source-span-start-line
+                                                  right-span)
+                                                1)
+                                              (>
+                                                (ast-source-span-start-col
+                                                  right-span)
+                                                (ast-source-span-start-col
+                                                  body-span)))]
+                                          [_ false]))])]
+                                [_ false]))]
+                          [_ false]))])]
                 [_ false]))]
           [_ false]))]
     [_ false]))
@@ -9056,13 +9066,15 @@
             (and
               (ast-decl-list-empty? (& done))
               (match (ast-expr-unspan (ast-node-get body-box))
-                [(AstExpr.Init ty)
-                  (match ty
-                    [(AstMaybeType.Some inner)
-                      (match inner
-                        [(AstType.I64) true]
-                        [_ false])]
-                    [_ false])]
+                [(AstExpr.Init init_payload)
+                  (match (box-get init_payload)
+                    [(AstInit.Init ty)
+                      (match ty
+                        [(AstMaybeType.Some inner)
+                          (match inner
+                            [(AstType.I64) true]
+                            [_ false])]
+                        [_ false])])]
                 [_ false])))]
         [_ false])]
     [(ResultAstProgram.Err _) false]))
@@ -9080,10 +9092,12 @@
                 (and
                   (ast-decl-list-empty? (& done))
                   (match (ast-expr-unspan (ast-node-get body-box))
-                    [(AstExpr.Init ty)
-                      (match ty
-                        [(AstMaybeType.No) true]
-                        [_ false])]
+                    [(AstExpr.Init init_payload)
+                      (match (box-get init_payload)
+                        [(AstInit.Init ty)
+                          (match ty
+                            [(AstMaybeType.No) true]
+                            [_ false])])]
                     [_ false])))]
             [_ false])]
         [_ false])]
@@ -9156,24 +9170,32 @@
 
 (define (compiler-parse-borrow-inferred-var? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow false AstBorrowLifetime.Inferred place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
-          [_ false]))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow false AstBorrowLifetime.Inferred place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (match (ast-expr-unspan place)
+              [(AstExpr.Var place-name)
+                (string.eq (intern-str place-name) name)]
+              [_ false]))]
+        [_ false])]
     [_ false]))
 
 (define (compiler-parse-mut-borrow-inferred-var?
   [expr : AstExpr]
   [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow true AstBorrowLifetime.Inferred place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
-          [_ false]))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow true AstBorrowLifetime.Inferred place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (match (ast-expr-unspan place)
+              [(AstExpr.Var place-name)
+                (string.eq (intern-str place-name) name)]
+              [_ false]))]
+        [_ false])]
     [_ false]))
 
 (define (compiler-parse-borrow-named-var?
@@ -9181,15 +9203,21 @@
   [lifetime : String]
   [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow false (AstBorrowLifetime.Named actual-lifetime) place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name)
-            (and
-              (string.eq actual-lifetime lifetime)
-              (string.eq (intern-str place-name) name))]
-          [_ false]))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow
+            false
+            (AstBorrowLifetime.Named actual-lifetime)
+            place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (match (ast-expr-unspan place)
+              [(AstExpr.Var place-name)
+                (and
+                  (string.eq actual-lifetime lifetime)
+                  (string.eq (intern-str place-name) name))]
+              [_ false]))]
+        [_ false])]
     [_ false]))
 
 (define (compiler-parse-borrow-ok?) : bool
@@ -9213,36 +9241,49 @@
                           [second : AstExpr
                             (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
                           (match (ast-expr-unspan first)
-                            [(AstExpr.Borrow
-                                _
-                                AstBorrowLifetime.Inferred
-                                first-place-box)
-                              (let
-                                [first-place : AstExpr
-                                  (ast-node-get first-place-box)]
-                                (match (ast-expr-unspan first-place)
-                                  [(AstExpr.Var first-name)
-                                    (if (string.eq (intern-str first-name) "x")
-                                      (match (ast-expr-unspan second)
-                                        [(AstExpr.Borrow
-                                            _
-                                            (AstBorrowLifetime.Named lifetime)
-                                            second-place-box)
-                                          (let
-                                            [second-place : AstExpr
-                                              (ast-node-get second-place-box)]
-                                            (match (ast-expr-unspan
-                                              second-place)
-                                              [(AstExpr.Var second-name)
-                                                (and
-                                                  (string.eq lifetime "x")
-                                                  (string.eq
-                                                    (intern-str second-name)
-                                                    "x"))]
-                                              [_ false]))]
-                                        [_ false])
-                                      false)]
-                                  [_ false]))]
+                            [(AstExpr.Borrow borrow_payload)
+                              (match (box-get borrow_payload)
+                                [(AstBorrowExpr.Borrow
+                                    _
+                                    AstBorrowLifetime.Inferred
+                                    first-place-box)
+                                  (let
+                                    [first-place : AstExpr
+                                      (ast-node-get first-place-box)]
+                                    (match (ast-expr-unspan first-place)
+                                      [(AstExpr.Var first-name)
+                                        (if (string.eq
+                                          (intern-str first-name)
+                                          "x")
+                                          (match (ast-expr-unspan second)
+                                            [(AstExpr.Borrow borrow_payload)
+                                              (match (box-get borrow_payload)
+                                                [(AstBorrowExpr.Borrow
+                                                    _
+                                                    (AstBorrowLifetime.Named
+                                                      lifetime)
+                                                    second-place-box)
+                                                  (let
+                                                    [second-place : AstExpr
+                                                      (ast-node-get
+                                                        second-place-box)]
+                                                    (match (ast-expr-unspan
+                                                      second-place)
+                                                      [(AstExpr.Var second-name)
+                                                        (and
+                                                          (string.eq
+                                                            lifetime
+                                                            "x")
+                                                          (string.eq
+                                                            (intern-str
+                                                              second-name)
+                                                            "x"))]
+                                                      [_ false]))]
+                                                [_ false])]
+                                            [_ false])
+                                          false)]
+                                      [_ false]))]
+                                [_ false])]
                             [_ false]))
                         false)]
                     [_ false])]

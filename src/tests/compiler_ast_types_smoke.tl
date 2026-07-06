@@ -256,15 +256,17 @@
     [(AstExpr.Binary _ left right)
       (if (= left right)
         (match (ast-node-pool-context-expr-get pools left)
-          [(AstExpr.Spanned inner span)
-            (and
-              (not (= left old-span))
-              (not (= inner old-lit))
-              (= (struct-get span start-line) 1)
-              (= (struct-get span start-col) 2)
-              (= (struct-get span end-line) 3)
-              (= (struct-get span end-col) 4)
-              (compiler-ast-context-expr-int-lit? pools inner 7))]
+          [(AstExpr.Spanned spanned_payload)
+            (match (box-get spanned_payload)
+              [(AstSpanned.Spanned inner span)
+                (and
+                  (not (= left old-span))
+                  (not (= inner old-lit))
+                  (= (struct-get span start-line) 1)
+                  (= (struct-get span start-col) 2)
+                  (= (struct-get span end-line) 3)
+                  (= (struct-get span end-col) 4)
+                  (compiler-ast-context-expr-int-lit? pools inner 7))])]
           [_ false])
         false)]
     [_ false]))
@@ -275,13 +277,15 @@
       [(AstExpr.Binary _ left right)
         (if (= left right)
           (match (ast-node-get left)
-            [(AstExpr.Spanned inner _)
-              (match (ast-node-get inner)
-                [(AstExpr.Literal lit)
-                  (match lit
-                    [(AstLiteral.Int value _) (= value 7)]
-                    [_ false])]
-                [_ false])]
+            [(AstExpr.Spanned spanned_payload)
+              (match (box-get spanned_payload)
+                [(AstSpanned.Spanned inner _)
+                  (match (ast-node-get inner)
+                    [(AstExpr.Literal lit)
+                      (match lit
+                        [(AstLiteral.Int value _) (= value 7)]
+                        [_ false])]
+                    [_ false])])]
             [_ false])
           false)]
       [_ false])
@@ -346,8 +350,10 @@
                                   (match (ast-node-pool-context-expr-get
                                     pools
                                     make-body)
-                                    [(AstExpr.MakeArray _ size-body)
-                                      (= size-body first-body)]
+                                    [(AstExpr.MakeArray make_array_payload)
+                                      (match (box-get make_array_payload)
+                                        [(AstMakeArray.MakeArray _ size-body)
+                                          (= size-body first-body)])]
                                     [_ false])
                                   (match (ast-decl-list-step final-box)
                                     [(AstDeclListStep.Nil) true]
@@ -388,7 +394,8 @@
     [source-span : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExpr.Spanned source-lit (AstSourceSpan 1 2 3 4)))]
+        (AstExpr.Spanned
+          (box (AstSpanned.Spanned source-lit (AstSourceSpan 1 2 3 4)))))]
     [source-body : i64
       (ast-node-pool-context-expr-push
         source-pools
@@ -396,7 +403,8 @@
     [source-make : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExpr.MakeArray (AstType.Ptr source-i64-ty) source-body))]
+        (AstExpr.MakeArray
+          (box (AstMakeArray.MakeArray (AstType.Ptr source-i64-ty) source-body))))]
     [program : AstProgram
       (ast-program
         (ast-decl-cons

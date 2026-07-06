@@ -752,8 +752,10 @@
 
 (define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
-    [(AstExpr.Spanned _ span)
-      (compiler-diagnostic-from-ast-span "" span message)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned _ span)
+          (compiler-diagnostic-from-ast-span "" span message)])]
     [_ (lower-diagnostic message)]))
 
 ;; Best-available source span for an expression: the outermost `AstExpr.Spanned`
@@ -765,7 +767,9 @@
 ;; unspanned expression (synthesized IR has no source location).
 (define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
   (match expr
-    [(AstExpr.Spanned _ span) (CompilerMaybeSourceSpan.Some span)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned _ span) (CompilerMaybeSourceSpan.Some span)])]
     [_ (CompilerMaybeSourceSpan.No)]))
 
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
@@ -3867,19 +3871,27 @@
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerStringSet]) : ResultLowerAstExpr
   (match expr
-    [(AstExpr.Spanned inner-box span)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
-          [(ResultLowerAstExpr.Ok rewritten)
-            (ResultLowerAstExpr.Ok
-              (lower-context-expr-get
-                ctx
-                (ast-expr-spanned-with-pools
-                  (tc-context-pools ctx)
-                  (lower-context-expr-push ctx rewritten)
-                  span)))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box span)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              inner
+              subst
+              shadowed)
+              [(ResultLowerAstExpr.Ok rewritten)
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-spanned-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten)
+                      span)))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
     [(AstExpr.Var name)
       (match (lower-spmd-inline-subst-lookup subst (intern-str name))
         [(LowerMaybeAstExpr.Some value) (ResultLowerAstExpr.Ok value)]
@@ -4001,32 +4013,48 @@
         [(ResultLowerAstExprList.Ok rewritten)
           (ResultLowerAstExpr.Ok (AstExpr.Begin rewritten))]
         [(ResultLowerAstExprList.Err diag) (ResultLowerAstExpr.Err diag)])]
-    [(AstExpr.Ann inner-box ty)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
-          [(ResultLowerAstExpr.Ok rewritten)
-            (ResultLowerAstExpr.Ok
-              (lower-context-expr-get
-                ctx
-                (ast-expr-ann-with-pools
-                  (tc-context-pools ctx)
-                  (lower-context-expr-push ctx rewritten)
-                  ty)))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(AstExpr.Cast inner-box ty)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
-          [(ResultLowerAstExpr.Ok rewritten)
-            (ResultLowerAstExpr.Ok
-              (lower-context-expr-get
-                ctx
-                (ast-expr-cast-with-pools
-                  (tc-context-pools ctx)
-                  (lower-context-expr-push ctx rewritten)
-                  ty)))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box ty)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              inner
+              subst
+              shadowed)
+              [(ResultLowerAstExpr.Ok rewritten)
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-ann-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten)
+                      ty)))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box ty)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              inner
+              subst
+              shadowed)
+              [(ResultLowerAstExpr.Ok rewritten)
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast-expr-cast-with-pools
+                      (tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten)
+                      ty)))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (lower-context-expr-get ctx array-box)]
@@ -5140,10 +5168,12 @@
   [roots : CloneNameList]
   [expr : AstExpr]) : CloneNameList
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (tc-context-expr-get ctx inner-box)]
+            (lower-clone-roots-expr ctx env decls able roots inner))])]
     [(AstExpr.Literal _) roots]
     [(AstExpr.Var _) roots]
     [(AstExpr.Binary _ lhs-box rhs-box)
@@ -5225,10 +5255,12 @@
       (lower-clone-roots-expr-list ctx env decls able roots values)]
     [(AstExpr.DynArray values)
       (lower-clone-roots-expr-list ctx env decls able roots values)]
-    [(AstExpr.MakeArray _ len-box)
-      (let
-        [len : AstExpr (tc-context-expr-get ctx len-box)]
-        (lower-clone-roots-expr ctx env decls able roots len))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (let
+            [len : AstExpr (tc-context-expr-get ctx len-box)]
+            (lower-clone-roots-expr ctx env decls able roots len))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (tc-context-expr-get ctx array-box)]
@@ -5310,18 +5342,24 @@
       (let
         [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Borrow _ _ inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (tc-context-expr-get ctx inner-box)]
+            (lower-clone-roots-expr ctx env decls able roots inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (tc-context-expr-get ctx inner-box)]
+            (lower-clone-roots-expr ctx env decls able roots inner))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (let
+            [inner : AstExpr (tc-context-expr-get ctx inner-box)]
+            (lower-clone-roots-expr ctx env decls able roots inner))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
@@ -5560,7 +5598,9 @@
           (lower-clone-roots-expr ctx env decls able roots inner)
           value))]
     [(AstExpr.TypeLiteral _) roots]
-    [(AstExpr.Init _) roots]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) roots])]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (tc-context-expr-get ctx inner-box)]
@@ -5619,18 +5659,22 @@
           able
           (lower-clone-roots-expr ctx env decls able roots ptr)
           offset))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        (lower-clone-roots-expr ctx env decls able roots ptr))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (let
+            [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
+            (lower-clone-roots-expr ctx env decls able roots ptr))])]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
         (lower-clone-roots-expr ctx env decls able roots ptr))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (let
+            [value : AstExpr (tc-context-expr-get ctx value-box)]
+            (lower-clone-roots-expr ctx env decls able roots value))])]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (tc-context-expr-get ctx inner-box)]
@@ -5974,10 +6018,12 @@
   [state : LowerReachState]
   [expr : AstExpr]) : LowerReachState
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+            (lower-reach-expr pools all-functions names state inner))])]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name)
       (lower-reach-add-source all-functions names state (intern-str name))]
@@ -6069,10 +6115,12 @@
       (lower-reach-expr-list pools all-functions names state values)]
     [(AstExpr.DynArray values)
       (lower-reach-expr-list pools all-functions names state values)]
-    [(AstExpr.MakeArray _ len-box)
-      (let
-        [len : AstExpr (ast-node-pool-context-expr-get pools len-box)]
-        (lower-reach-expr pools all-functions names state len))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (let
+            [len : AstExpr (ast-node-pool-context-expr-get pools len-box)]
+            (lower-reach-expr pools all-functions names state len))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
@@ -6137,18 +6185,24 @@
       (let
         [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr pools all-functions names state value))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(AstExpr.Borrow _ _ inner-box)
-      (let
-        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+            (lower-reach-expr pools all-functions names state inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+            (lower-reach-expr pools all-functions names state inner))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (let
+            [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+            (lower-reach-expr pools all-functions names state inner))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
@@ -6354,7 +6408,9 @@
           (lower-reach-expr pools all-functions names state inner)
           value))]
     [(AstExpr.TypeLiteral _) state]
-    [(AstExpr.Init _) state]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) state])]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
@@ -6411,18 +6467,22 @@
           names
           (lower-reach-expr pools all-functions names state ptr)
           offset))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
-        (lower-reach-expr pools all-functions names state ptr))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (let
+            [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
+            (lower-reach-expr pools all-functions names state ptr))])]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
         (lower-reach-expr pools all-functions names state ptr))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (let
+            [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
+            (lower-reach-expr pools all-functions names state value))])]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
@@ -7606,8 +7666,10 @@
   [module : String]
   [expr : AstExpr]) : hashmap.I64I64Map
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-used-types-add-expr-id pools used module inner-box)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-used-types-add-expr-id pools used module inner-box)])]
     [(AstExpr.Literal _) used]
     [(AstExpr.Var _) used]
     [(AstExpr.Binary _ lhs-box rhs-box)
@@ -7662,12 +7724,14 @@
       (lower-used-types-add-expr-list pools used module values)]
     [(AstExpr.DynArray values)
       (lower-used-types-add-expr-list pools used module values)]
-    [(AstExpr.MakeArray ty len-box)
-      (lower-used-types-add-expr-id
-        pools
-        (lower-used-types-add-type pools used module ty)
-        module
-        len-box)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray ty len-box)
+          (lower-used-types-add-expr-id
+            pools
+            (lower-used-types-add-type pools used module ty)
+            module
+            len-box)])]
     [(AstExpr.ArrayRef array-box index-box)
       (lower-used-types-add-expr-id
         pools
@@ -7708,20 +7772,26 @@
       (lower-used-types-add-expr-list pools used module exprs)]
     [(AstExpr.Set _ value-box)
       (lower-used-types-add-expr-id pools used module value-box)]
-    [(AstExpr.Ann inner-box ty)
-      (lower-used-types-add-expr-id
-        pools
-        (lower-used-types-add-type pools used module ty)
-        module
-        inner-box)]
-    [(AstExpr.Cast inner-box ty)
-      (lower-used-types-add-expr-id
-        pools
-        (lower-used-types-add-type pools used module ty)
-        module
-        inner-box)]
-    [(AstExpr.Borrow _ _ inner-box)
-      (lower-used-types-add-expr-id pools used module inner-box)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box ty)
+          (lower-used-types-add-expr-id
+            pools
+            (lower-used-types-add-type pools used module ty)
+            module
+            inner-box)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box ty)
+          (lower-used-types-add-expr-id
+            pools
+            (lower-used-types-add-type pools used module ty)
+            module
+            inner-box)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (lower-used-types-add-expr-id pools used module inner-box)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
@@ -7868,8 +7938,10 @@
         module
         value-box)]
     [(AstExpr.TypeLiteral ty) (lower-used-types-add-type pools used module ty)]
-    [(AstExpr.Init maybe-ty)
-      (lower-used-types-add-maybe-type pools used module maybe-ty)]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (lower-used-types-add-maybe-type pools used module maybe-ty)])]
     [(AstExpr.Comptime inner-box)
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Quote _) used]
@@ -7904,20 +7976,24 @@
         (lower-used-types-add-expr-id pools used module ptr-box)
         module
         offset-box)]
-    [(AstExpr.PtrCast ptr-box ty)
-      (lower-used-types-add-expr-id
-        pools
-        (lower-used-types-add-type pools used module ty)
-        module
-        ptr-box)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box ty)
+          (lower-used-types-add-expr-id
+            pools
+            (lower-used-types-add-type pools used module ty)
+            module
+            ptr-box)])]
     [(AstExpr.PtrToInt ptr-box)
       (lower-used-types-add-expr-id pools used module ptr-box)]
-    [(AstExpr.IntToPtr value-box ty)
-      (lower-used-types-add-expr-id
-        pools
-        (lower-used-types-add-type pools used module ty)
-        module
-        value-box)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box ty)
+          (lower-used-types-add-expr-id
+            pools
+            (lower-used-types-add-type pools used module ty)
+            module
+            value-box)])]
     [(AstExpr.StringData inner-box)
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.StringFromBytes ptr-box len-box)
@@ -16926,12 +17002,14 @@
   [ctx : TcContext]
   [arg : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan arg)
-    [(AstExpr.Borrow mutable _ place-box)
-      (if mutable
-        (match (ast-expr-unspan (lower-context-expr-get ctx place-box))
-          [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
-          [_ TcMaybeString.No])
-        TcMaybeString.No)]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow mutable _ place-box)
+          (if mutable
+            (match (ast-expr-unspan (lower-context-expr-get ctx place-box))
+              [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
+              [_ TcMaybeString.No])
+            TcMaybeString.No)])]
     [_ TcMaybeString.No]))
 
 (define (lower-call-arg-normal-as
@@ -18306,7 +18384,10 @@
             state
             env
             type-env
-            (AstExpr.Init (AstMaybeType.Some (tc-context-type-get ctx elem)))
+            (AstExpr.Init
+              (box
+                (AstInit.Init
+                  (AstMaybeType.Some (tc-context-type-get ctx elem)))))
             expr-ty)]
         [(AstType.Tuple elems)
           (lower-tuple
@@ -19103,26 +19184,28 @@
   [type-cache : LowerTypeCache]
   [expr : AstExpr]) : ResultTcType
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [slot : i64 (% inner-box tc-rtf-cap)]
-        (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
-          (= (array-ref tc-rtf-id-arr slot) inner-box)
-          false)
-          (ResultTcType.Ok (array-ref tc-rtf-ty-arr slot))
-          (match (lower-expr-result-type-fast
-            ctx
-            env
-            type-env
-            type-cache
-            (lower-context-expr-get ctx inner-box))
-            [(ResultTcType.Ok ty)
-              (begin
-                (array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
-                (array-set! tc-rtf-id-arr slot inner-box)
-                (array-set! tc-rtf-ty-arr slot ty)
-                (ResultTcType.Ok ty))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [slot : i64 (% inner-box tc-rtf-cap)]
+            (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
+              (= (array-ref tc-rtf-id-arr slot) inner-box)
+              false)
+              (ResultTcType.Ok (array-ref tc-rtf-ty-arr slot))
+              (match (lower-expr-result-type-fast
+                ctx
+                env
+                type-env
+                type-cache
+                (lower-context-expr-get ctx inner-box))
+                [(ResultTcType.Ok ty)
+                  (begin
+                    (array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
+                    (array-set! tc-rtf-id-arr slot inner-box)
+                    (array-set! tc-rtf-ty-arr slot ty)
+                    (ResultTcType.Ok ty))]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])))])]
     [(AstExpr.Literal lit) (ResultTcType.Ok (tc-literal-type lit))]
     [(AstExpr.BinaryData _) (ResultTcType.Ok (ast-ty-dyn-array (AstType.U8)))]
     [(AstExpr.SpmdProgramIndex) (ResultTcType.Ok (AstType.I64))]
@@ -19132,16 +19215,24 @@
         [(ResultTcType.Ok expr-ty)
           (ResultTcType.Ok (tc-type-without-regions expr-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
-        [(AstMaybeType.Some ty)
-          (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
-        [(AstMaybeType.No)
-          (ResultTcType.Err "lower: contextual init requires an expected type")])]
-    [(AstExpr.Ann _ ty)
-      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstExpr.Cast _ ty)
-      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (match maybe-ty
+            [(AstMaybeType.Some ty)
+              (ResultTcType.Ok
+                (tc-type-without-regions (tc-resolve-type ctx ty)))]
+            [(AstMaybeType.No)
+              (ResultTcType.Err
+                "lower: contextual init requires an expected type")])])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed _ ty)
+          (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed _ ty)
+          (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))])]
     [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -19350,10 +19441,12 @@
   [expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-origin ctx state env type-env inner origin))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-expr-origin ctx state env type-env inner origin))])]
     [(AstExpr.Literal lit)
       (lower-expr-with-type
         ctx
@@ -19406,24 +19499,28 @@
             [(ResultTcType.Err message)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr origin message)))])))]
-    [(AstExpr.Ann _ ty)
-      (lower-expr-with-type
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstExpr.Cast _ ty)
-      (lower-expr-with-type
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed _ ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            (tc-type-without-regions (tc-resolve-type ctx ty)))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed _ ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            (tc-type-without-regions (tc-resolve-type ctx ty)))])]
     [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (lower-context-expr-get ctx left-box)]
@@ -19528,10 +19625,12 @@
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-expr-with-type ctx state env type-env inner origin expr-ty))])]
     [(AstExpr.Literal lit)
       (lower-materialize-at-expr
         state
@@ -19548,12 +19647,14 @@
       (lower-materialize-at-expr state (CompilerIrValue.I64 0) expr-ty origin)]
     [(AstExpr.SpmdProgramCount)
       (lower-materialize-at-expr state (CompilerIrValue.I64 1) expr-ty origin)]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
-        [(AstMaybeType.Some ty)
-          (lower-init-expr ctx state env type-env ty origin expr-ty)]
-        [(AstMaybeType.No)
-          (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (match maybe-ty
+            [(AstMaybeType.Some ty)
+              (lower-init-expr ctx state env type-env ty origin expr-ty)]
+            [(AstMaybeType.No)
+              (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])])]
     [(AstExpr.Var name)
       (let
         [name-text : String (intern-str name)]
@@ -19572,29 +19673,43 @@
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr origin message)))])
           (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-expr-expected ctx state env type-env inner expr-ty origin)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr inner-state value _)
-                (ResultLowerExpr.Ok (LowerExpr.Expr inner-state value expr-ty))])]
-          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-cast-source-expr ctx state env type-env inner origin)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr inner-state value inner-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value inner-state value inner-ty expr-ty))])]
-          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
-    [(AstExpr.Borrow _ _ inner-box)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-borrow-expr ctx state env type-env inner origin expr-ty))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              inner
+              expr-ty
+              origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr inner-state value _)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr inner-state value expr-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (match (lower-cast-source-expr ctx state env type-env inner origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr inner-state value inner-ty)
+                    (ResultLowerExpr.Ok
+                      (lower-cast-value inner-state value inner-ty expr-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-borrow-expr ctx state env type-env inner origin expr-ty))])]
     [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -20039,10 +20154,12 @@
           (intern-str field)
           value
           origin))]
-    [(AstExpr.MakeArray elem-ty len-box)
-      (let
-        [len : AstExpr (lower-context-expr-get ctx len-box)]
-        (lower-make-array ctx state env type-env elem-ty len origin))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray elem-ty len-box)
+          (let
+            [len : AstExpr (lower-context-expr-get ctx len-box)]
+            (lower-make-array ctx state env type-env elem-ty len origin))])]
     [(AstExpr.Array values)
       (lower-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExpr.DynArray values)
@@ -20449,16 +20566,18 @@
                                   "lower: ptr-offset requires raw pointer")))])])]
                   [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])])]
           [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (lower-context-expr-get ctx ptr-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (let
+            [ptr : AstExpr (lower-context-expr-get ctx ptr-box)]
+            (match (lower-expr ctx state env type-env ptr)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
+                    (ResultLowerExpr.Ok
+                      (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
+              [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))])]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (lower-context-expr-get ctx ptr-box)]
@@ -20469,16 +20588,18 @@
                 (ResultLowerExpr.Ok
                   (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
           [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-expr ctx state env type-env value)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr value-state value-ir value-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value value-state value-ir value-ty expr-ty))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (let
+            [value : AstExpr (lower-context-expr-get ctx value-box)]
+            (match (lower-expr ctx state env type-env value)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr value-state value-ir value-ty)
+                    (ResultLowerExpr.Ok
+                      (lower-cast-value value-state value-ir value-ty expr-ty))])]
+              [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))])]
     [(AstExpr.StringData str-box)
       (let
         [str : AstExpr (lower-context-expr-get ctx str-box)]
@@ -20571,10 +20692,19 @@
   [expected-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-expected ctx state env type-env inner expected-ty origin))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              inner
+              expected-ty
+              origin))])]
     [(AstExpr.Literal lit)
       (lower-materialize-at-expr
         state
@@ -20693,19 +20823,21 @@
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expected-ty))]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
-        [(AstMaybeType.No)
-          (lower-init-expr
-            ctx
-            state
-            env
-            type-env
-            expected-ty
-            origin
-            expected-ty)]
-        [(AstMaybeType.Some _)
-          (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (match maybe-ty
+            [(AstMaybeType.No)
+              (lower-init-expr
+                ctx
+                state
+                env
+                type-env
+                expected-ty
+                origin
+                expected-ty)]
+            [(AstMaybeType.Some _)
+              (lower-expr-and-coerce ctx state env type-env expr expected-ty)])])]
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (lower-context-expr-get ctx func-box)]
@@ -24809,40 +24941,46 @@
   [origin : AstExpr]) : LowerMaybeDirectStore
   (if (lower-direct-store-target? ctx state result-ty)
     (match value
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-direct-store-rhs-into
-            ctx
-            state
-            env
-            type-env
-            dst
-            inner
-            result-ty
-            origin))]
-      [(AstExpr.Ann inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-direct-store-rhs-into
-            ctx
-            state
-            env
-            type-env
-            dst
-            inner
-            result-ty
-            origin))]
-      [(AstExpr.Init maybe-ty)
-        (lower-direct-init-into
-          ctx
-          state
-          env
-          type-env
-          dst
-          maybe-ty
-          result-ty
-          origin)]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-direct-store-rhs-into
+                ctx
+                state
+                env
+                type-env
+                dst
+                inner
+                result-ty
+                origin))])]
+      [(AstExpr.Ann ann_payload)
+        (match (box-get ann_payload)
+          [(AstTypedExpr.Typed inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-direct-store-rhs-into
+                ctx
+                state
+                env
+                type-env
+                dst
+                inner
+                result-ty
+                origin))])]
+      [(AstExpr.Init init_payload)
+        (match (box-get init_payload)
+          [(AstInit.Init maybe-ty)
+            (lower-direct-init-into
+              ctx
+              state
+              env
+              type-env
+              dst
+              maybe-ty
+              result-ty
+              origin)])]
       [(AstExpr.Call func-box args)
         (let
           [func : AstExpr (lower-context-expr-get ctx func-box)]
@@ -30452,10 +30590,12 @@
 
 (define (lower-expr-is-var? [ctx : TcContext] [expr : AstExpr] [name : String]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-is-var? ctx inner name))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-expr-is-var? ctx inner name))])]
     [(AstExpr.Var found) (string.eq (intern-str found) name)]
     [_ false]))
 
@@ -30465,14 +30605,18 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeArrayVar
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-dynamic-array-var ctx env type-env inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-dynamic-array-var ctx env type-env inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-dynamic-array-var ctx env type-env inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-dynamic-array-var ctx env type-env inner))])]
     [(AstExpr.Var name)
       (let
         [var-id : i64
@@ -30518,10 +30662,12 @@
   [expr : AstExpr]
   [index : String]) : LowerMaybeArrayVar
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-array-ref-var-for-index ctx env type-env inner index))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-array-ref-var-for-index ctx env type-env inner index))])]
     [(AstExpr.ArrayRef arr-box idx-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -30537,18 +30683,24 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeIrValue
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-spmd-broadcast-lane ctx env type-env inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-spmd-broadcast-lane ctx env type-env inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-spmd-broadcast-lane ctx env type-env inner))])]
     [(AstExpr.Literal (AstLiteral.Int n _))
       (LowerMaybeIrValue.Some (CompilerIrValue.I64 n))]
     [(AstExpr.Var name)
@@ -30669,18 +30821,24 @@
   [ctx : TcContext]
   [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-literal-offset ctx inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-literal-offset ctx inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-literal-offset ctx inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-literal-offset ctx inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-literal-offset ctx inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-literal-offset ctx inner))])]
     [(AstExpr.Literal (AstLiteral.Int n _))
       (if (>= n 0)
         n
@@ -30691,18 +30849,24 @@
   [ctx : TcContext]
   [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-positive-power-two-literal ctx inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-positive-power-two-literal ctx inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-positive-power-two-literal ctx inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-positive-power-two-literal ctx inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-positive-power-two-literal ctx inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-positive-power-two-literal ctx inner))])]
     [(AstExpr.Literal (AstLiteral.Int n _))
       (if (> n 0)
         (if (= (bit-and n (- n 1)) 0)
@@ -30716,18 +30880,24 @@
   [index : String]
   [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-offset ctx index inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-offset ctx index inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-offset ctx index inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-offset ctx index inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-offset ctx index inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-index-offset ctx index inner))])]
     [(AstExpr.Var name)
       (if (string.eq (intern-str name) index)
         0
@@ -31074,39 +31244,45 @@
   [lane-locals : hashmap.StringI64Map]
   [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
     [(AstExpr.Literal _) 0]
     [(AstExpr.Var name)
       (let
@@ -31398,39 +31574,45 @@
   [lane-locals : hashmap.StringI64Map]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
         [cond : AstExpr (lower-context-expr-get ctx cond-box)]
@@ -31786,33 +31968,39 @@
   [lane-locals : hashmap.StringI64Map]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (lower-context-expr-get ctx cond-box)]
@@ -32145,33 +32333,39 @@
   [lane-locals : hashmap.StringI64Map]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-masked-vector-body-has-varying-match-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-match-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-match-with-locals?
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
@@ -32566,30 +32760,36 @@
   [enum-locals : LowerStringSet]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-masked-vector-expr-varying-enum-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Ann inner-box _)
-      (lower-masked-vector-expr-varying-enum-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Cast inner-box _)
-      (lower-masked-vector-expr-varying-enum-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-masked-vector-expr-varying-enum-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-expr-varying-enum-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-expr-varying-enum-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.Var name)
       (lower-string-set-contains? enum-locals (intern-str name))]
     [(AstExpr.ArrayRef arr-box idx-box)
@@ -32662,30 +32862,36 @@
   [enum-locals : LowerStringSet]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
         ctx
@@ -33031,33 +33237,39 @@
   [index : String]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-bool-array-lane?
+              ctx
+              env
+              type-env
+              index
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-bool-array-lane?
+              ctx
+              env
+              type-env
+              index
+              inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-body-has-bool-array-lane?
+              ctx
+              env
+              type-env
+              index
+              inner))])]
     [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -33319,18 +33531,24 @@
   [index : String]
   [expr : AstExpr]) : LowerArrayVarSet
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-array-vars ctx env type-env index inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-array-vars ctx env type-env index inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-array-vars ctx env type-env index inner))])]
     [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -33578,18 +33796,24 @@
 
 (define (lower-vector-body-has-array-read? [ctx : TcContext] [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-array-read? ctx inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-array-read? ctx inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-array-read? ctx inner))])]
     [(AstExpr.ArrayRef _ _) true]
     [(AstExpr.Unary _ inner-box)
       (let
@@ -33715,18 +33939,24 @@
 
 (define (lower-vector-body-has-spmd-shuffle? [ctx : TcContext] [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-spmd-shuffle? ctx inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-spmd-shuffle? ctx inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-spmd-shuffle? ctx inner))])]
     [(AstExpr.SpmdShuffle _ _) true]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
@@ -33842,18 +34072,24 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx type-env inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx type-env inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx type-env inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-atomic-call? ctx type-env inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-atomic-call? ctx type-env inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-vector-body-has-atomic-call? ctx type-env inner))])]
     [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -33998,18 +34234,24 @@
 
 (define (lower-spmd-expr-has-mul? [ctx : TcContext] [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-spmd-expr-has-mul? ctx inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-spmd-expr-has-mul? ctx inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-spmd-expr-has-mul? ctx inner))])]
     [(AstExpr.Binary op lhs-box rhs-box)
       (match op
         [(AstBinOp.Mul) true]
@@ -34079,16 +34321,18 @@
   [index : String]
   [body : AstExpr]) : bool
   (match body
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-has-unsupported-byte-mul?
-          ctx
-          mode
-          env
-          type-env
-          index
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-vector-map-has-unsupported-byte-mul?
+              ctx
+              mode
+              env
+              type-env
+              index
+              inner))])]
     [(AstExpr.ArraySet arr-box set-index-box value-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -34112,24 +34356,28 @@
   [dst-elem : AstType]
   [value : AstExpr]) : LowerMaybeVectorMapValue
   (match value
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-casted-literal
-          ctx
-          mode
-          target-ty
-          dst-elem
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-casted-literal
-          ctx
-          mode
-          target-ty
-          dst-elem
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-vector-map-casted-literal
+              ctx
+              mode
+              target-ty
+              dst-elem
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-vector-map-casted-literal
+              ctx
+              mode
+              target-ty
+              dst-elem
+              inner))])]
     [(AstExpr.Literal lit)
       (if (and
         (> (lower-simd-lanes-for-elem mode target-ty) 0)
@@ -34149,41 +34397,11 @@
   [dst-elem : AstType]
   [value : AstExpr]) : LowerMaybeVectorMapValue
   (match value
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-value
-          ctx
-          mode
-          env
-          type-env
-          index
-          dst-elem
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-value
-          ctx
-          mode
-          env
-          type-env
-          index
-          dst-elem
-          inner))]
-    [(AstExpr.Cast inner-box cast-ty)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        [target-ty : AstType (tc-type-without-regions cast-ty)]
-        (match (lower-simple-vector-map-casted-literal
-          ctx
-          mode
-          target-ty
-          dst-elem
-          inner)
-          [(LowerMaybeVectorMapValue.Some plan)
-            (LowerMaybeVectorMapValue.Some plan)]
-          [(LowerMaybeVectorMapValue.No)
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
             (lower-simple-vector-map-value
               ctx
               mode
@@ -34191,7 +34409,43 @@
               type-env
               index
               dst-elem
-              inner)]))]
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-vector-map-value
+              ctx
+              mode
+              env
+              type-env
+              index
+              dst-elem
+              inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box cast-ty)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            [target-ty : AstType (tc-type-without-regions cast-ty)]
+            (match (lower-simple-vector-map-casted-literal
+              ctx
+              mode
+              target-ty
+              dst-elem
+              inner)
+              [(LowerMaybeVectorMapValue.Some plan)
+                (LowerMaybeVectorMapValue.Some plan)]
+              [(LowerMaybeVectorMapValue.No)
+                (lower-simple-vector-map-value
+                  ctx
+                  mode
+                  env
+                  type-env
+                  index
+                  dst-elem
+                  inner)]))])]
     [(AstExpr.ArrayRef _ _)
       (match (lower-array-ref-var-for-index ctx env type-env value index)
         [(LowerMaybeArrayVar.Some array-var array-elem)
@@ -34334,10 +34588,12 @@
   [index : String]
   [body : AstExpr]) : LowerMaybeVectorMap
   (match body
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map ctx mode env type-env index inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-simple-vector-map ctx mode env type-env index inner))])]
     [(AstExpr.ArraySet arr-box set-index-box value-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -34405,30 +34661,34 @@
   [value : AstExpr]) : LowerMaybeVectorReduce
   (if (lower-mode-simd? mode)
     (match value
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-simple-vector-reduce
-            ctx
-            mode
-            env
-            type-env
-            op
-            index
-            value-ty
-            inner))]
-      [(AstExpr.Ann inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-simple-vector-reduce
-            ctx
-            mode
-            env
-            type-env
-            op
-            index
-            value-ty
-            inner))]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-simple-vector-reduce
+                ctx
+                mode
+                env
+                type-env
+                op
+                index
+                value-ty
+                inner))])]
+      [(AstExpr.Ann ann_payload)
+        (match (box-get ann_payload)
+          [(AstTypedExpr.Typed inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-simple-vector-reduce
+                ctx
+                mode
+                env
+                type-env
+                op
+                index
+                value-ty
+                inner))])]
       [_
         (match (lower-array-ref-var-for-index ctx env type-env value index)
           [(LowerMaybeArrayVar.Some array-var elem-ty)
@@ -37774,48 +38034,54 @@
   [lanes : i64]
   [expr : AstExpr]) : ResultLowerExpr
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-avx512-masked-expr
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-avx512-masked-expr
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-avx512-masked-expr
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              inner))])]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Bool value)
@@ -38046,21 +38312,23 @@
   [expr : AstExpr]
   [expected-ty : AstType]) : ResultLowerExpr
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr-expected
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner
-          expected-ty))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-avx512-masked-expr-expected
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              inner
+              expected-ty))])]
     [(AstExpr.Literal lit)
       (ResultLowerExpr.Ok
         (lower-emit-splat
@@ -39230,65 +39498,67 @@
   [arms : AstMatchArmList]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (ast-expr-unspan scrutinee)
-    [(AstExpr.Borrow mutable _ place-box)
-      (if mutable
-        (lower-match-value ctx state env type-env scrutinee arms expr-ty)
-        (let
-          [place : AstExpr (lower-context-expr-get ctx place-box)]
-          (match (tc-expr ctx type-env scrutinee)
-            [(ResultTcType.Ok scrut-ty)
-              (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
-                [(AstType.Ref borrow-lifetime referent-box)
-                  (let
-                    [referent-ty : AstType
-                      (tc-type-strip-region
-                        (tc-resolve-type
-                          ctx
-                          (tc-context-type-get ctx referent-box)))]
-                    (match referent-ty
-                      [(AstType.Enum _)
-                        (lower-match-borrowed-enum
-                          ctx
-                          state
-                          env
-                          type-env
-                          place
-                          borrow-lifetime
-                          referent-ty
-                          arms
-                          expr-ty)]
-                      [(AstType.EnumArgs _ _)
-                        (lower-match-borrowed-enum
-                          ctx
-                          state
-                          env
-                          type-env
-                          place
-                          borrow-lifetime
-                          referent-ty
-                          arms
-                          expr-ty)]
-                      [_
-                        (lower-match-value
-                          ctx
-                          state
-                          env
-                          type-env
-                          scrutinee
-                          arms
-                          expr-ty)]))]
-                [_
-                  (lower-match-value
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrutinee
-                    arms
-                    expr-ty)])]
-            [(ResultTcType.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr scrutinee message)))])))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow mutable _ place-box)
+          (if mutable
+            (lower-match-value ctx state env type-env scrutinee arms expr-ty)
+            (let
+              [place : AstExpr (lower-context-expr-get ctx place-box)]
+              (match (tc-expr ctx type-env scrutinee)
+                [(ResultTcType.Ok scrut-ty)
+                  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+                    [(AstType.Ref borrow-lifetime referent-box)
+                      (let
+                        [referent-ty : AstType
+                          (tc-type-strip-region
+                            (tc-resolve-type
+                              ctx
+                              (tc-context-type-get ctx referent-box)))]
+                        (match referent-ty
+                          [(AstType.Enum _)
+                            (lower-match-borrowed-enum
+                              ctx
+                              state
+                              env
+                              type-env
+                              place
+                              borrow-lifetime
+                              referent-ty
+                              arms
+                              expr-ty)]
+                          [(AstType.EnumArgs _ _)
+                            (lower-match-borrowed-enum
+                              ctx
+                              state
+                              env
+                              type-env
+                              place
+                              borrow-lifetime
+                              referent-ty
+                              arms
+                              expr-ty)]
+                          [_
+                            (lower-match-value
+                              ctx
+                              state
+                              env
+                              type-env
+                              scrutinee
+                              arms
+                              expr-ty)]))]
+                    [_
+                      (lower-match-value
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrutinee
+                        arms
+                        expr-ty)])]
+                [(ResultTcType.Err message)
+                  (ResultLowerExpr.Err
+                    (box (lower-diagnostic-at-expr scrutinee message)))])))])]
     [_ (lower-match-value ctx state env type-env scrutinee arms expr-ty)]))
 
 (define (lower-match-enum
@@ -40429,16 +40699,20 @@
   [type-env : TcTypeEnv]
   [callee : AstExpr]) : bool
   (match (ast-expr-unspan callee)
-    [(AstExpr.Ann inner-box _)
-      (lower-tail-call-reference-capturing-lambda?
-        ctx
-        type-env
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Cast inner-box _)
-      (lower-tail-call-reference-capturing-lambda?
-        ctx
-        type-env
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-tail-call-reference-capturing-lambda?
+            ctx
+            type-env
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-tail-call-reference-capturing-lambda?
+            ctx
+            type-env
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
@@ -40689,18 +40963,24 @@
   [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-tail-expr-candidate? ctx state env inner))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-tail-expr-candidate? ctx state env inner))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-tail-expr-candidate? ctx state env inner))])]
     [(AstExpr.Call callee-box _)
       (let
         [callee : AstExpr (lower-context-expr-get ctx callee-box)]
@@ -40880,7 +41160,9 @@
     [(AstExpr.Literal _) false]
     [(AstExpr.Var _) false]
     [(AstExpr.TypeLiteral _) false]
-    [(AstExpr.Init _) false]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) false])]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrAddrOf _) false]
     [(AstExpr.BinaryData _) false]
@@ -40889,19 +41171,28 @@
     [(AstExpr.ProgramEnvp) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
-    [(AstExpr.Spanned inner-box _)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-rvo-node-has-early-return? ctx inner-box)])]
     [(AstExpr.Binary _ left-box right-box)
       (or
         (lower-rvo-node-has-early-return? ctx left-box)
         (lower-rvo-node-has-early-return? ctx right-box))]
     [(AstExpr.Unary _ inner-box)
       (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(AstExpr.Ann inner-box _) (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(AstExpr.Cast inner-box _)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(AstExpr.Borrow _ _ inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-rvo-node-has-early-return? ctx inner-box)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-rvo-node-has-early-return? ctx inner-box)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (lower-rvo-node-has-early-return? ctx inner-box)])]
     [(AstExpr.Call func-box args)
       (or
         (lower-rvo-node-has-early-return? ctx func-box)
@@ -40928,8 +41219,10 @@
         (lower-rvo-node-has-early-return? ctx index-box))]
     [(AstExpr.Array exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(AstExpr.DynArray exprs) (lower-rvo-expr-list-has-early-return? ctx exprs)]
-    [(AstExpr.MakeArray _ len-box)
-      (lower-rvo-node-has-early-return? ctx len-box)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (lower-rvo-node-has-early-return? ctx len-box)])]
     [(AstExpr.ArrayRef arr-box index-box)
       (or
         (lower-rvo-node-has-early-return? ctx arr-box)
@@ -41053,10 +41346,15 @@
       (or
         (lower-rvo-node-has-early-return? ctx ptr-box)
         (lower-rvo-node-has-early-return? ctx offset-box))]
-    [(AstExpr.PtrCast ptr-box _) (lower-rvo-node-has-early-return? ctx ptr-box)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr-box _)
+          (lower-rvo-node-has-early-return? ctx ptr-box)])]
     [(AstExpr.PtrToInt ptr-box) (lower-rvo-node-has-early-return? ctx ptr-box)]
-    [(AstExpr.IntToPtr value-box _)
-      (lower-rvo-node-has-early-return? ctx value-box)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value-box _)
+          (lower-rvo-node-has-early-return? ctx value-box)])]
     [(AstExpr.StringData str-box)
       (lower-rvo-node-has-early-return? ctx str-box)]
     [(AstExpr.StringFromBytes ptr-box len-box)
@@ -41445,10 +41743,12 @@
     (>= sret-var 0)
     (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
     (match expr
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-return-expr ctx state env type-env inner ret-ty sret-var))]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-return-expr ctx state env type-env inner ret-ty sret-var))])]
       [(AstExpr.Call func-box args)
         (let
           [func : AstExpr (lower-context-expr-get ctx func-box)]
@@ -41472,18 +41772,22 @@
   [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-tail-call-safe-param-aggregate-arg?
-        ctx
-        state
-        env
-        (lower-context-expr-get ctx inner-box))]
-    [(AstExpr.Ann inner-box _)
-      (lower-tail-call-safe-param-aggregate-arg?
-        ctx
-        state
-        env
-        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-tail-call-safe-param-aggregate-arg?
+            ctx
+            state
+            env
+            (lower-context-expr-get ctx inner-box))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-tail-call-safe-param-aggregate-arg?
+            ctx
+            state
+            env
+            (lower-context-expr-get ctx inner-box))])]
     [(AstExpr.Var name)
       (let
         [var-id : i64
@@ -42470,25 +42774,27 @@
   [type-env : TcTypeEnv]
   [scrutinee : AstExpr]) : bool
   (match (ast-expr-unspan scrutinee)
-    [(AstExpr.Borrow mutable _ _)
-      (if mutable
-        false
-        (match (tc-expr ctx type-env scrutinee)
-          [(ResultTcType.Ok scrut-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
-              [(AstType.Ref _ referent-box)
-                (let
-                  [referent-ty : AstType
-                    (tc-type-strip-region
-                      (tc-resolve-type
-                        ctx
-                        (tc-context-type-get ctx referent-box)))]
-                  (match referent-ty
-                    [(AstType.Enum _) true]
-                    [(AstType.EnumArgs _ _) true]
-                    [_ false]))]
-              [_ false])]
-          [(ResultTcType.Err _) false]))]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow mutable _ _)
+          (if mutable
+            false
+            (match (tc-expr ctx type-env scrutinee)
+              [(ResultTcType.Ok scrut-ty)
+                (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+                  [(AstType.Ref _ referent-box)
+                    (let
+                      [referent-ty : AstType
+                        (tc-type-strip-region
+                          (tc-resolve-type
+                            ctx
+                            (tc-context-type-get ctx referent-box)))]
+                      (match referent-ty
+                        [(AstType.Enum _) true]
+                        [(AstType.EnumArgs _ _) true]
+                        [_ false]))]
+                  [_ false])]
+              [(ResultTcType.Err _) false]))])]
     [_ false]))
 
 (define (lower-tail-match
@@ -42583,25 +42889,45 @@
   [sret-var : i64]) : ResultLowerState
   (if (lower-tail-expr-candidate? ctx state env expr)
     (match expr
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-      [(AstExpr.Ann inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-      [(AstExpr.Cast inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (match (tc-expr ctx type-env inner)
-            [(ResultTcType.Ok inner-ty)
-              (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
-                (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
-                (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
-            [(ResultTcType.Err message)
-              (ResultLowerState.Err
-                (box (lower-diagnostic-at-expr inner message)))]))]
+      [(AstExpr.Spanned spanned_payload)
+        (match (box-get spanned_payload)
+          [(AstSpanned.Spanned inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-tail-expr ctx state env type-env inner ret-ty sret-var))])]
+      [(AstExpr.Ann ann_payload)
+        (match (box-get ann_payload)
+          [(AstTypedExpr.Typed inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (lower-tail-expr ctx state env type-env inner ret-ty sret-var))])]
+      [(AstExpr.Cast cast_payload)
+        (match (box-get cast_payload)
+          [(AstTypedExpr.Typed inner-box _)
+            (let
+              [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+              (match (tc-expr ctx type-env inner)
+                [(ResultTcType.Ok inner-ty)
+                  (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
+                    (lower-tail-expr
+                      ctx
+                      state
+                      env
+                      type-env
+                      inner
+                      ret-ty
+                      sret-var)
+                    (lower-return-expr
+                      ctx
+                      state
+                      env
+                      type-env
+                      expr
+                      ret-ty
+                      sret-var))]
+                [(ResultTcType.Err message)
+                  (ResultLowerState.Err
+                    (box (lower-diagnostic-at-expr inner message)))]))])]
       [(AstExpr.Call callee-box args)
         (let
           [callee : AstExpr (lower-context-expr-get ctx callee-box)]
@@ -42949,18 +43275,24 @@
   [expr : AstExpr]
   [ty : AstType]) : ResultLowerValue
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner ty))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner ty))]
-    [(AstExpr.Cast inner-box cast-ty)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner cast-ty))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-global-value ctx names inner ty))])]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-global-value ctx names inner ty))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box cast-ty)
+          (let
+            [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-global-value ctx names inner cast-ty))])]
     [(AstExpr.Literal lit)
       (ResultLowerValue.Ok (lower-literal-value-with-type lit ty))]
     [(AstExpr.BinaryData bytes)
@@ -45402,8 +45734,10 @@
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : bool
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-box _)
+          (lower-source-node-has-import-call? pools inner-box)])]
     [(AstExpr.Call func-box args)
       (or
         (lower-source-call-head-import? pools func-box)
@@ -45442,8 +45776,10 @@
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.DynArray exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
-    [(AstExpr.MakeArray _ len-box)
-      (lower-source-node-has-import-call? pools len-box)]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ len-box)
+          (lower-source-node-has-import-call? pools len-box)])]
     [(AstExpr.ArrayRef array-box index-box)
       (or
         (lower-source-node-has-import-call? pools array-box)
@@ -45470,12 +45806,18 @@
     [(AstExpr.Unsafe exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(AstExpr.Set _ rhs-box) (lower-source-node-has-import-call? pools rhs-box)]
-    [(AstExpr.Ann inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(AstExpr.Cast inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(AstExpr.Borrow _ _ inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-source-node-has-import-call? pools inner-box)])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-source-node-has-import-call? pools inner-box)])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ inner-box)
+          (lower-source-node-has-import-call? pools inner-box)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -45584,12 +45926,16 @@
       (or
         (lower-source-node-has-import-call? pools pointer-box)
         (lower-source-node-has-import-call? pools offset-box))]
-    [(AstExpr.PtrCast inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-source-node-has-import-call? pools inner-box)])]
     [(AstExpr.PtrToInt inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
-    [(AstExpr.IntToPtr inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed inner-box _)
+          (lower-source-node-has-import-call? pools inner-box)])]
     [(AstExpr.StringData inner-box)
       (lower-source-node-has-import-call? pools inner-box)]
     [(AstExpr.StringFromBytes data-box len-box)

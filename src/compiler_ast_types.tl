@@ -440,8 +440,28 @@
 (defenum AstMatch
   (Match i64 AstMatchArmList))
 
+;; Boxed payloads for the remaining 48 B AstExpr tier. These variants carry
+;; either source spans, inline AstType payloads, AstMaybeType, or named borrow
+;; lifetime metadata. Moving them out of the always-present pool slot lets the
+;; flat AstExpr pool stride drop to the next tier while keeping the cold payloads
+;; available to diagnostics, typechecking, lowering, and macro code.
+(defenum AstSpanned
+  (Spanned i64 AstSourceSpan))
+
+(defenum AstMakeArray
+  (MakeArray AstType i64))
+
+(defenum AstTypedExpr
+  (Typed i64 AstType))
+
+(defenum AstBorrowExpr
+  (Borrow bool AstBorrowLifetime i64))
+
+(defenum AstInit
+  (Init AstMaybeType))
+
 (defenum AstExpr
-  (Spanned i64 AstSourceSpan)
+  (Spanned (Box AstSpanned))
   (Literal AstLiteral)
   (Var i64)
   (Binary AstBinOp i64 i64)
@@ -454,7 +474,7 @@
   (TupleRef i64 i64)
   (Array AstExprList)
   (DynArray AstExprList)
-  (MakeArray AstType i64)
+  (MakeArray (Box AstMakeArray))
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
   (ArrayPush i64 i64)
@@ -466,9 +486,9 @@
   ;; unsafe-context flag is consumed by later raw-pointer ops).
   (Unsafe AstExprList)
   (Set i64 i64)
-  (Ann i64 AstType)
-  (Cast i64 AstType)
-  (Borrow bool AstBorrowLifetime i64)
+  (Ann (Box AstTypedExpr))
+  (Cast (Box AstTypedExpr))
+  (Borrow (Box AstBorrowExpr))
   (Match (Box AstMatch))
   (Foreach (Box AstForeach))
   (SpmdReduce (Box AstSpmdReduce))
@@ -493,7 +513,7 @@
   ;; Zero/identity initialization. `(init : T)` carries `AstMaybeType.Some T`;
   ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
-  (Init AstMaybeType)
+  (Init (Box AstInit))
   ;; Compile-time evaluation form `(comptime expr)`. Parsed and
   ;; type-checked (as the inner expression's type); evaluated by CTFE.
   (Comptime i64)
@@ -533,9 +553,9 @@
   (PtrRead i64)
   (PtrWrite i64 i64)
   (PtrOffset i64 i64)
-  (PtrCast i64 AstType)
+  (PtrCast (Box AstTypedExpr))
   (PtrToInt i64)
-  (IntToPtr i64 AstType)
+  (IntToPtr (Box AstTypedExpr))
   ;; Low-level FFI bridge operations used by stdlib. These expose raw backing
   ;; storage and process entry state without synthesizing runtime wrapper calls.
   (StringData i64)
@@ -4002,7 +4022,7 @@
       out)))
 
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
-  (ast-node-push (AstExpr.Spanned inner span)))
+  (ast-node-push (AstExpr.Spanned (box (AstSpanned.Spanned inner span)))))
 
 (define (ast-expr-binary [op : AstBinOp] [left : i64] [right : i64]) : i64
   (ast-node-push (AstExpr.Binary op left right)))
@@ -4032,7 +4052,7 @@
   (ast-node-push (AstExpr.TupleRef target index)))
 
 (define (ast-expr-make-array [elem : AstType] [size : i64]) : i64
-  (ast-node-push (AstExpr.MakeArray elem size)))
+  (ast-node-push (AstExpr.MakeArray (box (AstMakeArray.MakeArray elem size)))))
 
 (define (ast-expr-dyn-array [items : AstExprList]) : i64
   (ast-node-push (AstExpr.DynArray items)))
@@ -4059,16 +4079,17 @@
   (ast-node-push (AstExpr.Set name value)))
 
 (define (ast-expr-ann [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.Ann expr ty)))
+  (ast-node-push (AstExpr.Ann (box (AstTypedExpr.Typed expr ty)))))
 
 (define (ast-expr-cast [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.Cast expr ty)))
+  (ast-node-push (AstExpr.Cast (box (AstTypedExpr.Typed expr ty)))))
 
 (define (ast-expr-borrow
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-push (AstExpr.Borrow mutable lifetime expr)))
+  (ast-node-push
+    (AstExpr.Borrow (box (AstBorrowExpr.Borrow mutable lifetime expr)))))
 
 (define (ast-expr-match [scrutinee : i64] [arms : AstMatchArmList]) : i64
   (ast-node-push (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
@@ -4218,7 +4239,7 @@
   (ast-node-push (AstExpr.BoxSet target value)))
 
 (define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
-  (ast-node-push (AstExpr.Init maybe-ty)))
+  (ast-node-push (AstExpr.Init (box (AstInit.Init maybe-ty)))))
 
 (define (ast-expr-init [ty : AstType]) : i64
   (ast-expr-init-maybe (AstMaybeType.Some ty)))
@@ -4272,13 +4293,13 @@
   (ast-node-push (AstExpr.PtrOffset ptr offset)))
 
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.PtrCast ptr ty)))
+  (ast-node-push (AstExpr.PtrCast (box (AstTypedExpr.Typed ptr ty)))))
 
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.IntToPtr value ty)))
+  (ast-node-push (AstExpr.IntToPtr (box (AstTypedExpr.Typed value ty)))))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))
@@ -4311,7 +4332,9 @@
   [pools : AstNodePoolContext]
   [inner : i64]
   [span : AstSourceSpan]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Spanned inner span)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Spanned (box (AstSpanned.Spanned inner span)))))
 
 (define (ast-expr-binary-with-pools
   [pools : AstNodePoolContext]
@@ -4371,7 +4394,9 @@
   [pools : AstNodePoolContext]
   [elem : AstType]
   [size : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.MakeArray elem size)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.MakeArray (box (AstMakeArray.MakeArray elem size)))))
 
 (define (ast-expr-dyn-array-with-pools
   [pools : AstNodePoolContext]
@@ -4425,20 +4450,26 @@
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Ann expr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Ann (box (AstTypedExpr.Typed expr ty)))))
 
 (define (ast-expr-cast-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Cast expr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Cast (box (AstTypedExpr.Typed expr ty)))))
 
 (define (ast-expr-borrow-with-pools
   [pools : AstNodePoolContext]
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Borrow mutable lifetime expr)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Borrow (box (AstBorrowExpr.Borrow mutable lifetime expr)))))
 
 (define (ast-expr-match-with-pools
   [pools : AstNodePoolContext]
@@ -4641,7 +4672,9 @@
 (define (ast-expr-init-maybe-with-pools
   [pools : AstNodePoolContext]
   [maybe-ty : AstMaybeType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Init maybe-ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Init (box (AstInit.Init maybe-ty)))))
 
 (define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
   (ast-expr-init-maybe-with-pools pools (AstMaybeType.Some ty)))
@@ -4716,7 +4749,9 @@
   [pools : AstNodePoolContext]
   [ptr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.PtrCast ptr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.PtrCast (box (AstTypedExpr.Typed ptr ty)))))
 
 (define (ast-expr-ptr-to-int-with-pools
   [pools : AstNodePoolContext]
@@ -4727,7 +4762,9 @@
   [pools : AstNodePoolContext]
   [value : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.IntToPtr value ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.IntToPtr (box (AstTypedExpr.Typed value ty)))))
 
 (define (ast-expr-string-data-with-pools
   [pools : AstNodePoolContext]
@@ -6234,8 +6271,14 @@
   [remap : AstProgramCompactionRemap]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExpr.Spanned inner span)
-      (AstExpr.Spanned (ast-compaction-remap-expr-id remap inner) span)]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner span)
+          (AstExpr.Spanned
+            (box
+              (AstSpanned.Spanned
+                (ast-compaction-remap-expr-id remap inner)
+                span)))])]
     [(AstExpr.Literal lit) (AstExpr.Literal lit)]
     [(AstExpr.Var name) (AstExpr.Var name)]
     [(AstExpr.Binary op left right)
@@ -6279,10 +6322,14 @@
       (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
     [(AstExpr.DynArray items)
       (AstExpr.DynArray (ast-compaction-remap-expr-list remap items))]
-    [(AstExpr.MakeArray elem size)
-      (AstExpr.MakeArray
-        (ast-compaction-remap-type remap elem)
-        (ast-compaction-remap-expr-id remap size))]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray elem size)
+          (AstExpr.MakeArray
+            (box
+              (AstMakeArray.MakeArray
+                (ast-compaction-remap-type remap elem)
+                (ast-compaction-remap-expr-id remap size))))])]
     [(AstExpr.ArrayRef target index)
       (AstExpr.ArrayRef
         (ast-compaction-remap-expr-id remap target)
@@ -6310,19 +6357,31 @@
       (AstExpr.Unsafe (ast-compaction-remap-expr-list remap exprs))]
     [(AstExpr.Set name value)
       (AstExpr.Set name (ast-compaction-remap-expr-id remap value))]
-    [(AstExpr.Ann inner ty)
-      (AstExpr.Ann
-        (ast-compaction-remap-expr-id remap inner)
-        (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Cast inner ty)
-      (AstExpr.Cast
-        (ast-compaction-remap-expr-id remap inner)
-        (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Borrow mutable lifetime inner)
-      (AstExpr.Borrow
-        mutable
-        lifetime
-        (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (AstExpr.Ann
+            (box
+              (AstTypedExpr.Typed
+                (ast-compaction-remap-expr-id remap inner)
+                (ast-compaction-remap-type remap ty))))])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed inner ty)
+          (AstExpr.Cast
+            (box
+              (AstTypedExpr.Typed
+                (ast-compaction-remap-expr-id remap inner)
+                (ast-compaction-remap-type remap ty))))])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow mutable lifetime inner)
+          (AstExpr.Borrow
+            (box
+              (AstBorrowExpr.Borrow
+                mutable
+                lifetime
+                (ast-compaction-remap-expr-id remap inner))))])]
     [(AstExpr.Match payload)
       (match (box-get payload)
         [(AstMatch.Match scrutinee arms)
@@ -6430,8 +6489,12 @@
         (ast-compaction-remap-expr-id remap value))]
     [(AstExpr.TypeLiteral ty)
       (AstExpr.TypeLiteral (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Init maybe-ty)
-      (AstExpr.Init (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init maybe-ty)
+          (AstExpr.Init
+            (box
+              (AstInit.Init (ast-compaction-remap-maybe-type remap maybe-ty))))])]
     [(AstExpr.Comptime inner)
       (AstExpr.Comptime (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Quote inner)
@@ -6465,16 +6528,24 @@
       (AstExpr.PtrOffset
         (ast-compaction-remap-expr-id remap ptr)
         (ast-compaction-remap-expr-id remap offset))]
-    [(AstExpr.PtrCast ptr ty)
-      (AstExpr.PtrCast
-        (ast-compaction-remap-expr-id remap ptr)
-        (ast-compaction-remap-type remap ty))]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed ptr ty)
+          (AstExpr.PtrCast
+            (box
+              (AstTypedExpr.Typed
+                (ast-compaction-remap-expr-id remap ptr)
+                (ast-compaction-remap-type remap ty))))])]
     [(AstExpr.PtrToInt ptr)
       (AstExpr.PtrToInt (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExpr.IntToPtr value ty)
-      (AstExpr.IntToPtr
-        (ast-compaction-remap-expr-id remap value)
-        (ast-compaction-remap-type remap ty))]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed value ty)
+          (AstExpr.IntToPtr
+            (box
+              (AstTypedExpr.Typed
+                (ast-compaction-remap-expr-id remap value)
+                (ast-compaction-remap-type remap ty))))])]
     [(AstExpr.StringData value)
       (AstExpr.StringData (ast-compaction-remap-expr-id remap value))]
     [(AstExpr.StringFromBytes data len)
@@ -6732,7 +6803,9 @@
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
-    [(AstExpr.Spanned _ _) 1]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned _ _) 1])]
     [(AstExpr.Literal _) 2]
     [(AstExpr.Var _) 3]
     [(AstExpr.Binary _ _ _) 4]
@@ -6745,7 +6818,9 @@
     [(AstExpr.TupleRef _ _) 11]
     [(AstExpr.Array _) 12]
     [(AstExpr.DynArray _) 74]
-    [(AstExpr.MakeArray _ _) 13]
+    [(AstExpr.MakeArray make_array_payload)
+      (match (box-get make_array_payload)
+        [(AstMakeArray.MakeArray _ _) 13])]
     [(AstExpr.ArrayRef _ _) 14]
     [(AstExpr.ArraySet _ _ _) 15]
     [(AstExpr.ArrayPush _ _) 41]
@@ -6754,9 +6829,15 @@
     [(AstExpr.Begin _) 18]
     [(AstExpr.Unsafe _) 32]
     [(AstExpr.Set _ _) 19]
-    [(AstExpr.Ann _ _) 20]
-    [(AstExpr.Cast _ _) 21]
-    [(AstExpr.Borrow _ _ _) 40]
+    [(AstExpr.Ann ann_payload)
+      (match (box-get ann_payload)
+        [(AstTypedExpr.Typed _ _) 20])]
+    [(AstExpr.Cast cast_payload)
+      (match (box-get cast_payload)
+        [(AstTypedExpr.Typed _ _) 21])]
+    [(AstExpr.Borrow borrow_payload)
+      (match (box-get borrow_payload)
+        [(AstBorrowExpr.Borrow _ _ _) 40])]
     [(AstExpr.Match _) 22]
     [(AstExpr.Foreach _) 23]
     [(AstExpr.StructGet _ _) 24]
@@ -6766,7 +6847,9 @@
     [(AstExpr.WithScratch _) 67]
     [(AstExpr.InArena _ _) 65]
     [(AstExpr.TypeLiteral _) 26]
-    [(AstExpr.Init _) 61]
+    [(AstExpr.Init init_payload)
+      (match (box-get init_payload)
+        [(AstInit.Init _) 61])]
     [(AstExpr.Comptime _) 27]
     [(AstExpr.SpmdReduce _) 28]
     [(AstExpr.SpmdScan _) 68]
@@ -6785,9 +6868,13 @@
     [(AstExpr.PtrRead _) 34]
     [(AstExpr.PtrWrite _ _) 35]
     [(AstExpr.PtrOffset _ _) 36]
-    [(AstExpr.PtrCast _ _) 37]
+    [(AstExpr.PtrCast ptr_cast_payload)
+      (match (box-get ptr_cast_payload)
+        [(AstTypedExpr.Typed _ _) 37])]
     [(AstExpr.PtrToInt _) 38]
-    [(AstExpr.IntToPtr _ _) 39]
+    [(AstExpr.IntToPtr int_to_ptr_payload)
+      (match (box-get int_to_ptr_payload)
+        [(AstTypedExpr.Typed _ _) 39])]
     [(AstExpr.Box _) 42]
     [(AstExpr.BoxGet _) 43]
     [(AstExpr.BoxTake _) 65]
@@ -6813,17 +6900,22 @@
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExpr.Spanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-id _)
+          (ast-expr-unspan (ast-node-get inner-id))])]
     [_ expr]))
 
 (define (ast-expr-unspan-with-pools
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExpr.Spanned inner-id _)
-      (ast-expr-unspan-with-pools
-        pools
-        (ast-node-pool-context-expr-get pools inner-id))]
+    [(AstExpr.Spanned spanned_payload)
+      (match (box-get spanned_payload)
+        [(AstSpanned.Spanned inner-id _)
+          (ast-expr-unspan-with-pools
+            pools
+            (ast-node-pool-context-expr-get pools inner-id))])]
     [_ expr]))
 
 (define (ast-decl-tag [decl : AstDecl]) : i64

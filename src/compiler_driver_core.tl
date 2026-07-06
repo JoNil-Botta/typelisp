@@ -388,6 +388,7 @@
     (compiler-load-session-reset-interns!)
     (compiler-typecheck-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)
+    (ctfe-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     ;; Drop the previous entry's lowerer arenas. At opt level 0
@@ -397,6 +398,7 @@
 (define (compiler-driver-reset-analysis-state!) : unit
   (begin
     (cbi.compiler-builtin-reset!)
+    (ctfe-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     (lower-arenas-release!)))
@@ -415,6 +417,7 @@
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
+        (ctfe-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)

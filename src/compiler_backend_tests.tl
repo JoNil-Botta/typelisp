@@ -4316,6 +4316,96 @@
       "backend: register-group load requires var operand")
     (compiler-backend-register-group-call-arg-error-ok?)))
 
+(define (compiler-backend-reg-part-entry-ok?
+  [reg : String]
+  [reg32 : String]
+  [reg16 : String]
+  [reg8 : String]) : bool
+  (and
+    (string.eq (compiler-backend-reg-part (string.copy reg) 8) reg)
+    (string.eq (compiler-backend-reg-part (string.copy reg) 4) reg32)
+    (string.eq (compiler-backend-reg-part (string.copy reg) 2) reg16)
+    (string.eq (compiler-backend-reg-part (string.copy reg) 1) reg8)))
+
+(define (compiler-backend-reg-part-known-entry-ok? [reg : String]) : bool
+  (cond
+    [(string.eq reg "%rax")
+      (compiler-backend-reg-part-entry-ok? reg "%eax" "%ax" "%al")]
+    [(string.eq reg "%rbx")
+      (compiler-backend-reg-part-entry-ok? reg "%ebx" "%bx" "%bl")]
+    [(string.eq reg "%rcx")
+      (compiler-backend-reg-part-entry-ok? reg "%ecx" "%cx" "%cl")]
+    [(string.eq reg "%rdx")
+      (compiler-backend-reg-part-entry-ok? reg "%edx" "%dx" "%dl")]
+    [(string.eq reg "%rdi")
+      (compiler-backend-reg-part-entry-ok? reg "%edi" "%di" "%dil")]
+    [(string.eq reg "%rsi")
+      (compiler-backend-reg-part-entry-ok? reg "%esi" "%si" "%sil")]
+    [(string.eq reg "%r8")
+      (compiler-backend-reg-part-entry-ok? reg "%r8d" "%r8w" "%r8b")]
+    [(string.eq reg "%r9")
+      (compiler-backend-reg-part-entry-ok? reg "%r9d" "%r9w" "%r9b")]
+    [(string.eq reg "%r10")
+      (compiler-backend-reg-part-entry-ok? reg "%r10d" "%r10w" "%r10b")]
+    [(string.eq reg "%r11")
+      (compiler-backend-reg-part-entry-ok? reg "%r11d" "%r11w" "%r11b")]
+    [(string.eq reg "%r12")
+      (compiler-backend-reg-part-entry-ok? reg "%r12d" "%r12w" "%r12b")]
+    [(string.eq reg "%r13")
+      (compiler-backend-reg-part-entry-ok? reg "%r13d" "%r13w" "%r13b")]
+    [(string.eq reg "%r14")
+      (compiler-backend-reg-part-entry-ok? reg "%r14d" "%r14w" "%r14b")]
+    [(string.eq reg "%r15")
+      (compiler-backend-reg-part-entry-ok? reg "%r15d" "%r15w" "%r15b")]
+    [(string.eq reg "%rbp")
+      (compiler-backend-reg-part-entry-ok? reg "%ebp" "%bp" "%bpl")]
+    [else false]))
+
+(define (compiler-backend-reg-part-list-ok? [regs : CompilerRegStringList]) : bool
+  (match regs
+    [(CompilerRegStringList.Nil) true]
+    [(CompilerRegStringList.Cons reg rest)
+      (and
+        (compiler-backend-reg-part-known-entry-ok? reg)
+        (compiler-backend-reg-part-list-ok? (box-get rest)))]))
+
+(define (compiler-backend-reg-part-pools-ok?) : bool
+  (and
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-sysv-integer-registers-with-rbp))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-zero-call-caller-saved-integer-registers))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-sysv-caller-saved-integer-registers))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-sysv-callee-saved-integer-registers))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-win64-caller-saved-integer-registers))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-win64-callee-saved-integer-registers))
+    (compiler-backend-reg-part-list-ok?
+      (compiler-reg-greedy-div-clobber-registers))))
+
+(define (compiler-backend-scavenge-emergency-reg-support-ok?) : bool
+  (and
+    (compiler-backend-scavenge-emergency-reg-supported? "%rax")
+    (compiler-backend-scavenge-emergency-reg-supported? "%rcx")
+    (compiler-backend-scavenge-emergency-reg-supported? "%rdx")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r8")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r9")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r10")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r11")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r12")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r13")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r14")
+    (compiler-backend-scavenge-emergency-reg-supported? "%r15")
+    (compiler-backend-scavenge-emergency-reg-supported? "%rbx")
+    (compiler-backend-scavenge-emergency-reg-supported? "%xmm2")
+    (compiler-backend-scavenge-emergency-reg-supported? "%xmm3")
+    (compiler-backend-scavenge-emergency-reg-supported? "%xmm4")
+    (compiler-backend-scavenge-emergency-reg-supported? "%xmm5")
+    (not (compiler-backend-scavenge-emergency-reg-supported? "%rdi"))))
+
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (Array i64) (array.make-array i64 12)]
@@ -18678,6 +18768,8 @@
       (and
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-register-group-fail-closed-ok?)
+        (compiler-backend-reg-part-pools-ok?)
+        (compiler-backend-scavenge-emergency-reg-support-ok?)
         (compiler-backend-ir-walkers-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and

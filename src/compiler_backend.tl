@@ -247,23 +247,6 @@
   (Ok)
   (Err String))
 
-(defstruct CompilerBackendSwitchCasePlan
-  (cases CompilerIrSwitchCaseList)
-  (edge-blocks String))
-
-(defenum ResultCompilerBackendSwitchCasePlan
-  (Ok CompilerBackendSwitchCasePlan)
-  (Err (Box CompilerDiagnostic)))
-
-(defstruct CompilerBackendSwitchEdgePlan
-  (cases CompilerIrSwitchCaseList)
-  (default-label String)
-  (edge-blocks String))
-
-(defenum ResultCompilerBackendSwitchEdgePlan
-  (Ok CompilerBackendSwitchEdgePlan)
-  (Err (Box CompilerDiagnostic)))
-
 (defstruct CompilerBackendPicOutput
   (asm String)
   (fixups String))
@@ -7798,107 +7781,58 @@
     reg
     "\n"))
 
+(define (compiler-backend-reg-part-by-size
+  [reg64 : String]
+  [reg32 : String]
+  [reg16 : String]
+  [reg8 : String]
+  [size : i64]) : String
+  (cond
+    [(= size 8) reg64]
+    [(= size 4) reg32]
+    [(= size 2) reg16]
+    [(= size 1) reg8]
+    [else
+      (panic
+        (string.append
+          "backend: unsupported register part size "
+          (string.int->string size)))]))
+
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
   (cond
-    [(= size 8) reg]
     [(string.eq reg "%rax")
-      (if (= size 4)
-        "%eax"
-        (if (= size 2)
-          "%ax"
-          "%al"))]
+      (compiler-backend-reg-part-by-size reg "%eax" "%ax" "%al" size)]
     [(string.eq reg "%rbx")
-      (if (= size 4)
-        "%ebx"
-        (if (= size 2)
-          "%bx"
-          "%bl"))]
+      (compiler-backend-reg-part-by-size reg "%ebx" "%bx" "%bl" size)]
     [(string.eq reg "%rcx")
-      (if (= size 4)
-        "%ecx"
-        (if (= size 2)
-          "%cx"
-          "%cl"))]
+      (compiler-backend-reg-part-by-size reg "%ecx" "%cx" "%cl" size)]
     [(string.eq reg "%rdx")
-      (if (= size 4)
-        "%edx"
-        (if (= size 2)
-          "%dx"
-          "%dl"))]
+      (compiler-backend-reg-part-by-size reg "%edx" "%dx" "%dl" size)]
     [(string.eq reg "%rdi")
-      (if (= size 4)
-        "%edi"
-        (if (= size 2)
-          "%di"
-          "%dil"))]
+      (compiler-backend-reg-part-by-size reg "%edi" "%di" "%dil" size)]
     [(string.eq reg "%rsi")
-      (if (= size 4)
-        "%esi"
-        (if (= size 2)
-          "%si"
-          "%sil"))]
+      (compiler-backend-reg-part-by-size reg "%esi" "%si" "%sil" size)]
     [(string.eq reg "%r12")
-      (if (= size 4)
-        "%r12d"
-        (if (= size 2)
-          "%r12w"
-          "%r12b"))]
+      (compiler-backend-reg-part-by-size reg "%r12d" "%r12w" "%r12b" size)]
     [(string.eq reg "%r13")
-      (if (= size 4)
-        "%r13d"
-        (if (= size 2)
-          "%r13w"
-          "%r13b"))]
+      (compiler-backend-reg-part-by-size reg "%r13d" "%r13w" "%r13b" size)]
     [(string.eq reg "%r14")
-      (if (= size 4)
-        "%r14d"
-        (if (= size 2)
-          "%r14w"
-          "%r14b"))]
+      (compiler-backend-reg-part-by-size reg "%r14d" "%r14w" "%r14b" size)]
     [(string.eq reg "%r15")
-      (if (= size 4)
-        "%r15d"
-        (if (= size 2)
-          "%r15w"
-          "%r15b"))]
+      (compiler-backend-reg-part-by-size reg "%r15d" "%r15w" "%r15b" size)]
     [(string.eq reg "%r8")
-      (if (= size 4)
-        "%r8d"
-        (if (= size 2)
-          "%r8w"
-          "%r8b"))]
+      (compiler-backend-reg-part-by-size reg "%r8d" "%r8w" "%r8b" size)]
     [(string.eq reg "%r9")
-      (if (= size 4)
-        "%r9d"
-        (if (= size 2)
-          "%r9w"
-          "%r9b"))]
+      (compiler-backend-reg-part-by-size reg "%r9d" "%r9w" "%r9b" size)]
     [(string.eq reg "%r10")
-      (if (= size 4)
-        "%r10d"
-        (if (= size 2)
-          "%r10w"
-          "%r10b"))]
+      (compiler-backend-reg-part-by-size reg "%r10d" "%r10w" "%r10b" size)]
     [(string.eq reg "%r11")
-      (if (= size 4)
-        "%r11d"
-        (if (= size 2)
-          "%r11w"
-          "%r11b"))]
+      (compiler-backend-reg-part-by-size reg "%r11d" "%r11w" "%r11b" size)]
     ;; M-G3 stage 2: %rbp is a pool register in FPO functions; without this arm
     ;; the else-fallback would silently substitute %r15 parts (miscompile).
     [(string.eq reg "%rbp")
-      (if (= size 4)
-        "%ebp"
-        (if (= size 2)
-          "%bp"
-          "%bpl"))]
-    [else
-      (if (= size 4)
-        "%r15d"
-        (if (= size 2)
-          "%r15w"
-          "%r15b"))]))
+      (compiler-backend-reg-part-by-size reg "%ebp" "%bp" "%bpl" size)]
+    [else (panic (string.append "backend: unsupported register part " reg))]))
 
 (define (compiler-backend-emit-load-memory-to-reg
   [addr : String]
@@ -25182,13 +25116,6 @@
         default-label)
       (compiler-backend-switch-cases-target-phi? cases))))
 
-(define (compiler-backend-switch-label-needs-edge? [label : String]) : bool
-  (and
-    (> compiler-backend-current-phi-target-count 0)
-    (compiler-backend-string-list-contains?
-      compiler-backend-current-phi-targets
-      label)))
-
 (define (compiler-backend-switch-case-edge-label
   [current-label : String]
   [tag : i64]) : String
@@ -25212,119 +25139,61 @@
       (compiler-backend-jump-label function target-label)
       "")))
 
-(define (compiler-backend-switch-edge-plan-cases
+(define (compiler-backend-emit-switch-case-edge-blocks
   [function : String]
   [current-label : String]
   [cases : CompilerIrSwitchCaseList]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackendSwitchCasePlan
+  [vars : i64]) : ResultCompilerBackend
   (match cases
-    [(CompilerIrSwitchCaseList.Nil)
-      (ResultCompilerBackendSwitchCasePlan.Ok
-        (CompilerBackendSwitchCasePlan CompilerIrSwitchCaseList.Nil ""))]
+    [(CompilerIrSwitchCaseList.Nil) (ResultCompilerBackend.Ok "")]
     [(CompilerIrSwitchCaseList.Cons case rest)
-      (match (compiler-backend-switch-edge-plan-cases
-        function
-        current-label
-        (box-get rest)
-        assignments
-        blocks
-        program-index
-        vars)
-        [(ResultCompilerBackendSwitchCasePlan.Ok rest-plan)
-          (match case
-            [(CompilerIrSwitchCase.Case tag label)
-              (if (compiler-backend-switch-label-needs-edge? label)
-                (match (compiler-backend-emit-phi-edge-copies
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (if (compiler-backend-string-list-contains?
+            compiler-backend-current-phi-targets
+            label)
+            (match (compiler-backend-emit-phi-edge-copies
+              assignments
+              blocks
+              label
+              current-label
+              program-index
+              vars)
+              [(ResultCompilerBackend.Ok copies)
+                (match (compiler-backend-emit-switch-case-edge-blocks
+                  function
+                  current-label
+                  (box-get rest)
                   assignments
                   blocks
-                  label
-                  current-label
                   program-index
                   vars)
-                  [(ResultCompilerBackend.Ok copies)
-                    (let
-                      [edge-label : String
-                        (compiler-backend-switch-case-edge-label
-                          current-label
-                          tag)]
-                      (ResultCompilerBackendSwitchCasePlan.Ok
-                        (CompilerBackendSwitchCasePlan
-                          (compiler-ir-switch-case-cons
-                            tag
-                            edge-label
-                            (struct-get rest-plan cases))
-                          (string.append
-                            (compiler-backend-emit-switch-edge-block
-                              function
-                              edge-label
-                              label
-                              copies)
-                            (struct-get rest-plan edge-blocks)))))]
+                  [(ResultCompilerBackend.Ok rest-blocks)
+                    (ResultCompilerBackend.Ok
+                      (string.append
+                        (compiler-backend-emit-switch-edge-block
+                          function
+                          (compiler-backend-switch-case-edge-label
+                            current-label
+                            tag)
+                          label
+                          copies)
+                        rest-blocks))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackendSwitchCasePlan.Err message)])
-                (ResultCompilerBackendSwitchCasePlan.Ok
-                  (CompilerBackendSwitchCasePlan
-                    (compiler-ir-switch-case-cons
-                      tag
-                      label
-                      (struct-get rest-plan cases))
-                    (struct-get rest-plan edge-blocks))))])]
-        [(ResultCompilerBackendSwitchCasePlan.Err message)
-          (ResultCompilerBackendSwitchCasePlan.Err message)])]))
-
-(define (compiler-backend-switch-edge-plan
-  [function : String]
-  [current-label : String]
-  [cases : CompilerIrSwitchCaseList]
-  [default-label : String]
-  [assignments : CompilerRegAssignmentList]
-  [blocks : CompilerIrBlockList]
-  [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackendSwitchEdgePlan
-  (match (compiler-backend-switch-edge-plan-cases
-    function
-    current-label
-    cases
-    assignments
-    blocks
-    program-index
-    vars)
-    [(ResultCompilerBackendSwitchCasePlan.Ok case-plan)
-      (if (compiler-backend-switch-label-needs-edge? default-label)
-        (match (compiler-backend-emit-phi-edge-copies
-          assignments
-          blocks
-          default-label
-          current-label
-          program-index
-          vars)
-          [(ResultCompilerBackend.Ok copies)
-            (let
-              [edge-label : String
-                (compiler-backend-switch-default-edge-label current-label)]
-              (ResultCompilerBackendSwitchEdgePlan.Ok
-                (CompilerBackendSwitchEdgePlan
-                  (struct-get case-plan cases)
-                  edge-label
-                  (string.append
-                    (struct-get case-plan edge-blocks)
-                    (compiler-backend-emit-switch-edge-block
-                      function
-                      edge-label
-                      default-label
-                      copies)))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackendSwitchEdgePlan.Err message)])
-        (ResultCompilerBackendSwitchEdgePlan.Ok
-          (CompilerBackendSwitchEdgePlan
-            (struct-get case-plan cases)
-            default-label
-            (struct-get case-plan edge-blocks))))]
-    [(ResultCompilerBackendSwitchCasePlan.Err message)
-      (ResultCompilerBackendSwitchEdgePlan.Err message)]))
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])
+            (compiler-backend-emit-switch-case-edge-blocks
+              function
+              current-label
+              (box-get rest)
+              assignments
+              blocks
+              program-index
+              vars))])]))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -25335,29 +25204,44 @@
 
 (define (compiler-backend-emit-switch-table-cases-into
   [function : String]
+  [current-label : String]
+  [retarget-phi-edges : bool]
   [cases : CompilerIrSwitchCaseList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match cases
     [(CompilerIrSwitchCaseList.Nil) buf]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
-        [(CompilerIrSwitchCase.Case _ label)
+        [(CompilerIrSwitchCase.Case tag label)
           (compiler-backend-emit-switch-table-cases-into
             function
+            current-label
+            retarget-phi-edges
             (box-get rest)
             (text_buf.append
               (text_buf.append
                 (text_buf.append buf "    .quad ")
-                (compiler-backend-asm-label function label))
+                (compiler-backend-asm-label
+                  function
+                  (if (and
+                    retarget-phi-edges
+                    (compiler-backend-string-list-contains?
+                      compiler-backend-current-phi-targets
+                      label))
+                    (compiler-backend-switch-case-edge-label current-label tag)
+                    label)))
               "\n"))])]))
 
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : String]
-  [cases : CompilerIrSwitchCaseList]) : String
+  [cases : CompilerIrSwitchCaseList]
+  [retarget-phi-edges : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
       function
+      current-label
+      retarget-phi-edges
       cases
       (text_buf.append
         (text_buf.append
@@ -25382,11 +25266,13 @@
       (+ index 1)
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Switch _ _ cases default-label)
-          (if (compiler-backend-switch-target-phi? cases default-label)
+          (text_buf.append
             buf
-            (text_buf.append
-              buf
-              (compiler-backend-emit-switch-table function current-label cases)))]
+            (compiler-backend-emit-switch-table
+              function
+              current-label
+              cases
+              (compiler-backend-switch-target-phi? cases default-label)))]
         [_ buf]))))
 
 (define (compiler-backend-emit-switch-tables-seq-into
@@ -25627,14 +25513,6 @@
               ",8)\n")))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-switch-local-table
-  [function : String]
-  [current-label : String]
-  [cases : CompilerIrSwitchCaseList]) : String
-  (string.append
-    (compiler-backend-emit-switch-table function current-label cases)
-    ".text\n"))
-
 (define (compiler-backend-emit-switch
   [function : String]
   [current-label : String]
@@ -25662,37 +25540,60 @@
               ""
               (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi? cases default-label)
-        (match (compiler-backend-switch-edge-plan
+        (match (compiler-backend-emit-switch-case-edge-blocks
           function
           current-label
           cases
-          default-label
           assignments
           blocks
           program-index
           vars)
-          [(ResultCompilerBackendSwitchEdgePlan.Ok plan)
-            (match (compiler-backend-emit-switch-dispatch
-              function
-              current-label
-              index
-              base
-              case-count
-              (struct-get plan default-label)
-              assignments)
-              [(ResultCompilerBackend.Ok dispatch)
-                (ResultCompilerBackend.Ok
-                  (string.append
-                    dispatch
-                    (string.append
-                      (struct-get plan edge-blocks)
-                      (compiler-backend-emit-switch-local-table
+          [(ResultCompilerBackend.Ok case-blocks)
+            (let
+              [default-needs-edge : bool
+                (compiler-backend-string-list-contains?
+                  compiler-backend-current-phi-targets
+                  default-label)]
+              (match (if default-needs-edge
+                (match (compiler-backend-emit-phi-edge-copies
+                  assignments
+                  blocks
+                  default-label
+                  current-label
+                  program-index
+                  vars)
+                  [(ResultCompilerBackend.Ok copies)
+                    (ResultCompilerBackend.Ok
+                      (compiler-backend-emit-switch-edge-block
                         function
-                        current-label
-                        (struct-get plan cases)))))]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)])]
-          [(ResultCompilerBackendSwitchEdgePlan.Err message)
+                        (compiler-backend-switch-default-edge-label
+                          current-label)
+                        default-label
+                        copies))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])
+                (ResultCompilerBackend.Ok ""))
+                [(ResultCompilerBackend.Ok default-block)
+                  (match (compiler-backend-emit-switch-dispatch
+                    function
+                    current-label
+                    index
+                    base
+                    case-count
+                    (if default-needs-edge
+                      (compiler-backend-switch-default-edge-label current-label)
+                      default-label)
+                    assignments)
+                    [(ResultCompilerBackend.Ok dispatch)
+                      (ResultCompilerBackend.Ok
+                        (string.append
+                          dispatch
+                          (string.append case-blocks default-block)))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
       [else
         (match (compiler-backend-emit-switch-dispatch
@@ -33315,6 +33216,11 @@
             [else 0])
           0)])))
 
+(define (compiler-backend-scavenge-emergency-reg-supported? [reg : String]) : bool
+  (or
+    (string.eq reg "%rax")
+    (not (= (compiler-backend-scavenge-reg-bit reg) 0))))
+
 (define compiler-backend-scavenge-reg-bit-count : i64
   15)
 
@@ -34360,21 +34266,15 @@
       (if (< emidx 0)
         (begin
           ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
-          ;; restores it). String is move-only, so map the fallback -- always one
-          ;; of the reserved scratch regs %r8/%r10/%r11/%rax -- to a fresh literal
-          ;; for the global, and return the owned fallback. (emidx<0 = the
-          ;; fallback is FREE here, preferred; or the pathological all-excluded
-          ;; last resort.)
-          (compiler-backend-emergency-add!
-            (cond
-              [(string.eq fallback "%r10") "%r10"]
-              [(string.eq fallback "%r11") "%r11"]
-              [(string.eq fallback "%rax") "%rax"]
-              [(string.eq fallback "%xmm2") "%xmm2"]
-              [(string.eq fallback "%xmm3") "%xmm3"]
-              [(string.eq fallback "%xmm4") "%xmm4"]
-              [(string.eq fallback "%xmm5") "%xmm5"]
-              [else "%r8"]))
+          ;; restores it). Give the global save set a copy, then return the
+          ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
+          ;; the pathological all-excluded last resort.)
+          (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
+            (compiler-backend-emergency-add! (string.copy fallback))
+            (panic
+              (string.append
+                "backend: unsupported scavenge emergency fallback register "
+                fallback)))
           fallback)
         (begin
           (compiler-backend-emergency-add! (array-ref cands emidx))

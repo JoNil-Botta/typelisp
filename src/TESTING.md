@@ -205,6 +205,20 @@ scripts/analyze-move-traffic.sh --asm target/path/build.s
 The census is a deterministic local measurement helper for regalloc/backend
 traffic work, not a CI gate.
 
+Use
+[`../scripts/analyze-emergency-scavenge.sh`](../scripts/analyze-emergency-scavenge.sh)
+to build a `--cfg scavenge-census` CLI and compile `src/main.tl` plus the
+benchmark corpus at opt level 2. It writes a TSV with total emergency
+scavenge picks, free-fallback picks, occupied-candidate picks, fallback last
+resorts, wrapped instructions, wrapped registers, and max pending registers:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/analyze-emergency-scavenge.sh
+```
+
+This is a local prioritization tool for scavenger/regalloc follow-up work, not
+a CI gate.
+
 `scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
 counter for local deterministic performance measurements. It builds TypeLisp
 benchmark binaries and their paired `clang -O2` C baselines, runs them under

@@ -31315,30 +31315,33 @@
   [ctx : TcContext]
   [enum-name : String]
   [variant-name : String]) : String
-  (if (tc-name-qualified? variant-name)
-    variant-name
-    (if (>= (tc-name-first-dot variant-name) 0)
-      (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
-        [(ResultTcString.Ok lookup-name) lookup-name]
-        [(ResultTcString.Err _)
-          (match (tc-dotted-type-name-lookup-key ctx variant-name)
-            [(ResultTcString.Ok lookup-name) lookup-name]
-            [(ResultTcString.Err _) variant-name])])
-      (let
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            (tc-context-registries ctx)
-            variant-name
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? handle)
-          (match (tc-variant-owner-name ctx handle)
-            [(ResultTcString.Ok owner)
-              (if (string.eq owner enum-name)
-                variant-name
-                (tc-qualified-variant-name enum-name variant-name))]
-            [(ResultTcString.Err _)
-              (tc-qualified-variant-name enum-name variant-name)])
-          (tc-qualified-variant-name enum-name variant-name))))))
+  ;; Intern variant-name once; read both id-keyed slots. Refs #4427.
+  (let
+    [variant-id : i64 (intern variant-name)]
+    (if (tc-name-qualified-id? variant-id)
+      variant-name
+      (if (>= (intern-first-dot variant-id) 0)
+        (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
+          [(ResultTcString.Ok lookup-name) lookup-name]
+          [(ResultTcString.Err _)
+            (match (tc-dotted-type-name-lookup-key ctx variant-name)
+              [(ResultTcString.Ok lookup-name) lookup-name]
+              [(ResultTcString.Err _) variant-name])])
+        (let
+          [handle : i64
+            (compiler-registries-lookup-variant-or
+              (tc-context-registries ctx)
+              variant-name
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (match (tc-variant-owner-name ctx handle)
+              [(ResultTcString.Ok owner)
+                (if (string.eq owner enum-name)
+                  variant-name
+                  (tc-qualified-variant-name enum-name variant-name))]
+              [(ResultTcString.Err _)
+                (tc-qualified-variant-name enum-name variant-name)])
+            (tc-qualified-variant-name enum-name variant-name)))))))
 
 (define (tc-qualified-variant-handle-for-enum-or
   [ctx : TcContext]

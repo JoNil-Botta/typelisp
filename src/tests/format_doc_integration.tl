@@ -1,5 +1,5 @@
 ;; Self-hosted formatter layout engine smoke test.
-(import "../format_doc.tl")
+(import format_doc)
 
 (define (main) : i64
-  (format-doc-self-test))
+  (format_doc.format-doc-self-test))

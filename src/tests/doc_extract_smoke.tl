@@ -1,5 +1,5 @@
 ;; doc_extract_smoke.tl - Runnable structural smoke for doc_extract.tl.
-(import "../doc_extract.tl")
+(import doc_extract)
 
 (define (main) : i64
-  (doc-extract-smoke))
+  (doc_extract.doc-extract-smoke))

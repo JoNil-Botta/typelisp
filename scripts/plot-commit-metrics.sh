@@ -21,6 +21,9 @@ set -eu
 #   ci_run.head_sha          == pr.headRefOid         (CI time)
 # Only commits that have all three are plotted.
 #
+# By default the whole available history is scanned; the limit flags cap the
+# scan for a faster/cheaper run.
+#
 # Requires: gh (authenticated), git, jq, awk. Reads the network; writes one SVG
 # and a companion .tsv. Nothing in the repo is modified.
 
@@ -30,12 +33,17 @@ usage: scripts/plot-commit-metrics.sh [options]
 
   -o FILE          output SVG path (default: target/commit-metrics.svg)
                    a companion <FILE>.tsv with the joined data is also written.
-  --pr-limit N     merged PRs to scan       (default: 300)
-  --run-limit N    ci.yml runs to scan      (default: 800)
-  --release-pages N release API pages (x100) (default: 8)
+  --pr-limit N     merged PRs to scan       (default: all available)
+  --run-limit N    ci.yml runs to scan      (default: all available)
+  --release-pages N release API pages (x100) (default: all available)
   --ma-window N    centered window (commits) for the CI-time moving average (default: 21)
   --no-fetch       do not run `git fetch origin main` first
   -h, --help       show this help
+
+The limits default to scanning everything available so the plot covers the full
+history; pass a positive value to any of them to cap that scan. The release
+pager stops on its own at the first empty page, so --release-pages is only a
+ceiling.
 
 The script needs the merge commits present locally to read the baseline value,
 so it runs `git fetch origin main` by default (updates only the remote-tracking
@@ -46,10 +54,14 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# 0 means "scan everything available" (the default); a positive value caps the
+# scan. gh has no "all" switch, so an uncapped PR/run scan is expressed as a
+# ceiling above any realistic history size.
+ALL_CEIL=1000000
 OUT=target/commit-metrics.svg
-PR_LIMIT=300
-RUN_LIMIT=800
-REL_PAGES=8
+PR_LIMIT=0
+RUN_LIMIT=0
+REL_PAGES=0
 MA_WINDOW=21
 FETCH=1
 
@@ -77,22 +89,30 @@ TAB=$(printf '\t')
 
 log() { echo "[plot-commit-metrics] $*" >&2; }
 
+# Resolve the "0 = all" sentinels to the concrete values used for scanning.
+pr_scan=$PR_LIMIT;   [ "$pr_scan" -eq 0 ]  && pr_scan=$ALL_CEIL
+run_scan=$RUN_LIMIT; [ "$run_scan" -eq 0 ] && run_scan=$ALL_CEIL
+rel_scan=$REL_PAGES; [ "$rel_scan" -eq 0 ] && rel_scan=$ALL_CEIL
+pr_desc=$([ "$PR_LIMIT" -eq 0 ] && echo "all available" || echo "$PR_LIMIT")
+run_desc=$([ "$RUN_LIMIT" -eq 0 ] && echo "all available" || echo "$RUN_LIMIT")
+rel_desc=$([ "$REL_PAGES" -eq 0 ] && echo "all available" || echo "$REL_PAGES page(s)")
+
 if [ "$FETCH" -eq 1 ]; then
   log "fetching origin main (so merge commits are readable) ..."
   git fetch origin main --quiet
 fi
 
 # --- 1. merged PRs: head sha (CI key) + merge sha (release/insn key) -----------
-log "fetching up to $PR_LIMIT merged PRs ..."
-gh pr list --state merged --limit "$PR_LIMIT" \
+log "fetching $pr_desc merged PRs ..."
+gh pr list --state merged --limit "$pr_scan" \
   --json number,headRefOid,mergeCommit \
   -q '.[] | select(.mergeCommit.oid != null) | [.headRefOid, .mergeCommit.oid] | @tsv' \
   > "$WORK/pr.tsv"
 log "  merged PRs with a merge commit: $(wc -l < "$WORK/pr.tsv" | tr -d ' ')"
 
 # --- 2. ci.yml runs: best (longest) successful wall-clock per head sha ---------
-log "fetching up to $RUN_LIMIT ci.yml runs ..."
-gh run list --workflow ci.yml --limit "$RUN_LIMIT" \
+log "fetching $run_desc ci.yml runs ..."
+gh run list --workflow ci.yml --limit "$run_scan" \
   --json headSha,conclusion,startedAt,updatedAt \
   -q '.[] | select(.conclusion=="success") | [.headSha,.startedAt,.updatedAt] | @tsv' \
   | awk -F'\t' '
@@ -111,10 +131,10 @@ gh run list --workflow ci.yml --limit "$RUN_LIMIT" \
 log "  head commits with a successful CI duration: $(wc -l < "$WORK/ci_best.tsv" | tr -d ' ')"
 
 # --- 3. releases: merge commit -> linux binary size ---------------------------
-log "fetching release artifact sizes ($REL_PAGES page(s)) ..."
+log "fetching release artifact sizes ($rel_desc) ..."
 : > "$WORK/rel.tsv"
 page=1
-while [ "$page" -le "$REL_PAGES" ]; do
+while [ "$page" -le "$rel_scan" ]; do
   n=$(gh api "repos/$REPO/releases?per_page=100&page=$page" \
         -q '.[] | [.target_commitish, (([.assets[]|select(.name=="typelisp-stage0-linux")|.size]|first)//"")] | @tsv' \
         2>/dev/null | tee -a "$WORK/rel.tsv" | wc -l | tr -d ' ')

@@ -4400,11 +4400,13 @@
     (compiler-backend-scavenge-emergency-reg-supported? "%r14")
     (compiler-backend-scavenge-emergency-reg-supported? "%r15")
     (compiler-backend-scavenge-emergency-reg-supported? "%rbx")
+    (compiler-backend-scavenge-emergency-reg-supported? "%rsi")
+    (compiler-backend-scavenge-emergency-reg-supported? "%rdi")
     (compiler-backend-scavenge-emergency-reg-supported? "%xmm2")
     (compiler-backend-scavenge-emergency-reg-supported? "%xmm3")
     (compiler-backend-scavenge-emergency-reg-supported? "%xmm4")
     (compiler-backend-scavenge-emergency-reg-supported? "%xmm5")
-    (not (compiler-backend-scavenge-emergency-reg-supported? "%rdi"))))
+    (not (compiler-backend-scavenge-emergency-reg-supported? "%r16"))))
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
@@ -11859,12 +11861,39 @@
               (CompilerRegAssignment.Assignment
                 6
                 (CompilerRegLocation.Register "%r8"))
-              CompilerRegAssignmentList.Nil)))))))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  7
+                  (CompilerRegLocation.Register "%rsi"))
+                (compiler-reg-assignment-cons
+                  (CompilerRegAssignment.Assignment
+                    8
+                    (CompilerRegLocation.Register "%rdi"))
+                  (compiler-reg-assignment-cons
+                    (CompilerRegAssignment.Assignment
+                      9
+                      (CompilerRegLocation.Register "%rax"))
+                    CompilerRegAssignmentList.Nil))))))))))
 
 (define (compiler-backend-gep-load-multi-emergency-instrs) : CompilerIrInstrList
   (let
     [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
     (begin
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 38 (CompilerIrValue.Var 9) (AstType.I64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 37 (CompilerIrValue.Var 8) (AstType.I64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 36 (CompilerIrValue.Var 7) (AstType.I64))
+          instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
@@ -11913,6 +11942,21 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 6 (CompilerIrValue.I64 6) (AstType.I64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 9) (AstType.I64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 8 (CompilerIrValue.I64 8) (AstType.I64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 7 (CompilerIrValue.I64 7) (AstType.I64))
           instrs))
       (set!
         instrs
@@ -18355,7 +18399,7 @@
 
 (define (compiler-backend-scavenge-emergency-exclude-fallback) : (Array String)
   (let
-    [a : (Array String) (make-array String 6)]
+    [a : (Array String) (make-array String 9)]
     (begin
       (array-set! a 0 "%r9")
       (array-set! a 1 "%rcx")
@@ -18363,6 +18407,9 @@
       (array-set! a 3 "%r10")
       (array-set! a 4 "%r11")
       (array-set! a 5 "%r8")
+      (array-set! a 6 "%rsi")
+      (array-set! a 7 "%rdi")
+      (array-set! a 8 "%rax")
       a)))
 
 (define (compiler-backend-scavenge-pooled-r10-r11-ok?) : bool
@@ -18651,6 +18698,130 @@
           "%r9")
         "%r9"))))
 
+(define (compiler-backend-test-reg-assignment-list-from
+  [regs : (Array String)]
+  [index : i64]) : CompilerRegAssignmentList
+  (if (>= index (array-length regs))
+    CompilerRegAssignmentList.Nil
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        index
+        (CompilerRegLocation.Register (array-ref regs index)))
+      (compiler-backend-test-reg-assignment-list-from regs (+ index 1)))))
+
+(define (compiler-backend-test-fill-live-range!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [count : i64]
+  [start : i64]
+  [end : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! starts i start)
+          (array-set! ends i end)
+          (set! i (+ i 1))))
+      unit)))
+
+(define (compiler-backend-scavenge-special-reg-bit-map-ok?) : bool
+  (let
+    [rax : i64 (compiler-backend-scavenge-reg-bit "%rax")]
+    [rsi : i64 (compiler-backend-scavenge-reg-bit "%rsi")]
+    [rdi : i64 (compiler-backend-scavenge-reg-bit "%rdi")]
+    (and
+      (not (= rax 0))
+      (not (= rsi 0))
+      (not (= rdi 0))
+      (not (= rax rsi))
+      (not (= rax rdi))
+      (not (= rsi rdi))
+      (= (compiler-backend-scavenge-reg-bit-by-index 15) rax)
+      (= (compiler-backend-scavenge-reg-bit-by-index 16) rsi)
+      (= (compiler-backend-scavenge-reg-bit-by-index 17) rdi))))
+
+(define (compiler-backend-scavenge-widened-pool-picks-rsi-ok?) : bool
+  (let
+    [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+    [regs : (Array String) (make-array String 13)]
+    [starts : (Array i64) (make-array i64 13)]
+    [ends : (Array i64) (make-array i64 13)]
+    [assignments : CompilerRegAssignmentList CompilerRegAssignmentList.Nil]
+    [picked : String ""]
+    [ok : bool false]
+    (begin
+      (array-set! regs 0 "%r9")
+      (array-set! regs 1 "%rcx")
+      (array-set! regs 2 "%rdx")
+      (array-set! regs 3 "%r10")
+      (array-set! regs 4 "%r11")
+      (array-set! regs 5 "%r8")
+      (array-set! regs 6 "%r12")
+      (array-set! regs 7 "%r13")
+      (array-set! regs 8 "%r14")
+      (array-set! regs 9 "%r15")
+      (array-set! regs 10 "%rbx")
+      (array-set! regs 11 "%rdi")
+      (array-set! regs 12 "%rax")
+      (compiler-backend-test-fill-live-range! starts ends 13 0 10)
+      (set! assignments (compiler-backend-test-reg-assignment-list-from regs 0))
+      (compiler-backend-set-current-fn-linux!)
+      (set! compiler-backend-emergency-pending false)
+      (set! compiler-backend-emergency-used false)
+      (set! compiler-backend-emergency-pending-count 0)
+      (set! compiler-backend-emergency-used-count 0)
+      (set!
+        picked
+        (compiler-backend-scavenge-pick
+          starts
+          ends
+          (compiler-reg-assignment-index-build assignments 13)
+          13
+          4
+          (array.make-array String 0)
+          0
+          "%r8"))
+      (set!
+        ok
+        (and
+          (string.eq picked "%rsi")
+          (not compiler-backend-emergency-pending)
+          (not compiler-backend-emergency-used)
+          (= compiler-backend-emergency-pending-count 0)
+          (= compiler-backend-emergency-used-count 0)))
+      (if prev-win64
+        (compiler-backend-set-current-fn-win64!)
+        (compiler-backend-set-current-fn-linux!))
+      ok)))
+
+(define (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?) : bool
+  (let
+    [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+    [rsi-bit : i64 (compiler-backend-scavenge-reg-bit "%rsi")]
+    [rdi-bit : i64 (compiler-backend-scavenge-reg-bit "%rdi")]
+    [linux-ok : bool false]
+    [win64-ok : bool false]
+    (begin
+      (compiler-backend-set-current-fn-linux!)
+      (set!
+        linux-ok
+        (and
+          (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rsi")
+          (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rdi")))
+      (compiler-backend-set-current-fn-win64!)
+      (set!
+        win64-ok
+        (and
+          (not (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rsi"))
+          (not (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rdi"))
+          (compiler-backend-scavenge-candidate-ok? 0 0 rsi-bit "%rsi")
+          (compiler-backend-scavenge-candidate-ok? 0 0 rdi-bit "%rdi")))
+      (if prev-win64
+        (compiler-backend-set-current-fn-win64!)
+        (compiler-backend-set-current-fn-linux!))
+      (and linux-ok win64-ok))))
+
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 1)]
@@ -18679,7 +18850,7 @@
             1
             5
             exclude
-            6
+            9
             "%r8")]
         [ok : bool
           (and
@@ -18993,6 +19164,9 @@
         (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?)
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
+        (compiler-backend-scavenge-special-reg-bit-map-ok?)
+        (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
+        (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)

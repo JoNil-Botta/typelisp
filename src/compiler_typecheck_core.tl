@@ -50846,28 +50846,62 @@
     (string.eq definition-module "stdlib.core_macros")
     (tc-name-base-eq? macro-name base)))
 
+(define (macro-core-boolean-signature?
+  [ctx : TcContext]
+  [definition-module : String]
+  [params : AstMacroParamList]) : bool
+  (if (= (ast-macro-param-list-len (& params)) 1)
+    (match (ast-macro-param-list-get (& params) 0 (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty variadic)
+        (and
+          variadic
+          (tc-type-eq
+            (macro-resolve-signature-type ctx definition-module ty)
+            (AstType.Bool)))])
+    false))
+
 (define (macro-core-boolean-fast-expand
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
+  [definition-module : String]
+  [params : AstMacroParamList]
   [_macro-name : String]
   [args : AstExprList]
   [depth : i64]
+  [call-expr : AstExpr]
   [is-or : bool]) : ResultMacroExpr
   (match (macro-expand-exprs ctx type-env decls depth args)
     [(ResultMacroExprList.Ok expanded-args)
-      (begin
-        (cfg compile-profile (compiler-tc-macro-profile-start))
-        (let
-          [expanded : i64
-            (if is-or
-              (macro-core-or-chain (& expanded-args) 0)
-              (macro-core-and-chain (& expanded-args) 0))]
+      (match (macro-bind-params
+        ctx
+        decls
+        definition-module
+        type-env
+        params
+        expanded-args
+        (ctfe-env-empty)
+        false
+        call-expr)
+        [(ResultMacroEnv.Ok _)
           (begin
-            (cfg
-              compile-profile
-              (compiler-tc-macro-profile-finish _macro-name expanded-args))
-            (ResultMacroExpr.Ok expanded))))]
+            (cfg compile-profile (compiler-tc-macro-profile-start))
+            (let
+              [expanded : i64
+                (if is-or
+                  (macro-core-or-chain (& expanded-args) 0)
+                  (macro-core-and-chain (& expanded-args) 0))]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish _macro-name expanded-args))
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (ast-node-get expanded)))))]
+        [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)])]
     [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)]))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
@@ -50897,23 +50931,33 @@
             call-expr
             "typecheck: Decls macro can only be used at module scope")))
       (cond
-        [(macro-core-boolean-macro? macro-name definition-module "and")
+        [(and
+            (macro-core-boolean-macro? macro-name definition-module "and")
+            (macro-core-boolean-signature? ctx definition-module params))
           (macro-core-boolean-fast-expand
             ctx
             type-env
             decls
+            definition-module
+            params
             macro-name
             args
             depth
+            call-expr
             false)]
-        [(macro-core-boolean-macro? macro-name definition-module "or")
+        [(and
+            (macro-core-boolean-macro? macro-name definition-module "or")
+            (macro-core-boolean-signature? ctx definition-module params))
           (macro-core-boolean-fast-expand
             ctx
             type-env
             decls
+            definition-module
+            params
             macro-name
             args
             depth
+            call-expr
             true)]
         [else
           (match (macro-eval-transformer

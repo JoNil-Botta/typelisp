@@ -950,6 +950,7 @@ EOF
     assert_matches "$_stack_asm" '^[[:space:]]+addq \$[0-9]+, %rsp$' backend-stack-args
     assert_matches "$_stack_asm" '^[[:space:]]+movq .* 0\(%rsp\)$' backend-stack-args
     assert_matches "$_stack_asm" '^[[:space:]]+movq .* 8\(%rsp\)$' backend-stack-args
+    assert_matches "$_stack_asm" '^[[:space:]]+movsd .* [0-9]+\(%rsp\)$' backend-stack-args
     assert_not_contains "$_stack_asm" "backend: too many call args" backend-stack-args
     as "$_stack_asm" -o "$_stack_obj"
     ld "$_stack_obj" -o "$_stack_bin" -e "$(linux_entry_symbol_for_asm "$_stack_asm")"

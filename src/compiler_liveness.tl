@@ -71,7 +71,13 @@
   (CompilerLiveBlockList.Cons head (box rest)))
 
 (define (compiler-live-set-word-bits) : i64
-  63)
+  32)
+
+(define (compiler-live-set-word-shift) : i64
+  5)
+
+(define (compiler-live-set-word-mask) : i64
+  31)
 
 (define (compiler-live-set-min [a : i64] [b : i64]) : i64
   (if (< a b)
@@ -84,10 +90,10 @@
     b))
 
 (define (compiler-live-set-word-index [value : i64]) : i64
-  (/ value (compiler-live-set-word-bits)))
+  (shr value (compiler-live-set-word-shift)))
 
 (define (compiler-live-set-bit-index [value : i64]) : i64
-  (% value (compiler-live-set-word-bits)))
+  (bit-and value (compiler-live-set-word-mask)))
 
 (define (compiler-live-set-bit-mask [value : i64]) : i64
   (shl 1 (compiler-live-set-bit-index value)))
@@ -468,35 +474,35 @@
   (let
     [empty : CompilerLiveI64Set (compiler-live-set-empty)]
     [with-negative : CompilerLiveI64Set (compiler-live-set-insert empty -4)]
-    [a : CompilerLiveI64Set (compiler-live-set4 0 62 63 130)]
-    [b : CompilerLiveI64Set (compiler-live-set4 130 63 62 0)]
-    [removed : CompilerLiveI64Set (compiler-live-set-remove a 62)]
+    [a : CompilerLiveI64Set (compiler-live-set4 0 31 32 66)]
+    [b : CompilerLiveI64Set (compiler-live-set4 66 32 31 0)]
+    [removed : CompilerLiveI64Set (compiler-live-set-remove a 31)]
     [unioned : CompilerLiveI64Set
-      (compiler-live-set-union removed (compiler-live-set2 62 129))]
+      (compiler-live-set-union removed (compiler-live-set2 31 65))]
     [minus : CompilerLiveI64Set
-      (compiler-live-set-minus unioned (compiler-live-set2 0 129))]
+      (compiler-live-set-minus unioned (compiler-live-set2 0 65))]
     [trimmed : CompilerLiveI64Set
-      (compiler-live-set-remove (compiler-live-set-remove a 130) 63)]
+      (compiler-live-set-remove (compiler-live-set-remove a 66) 32)]
     [ok : bool true]
     (begin
       (set! ok (and ok (compiler-live-set-eq? empty with-negative)))
       (set! ok (and ok (= (compiler-live-set-count a) 4)))
       (set! ok (and ok (compiler-live-set-contains? a 0)))
-      (set! ok (and ok (compiler-live-set-contains? a 62)))
-      (set! ok (and ok (compiler-live-set-contains? a 63)))
-      (set! ok (and ok (compiler-live-set-contains? a 130)))
+      (set! ok (and ok (compiler-live-set-contains? a 31)))
+      (set! ok (and ok (compiler-live-set-contains? a 32)))
+      (set! ok (and ok (compiler-live-set-contains? a 66)))
       (set! ok (and ok (not (compiler-live-set-contains? a -1))))
-      (set! ok (and ok (not (compiler-live-set-contains? a 64))))
+      (set! ok (and ok (not (compiler-live-set-contains? a 33))))
       (set! ok (and ok (compiler-live-set-eq? a b)))
       (set!
         ok
         (and ok (= (compiler-live-set-score a) (compiler-live-set-score b))))
       (set! ok (and ok (= (compiler-live-set-count removed) 3)))
-      (set! ok (and ok (not (compiler-live-set-contains? removed 62))))
+      (set! ok (and ok (not (compiler-live-set-contains? removed 31))))
       (set! ok (and ok (= (compiler-live-set-count unioned) 5)))
       (set!
         ok
-        (and ok (compiler-live-set-eq? minus (compiler-live-set3 62 63 130))))
+        (and ok (compiler-live-set-eq? minus (compiler-live-set3 31 32 66))))
       (set! ok (and ok (= (compiler-live-set-count trimmed) 2)))
       (set! ok (and ok (= (compiler-live-set-word-count trimmed) 1)))
       ok)))

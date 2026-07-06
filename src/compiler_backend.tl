@@ -48521,6 +48521,33 @@ tl_memchr:
         true)]
     [(ResultCompilerLower.Err diag) (ResultCompilerBackendObject.Err diag)]))
 
+;; Compare `needle-len` raw bytes of `needle-data` against `text-data` starting
+;; at byte offset `start`. Callers guarantee `start >= 0` and
+;; `start + needle-len <= text-len`, so the reads stay in bounds. Reading the
+;; String data pointers directly avoids the per-byte bounds check and repeated
+;; length loads of `string.string-ref`; the backend scans assembly text a byte
+;; at a time, so this predicate is one of the hottest in the self-compile.
+(define (compiler-backend-bytes-eq-at?
+  [text-data : (Ptr u8)]
+  [needle-data : (Ptr u8)]
+  [start : i64]
+  [needle-len : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (if ok
+        (< i needle-len)
+        false)
+        (if (=
+          (unsafe
+            (ptr-read (ptr-offset text-data (+ start i))))
+          (unsafe
+            (ptr-read (ptr-offset needle-data i))))
+          (set! i (+ i 1))
+          (set! ok false)))
+      ok)))
+
 (define (compiler-backend-string-prefix-at?
   [text : String]
   [prefix : String]
@@ -48532,19 +48559,13 @@ tl_memchr:
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while ok
-              (if (< i prefix-len)
-                (if (=
-                  (string.string-ref text (+ start i))
-                  (string.string-ref prefix i))
-                  (set! i (+ i 1))
-                  (set! ok false))
-                (set! ok false)))
-            (= i prefix-len)))))))
+        (compiler-backend-bytes-eq-at?
+          (unsafe
+            (string-data text))
+          (unsafe
+            (string-data prefix))
+          start
+          prefix-len)))))
 
 (define (compiler-backend-string-contains? [text : String] [needle : String]) : bool
   (let
@@ -48552,20 +48573,33 @@ tl_memchr:
     [needle-len : i64 (string.string-length needle)]
     (if (= needle-len 0)
       true
-      (let
-        [i : i64 0]
-        [found : bool false]
-        [done : bool false]
-        (begin
-          (while (not done)
-            (if (<= (+ i needle-len) text-len)
-              (if (compiler-backend-string-prefix-at? text needle i)
+      (if (> needle-len text-len)
+        false
+        (let
+          [text-data : (Ptr u8)
+            (unsafe
+              (string-data text))]
+          [needle-data : (Ptr u8)
+            (unsafe
+              (string-data needle))]
+          [last : i64 (- text-len needle-len)]
+          [i : i64 0]
+          [found : bool false]
+          [done : bool false]
+          (begin
+            (while (if done
+              false
+              (<= i last))
+              (if (compiler-backend-bytes-eq-at?
+                text-data
+                needle-data
+                i
+                needle-len)
                 (begin
                   (set! found true)
                   (set! done true))
-                (set! i (+ i 1)))
-              (set! done true)))
-          found)))))
+                (set! i (+ i 1))))
+            found))))))
 
 (define (compiler-backend-string-count [text : String] [needle : String]) : i64
   (let
@@ -48573,17 +48607,30 @@ tl_memchr:
     [needle-len : i64 (string.string-length needle)]
     (if (= needle-len 0)
       0
-      (let
-        [i : i64 0]
-        [count : i64 0]
-        (begin
-          (while (<= (+ i needle-len) text-len)
-            (if (compiler-backend-string-prefix-at? text needle i)
-              (begin
-                (set! count (+ count 1))
-                (set! i (+ i needle-len)))
-              (set! i (+ i 1))))
-          count)))))
+      (if (> needle-len text-len)
+        0
+        (let
+          [text-data : (Ptr u8)
+            (unsafe
+              (string-data text))]
+          [needle-data : (Ptr u8)
+            (unsafe
+              (string-data needle))]
+          [last : i64 (- text-len needle-len)]
+          [i : i64 0]
+          [count : i64 0]
+          (begin
+            (while (<= i last)
+              (if (compiler-backend-bytes-eq-at?
+                text-data
+                needle-data
+                i
+                needle-len)
+                (begin
+                  (set! count (+ count 1))
+                  (set! i (+ i needle-len)))
+                (set! i (+ i 1))))
+            count))))))
 
 (define compiler-backend-pic-image-base-label : String
   ".L_tl_pic_image_base")
@@ -48603,18 +48650,32 @@ tl_memchr:
           start
           (cast (string.string-ref needle 0) : u8))
         (let
-          [i : i64 start]
+          [text-data : (Ptr u8)
+            (unsafe
+              (string-data text))]
+          [needle-data : (Ptr u8)
+            (unsafe
+              (string-data needle))]
+          [last : i64 (- text-len needle-len)]
+          [i : i64
+            (if (< start 0)
+              0
+              start)]
           [found : i64 -1]
           [done : bool false]
           (begin
-            (while (not done)
-              (if (<= (+ i needle-len) text-len)
-                (if (compiler-backend-string-prefix-at? text needle i)
-                  (begin
-                    (set! found i)
-                    (set! done true))
-                  (set! i (+ i 1)))
-                (set! done true)))
+            (while (if done
+              false
+              (<= i last))
+              (if (compiler-backend-bytes-eq-at?
+                text-data
+                needle-data
+                i
+                needle-len)
+                (begin
+                  (set! found i)
+                  (set! done true))
+                (set! i (+ i 1))))
             found))))))
 
 (define (compiler-backend-string-replace-all

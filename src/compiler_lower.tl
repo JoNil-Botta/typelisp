@@ -6597,7 +6597,7 @@
                 (let
                   [cleanup-str : String (intern-str cleanup-name)]
                   [logical-name : String
-                    (if (tc-name-qualified? cleanup-str)
+                    (if (tc-name-qualified-id? cleanup-name)
                       (lower-name-cache-resolve-hygiene names cleanup-str)
                       (lower-decl-logical-name
                         entry-path

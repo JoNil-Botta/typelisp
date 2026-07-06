@@ -7423,7 +7423,7 @@
   (if tc-unqualified-import-has-ambiguity
     (let
       [name : String (intern-str name-id)]
-      (if (tc-name-qualified? name)
+      (if (tc-name-qualified-id? name-id)
         (TcMaybeString.No)
         (let
           [module : String (tc-context-module ctx)]
@@ -7450,7 +7450,7 @@
             [module : String (tc-context-module ctx)]
             (if (and
               (> (string.string-length module) 0)
-              (not (tc-name-qualified? name)))
+              (not (tc-name-qualified-id? name-id)))
               (match (tc-lookup-id
                 env
                 (tc-name-id (compiler-symbol-module-key module name)))
@@ -22956,7 +22956,7 @@
           [(tc-spmd-env-has-local? spmd-env raw-text) (ResultTcString.Err "")]
           [(tc-hygiene-global-name? raw-text)
             (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
-          [(tc-name-qualified? raw-text) (ResultTcString.Ok raw-text)]
+          [(tc-name-qualified-id? raw-name) (ResultTcString.Ok raw-text)]
           [else (tc-source-name-lookup-key ctx env raw-text)]))]
     [_ (ResultTcString.Err "")]))
 
@@ -48903,7 +48903,7 @@
     [module : String (tc-context-module ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (tc-name-qualified? name-str))
+      (not (tc-name-qualified-id? name))
       (not (tc-source-slash-qualified? name-str)))
       (str_cat.str-cat (tc-name-slashes-to-dots module) "." name-str)
       name-str)))
@@ -54957,7 +54957,7 @@
     (if (tc-source-slash-qualified-id? cleanup-str cleanup-name)
       (tc-cleanup-source-slash-alias-helper-name ctx cleanup-str cleanup-name)
       (intern
-        (if (tc-name-qualified? cleanup-str)
+        (if (tc-name-qualified-id? cleanup-name)
           cleanup-str
           (compiler-symbol-module-key
             (tc-qualified-name-module owner-name)
@@ -55623,7 +55623,7 @@
     [module : String (tc-context-module ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (tc-name-qualified? text)))
+      (not (tc-name-qualified-id? name)))
       (compiler-symbol-module-key module text)
       text)))
 

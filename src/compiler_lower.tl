@@ -1307,16 +1307,19 @@
   [type-env : TcTypeEnv]
   [module : String]
   [lookup-name : String]) : String
-  (if (tc-name-qualified? lookup-name)
-    lookup-name
-    (if (>= (tc-name-first-dot lookup-name) 0)
-      (match (tc-source-name-lookup-key
-        (tc-context-with-module ctx module)
-        type-env
-        lookup-name)
-        [(ResultTcString.Ok resolved-name) resolved-name]
-        [(ResultTcString.Err _) (compiler-symbol-module-key module lookup-name)])
-      (compiler-symbol-module-key module lookup-name))))
+  (let
+    [lookup-name-id : i64 (intern lookup-name)]
+    (if (tc-name-qualified-id? lookup-name-id)
+      lookup-name
+      (if (>= (intern-first-dot lookup-name-id) 0)
+        (match (tc-source-name-lookup-key
+          (tc-context-with-module ctx module)
+          type-env
+          lookup-name)
+          [(ResultTcString.Ok resolved-name) resolved-name]
+          [(ResultTcString.Err _)
+            (compiler-symbol-module-key module lookup-name)])
+        (compiler-symbol-module-key module lookup-name)))))
 
 (define (lower-hygiene-source-name-in-context
   [ctx : TcContext]
@@ -7482,11 +7485,10 @@
     [(AstPattern.Binding _) used]
     [(AstPattern.Variant name patterns-box)
       (let
-        [name-str : String (intern-str name)]
+        ;; `name` is already the interned id; read the id-keyed metadata slots
+        ;; directly instead of re-hashing `(intern-str name)` twice.
         [with-head : hashmap.I64I64Map
-          (if (or
-            (tc-name-qualified? name-str)
-            (>= (tc-name-first-dot name-str) 0))
+          (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
             (lower-used-type-name-add used module name)
             used)]
         (lower-used-types-add-pattern-list

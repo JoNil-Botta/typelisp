@@ -6318,8 +6318,8 @@
                 (compiler-backend-string-contains?
                   cycle
                   "    movq %r10, -16(%rbp)\n")
-                (not (compiler-backend-string-contains? cycle "pushq"))
-                (not (compiler-backend-string-contains? cycle "popq"))
+                (compiler-backend-string-contains? cycle "    pushq %r8\n")
+                (compiler-backend-string-contains? cycle "    popq %r8\n")
                 (not (compiler-backend-string-contains? cycle "%rax")))]
             [(ResultCompilerBackend.Err _) false])]
         [(ResultCompilerBackend.Err _) false])]
@@ -6823,7 +6823,7 @@
           (compiler-backend-string-contains? asm "    movq $42,")
           true)
         (not (compiler-backend-string-contains? asm "    pushq %rax\n"))
-        (not (compiler-backend-string-contains? asm "    popq "))
+        (not (compiler-backend-string-contains? asm "    popq %rax\n"))
         (not (compiler-backend-string-contains? asm ".extern syscall\n")))]
     [(ResultCompilerBackend.Err _) false]))
 

@@ -798,6 +798,27 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
+  (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
+    input-path
+    program
+    spans
+    target
+    has-target
+    mode
+    opt-level
+    emit-entry
+    false))
+
+(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverBuffer
   (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -818,28 +839,30 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-target-with-mode-buffer
+                  (compiler-backend-emit-program-target-with-mode-and-crt
                     optimized
                     target
                     mode
                     optimized-spans
-                    emit-entry)
-                  (compiler-backend-emit-program-target-with-mode-buffer
+                    emit-entry
+                    crt-entry)
+                  (compiler-backend-emit-program-target-with-mode-and-crt
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
-                    emit-entry))
-                  [(ResultCompilerBackendBuffer.Ok buf)
+                    emit-entry
+                    crt-entry))
+                  [(ResultCompilerBackend.Ok asm)
                     (let
                       [peepholed : text_buf.TextBuf
-                        (compiler-backend-peephole-text-buf buf)]
+                        (text_buf.append (text_buf.empty) asm)]
                       (begin
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "backend"))
                         (ResultCompilerDriverBuffer.Ok peepholed)))]
-                  [(ResultCompilerBackendBuffer.Err diag)
+                  [(ResultCompilerBackend.Err diag)
                     (begin
                       (cfg
                         compile-profile

@@ -1,9 +1,9 @@
 ;; compiler_ctfe.tl - Selfhost compile-time function evaluation (CTFE) for
-;; expression-position `(comptime expr)` (#719, scalar subset).
+;; expression-position `(comptime expr)`.
 ;;
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
 ;; compile-time value types are i64, f64/f32, bool, char, unit, type values, and
-;; Expr / list aggregates (#1137).
+;; Expr / list aggregates.
 ;;
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
@@ -28,8 +28,8 @@
     `(__tl_string_ref ,text ,index)
     `(string.string-ref ,text ,index)))
 
-;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
-;; from #1137 for macro transformers; TypeInfo pseudo-values back the
+;; A compile-time value. Scalars; Expr / ExprList aggregates
+;; for macro transformers; TypeInfo pseudo-values back the
 ;; stdlib-owned reflection surface.
 (defenum CompilerCtfeValue
   (I64 i64)
@@ -41,7 +41,7 @@
   (Unit)
   (Type AstType)
   ;; A user-facing `Expr` code fragment plus its internally checked produced
-  ;; type. The type is not part of the source-level Expr type (#1135).
+  ;; type. The type is not part of the source-level Expr type.
   (Expr i64 AstType)
   (ExprList AstExprList)
   (ExprClause AstExprClause)
@@ -126,7 +126,7 @@
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
 ;;
-;; Storage disposition (#2748):
+;; Storage disposition:
 ;; - CtfeLayoutFieldList, CtfeLayoutInfoList, CtfeReflectFieldList,
 ;;   CtfeReflectVariantList, and CtfeReflectInfoList are vector-backed
 ;;   generated-collection families. The historical `List` names are retained so
@@ -134,7 +134,7 @@
 ;; - CtfeEnv remains a persistent cons chain because lexical shadowing and cheap
 ;;   push/pop are its primary operations.
 ;; - AST-owned lists such as AstExprList, AstTypeList, and AstParamList remain
-;;   frontend data structures and are tracked separately by #2565.
+;;   frontend data structures and are tracked separately.
 (defenum CtfeLayoutField
   (Field String i64))
 
@@ -3932,7 +3932,7 @@
 ;; CTFE lacks general stdlib function calls and syntax values still carry
 ;; compiler-owned provenance/type metadata. Simple public inspectors are routed
 ;; through source-shaped match bodies below so their behavior follows the
-;; ordinary stdlib.comptime definitions (#3988).
+;; ordinary stdlib.comptime definitions.
 (define (ctfe-stdlib-string-helper-name? [name : String] [base : String]) : bool
   (and
     (ctfe-string-has-module-separator? name)
@@ -8522,7 +8522,7 @@
       (ResultCtfe.Ok (CompilerCtfeValue.Expr node ty) next-fuel)]
     [(ResultCtfeQuoteExpr.Err diag) (ResultCtfe.Err diag)]))
 
-;; --- expr constructors and inspectors (#1137) --------------------------------
+;; --- expr constructors and inspectors ----------------------------------------
 ;; Macro transformers need to build and pattern-match AST nodes at comptime.
 ;; These constructors / inspectors cover the forms needed by v1 macros
 ;; (and, or, when, unless, cond): literals, variables, if, and call.
@@ -11562,10 +11562,10 @@
       (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
       ok)))
 
-;; --- self-tests (#1137 additions) -------------------------------------------
+;; --- self-tests ---------------------------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
 ;; compare it structurally, extract its parts, and verify list ops.
-;; Flat-AST test helper: the #1137 self-tests build exprs with i64-returning
+;; Flat-AST test helper: the self-tests build exprs with i64-returning
 ;; constructors; ctfe-expr-eq takes AstExpr, so wrap node ids for the tests.
 (define (ctfe-test-expr-eq-in-env [env : CtfeEnv] [a : i64] [b : i64]) : bool
   (ctfe-expr-eq-in-env env (ctfe-ast-get env a) (ctfe-ast-get env b)))

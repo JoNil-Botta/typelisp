@@ -136,6 +136,14 @@
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 1) -1)
         10
         "I64I64 owned get")
+      (test.assert-i64-eq
+        (map_i64_i64.get-value-or (& m) 1 -1)
+        10
+        "I64I64 direct value-or found")
+      (test.assert-i64-eq
+        (map_i64_i64.get-value-or (& m) 99 -1)
+        -1
+        "I64I64 direct value-or missing")
       (test.assert-true (map_i64_i64.contains? (& m) 2) "I64I64 contains")
       (test.assert-true
         (map_i64_i64.borrowed-value-found?

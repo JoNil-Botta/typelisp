@@ -1,4 +1,4 @@
-;# Core expression macros - the implicit prelude (#2060).
+;# Core expression macros - the implicit prelude.
 ;#
 ;# The compile driver links this module into every program (alongside
 ;# stdlib/runtime.tl), so a bare `when`, `unless`, `cond`, `and`, or `or` that is

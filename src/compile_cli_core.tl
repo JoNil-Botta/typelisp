@@ -1,4 +1,4 @@
-;; compile_cli_core.tl - Main-free selfhost compile/check core (#565, #1639).
+;; compile_cli_core.tl - Main-free selfhost compile/check core.
 ;;
 ;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
@@ -16,7 +16,7 @@
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
 ;; as the command name. The retained bootstrap `compile.tl` driver and the
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
-;; compiler (#1638).
+;; compiler.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)
@@ -28,44 +28,176 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
-;; Pair-shaped batch entries stay as a list until aggregate-element vector
-;; support makes a generated entry vector cleaner than parallel StringVecs.
-(defenum CompileCliBatchEntryList
-  (Nil)
-  (Cons String String (Box CompileCliBatchEntryList)))
+(defstruct CompileCliBatchEntry
+  (input-path String)
+  (output-path String))
+
+(defstruct CompileCliBatchEntryList
+  (slots (Array CompileCliBatchEntry))
+  (len i64))
 
 (defenum ResultCompileCliBatchEntryList
   (Ok CompileCliBatchEntryList)
   (Err i64))
 
-(defenum CompileCliCfgNames
-  (Nil)
-  (Cons String (Box CompileCliCfgNames)))
+(defstruct CompileCliCfgNames
+  (slots (Array String))
+  (len i64))
 
-(define (compile-cli-batch-entry-cons
+(define (compile-cli-batch-entry-list-with-capacity [capacity : i64]) : CompileCliBatchEntryList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (CompileCliBatchEntryList (make-array CompileCliBatchEntry cap) 0)))
+
+(define (compile-cli-batch-entry-list-new) : CompileCliBatchEntryList
+  (compile-cli-batch-entry-list-with-capacity 4))
+
+(define (compile-cli-batch-entry-list-len
+  [entries : (& entries CompileCliBatchEntryList)]) : i64
+  (struct-get entries len))
+
+(define (compile-cli-batch-entry-list-get
+  [entries : (& entries CompileCliBatchEntryList)]
+  [index : i64]) : CompileCliBatchEntry
+  (if (if (>= index 0)
+    (< index (struct-get entries len))
+    false)
+    (array-ref (struct-get entries slots) index)
+    (CompileCliBatchEntry "" "")))
+
+(define (compile-cli-batch-entry-list-copy-range!
+  [dst : (&mut dst (Array CompileCliBatchEntry))]
+  [src : (& src (Array CompileCliBatchEntry))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (compile-cli-batch-entry-list-grow!
+  [entries : (&mut entries CompileCliBatchEntryList)]) : unit
+  (let
+    [count : i64 (struct-get entries len)]
+    [old-cap : i64 (array-length (struct-get entries slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array CompileCliBatchEntry)
+      (make-array CompileCliBatchEntry new-cap)]
+    (begin
+      (compile-cli-batch-entry-list-copy-range!
+        (&mut bigger)
+        (& (struct-get entries slots))
+        0
+        count)
+      (set! (struct-get entries slots) bigger))))
+
+(define (compile-cli-batch-entry-list-push!
+  [entries : (&mut entries CompileCliBatchEntryList)]
   [input-path : String]
-  [output-path : String]
-  [rest : CompileCliBatchEntryList]) : CompileCliBatchEntryList
-  (CompileCliBatchEntryList.Cons input-path output-path (box rest)))
+  [output-path : String]) : unit
+  (begin
+    (if (< (struct-get entries len) (array-length (struct-get entries slots)))
+      unit
+      (compile-cli-batch-entry-list-grow! entries))
+    (let
+      [index : i64 (struct-get entries len)]
+      (begin
+        (array-set!
+          (struct-get entries slots)
+          index
+          (CompileCliBatchEntry input-path output-path))
+        (set! (struct-get entries len) (+ index 1))))))
+
+(define (compile-cli-cfg-names-with-capacity [capacity : i64]) : CompileCliCfgNames
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (CompileCliCfgNames (make-array String cap) 0)))
 
 (define (compile-cli-cfg-names-empty) : CompileCliCfgNames
-  CompileCliCfgNames.Nil)
+  (compile-cli-cfg-names-with-capacity 4))
+
+(define (compile-cli-cfg-names-copy-range!
+  [dst : (&mut dst (Array String))]
+  [src : (& src (Array String))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (compile-cli-cfg-names-grow! [names : (&mut names CompileCliCfgNames)]) : unit
+  (let
+    [count : i64 (struct-get names len)]
+    [old-cap : i64 (array-length (struct-get names slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array String) (make-array String new-cap)]
+    (begin
+      (compile-cli-cfg-names-copy-range!
+        (&mut bigger)
+        (& (struct-get names slots))
+        0
+        count)
+      (set! (struct-get names slots) bigger))))
+
+(define (compile-cli-cfg-names-push!
+  [names : (&mut names CompileCliCfgNames)]
+  [name : String]) : unit
+  (begin
+    (if (< (struct-get names len) (array-length (struct-get names slots)))
+      unit
+      (compile-cli-cfg-names-grow! names))
+    (let
+      [index : i64 (struct-get names len)]
+      (begin
+        (array-set! (struct-get names slots) index name)
+        (set! (struct-get names len) (+ index 1))))))
+
+(define (compile-cli-cfg-names-get
+  [names : (& names CompileCliCfgNames)]
+  [index : i64]) : String
+  (if (if (>= index 0)
+    (< index (struct-get names len))
+    false)
+    (array-ref (struct-get names slots) index)
+    ""))
 
 (define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
-  (CompileCliCfgNames.Cons name (box names)))
+  (let
+    [next : CompileCliCfgNames names]
+    (begin
+      (compile-cli-cfg-names-push! (&mut next) name)
+      next)))
 
 (define (compile-cli-cfg-names-to-env-from
-  [names : CompileCliCfgNames]
+  [names : (& names CompileCliCfgNames)]
+  [index : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match names
-    [(CompileCliCfgNames.Nil) env]
-    [(CompileCliCfgNames.Cons name rest)
-      (compile-cli-cfg-names-to-env-from
-        (box-get rest)
-        (compiler-cfg-enable env name))]))
+  (if (>= index (struct-get names len))
+    env
+    (compile-cli-cfg-names-to-env-from
+      names
+      (+ index 1)
+      (compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
 
 (define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-from names (compiler-cfg-empty)))
+  (compile-cli-cfg-names-to-env-from (& names) 0 (compiler-cfg-empty)))
 
 (defenum CompileCliConfig
   (Config
@@ -796,36 +928,49 @@
           inline-test-status))
       doctest-status)))
 
+(define (compile-cli-run-batch-inline-tests-from
+  [entries : (& entries CompileCliBatchEntryList)]
+  [index : i64]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : svec.StringVec]
+  [cfgs : CompileCliCfgNames]) : i64
+  (if (>= index (compile-cli-batch-entry-list-len entries))
+    0
+    (let
+      [entry : CompileCliBatchEntry
+        (compile-cli-batch-entry-list-get entries index)]
+      [input-path : String (struct-get entry input-path)]
+      [status : i64
+        (tltest-inline-typecheck-file-with-cfg
+          input-path
+          stdlib-roots
+          (compiler-driver-target-cfgs
+            target
+            (compile-cli-cfg-names-to-env cfgs))
+          "typecheck-prefix-inline-compile-batch")]
+      (if (= status 0)
+        (compile-cli-run-batch-inline-tests-from
+          entries
+          (+ index 1)
+          target
+          stdlib-roots
+          cfgs)
+        (begin
+          (io.print-error
+            (str_cat.str-cat "\ncompile: batch source failed: " input-path "\n"))
+          status)))))
+
 (define (compile-cli-run-batch-inline-tests
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
   [stdlib-roots : svec.StringVec]
   [cfgs : CompileCliCfgNames]) : i64
-  (match entries
-    [(CompileCliBatchEntryList.Nil) 0]
-    [(CompileCliBatchEntryList.Cons input-path _ rest)
-      (let
-        [status : i64
-          (tltest-inline-typecheck-file-with-cfg
-            input-path
-            stdlib-roots
-            (compiler-driver-target-cfgs
-              target
-              (compile-cli-cfg-names-to-env cfgs))
-            "typecheck-prefix-inline-compile-batch")]
-        (if (= status 0)
-          (compile-cli-run-batch-inline-tests
-            (box-get rest)
-            target
-            stdlib-roots
-            cfgs)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "\ncompile: batch source failed: "
-                input-path
-                "\n"))
-            status)))]))
+  (compile-cli-run-batch-inline-tests-from
+    (& entries)
+    0
+    target
+    stdlib-roots
+    cfgs))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -875,31 +1020,34 @@
         "\n"))
     1))
 
-(define (compile-cli-batch-parse-entries-from
+(define (compile-cli-batch-parse-entries-into!
   [text : String]
   [start : i64]
   [line : i64]
-  [n : i64]) : ResultCompileCliBatchEntryList
+  [n : i64]
+  [entries : (&mut entries CompileCliBatchEntryList)]) : i64
   (if (>= start n)
-    (ResultCompileCliBatchEntryList.Ok CompileCliBatchEntryList.Nil)
+    0
     (let
       [line-end : i64 (compile-cli-batch-line-end text start n)]
       [next-start : i64 (compile-cli-batch-next-line text line-end n)]
       (if (= start line-end)
-        (compile-cli-batch-parse-entries-from text next-start (+ line 1) n)
+        (compile-cli-batch-parse-entries-into!
+          text
+          next-start
+          (+ line 1)
+          n
+          entries)
         (let
           [sep : i64 (compile-cli-batch-find-separator text start line-end)]
           (if (< sep 0)
-            (ResultCompileCliBatchEntryList.Err
-              (compile-cli-batch-line-error line "expected input|output"))
+            (compile-cli-batch-line-error line "expected input|output")
             (let
               [output-start : i64 (+ sep 1)]
               (if (= start sep)
-                (ResultCompileCliBatchEntryList.Err
-                  (compile-cli-batch-line-error line "missing input path"))
+                (compile-cli-batch-line-error line "missing input path")
                 (if (= output-start line-end)
-                  (ResultCompileCliBatchEntryList.Err
-                    (compile-cli-batch-line-error line "missing output path"))
+                  (compile-cli-batch-line-error line "missing output path")
                   (let
                     [input-path : String
                       (string.substring text start (- sep start))]
@@ -908,19 +1056,134 @@
                         text
                         output-start
                         (- line-end output-start))]
-                    (match (compile-cli-batch-parse-entries-from
-                      text
-                      next-start
-                      (+ line 1)
-                      n)
-                      [(ResultCompileCliBatchEntryList.Ok rest)
-                        (ResultCompileCliBatchEntryList.Ok
-                          (compile-cli-batch-entry-cons
-                            input-path
-                            output-path
-                            rest))]
-                      [(ResultCompileCliBatchEntryList.Err status)
-                        (ResultCompileCliBatchEntryList.Err status)])))))))))))
+                    (begin
+                      (compile-cli-batch-entry-list-push!
+                        entries
+                        input-path
+                        output-path)
+                      (compile-cli-batch-parse-entries-into!
+                        text
+                        next-start
+                        (+ line 1)
+                        n
+                        entries))))))))))))
+
+(define (compile-cli-batch-parse-entries-from
+  [text : String]
+  [start : i64]
+  [line : i64]
+  [n : i64]) : ResultCompileCliBatchEntryList
+  (let
+    [entries : CompileCliBatchEntryList (compile-cli-batch-entry-list-new)]
+    [status : i64
+      (compile-cli-batch-parse-entries-into! text start line n (&mut entries))]
+    (if (= status 0)
+      (ResultCompileCliBatchEntryList.Ok entries)
+      (ResultCompileCliBatchEntryList.Err status))))
+
+(define (compile-cli-batch-entry-at?
+  [entries : (& entries CompileCliBatchEntryList)]
+  [index : i64]
+  [input-path : String]
+  [output-path : String]) : bool
+  (let
+    [entry : CompileCliBatchEntry
+      (compile-cli-batch-entry-list-get entries index)]
+    (and
+      (string.eq (struct-get entry input-path) input-path)
+      (string.eq (struct-get entry output-path) output-path))))
+
+(define (compile-cli-batch-parse-dense-order-ok?) : bool
+  (match (compile-cli-batch-parse-entries-from
+    "a.tl|a.s\n\nb.tl|b.s\r\nc.tl|c.s"
+    0
+    1
+    (string.string-length "a.tl|a.s\n\nb.tl|b.s\r\nc.tl|c.s"))
+    [(ResultCompileCliBatchEntryList.Err _) false]
+    [(ResultCompileCliBatchEntryList.Ok entries)
+      (and
+        (= (compile-cli-batch-entry-list-len (& entries)) 3)
+        (compile-cli-batch-entry-at? (& entries) 0 "a.tl" "a.s")
+        (compile-cli-batch-entry-at? (& entries) 1 "b.tl" "b.s")
+        (compile-cli-batch-entry-at? (& entries) 2 "c.tl" "c.s"))]))
+
+(test
+  compile-cli-batch-entry-dense-preserves-order
+  (unless
+    (compile-cli-batch-parse-dense-order-ok?)
+    (io.panic "compile: batch entry dense order smoke failed")))
+
+(define (compile-cli-run-batch-entries-from
+  [state : CompilerDriverState]
+  [entries : (& entries CompileCliBatchEntryList)]
+  [index : i64]
+  [has-target : bool]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : svec.StringVec]
+  [cfgs : CompileCliCfgNames]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]) : i64
+  (if (>= index (compile-cli-batch-entry-list-len entries))
+    0
+    (let
+      [entry : CompileCliBatchEntry
+        (compile-cli-batch-entry-list-get entries index)]
+      [input-path : String (struct-get entry input-path)]
+      [output-path : String (struct-get entry output-path)]
+      ;; Each batch entry gets a destroyable scratch arena, not just a lexical
+      ;; rewind region. Keep the exact scratch handle so cleanup does not
+      ;; depend on which arena compiler driver internals leave active.
+      [home : arena.Arena (arena.current)]
+      [scratch : arena.Arena (arena.make)]
+      [status : i64
+        (begin
+          (unsafe
+            (arena.set! scratch))
+          (compile-cli-run-compile-file
+            state
+            input-path
+            output-path
+            false
+            false
+            has-target
+            target
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level
+            false))]
+      ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
+      ;; live chain is reachable only from its newest segment (the active arena
+      ;; right after the balanced compile), not the make() root handle.
+      [scratch-end : arena.Arena (arena.current)]
+      (begin
+        (unsafe
+          (arena.set! home))
+        ;; Clear compile state while the entry scratch arena is still mapped:
+        ;; loader/typecheck caches may hold scratch-backed nodes until reset.
+        (compiler-driver-state-reset-file-state! state)
+        (unsafe
+          (begin
+            (arena.set! home)
+            (arena.destroy scratch-end)))
+        (if (= status 0)
+          (compile-cli-run-batch-entries-from
+            state
+            entries
+            (+ index 1)
+            has-target
+            target
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level)
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "\ncompile: batch source failed: "
+                input-path
+                "\n"))
+            status))))))
 
 (define (compile-cli-run-batch-entries
   [state : CompilerDriverState]
@@ -931,63 +1194,16 @@
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (match entries
-    [(CompileCliBatchEntryList.Nil) 0]
-    [(CompileCliBatchEntryList.Cons input-path output-path rest)
-      (let
-        ;; Each batch entry gets a destroyable scratch arena, not just a lexical
-        ;; rewind region. Keep the exact scratch handle so cleanup does not
-        ;; depend on which arena compiler driver internals leave active.
-        [home : arena.Arena (arena.current)]
-        [scratch : arena.Arena (arena.make)]
-        [status : i64
-          (begin
-            (unsafe
-              (arena.set! scratch))
-            (compile-cli-run-compile-file
-              state
-              input-path
-              output-path
-              false
-              false
-              has-target
-              target
-              stdlib-roots
-              cfgs
-              backend-mode
-              opt-level
-              false))]
-        ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
-        ;; live chain is reachable only from its newest segment (the active arena
-        ;; right after the balanced compile), not the make() root handle.
-        [scratch-end : arena.Arena (arena.current)]
-        (begin
-          (unsafe
-            (arena.set! home))
-          ;; Clear compile state while the entry scratch arena is still mapped:
-          ;; loader/typecheck caches may hold scratch-backed nodes until reset.
-          (compiler-driver-state-reset-file-state! state)
-          (unsafe
-            (begin
-              (arena.set! home)
-              (arena.destroy scratch-end)))
-          (if (= status 0)
-            (compile-cli-run-batch-entries
-              state
-              (box-get rest)
-              has-target
-              target
-              stdlib-roots
-              cfgs
-              backend-mode
-              opt-level)
-            (begin
-              (io.print-error
-                (str_cat.str-cat
-                  "\ncompile: batch source failed: "
-                  input-path
-                  "\n"))
-              status))))]))
+  (compile-cli-run-batch-entries-from
+    state
+    (& entries)
+    0
+    has-target
+    target
+    stdlib-roots
+    cfgs
+    backend-mode
+    opt-level))
 
 (define (compile-cli-run-batch-from
   [state : CompilerDriverState]

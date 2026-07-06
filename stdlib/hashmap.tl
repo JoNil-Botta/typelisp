@@ -1,8 +1,8 @@
-;# Generated concrete hashmap family (collections v1, #817/#825).
+;# Generated concrete hashmap family (collections v1).
 ;#
 ;# Open-addressed, linear-probing maps generated from explicit declaration
 ;# requests. `StringI64Map` remains the checked-in compatibility
-;# `HashMap<String,i64>` template chosen in #824/#825; this module requests
+;# `HashMap<String,i64>` template; this module requests
 ;# generated `StringStringMap`, `I64I64Map`, and `I64StringMap` families with the same
 ;# representation and API shape. String-key maps use the same string hash and
 ;# equality rules as `hash.string-key`; i64-key maps normalize the scalar key
@@ -47,7 +47,6 @@
 (module stdlib.hashmap)
 
 (import stdlib.array)
-(import stdlib.comptime)
 (import stdlib.hash as hash_mod)
 
 ;; lint-allow: unused-import
@@ -72,13 +71,11 @@
 ;: implementation while presenting the new `&`/`&mut` collection API shape.
 (defmacro (hashmap [K : type] [V : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append
+    [module-name : Expr
+      (expr-var
+        (string-append
           "stdlib.hashmap.generated."
-          (comptime.string-append
-            (type-key K)
-            (comptime.string-append "." (type-key V)))))]
+          (string-append (type-key K) (string-append "." (type-key V)))))]
     (match (type-key K)
       ["String"
         (match (type-key V)
@@ -631,6 +628,13 @@
                 (match lookup
                   [(LookupFound value) value]
                   [(LookupMissing) fallback]))
+              (define (get-value-or
+                [map : (& map Map)]
+                [key : i64]
+                [fallback : i64]) : i64
+                (match (base.i64-i64-map-get-ref (& (struct-get map inner)) key)
+                  [(base.I64I64MapFound value) value]
+                  [(base.I64I64MapMissing) fallback]))
               (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
                   map)
                 (BorrowedValueMissing))
@@ -1150,7 +1154,7 @@
               (module ,module-name))])])))
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
-;: carrying the owned key, its copied value, and the cached key hash (#824).
+;: carrying the owned key, its copied value, and the cached key hash.
 (defenum StringI64MapSlot
   (StringI64MapEmpty)
   (StringI64MapTombstone)
@@ -1371,7 +1375,7 @@
       0
       -1)))
 
-;: The v1 fixed-capacity `String -> i64` map (representation from #824): the
+;: The v1 fixed-capacity `String -> i64` map: the
 ;: open-addressing slot table, the live-entry count, and the tombstone count.
 (defstruct StringI64Map
   (slots (Array StringI64MapSlot))
@@ -1456,8 +1460,7 @@
   (array-length (struct-get map slots)))
 
 ;: Number of tombstone (deleted) slots awaiting reuse. Live entries plus
-;: tombstones never exceed the capacity; this count feeds resize thresholds
-;: (#827).
+;: tombstones never exceed the capacity; this count feeds resize thresholds.
 (define (string-i64-map-deleted [map : StringI64Map]) : i64
   (struct-get map deleted))
 
@@ -2510,9 +2513,7 @@
 ;: Borrow `map` mutably and return a live mutable entry for borrowed `key`.
 ;: The handle can update an existing entry in place; missing entries are
 ;: reported as absent and are not inserted by the handle API.
-(defmacro (string-i64-map-get-mut-entry-borrowed
-  [map : comptime.Expr]
-  [key : comptime.Expr]) : comptime.Expr
+(defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
   `(string-i64-map-mut-entry-from-info
     (string-i64-map-mut-entry-info
       (struct-get ,map slots)
@@ -2593,13 +2594,12 @@
 ;:
 ;: v1 iterates in *bucket order* - ascending slot index, skipping empty and
 ;: tombstone slots. This order is deterministic for a fixed table state but is
-;: NOT insertion order, and it can change across a resize/rehash (#827). Walk
+;: NOT insertion order, and it can change across a resize/rehash. Walk
 ;: live entries by starting at `(string-i64-map-next-occupied map 0)` and
 ;: advancing with `(string-i64-map-next-occupied map (+ index 1))` until the
 ;: cursor reaches the capacity, reading each entry with
 ;: `string-i64-map-entry-at`. Do not insert into or remove from the map during
 ;: a walk: a resize rebuilds the slot array and invalidates live indices.
-;: (Borrow-rule enforcement of this is revisited under #806.)
 ;:
 ;: ```typelisp
 ;: (import stdlib.hashmap)
@@ -2625,7 +2625,7 @@
 ;: The live entry at `index`, or `None` for an empty slot, a tombstone, or an
 ;: index outside `[0, capacity)`. Pair with `string-i64-map-next-occupied` to
 ;: walk the map in bucket order. The key is handed back by value; v1 does not
-;: yet enforce that the borrow outlives the map (revisited under #806).
+;: yet enforce that the borrow outlives the map.
 (define (string-i64-map-entry-at [map : StringI64Map] [index : i64]) : StringI64MapEntry
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
@@ -3324,9 +3324,7 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (string-string-map-get-mut-entry-borrowed
-  [map : comptime.Expr]
-  [key : comptime.Expr]) : comptime.Expr
+(defmacro (string-string-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
   `(string-string-map-mut-entry-from-info
     (string-string-map-mut-entry-info
       (struct-get ,map slots)
@@ -3974,9 +3972,7 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (i64-i64-map-get-mut-entry
-  [map : comptime.Expr]
-  [key : comptime.Expr]) : comptime.Expr
+(defmacro (i64-i64-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
   `(i64-i64-map-mut-entry-from-info
     (i64-i64-map-mut-entry-info
       (struct-get ,map slots)
@@ -4623,9 +4619,7 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (i64-string-map-get-mut-entry
-  [map : comptime.Expr]
-  [key : comptime.Expr]) : comptime.Expr
+(defmacro (i64-string-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
   `(i64-string-map-mut-entry-from-info
     (i64-string-map-mut-entry-info
       (struct-get ,map slots)
@@ -5740,7 +5734,7 @@
         (struct-get entry hash)))
     unit))
 
-;; Inline coverage migrated from stdlib/tests/hashmap_api.tl (#3083).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 
 (cfg
@@ -6812,8 +6806,8 @@
 (cfg
   test
   (defmacro (string-hash-payload-map-get-mut-entry-borrowed
-    [map : comptime.Expr]
-    [key : comptime.Expr]) : comptime.Expr
+    [map : Expr]
+    [key : Expr]) : Expr
     `(string-hash-payload-map-mut-entry-from-info
       (string-hash-payload-map-mut-entry-info
         (struct-get ,map slots)
@@ -7821,9 +7815,7 @@
 
 (cfg
   test
-  (defmacro (i64-hash-state-map-get-mut-entry
-    [map : comptime.Expr]
-    [key : comptime.Expr]) : comptime.Expr
+  (defmacro (i64-hash-state-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
     `(i64-hash-state-map-mut-entry-from-info
       (i64-hash-state-map-mut-entry-info
         (struct-get ,map slots)
@@ -9014,9 +9006,7 @@
 
 (cfg
   test
-  (defmacro (hash-nested-key-i64-map-get-mut-entry
-    [map : comptime.Expr]
-    [key : comptime.Expr]) : comptime.Expr
+  (defmacro (hash-nested-key-i64-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
     `(hash-nested-key-i64-map-mut-entry-from-info
       (hash-nested-key-i64-map-mut-entry-info
         (struct-get ,map slots)
@@ -9711,7 +9701,7 @@
       [(I64HashStateMapEntrySome _ v) (stdlib.hashmap.hash-state-score v)]
       [(I64HashStateMapEntryNone) fallback])))
 
-;; Iteration walkers (deterministic bucket order, #829). No first-class
+;; Iteration walkers (deterministic bucket order). No first-class
 ;; functions yet, so each walk is its own tail-recursive helper started at
 ;; `(stdlib.hashmap.string-i64-map-next-occupied m 0)` and advanced with the cursor.
 ;; Number of live entries the cursor visits (should equal the map's len).
@@ -9911,7 +9901,7 @@
   (test
     hashmap-descriptor-contract
     (begin
-      ;; --- hashmap key descriptor contract (#2056) ---
+      ;; --- hashmap key descriptor contract ---
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
         (string-key-descriptor-key)
         "stdlib/hashmap/string-key-v1"
@@ -9931,7 +9921,7 @@
   (test
     hashmap-aggregate-key-fixtures
     (begin
-      ;; --- hashmap aggregate key fixtures (#2729) ---
+      ;; --- hashmap aggregate key fixtures ---
       (let
         [c0 : HashNestedKeyI64Map
           (stdlib.hashmap.hash-nested-key-i64-map-with-capacity 1)]
@@ -10197,7 +10187,7 @@
   (test
     hashmap-aggregate-value-fixtures
     (begin
-      ;; --- hashmap aggregate value fixtures (#2728) ---
+      ;; --- hashmap aggregate value fixtures ---
       (let
         [alpha : String "alpha"]
         [payload0 : StringHashPayloadMap
@@ -10626,7 +10616,7 @@
   (test
     hashmap-string-i64-api
     (begin
-      ;; --- map API (#826): with-capacity / insert / get / contains? / len ---
+      ;; --- map API: with-capacity / insert / get / contains? / len ---
       (let
         [alpha-key : String "alpha"]
         [missing-key : String "missing"]
@@ -10742,7 +10732,7 @@
   (test
     hashmap-string-i64-removal
     (begin
-      ;; --- removal + tombstone accounting (#829) ---
+      ;; --- removal + tombstone accounting ---
       (let
         [r0 : StringI64Map (stdlib.hashmap.string-i64-map-with-capacity 8)]
         [r1 : StringI64Map
@@ -10834,7 +10824,7 @@
   (test
     hashmap-string-i64-update-entry
     (begin
-      ;; --- update / entry-or-insert API (#888) ---
+      ;; --- update / entry-or-insert API ---
       (let
         [u0 : StringI64Map (stdlib.hashmap.string-i64-map-with-capacity 4)]
         [u1 : StringI64Map
@@ -11034,7 +11024,7 @@
   (test
     hashmap-string-i64-resize-rehash
     (begin
-      ;; --- resize / rehash (#827) ---
+      ;; --- resize / rehash ---
       ;; needs-grow? threshold: a fresh capacity-4 table is below the 3/4 load.
       (test.assert-false
         (stdlib.hashmap.string-i64-map-needs-grow?
@@ -11169,7 +11159,7 @@
   (test
     hashmap-string-i64-iteration
     (begin
-      ;; --- deterministic bucket-order iteration (#829) ---
+      ;; --- deterministic bucket-order iteration ---
       ;; empty map: the cursor starts at the capacity; count and sum are zero.
       (let
         [e0 : StringI64Map (stdlib.hashmap.string-i64-map-with-capacity 8)]
@@ -11276,7 +11266,7 @@
   (test
     hashmap-string-string-family
     (begin
-      ;; --- generated String -> String map family (#817) ---
+      ;; --- generated String -> String map family ---
       (let
         [alpha : String "alpha"]
         [beta : String "beta"]
@@ -11383,7 +11373,7 @@
   (test
     hashmap-string-string-update-entry
     (begin
-      ;; --- generated String -> String update / entry-or-insert API (#888) ---
+      ;; --- generated String -> String update / entry-or-insert API ---
       (let
         [alpha-update : String "alpha"]
         [ssu0 : StringStringMap
@@ -11522,7 +11512,7 @@
   (test
     hashmap-i64-i64-family
     (begin
-      ;; --- generated i64 -> i64 map family (#817) ---
+      ;; --- generated i64 -> i64 map family ---
       (let
         [ii0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
         [ii1 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii0 1 10)]
@@ -11610,7 +11600,7 @@
   (test
     hashmap-i64-i64-update-entry
     (begin
-      ;; --- generated i64 -> i64 update / entry-or-insert API (#888) ---
+      ;; --- generated i64 -> i64 update / entry-or-insert API ---
       (let
         [iiu0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
         [iiu1 : I64I64Map

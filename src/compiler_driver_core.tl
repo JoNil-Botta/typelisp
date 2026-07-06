@@ -392,7 +392,7 @@
     (cbi.compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
-    ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
+    ;; Drop the previous entry's lowerer arenas. At opt level 0
     ;; the escaped IR stays alive until the next file reset.
     (lower-arenas-release!)))
 
@@ -420,7 +420,7 @@
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)
-        ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
+        ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (lower-arenas-release!)
         (compiler-driver-state-capture-active-interns! state)
@@ -666,7 +666,7 @@
     opt-level
     emit-entry))
 
-;; #2596: the lowered IR functions live in a dedicated arena
+;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
 ;; surviving function out of it, so the arena is dead weight (~172MB on a
 ;; cli.tl self-compile) once optimization returns. At level 0 the lowered
@@ -1069,9 +1069,9 @@
 
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
-;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives (#2142 / #2150),
-;;     exported as fixed symbols (#2143); kept as reachability roots.
-;;   - stdlib/core_macros.tl - the implicit core macro prelude (#2060): `and`,
+;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives,
+;;     exported as fixed symbols; kept as reachability roots.
+;;   - stdlib/core_macros.tl - the implicit core macro prelude: `and`,
 ;;     `or`, `when`, `unless`, `cond`. Loaded right after runtime so its macros
 ;;     are source-order visible to the entry and resolve as bare unqualified
 ;;     calls via the prelude fallback in `macro-call-decl`.
@@ -1895,7 +1895,7 @@
   [crt-entry : bool]) : ResultCompilerDriver
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    ;; The lowering provenance side table (#605/#761) is remapped after
+    ;; The lowering provenance side table is remapped after
     ;; optimization so backend diagnostics report surviving instruction
     ;; locations when a rewrite can preserve them.
     (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt

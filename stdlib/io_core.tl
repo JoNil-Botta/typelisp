@@ -157,7 +157,7 @@
             unit)
           fallback)))))
 
-;; #2357: the table pointers are stored as raw integer addresses the region
+;; The table pointers are stored as raw integer addresses the region
 ;; checker cannot see, and this init can fire inside a (with-arena ...) region
 ;; (the batch compile driver scopes each entry). Allocate the tables in a
 ;; dedicated persistent arena so a region reset cannot reclaim them; the

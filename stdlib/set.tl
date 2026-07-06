@@ -1,4 +1,4 @@
-;# Generated hash set modules (collections v1, #2730/#3199).
+;# Generated hash set modules (collections v1).
 ;#
 ;# `(set T)` emits a module-scoped hash set. Import each instantiation with an
 ;# alias when more than one set type is used:
@@ -546,8 +546,7 @@
         `(begin
           (module ,module-name))])))
 
-;; Inline coverage migrated from stdlib/tests/set_api.tl (#3083) and from the
-;; removed compiler-side set generator path (#3199).
+;; Inline test coverage.
 (cfg test (import "test.tl"))
 (cfg test (import (set String) as strset))
 (cfg test (import (set i64) as i64set))

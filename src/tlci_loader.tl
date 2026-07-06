@@ -1,4 +1,4 @@
-;; tlci_loader.tl - Dormant tlci comptime image loader core (#2657).
+;; tlci_loader.tl - Dormant tlci comptime image loader core.
 ;;
 ;; Native macro dispatch lands in later slices. This module owns the loader
 ;; boundary that is already specified: parse/validate a tlci image, map it into

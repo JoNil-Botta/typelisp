@@ -1,4 +1,4 @@
-;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
+;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -163,6 +163,90 @@
             (string.contains (& asm) (& needle)))]
         [(ResultCompilerDriverBuffer.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
+
+;; P4/C4.3 per-instantiation typecheck-completeness regression.
+;;
+;; A generated module is materialized in FULL and typechecked in full,
+;; independent of which of its methods a consumer references, because the
+;; reachability gate now runs AFTER typecheck (see
+;; lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools).
+;; Referencing `push` only vs. `push` + `map` therefore adds zero new typecheck
+;; work on the (vector C43Point) module and cannot surface a new type error from
+;; its body. Both variants must lower cleanly.
+(define (compiler-lower-smoke-c43-vector-push-only-source) : String
+  "(import stdlib.vector)
+(defstruct C43Point (x i64) (y i64))
+(import (vector C43Point) as pvec)
+(define (main) : i64
+  (let
+    [v : pvec.Vec (pvec.new)]
+    (begin
+      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.len (& v)))))")
+
+(define (compiler-lower-smoke-c43-vector-push-map-source) : String
+  "(import stdlib.vector)
+(defstruct C43Point (x i64) (y i64))
+(import (vector C43Point) as pvec)
+(define (c43-bump [p : C43Point]) : C43Point
+  (C43Point (+ (struct-get p x) 1) (struct-get p y)))
+(define (main) : i64
+  (let
+    [v : pvec.Vec (pvec.new)]
+    (begin
+      (pvec.push (&mut v) (C43Point 1 2))
+      (let
+        [w : pvec.Vec (pvec.map (& v) c43-bump)]
+        (pvec.len (& w))))))")
+
+;; A hand-written function that is UNREACHABLE from main but has a type error in
+;; its body. With the reachability gate positioned before typecheck (pre-P4) it
+;; was pruned and the error was silently missed at `compile`; P4 typechecks the
+;; whole program, so this MUST be rejected. Guards against re-gating typecheck.
+(define (compiler-lower-smoke-c43-unreachable-error-source) : String
+  "(import stdlib.vector)
+(defstruct C43Point (x i64) (y i64))
+(import (vector C43Point) as pvec)
+(define (main) : i64
+  (let
+    [v : pvec.Vec (pvec.new)]
+    (begin
+      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.len (& v)))))
+(define (c43-dead [s : String]) : i64 (+ s 1))")
+
+(define (compiler-lower-smoke-c43-vector-push-only-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-smoke-c43-vector-push-only-source))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-smoke-c43-vector-push-map-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-smoke-c43-vector-push-map-source))
+    [(ResultCompilerLower.Ok _ _) true]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-smoke-c43-unreachable-error-rejected?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-smoke-c43-unreachable-error-source))
+    [(ResultCompilerLower.Ok _ _) false]
+    [(ResultCompilerLower.Err _) true]))
+
+(define (compiler-lower-smoke-c43-typecheck-completeness-ok?) : bool
+  (begin
+    (unless
+      (compiler-lower-smoke-c43-vector-push-only-ok?)
+      (panic
+        "lower/C4.3: (vector C43Point) referencing only push must fully typecheck"))
+    (unless
+      (compiler-lower-smoke-c43-vector-push-map-ok?)
+      (panic "lower/C4.3: adding a map call must not surface a new type error"))
+    (unless
+      (compiler-lower-smoke-c43-unreachable-error-rejected?)
+      (panic
+        "lower/C4.3: an unreachable type error must be caught (typecheck is not reachability-gated)"))
+    true))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
@@ -562,4 +646,7 @@
     (unless
       (compiler-lower-smoke-issue3494-ok?)
       (panic "lower: issue3494 smoke failed"))
+    (unless
+      (compiler-lower-smoke-c43-typecheck-completeness-ok?)
+      (panic "lower: C4.3 typecheck-completeness smoke failed"))
     42))

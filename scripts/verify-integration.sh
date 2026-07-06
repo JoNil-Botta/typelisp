@@ -185,34 +185,6 @@ deps_or_empty() {
     esac
 }
 
-requires_symbol_from_deps() {
-    for _dep in $(deps_or_empty "$1"); do
-        case "$_dep" in
-            requires-stage0-symbol:*)
-                printf '%s\n' "${_dep#requires-stage0-symbol:}"
-                return
-                ;;
-        esac
-    done
-}
-
-should_skip_staged() {
-    _symbols=$1
-    _stderr=$2
-    [ -n "$_symbols" ] || return 1
-    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
-        grep -qF "$_symbol" "$_stderr" && return 0
-    done
-    return 1
-}
-
-should_skip_staged_diagnostic() {
-    _diagnostic=$1
-    _stderr=$2
-    [ -n "$_diagnostic" ] || return 1
-    grep -qF "$_diagnostic" "$_stderr"
-}
-
 dep_source_path() {
     _dep=$1
     _source_dir=$2
@@ -319,7 +291,6 @@ compile_linux_c_deps() {
 
     for _dep in $(deps_or_empty "$_deps"); do
         case "$_dep" in
-            requires-stage0-symbol:*) continue ;;
             *.c)
                 if ! command -v cc >/dev/null 2>&1; then
                     echo "missing C compiler: cc" >> "$_build_stderr"
@@ -349,7 +320,6 @@ compile_windows_c_deps() {
 
     for _dep in $(deps_or_empty "$_deps"); do
         case "$_dep" in
-            requires-stage0-symbol:*) continue ;;
             *.c)
                 if ! command -v clang >/dev/null 2>&1; then
                     echo "missing C compiler: clang" >> "$_build_stderr"
@@ -372,13 +342,15 @@ compile_windows_c_deps() {
 
 # Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
-#   arena_poison_*            Linux-only poison-on-reclaim debug mode
+#   arena_poison_stale_array_trap  the poison-on-reclaim trap cannot fire on
+#                             Windows: tl_arena_poison_enable is a no-op stub
+#                             in the Windows backend runtime, so the stale
+#                             access does not fault (Linux asserts exit 139)
 #   c_abi_sysv_*              Linux System V C ABI fixtures
 #   syscall_arg_alias         raw Linux syscall (rejected on the Windows target)
 #   dead_frame_store          raw Linux syscall (getpid) fixture (rejected on the Windows target)
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
-arena_poison_clone_survives
 arena_poison_stale_array_trap
 c_abi_sysv_register_aggregate_args
 c_abi_sysv_memory_aggregate
@@ -471,15 +443,7 @@ EOF
                 ;;
         esac
         case "${_extra:-}" in
-            "" | requires-stage0-symbol:?* | requires-stage0-diagnostic:?* | expected-stderr:?*) ;;
-            requires-stage0-symbol:)
-                echo "manifest line $_line_no has empty staged symbol for $_name" >&2
-                exit 1
-                ;;
-            requires-stage0-diagnostic:)
-                echo "manifest line $_line_no has empty staged diagnostic for $_name" >&2
-                exit 1
-                ;;
+            "" | expected-stderr:?*) ;;
             expected-stderr:)
                 echo "manifest line $_line_no has empty expected stderr for $_name" >&2
                 exit 1
@@ -505,13 +469,6 @@ EOF
 
         _source_dir=$(dirname -- "$_source_path")
         for _dep in $(deps_or_empty "$_deps"); do
-            case "$_dep" in
-                requires-stage0-symbol:)
-                    echo "manifest line $_line_no has empty staged symbol for $_name" >&2
-                    exit 1
-                    ;;
-                requires-stage0-symbol:*) continue ;;
-            esac
             case "$_dep" in
                 /* | *..*)
                     echo "manifest line $_line_no has unsafe dependency path: $_dep" >&2
@@ -1371,20 +1328,15 @@ validate_manifest
 
 failed=0
 ran=0
-skipped=0
 
 while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
     case "$name" in
         "" | \#*) continue ;;
     esac
 
-    requires_symbol=
-    requires_diagnostic=
     expected_stderr_spec=-
     case "${extra:-}" in
         "") ;;
-        requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
-        requires-stage0-diagnostic:*) requires_diagnostic=${extra#requires-stage0-diagnostic:} ;;
         expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
     esac
 
@@ -1395,14 +1347,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     work_src="$case_dir/$name.tl"
     cp "$source_path" "$work_src"
 
-    if [ -z "$requires_symbol" ]; then
-        requires_symbol=$(requires_symbol_from_deps "$deps")
-    fi
-
     for dep in $(deps_or_empty "$deps"); do
-        case "$dep" in
-            requires-stage0-symbol:*) continue ;;
-        esac
         copy_dep "$dep" "$source_dir" "$case_dir"
     done
 
@@ -1431,18 +1376,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
-            if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
-            if should_skip_staged_diagnostic "$requires_diagnostic" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for diagnostic '$requires_diagnostic')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
             echo "FAIL: $name compile failed" >&2
             show_compile_failure_diagnostics \
                 "$name" \
@@ -1477,12 +1410,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" $native_objs "-OUT:$(cygpath -aw "$bin.exe")" \
             -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
-            if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1505,18 +1432,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
-            if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
-            if should_skip_staged_diagnostic "$requires_diagnostic" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for diagnostic '$requires_diagnostic')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
             echo "FAIL: $name compile failed" >&2
             show_compile_failure_diagnostics \
                 "$name" \
@@ -1557,12 +1472,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # shellcheck disable=SC2086
         if ! ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$build_stdout" 2>> "$build_stderr"; then
-            if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                ran=$((ran + 1))
-                continue
-            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1588,13 +1497,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     case "$name" in
         stdlib_string | string_eq) check_stdlib_string_helpers_asm "$asm" "$name" ;;
     esac
-
-    if [ -n "$requires_symbol" ]; then
-        echo "[integration] NOTE: $name built with the current compiler; once the stage0 compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
-    fi
-    if [ -n "$requires_diagnostic" ]; then
-        echo "[integration] NOTE: $name built with the current compiler; once the stage0 compiler path accepts this source, drop the requires-stage0-diagnostic marker" >&2
-    fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"
     write_expected_stream "$expected_stderr_spec" "$expected_stderr"
@@ -1646,4 +1548,4 @@ else
     run_windows_backend_fixtures
 fi
 
-echo "All $ran integration case(s) passed for $HOST_OS ($skipped staged case(s) skipped)."
+echo "All $ran integration case(s) passed for $HOST_OS."

@@ -1,10 +1,10 @@
-;; lint_driver_core.tl - Driver logic for the selfhost `typelisp lint` tool
-;; (#1163): load a TypeLisp source, run the lint_core rules over its program, and
+;; lint_driver_core.tl - Driver logic for the selfhost `typelisp lint` tool:
+;; load a TypeLisp source, run the lint_core rules over its program, and
 ;; render each finding as `path:line:col: message`. Kept main-less so both the
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain. The deprecated string.concat rule
-;; and staged migration rules are opt-in until their in-tree migrations land.
+;; and staged migration rules are opt-in.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)

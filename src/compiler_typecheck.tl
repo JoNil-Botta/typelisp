@@ -1,4 +1,4 @@
-;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
+;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram.
 (import stdlib.io)
 (import stdlib.vector as svec)
 (import "compiler_typecheck_core.tl")
@@ -67,7 +67,7 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              (match (macro-expand-then-build-envs
                 generated
                 generated-paths
                 pools
@@ -174,7 +174,7 @@
         (ast-node-pool-context-install! pools)
         (match generated-result
           [(ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (macro-expand-program-with-paths-and-pools-roots-cfg
+            (match (macro-expand-then-build-envs
               generated
               generated-paths
               pools
@@ -214,7 +214,7 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools-roots-cfg
+              (match (macro-expand-then-build-envs
                 generated
                 generated-paths
                 pools
@@ -659,7 +659,7 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
-;; #2357: with the growing ty-node pool a compile that starts with the pool at
+;; With the growing ty-node pool a compile that starts with the pool at
 ;; capacity grows the backing array and succeeds rather than failing closed with
 ;; an exhaustion diagnostic. Verify the typecheck still succeeds under that
 ;; pressure (and that the pool grew).
@@ -2457,7 +2457,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-global-reference-aggregate-source)
-        "typecheck: storing references in top-level values requires lifetime support (#804)")
+        "typecheck: storing references in top-level values requires lifetime support")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4484,7 +4484,7 @@
     [lambda-return-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-lambda-return-source)
-        "typecheck: returning references requires lifetime support (#804)")]
+        "typecheck: returning references requires lifetime support")]
     [mut-ref-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
     [mut-borrow-ok : bool
@@ -4689,7 +4689,7 @@
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback), proving the
-;; typechecker carries the nearest declaration-body `AstExpr.Spanned` span (#681).
+;; typechecker carries the nearest declaration-body `AstExpr.Spanned` span.
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
   missing)")
@@ -4738,7 +4738,7 @@
           (= (compiler-diagnostic-col (box-get diag)) 7))]
       [(ResultCompilerTypecheck.Ok _) false])))
 
-;; Statement and control-flow type rules (#1042): if/while conditions, the
+;; Statement and control-flow type rules: if/while conditions, the
 ;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
 ;; plus an accepting program exercising the same forms. Migrated from
 ;; src/typechecker.rs unit coverage.
@@ -4810,7 +4810,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-cast-ann-source))
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-implicit-body-source))))
 
-;; Operator and call type rules (#1042): equality/comparison/integer operato
+;; Operator and call type rules: equality/comparison/integer operato
 ;; operand matching and call arity, plus accepting arithmetic/comparison/call
 ;; programs. Migrated from src/typechecker.rs unit coverage.
 (define (compiler-typecheck-op-eq-mismatch-source) : String
@@ -4904,7 +4904,7 @@
       "parse: malformed binary expression")
     (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))
 
-;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
+;; Scalar/bool/float/cast parity: remaining Rust typechecker unit
 ;; coverage for bool not/equality, cond condition typing, narrow intege
 ;; literal match rules, contextual f32 literals, f32 arithmetic/comparison, and
 ;; f64<->f32-only float casts.
@@ -5061,14 +5061,14 @@
 (define (compiler-typecheck-scalar-bool-cast-bad-source) : String
   "(define (main) : i64 (cast true : i64))")
 
-;; Contextual scalar literals also flow through tuple element types (#1626):
+;; Contextual scalar literals also flow through tuple element types:
 ;; the float literals resolve to f32 against the declared tuple element types.
 (define (compiler-typecheck-scalar-tuple-context-source) : String
   "(define (pair) : (Tuple f32 bool) (tuple 1.0 true))
 (define (first) : f32
   (tuple-ref (ann (tuple 1.0 true) : (Tuple f32 bool)) 0))")
 
-;; ... and through a begin's final expression (#1626): the tail float literal
+;; ... and through a begin's final expression: the tail float literal
 ;; resolves to f32 against the function return type.
 (define (compiler-typecheck-scalar-begin-context-source) : String
   "(define (f) : f32 (begin 1 1.0))")
@@ -5218,8 +5218,8 @@
           ok
           (compiler-typecheck-ok?
             (compiler-typecheck-scalar-f32-to-f64-cast-source))))
-      ;; Float -> int casts now truncate toward zero under the full numeric cast
-      ;; matrix (#1576), so `(cast 3.5 : i64)` is accepted rather than rejected.
+      ;; Float -> int casts truncate toward zero under the full numeric cast
+      ;; matrix, so `(cast 3.5 : i64)` is accepted rather than rejected.
       (set!
         ok
         (and
@@ -5249,7 +5249,7 @@
             (compiler-typecheck-scalar-begin-context-source))))
       ok)))
 
-;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to
+;; Match / pattern type rules: Rust inline coverage migrated to
 ;; selfhost-owned parser+typechecker fixtures.
 (define (compiler-typecheck-match-arm-mismatch-source) : String
   "(defenum E (A) (B))
@@ -5837,7 +5837,7 @@
         (set! ok false))
       ok)))
 
-;; Stdlib argv helper signature rules (#1042, #1893): `arg-count` returns i64
+;; Stdlib argv helper signature rules: `arg-count` returns i64
 ;; and `arg` accepts an i64 index and returns String. User declarations may
 ;; still define the same source-level names when no stdlib import brings them
 ;; into scope.
@@ -5898,10 +5898,10 @@
 (define (compiler-typecheck-lambda-bad-ret-source) : String
   "(define (main) : i64 (begin (lambda ([x : i64]) : bool x) 0))")
 
-;; Closure capture typing (#1542, migrated from src/typechecker.rs): a lambda
+;; Closure capture typing (migrated from src/typechecker.rs): a lambda
 ;; that reads outer locals/params type-checks like its declared `(-> ...)` type.
 ;; Covers scalar, multi-scalar, String, struct capture, and aggregate-returning
-;; lambdas - the capture shapes the selfhost typechecker currently accepts.
+;; lambdas - the capture shapes the selfhost typechecker accepts.
 (define (compiler-typecheck-lambda-capture-scalar-source) : String
   "(define (main) : i64 (let [n : i64 7] (let [g : (-> i64) (lambda () : i64 n)] (g))))")
 
@@ -6050,7 +6050,7 @@
       "(define (f [b : bool]) : i64 (cast b : i64))"
       "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
 
-;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
+;; spmd-reduce operator/type rules (SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
 ;; purity/effect rules are a separate slice.)
 (define (compiler-typecheck-spmd-reduce-op-tests-ok?) : bool
@@ -6066,7 +6066,7 @@
       "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
       "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))
 
-;; spmd-reduce purity rules (#1011, SPEC.md 5.15): the per-lane value
+;; spmd-reduce purity rules (SPEC.md 5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -6134,7 +6134,7 @@
       "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref bs i) 0))) true))"
       "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")))
 
-;; array-builtin signature rules (#1042): make-array length, array-ref array/index
+;; array-builtin signature rules: make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array
 ;; restrictions, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
@@ -6226,12 +6226,12 @@
         (set! ok false))
       ok)))
 
-;; comptime typecheck rules (#1042): a `(comptime ...)` form is typed by its
+;; comptime typecheck rules: a `(comptime ...)` form is typed by its
 ;; inner expression and flows that type to the use site (so an `i64` body is an
 ;; `i64`, a `bool` comparison is a `bool`, and a `let`/`if` body keeps its type);
 ;; `comptime` cannot reference a runtime variable, and a comptime result that
 ;; disagrees with the surrounding type is rejected like any other mismatch.
-;; Type-literal and comptime-parameter rules (#1540, migrated from
+;; Type-literal and comptime-parameter rules (migrated from
 ;; src/typechecker.rs): scalar `comptime` parameters type-check/specialize,
 ;; `(type ...)` literals are compile-time only, source-level `type` positions
 ;; stay rejected, and type-valued comptime parameters specialize through
@@ -6241,7 +6241,7 @@
     "typecheck: unknown type "
     (string.append
       name
-      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
+      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")))
 
 (define (compiler-typecheck-type-valued-comptime-source) : String
   "(defstruct Point (x i64))
@@ -6268,7 +6268,7 @@
       (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
       (compiler-typecheck-error-ok?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead")
       (compiler-typecheck-ok-with-cfg?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
         private-cfg)
@@ -6390,7 +6390,7 @@
       "typecheck: return type mismatch")
     (compiler-typecheck-stdlib-comptime-surface-tests-ok?)))
 
-;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
+;; IO-builtin signature rules: whole-file helpers and file-handle status
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
 ;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
 (define (compiler-typecheck-io-builtin-tests-ok?) : bool
@@ -6624,7 +6624,7 @@
         (set! ok false))
       ok)))
 
-;; Raw-pointer null construction / check (#1054).
+;; Raw-pointer null construction / check.
 (define (compiler-typecheck-ptr-null-ok-source) : String
   "(define (main) : i64 (if (ptr-null? (ptr-null : (Ptr i64))) 1 0))")
 
@@ -6648,7 +6648,7 @@
       (compiler-typecheck-ptr-null-check-bad-source)
       "typecheck: ptr-null? requires a raw pointer operand")))
 
-;; Unsafe blocks (#1053): parse + typecheck like `begin`; empty `(unsafe)`
+;; Unsafe blocks: parse + typecheck like `begin`; empty `(unsafe)`
 ;; rejects at parse.
 (define (compiler-typecheck-unsafe-ok-source) : String
   "(define (main) : i64 (unsafe 1 2 42))")
@@ -6921,7 +6921,7 @@
         (set! ok false))
       ok)))
 
-;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
+;; CTFE layout queries: folded calls produce `i64`, runtime calls are
 ;; rejected, and `offset-of` is restricted to structs with known fields.
 (define (compiler-typecheck-layout-query-tests-ok?) : bool
   (let
@@ -7250,7 +7250,7 @@
       (compiler-typecheck-comptime-decl-unsafe-template-source)
       "typecheck: comptime purity rejects unsafe block; reference path: comptime-decl -> unsafe")))
 
-;; --- macro expansion phase (#1139) ------------------------------------------
+;; --- macro expansion phase --------------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the
 ;; spliced form must then typecheck. Arity and typed operands are checked at the
 ;; call site before the transformer runs; Expr operands are syntax captures.
@@ -8169,7 +8169,7 @@
         (panic (compiler-diagnostic-message (box-get diag)))])
     unit))
 
-;; --- move checker fixtures (#1048) ------------------------------------------
+;; --- move checker fixtures ----------------------------------------------------
 ;; `String` is move-only; binding it into a fresh local with `let` moves it, so a
 ;; later read of the source is a use-after-move. Copyable scalars are never moved.
 (define (compiler-typecheck-move-use-after-move-source) : String
@@ -9681,7 +9681,7 @@
         (set! ok false))
       ok)))
 
-;; --- defdispatch frontend model (#1908) ------------------------------------
+;; --- defdispatch frontend model ---------------------------------------------
 (define (compiler-typecheck-defdispatch-full-source) : String
   "(define (dot-scalar [x : i64]) : i64 x)
 (define (dot-avx2 [x : i64]) : i64 (+ x 1))
@@ -9768,11 +9768,11 @@
       (compiler-typecheck-defdispatch-dispatch-variant-source)
       "typecheck: defdispatch variant cannot be another dispatch")))
 
-;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
+;; --- declaration namespace / duplicate diagnostics ---------------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
 ;; build-compiler-symbols / build-compiler-registries during typechecking, so the
 ;; CI typecheck smoke exercises them. Builtin shadowing remains accepted to
-;; match the Rust reference behavior from #677.
+;; match the Rust reference behavior.
 (define (compiler-typecheck-dup-function-source) : String
   "(define (foo [x : i64]) : i64 x)
 (define (foo [y : i64]) : i64 y)
@@ -9993,7 +9993,7 @@
       (io.panic "typecheck: quote tests failed"))
     unit))
 
-;; Runtime stdlib signature + shadowing coverage (#1539, migrated from
+;; Runtime stdlib signature + shadowing coverage (migrated from
 ;; src/typechecker.rs). `io.print-string`/`print-str`/`io.print-error` are stdlib
 ;; functions that take a `String`; `xgetbv` takes an integer; `cpuid` takes
 ;; integers; `string.string-ref`/`char-at` require an integer index. A user declaration

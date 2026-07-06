@@ -1,4 +1,4 @@
-;; package_source_core.tl - Shared package source discovery helpers (#1986).
+;; package_source_core.tl - Shared package source discovery helpers.
 ;;
 ;; Package-wide tool commands should agree on which files belong to a package.
 ;; This module resolves a `typelisp.pkg` path, loads the manifest, and walks the

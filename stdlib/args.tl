@@ -1,4 +1,4 @@
-;# stdlib/args.tl - Reusable argv option parser (#2680).
+;# stdlib/args.tl - Reusable argv option parser.
 ;#
 ;# Parses a caller-provided argv string sequence against explicit option specs.
 ;# The v1 surface is intentionally small: boolean flags, value flags, repeated

@@ -1,5 +1,5 @@
 ;; compiler_optimize.tl - Selfhost optimizer: pass framework + scalar constant
-;; folding (#543, first slice of #519).
+;; folding.
 ;;
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
 ;; (`compiler-backend-emit-program-for-target`). It performs conservative, scalar-only
@@ -69,7 +69,7 @@
   (Ok OptAggregatePointerList OptAggregateAccessList)
   (Reject))
 
-;; Aggregate field-load SROA (#1562) supporting types.
+;; Aggregate field-load SROA supporting types.
 (defenum OptAggregateLocation
   (No)
   (Some i64 i64))
@@ -962,7 +962,7 @@
             (CompilerIrMaybeValue.No))])]
     [(OptKnownConst.NoConst) (CompilerIrMaybeValue.No)]))
 
-;; --- strength reduction / algebraic identities (#924) -----------------------
+;; --- strength reduction / algebraic identities ------------------------------
 ;;
 ;; Rewrite only identities that are valid for all values of the instruction's
 ;; type. Division, modulo, and shifts intentionally have no identities here, so
@@ -1302,7 +1302,7 @@
             new-instr
             (opt-strength-instrs new-env (box-get rest)))])]))
 
-;; --- dead-code elimination (#544) --------------------------------------------
+;; --- dead-code elimination ---------------------------------------------------
 ;;
 ;; Conservative DCE matching the Rust optimizer's first slice: collect every IR
 ;; var id referenced as an operand anywhere in the function, then drop pure
@@ -1493,7 +1493,7 @@
         [(CompilerIrMaybeValue.Some value) (opt-collect-value-uses set value)]
         [(CompilerIrMaybeValue.No) set])]
     [(CompilerIrInstr.Phi _ inputs _) (opt-collect-phi-uses set inputs)]
-    ;; #2386: register-group ops use their operands -- Pack uses each word value,
+    ;; Register-group ops use their operands -- Pack uses each word value,
     ;; Word uses the source group. Omitting these would let DCE drop a definition
     ;; that feeds a Pack/Word.
     [(CompilerIrInstr.Pack _ words _) (opt-collect-value-list-uses set words)]
@@ -1984,7 +1984,7 @@
           (opt-collect-value-uses-array items value)]
         [(CompilerIrMaybeValue.No) unit])]
     [(CompilerIrInstr.Phi _ inputs _) (opt-collect-phi-uses-array items inputs)]
-    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    ;; Register-group ops use their operands (Pack: each word; Word: src).
     [(CompilerIrInstr.Pack _ words _)
       (opt-collect-value-list-uses-array items words)]
     [(CompilerIrInstr.Word _ src _ _) (opt-collect-value-uses-array items src)]
@@ -2383,7 +2383,7 @@
     [written : i64 (opt-dce-block-list-array-escape-fill items blocks slots 0)]
     (CompilerIrBlockList.Array (CompilerIrBlockSeq slots written))))
 
-;; --- aggregate allocation candidate analysis (#1487) ------------------------
+;; --- aggregate allocation candidate analysis --------------------------------
 ;;
 ;; This is intentionally analysis-only. It recognizes heap aggregate allocations
 ;; that stay local to a function and records the constant-offset derived pointers
@@ -3203,7 +3203,7 @@
   [accesses : OptAggregateAccessList]) : i64
   (opt-aggregate-access-list-store-count-from accesses 0))
 
-;; --- aggregate stack promotion (#1489) --------------------------------------
+;; --- aggregate stack promotion ----------------------------------------------
 ;;
 ;; Reuse the non-escaping aggregate classifier, but keep this first promotion
 ;; slice conservative: only fixed handle-shaped structs/enums/tuples are moved
@@ -3359,7 +3359,7 @@
             promoted-frame
             (opt-aggregate-promote-blocks slots blocks))])]))
 
-;; --- aggregate field-load scalar replacement (SROA, #1562) -------------------
+;; --- aggregate field-load scalar replacement (SROA) --------------------------
 ;; Replaces loads of fields from non-escaping aggregate allocations with the
 ;; scalar value last stored to that field. Runs after stack promotion so it
 ;; handles aggregates that promotion left in memory.
@@ -3696,7 +3696,7 @@
           frame
           (opt-aggregate-sroa-blocks candidates blocks)))]))
 
-;; --- block-local common subexpression elimination (#546) --------------------
+;; --- block-local common subexpression elimination ---------------------------
 ;;
 ;; Within a single basic block, track an available-expression table mapping a
 ;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) or a
@@ -5186,8 +5186,8 @@
     [(CompilerIrInstr.Return _) (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.TailCallIndirect _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]
-    ;; #2386: register-group ops are plain defining instructions -- invalidate
-    ;; their dst, keep the instruction (no CSE key for them yet).
+    ;; Register-group ops are plain defining instructions -- invalidate
+    ;; their dst, keep the instruction (no CSE key for them).
     [(CompilerIrInstr.Pack dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(CompilerIrInstr.Word dst _ _ _)
@@ -5205,7 +5205,7 @@
             new-instr
             (opt-cse-instrs new-table (box-get rest)))])]))
 
-;; --- block-local copy propagation (#545) ------------------------------------
+;; --- block-local copy propagation -------------------------------------------
 ;;
 ;; The lowerer and the CSE pass both materialize values through `CompilerIrInstr.Mov`
 ;; into fresh vars (CSE rewrites a redundant expression to `Mov dst earlier`).
@@ -5554,7 +5554,7 @@
             (CompilerIrMaybeValue.Some (opt-copy-resolve env value)))]
         [(CompilerIrMaybeValue.No) instr])]
     ;; `CompilerIrInstr.AddrOf` takes the address of a storage slot named by a raw var id,
-    ;; not a value, so its operand must not be copy-substituted (#545).
+    ;; not a value, so its operand must not be copy-substituted.
     [(CompilerIrInstr.AddrOf _ _) instr]
     ;; `CompilerIrInstr.Alloc`/`CompilerIrInstr.Jump` have no value operands; `CompilerIrInstr.Phi` inputs
     ;; belong to predecessor edges and are not block-local copies.
@@ -5562,7 +5562,7 @@
     [(CompilerIrInstr.LaneId _ _ _) instr]
     [(CompilerIrInstr.Jump _) instr]
     [(CompilerIrInstr.Phi _ _ _) instr]
-    ;; #2386: register-group ops carry value operands -- substitute copies into
+    ;; Register-group ops carry value operands -- substitute copies into
     ;; the packed words / the extracted source group.
     [(CompilerIrInstr.Pack dst words ty)
       (CompilerIrInstr.Pack dst (opt-copy-subst-value-list env words) ty)]
@@ -5656,7 +5656,7 @@
             [(IrSpmdCallResultUnit) env]
             [(IrSpmdCallResultValue dst _ _) (opt-copy-invalidate-var env dst)])])]
     [(CompilerIrInstr.Phi dst _ _) (opt-copy-invalidate-var env dst)]
-    ;; #2386: register-group ops define their dst -- drop any stale copy fact for
+    ;; Register-group ops define their dst -- drop any stale copy fact for
     ;; it (a reused var id must not trigger a later stale rewrite).
     [(CompilerIrInstr.Pack dst words _)
       (opt-copy-update-pack-env env dst words)]
@@ -5696,7 +5696,7 @@
 (define (opt-copy-instr-seq [env : OptCopyEnv] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-copy-instr-seq-from env instrs 0))
 
-;; --- block-local redundant bounds-check elimination (#930) ------------------
+;; --- block-local redundant bounds-check elimination -------------------------
 ;;
 ;; `CompilerIrInstr.BoundsCheck index length ok-label` is a trapping side-effect: it must be kept
 ;; unless the same `(index, length)` pair has already been checked on every
@@ -5788,7 +5788,7 @@
           rest2
           (OptBoundsFacts.Cons fact (box rest2))))]))
 
-;; #930 index canonicalization: an array index is lowered to a fresh
+;; Index canonicalization: an array index is lowered to a fresh
 ;; `Cast(idx, I64->U64)` per access (see `lower-array-element-addr`), so two
 ;; bounds checks on the *same* logical index (e.g. read-then-write `xs[i]` in a
 ;; swap) carry distinct cast vars and never match by `opt-value-eq`. The cast is
@@ -6059,7 +6059,7 @@
                 ptrs2
                 (opt-bounds-cast-update casts dst src from-ty to-ty)
                 (box-get rest))))]
-        ;; #930: an array element store cannot change any array's LENGTH (in TL a
+        ;; An array element store cannot change any array's LENGTH (in TL a
         ;; length slot is only ever written by make-array, and user code cannot
         ;; obtain a raw pointer to it), so the (index, length-token) bounds facts
         ;; survive it. Only a store whose target is a tracked length-slot pointer
@@ -6181,7 +6181,7 @@
                 [(option_i64.None) casts])
               (box-get rest)))])]))
 
-;; --- conservative CFG simplification (#926) ---------------------------------
+;; --- conservative CFG simplification ----------------------------------------
 ;;
 ;; Runs after block-local constant/copy propagation has exposed literal branch
 ;; conditions. It rewrites known boolean branches to jumps, computes reachable
@@ -6292,7 +6292,7 @@
         (compiler-ir-block-seq-to-list seq)
         seen)]))
 
-;; #2117: a hash-set seen-check; the incremental label-list scan made this
+;; A hash-set seen-check; the incremental label-list scan made this
 ;; O(blocks^2) string comparisons on large functions.
 (define (opt-cfg-block-labels-unique-map?
   [blocks : CompilerIrBlockList]
@@ -6527,7 +6527,7 @@
         entry-label
         all-reachable)]))
 
-;; CFG index (#2175): integer block ids are assigned in block-list order and
+;; CFG index: integer block ids are assigned in block-list order and
 ;; reused for successor/predecessor CSR rows, reachability, RPO, and RPO slot
 ;; lookup. Existing callers still consume OptLabelSet adapters, but each CFG
 ;; snapshot is indexed once and rebuilt only after block-list-mutating
@@ -7650,13 +7650,13 @@
     [doms : OptDomInfo (opt-cfg-dominators-with index entry-label)]
     (OptCfgContext index pred-map reachable entry-label doms)))
 
-;; (#2874) A cheap placeholder context built from an empty CFG. Used only as the
+;; A cheap placeholder context built from an empty CFG. Used only as the
 ;; sentinel paired with a function on the non-heavy pass path, where the threaded
 ;; context is never consumed (all heavy passes are skipped together).
 (define (opt-cfg-context-empty) : OptCfgContext
   (opt-cfg-context-build (CompilerIrBlockList.Nil)))
 
-;; (#2874) Carries an optimized function together with an OptCfgContext that is
+;; Carries an optimized function together with an OptCfgContext that is
 ;; valid for the returned function's *current* blocks, so the next pass in
 ;; optimize-function-once can reuse it for entry verification and dominance
 ;; queries instead of rebuilding from scratch. The context is only paired with
@@ -7901,7 +7901,7 @@
             [(IrSpmdCallResultUnit) (option_i64.None)]
             [(IrSpmdCallResultValue dst _ _) (option_i64.Some dst)])])]
     [(CompilerIrInstr.Phi dst _ _) (option_i64.Some dst)]
-    ;; #2386: Pack/Word define their dst like any scalar op. Without these arms
+    ;; Pack/Word define their dst like any scalar op. Without these arms
     ;; the verifier saw every use of a register-group word as use-before-def
     ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
     [(CompilerIrInstr.Pack dst _ _) (option_i64.Some dst)]
@@ -8067,7 +8067,7 @@
       (opt-cfg-entry-label blocks)
       (OptVarDefList.Nil))))
 
-;; #2117: the use verifier resolves every operand's defining block, so the
+;; The use verifier resolves every operand's defining block, so the
 ;; def list is indexed into a var-id-keyed array once per verification
 ;; (the list scan per use made the verifier quadratic on large functions).
 (define (opt-var-defs-max-id [defs : OptVarDefList] [highest : i64]) : i64
@@ -8450,7 +8450,7 @@
     [(CompilerIrInstr.Alloc _ _) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrInstr.LaneId _ _ _) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrInstr.Jump _) (ResultCompilerOptimizeVerify.Ok)]
-    ;; #2386: verify register-group operands dominate their use.
+    ;; Verify register-group operands dominate their use.
     [(CompilerIrInstr.Pack _ words _)
       (opt-verify-value-list-uses defs doms words block-label pos)]
     [(CompilerIrInstr.Word _ src _ _)
@@ -8682,7 +8682,7 @@
     [(CompilerIrProgram.Program _ functions _)
       (opt-verify-function-list functions)]))
 
-;; --- standalone scalar SSA construction / mem2reg (#2188) ------------------
+;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;
 ;; This constructor rewrites repeated scalar virtual-register definitions into
 ;; single-assignment form and inserts phis at dominance frontiers. It is
@@ -9837,7 +9837,7 @@
       (OptSsaInstrResult.Result instr env next-var)]
     [(CompilerIrInstr.Jump _) (OptSsaInstrResult.Result instr env next-var)]
     [(CompilerIrInstr.Phi _ _ _) (OptSsaInstrResult.Result instr env next-var)]
-    ;; #2386: SSA-rename register-group ops -- rewrite operands with the current
+    ;; SSA-rename register-group ops -- rewrite operands with the current
     ;; env, then rename the dst.
     [(CompilerIrInstr.Pack dst words ty)
       (match (opt-ssa-rename-dst facts env next-var dst)
@@ -10411,7 +10411,7 @@
                     facts
                     context)))))))]))
 
-;; --- conservative global value numbering / cross-block copies (#1349) -------
+;; --- conservative global value numbering / cross-block copies ---------------
 ;;
 ;; This pass is deliberately SSA-gated. If the function verifier cannot prove
 ;; single definitions and dominance for every use, the pass leaves the function
@@ -11149,7 +11149,7 @@
     [(CompilerIrInstr.LaneId _ _ _) instr]
     [(CompilerIrInstr.Jump _) instr]
     [(CompilerIrInstr.Phi _ _ _) instr]
-    ;; #2386: leave register-group ops un-substituted here; not propagating a
+    ;; Leave register-group ops un-substituted here; not propagating a
     ;; global copy into their operands is always sound (original vars stay valid).
     [(CompilerIrInstr.Pack _ _ _) instr]
     [(CompilerIrInstr.Word _ _ _ _) instr]
@@ -11909,7 +11909,7 @@
         (OptMaybeNaturalLoop.Some loop)
         (opt-natural-loop-find (box-get rest) header latch))]))
 
-;; #2117: membership during body collection is an O(1) id-indexed marks
+;; Membership during body collection is an O(1) id-indexed marks
 ;; array (the body/worklist LISTS keep their exact construction order, so
 ;; downstream output is byte-identical); reachability reads the CFG index's
 ;; bool array instead of scanning the label list.
@@ -12188,7 +12188,7 @@
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
 
-;; --- safe loop preheader synthesis (#2457) ----------------------------------
+;; --- safe loop preheader synthesis ------------------------------------------
 ;;
 ;; LICM and induction only operate on loops with a dedicated outside predecessor
 ;; whose only successor is the loop header. This pass creates that block for
@@ -12704,7 +12704,7 @@
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
-;; --- simple top-test loop rotation (#2458) ----------------------------------
+;; --- simple top-test loop rotation ------------------------------------------
 ;;
 ;; This runs before scalar SSA construction. It only rotates non-SSA loops whose
 ;; header is a side-effect-free scalar guard ending in a conditional branch, with
@@ -13031,7 +13031,7 @@
         frame
         (opt-loop-rotation-blocks blocks))]))
 
-;; --- conservative loop-invariant code motion (#1801) ------------------------
+;; --- conservative loop-invariant code motion --------------------------------
 ;;
 ;; LICM is verifier-gated. It moves non-trapping scalar `BinOp`/`UnOp`
 ;; definitions from natural loops with a single safe preheader. Memory LICM adds
@@ -14125,7 +14125,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-licm-function-with-context (opt-cfg-context-build blocks) func)]))
 
-;; --- simple induction-derived cleanup (#1802) ------------------------------
+;; --- simple induction-derived cleanup --------------------------------------
 ;;
 ;; This first induction slice recognizes canonical `i64` loop-carried phis:
 ;; `i = phi(preheader_seed, latch_next)` where `latch_next` is `i +/- const`.
@@ -14695,7 +14695,7 @@
 ;; Induction runs without a hoisted set, so GEP-base loop-invariance is
 ;; `opt-licm-value-invariant?` with an empty `hoisted` map: a var is invariant
 ;; iff it is not defined inside the loop body. Evaluating it directly avoids
-;; allocating an empty sentinel map per GEP candidate (#2337).
+;; allocating an empty sentinel map per GEP candidate.
 (define (opt-induction-value-base-invariant?
   [loop-defs : hashmap.I64I64Map]
   [value : CompilerIrValue]) : bool
@@ -15526,7 +15526,7 @@
             (opt-cfg-context-build simplified)
             true)))]))
 
-;; --- sparse conditional constant propagation (#1348) -----------------------
+;; --- sparse conditional constant propagation -------------------------------
 ;;
 ;; SCCP v1 runs after the local scalar simplifier. It keeps a small scalar
 ;; lattice for SSA vars and CFG-id-backed executable block flags. Unknown values
@@ -15539,7 +15539,7 @@
   (Const CompilerIrValue AstType)
   (Overdefined))
 
-;; #2357 (orig #2386 2951f920): the SCCP lattice was a persistent assoc list
+;; The SCCP lattice was a persistent assoc list
 ;; (OptSccpEnvCons id value rest) where opt-sccp-env-set rebuilt the WHOLE list on
 ;; every bind (via opt-sccp-env-remove) -> O(V) alloc per bind, O(V^2) per analysis
 ;; sweep, x fixpoint sweeps x all functions (~42s / ~12GB of the -O2 optimize
@@ -15986,7 +15986,7 @@
             [(IrSpmdCallResultUnit) state]
             [(IrSpmdCallResultValue dst _ _)
               (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])])]
-    ;; #2386 register-group dsts: bind Overdefined like loads/calls. Falling
+    ;; Register-group dsts: bind Overdefined like loads/calls. Falling
     ;; into the wildcard left them OptSccpValue.Unknown forever, so a branch on a
     ;; Word-extracted enum tag marked NO successor executable and SCCP folded
     ;; match arms away at -O2 (stale-constant miscompile).
@@ -16528,7 +16528,7 @@
     [(CompilerIrInstr.AddrOf _ _) instr]
     [(CompilerIrInstr.LaneId _ _ _) instr]
     [(CompilerIrInstr.Jump _) instr]
-    ;; #2386: register-group ops carry no SCCP-constant operands to fold.
+    ;; Register-group ops carry no SCCP-constant operands to fold.
     [(CompilerIrInstr.Pack _ _ _) instr]
     [(CompilerIrInstr.Word _ _ _ _) instr]
     [(CompilerIrInstr.TailCallIndirect callee args ty)
@@ -17103,7 +17103,7 @@
 (define (optimize-function-max-iterations) : i64
   2)
 
-;; --- cross-block global value numbering (#1349) -----------------------------
+;; --- cross-block global value numbering -------------------------------------
 ;;
 ;; Block-local CSE (`opt-cse-instr`) and copy propagation already collapse
 ;; redundant pure scalar expressions within a single basic block. This pass
@@ -17260,7 +17260,7 @@
     [(CompilerIrInstr.Jump _) (- 0 1)]
     [(CompilerIrInstr.Branch _ _ _) (- 0 1)]
     [(CompilerIrInstr.Return _) (- 0 1)]
-    ;; #2386: register-group ops define their dst.
+    ;; Register-group ops define their dst.
     [(CompilerIrInstr.Pack dst _ _) dst]
     [(CompilerIrInstr.Word dst _ _ _) dst]
     [(CompilerIrInstr.TailCallIndirect _ _ _) (- 0 1)]
@@ -17409,9 +17409,9 @@
         [buckets : (Array OptGvnBucket) (struct-get table buckets)]
         [bucket : i64 (opt-gvn-bucket-index buckets key)]
         [old-head : OptGvnBucket (array-ref buckets bucket)]
-        ;; #2357: under #1867 inline-by-value aggregates `array-ref` of a
+        ;; Under inline-by-value aggregates, `array-ref` of a
         ;; memory-backed aggregate returns the element ADDRESS (in-place), not a
-        ;; value snapshot the way main's old heap-handle GVN assumed. So the
+        ;; value snapshot the way the old heap-handle GVN assumed. So the
         ;; scope-change MUST capture old-head's value BEFORE the array-set! below
         ;; overwrites the slot -- otherwise restore writes back the just-pushed
         ;; head and scoped dominance breaks (a dominated sibling reuses a value
@@ -17784,7 +17784,7 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-gvn-blocks-with-context (opt-cfg-context-build blocks) params blocks))
 
-;; --- proven-safe div/rem guard elision (#2937) ------------------------------
+;; --- proven-safe div/rem guard elision --------------------------------------
 ;;
 ;; This pass marks integer div/rem as non-trapping only from facts established by
 ;; explicit dominating CFG edge checks. It deliberately ignores casts and joins:
@@ -18486,7 +18486,7 @@
     params
     blocks))
 
-;; --- guarded loop bounds-check elimination (#2848) -------------------------
+;; --- guarded loop bounds-check elimination ---------------------------------
 ;;
 ;; The block-local bounds pass can only remove a repeated check in the same
 ;; block. This function pass handles the lowered dynamic-array loop shape:
@@ -18552,7 +18552,7 @@
   (enabled bool)
   (length-clean hashmap.StringI64Map)
   (argc-return hashmap.StringI64Map)
-  ;; #3468: whole-program table of never-written literal-i64 globals, mapping
+  ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
   ;; than threaded as a separate parameter) because both are built once per
   ;; program and consumed in the same per-function level-2 pass. Empty unless
@@ -21116,7 +21116,7 @@
 ;;
 ;; A call to the CURRENT function in tail position (its result flows straight
 ;; into a `return`) is lowered as an `CompilerIrInstr.TailCall` whose callee name equals
-;; the function name. The backend currently emits a real `call` for it, which
+;; the function name. The backend emits a real `call` for it, which
 ;; grows the stack frame on every recursive step. This pass rewrites each such
 ;; self-tail-call into a back-edge to the function entry block, turning the
 ;; recursion into an in-place loop:
@@ -21447,9 +21447,9 @@
               unit)]
           (match promoted
             [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
-              ;; Aggregate field-load SROA (#1562) runs on the post-promotion
+              ;; Aggregate field-load SROA runs on the post-promotion
               ;; blocks/frame (it leaves the frame unchanged), so the slots stay
-              ;; consistent with the later #1530 global-GVN pass below.
+              ;; consistent with the later global-GVN pass below.
               (let
                 [_t-sroa : i64 (cfg compile-profile (profile.now-ms) 0)]
                 [sroa : CompilerIrFunction
@@ -21627,7 +21627,7 @@
                           unit)]
                       [_t-preheaders : i64
                         (cfg compile-profile (profile.now-ms) 0)]
-                      ;; (#2874) Thread one OptCfgContext per block-state through
+                      ;; Thread one OptCfgContext per block-state through
                       ;; the preheaders -> scratch_reset -> licm -> induction -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
                       ;; so the context the pass builds for its post-pass verify
@@ -21736,10 +21736,10 @@
                       [induction-blocks : CompilerIrBlockList
                         (opt-function-blocks induction)]
                       ;; Cross-block global value numbering + copy propagation
-                      ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
+                      ;; runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
                       ;; consistent with the promoted blocks. It reuses the
-                      ;; context induction handed back (#2874): induction's output
+                      ;; context induction handed back: induction's output
                       ;; blocks are global_gvn's input blocks unchanged.
                       [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
@@ -21768,7 +21768,7 @@
                           unit)]
                       [global-blocks : CompilerIrBlockList
                         (opt-function-blocks global)]
-                      ;; #3468: substitute proven constant-global divisors with
+                      ;; Substitute proven constant-global divisors with
                       ;; their literals before divrem-safety, so the literal
                       ;; divisor both enables the backend magic-multiply path and
                       ;; lets divrem-safety drop the zero/overflow guards. This
@@ -21964,7 +21964,7 @@
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
 
-;; Per-function arena escape (#1633). The optimizer fixpoint allocates up to
+;; Per-function arena escape. The optimizer fixpoint allocates up to
 ;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
 ;; by the bump allocator. To cap peak memory we run each function's optimization
 ;; in a reusable scratch arena, deep-`clone` only the final result back into the
@@ -22822,7 +22822,7 @@
       (opt-inline-census-maybe-value index census maybe)]
     [(CompilerIrInstr.Phi _ inputs _)
       (opt-inline-census-phi-inputs index census inputs)]
-    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    ;; Register-group ops use their operands (Pack: each word; Word: src).
     [(CompilerIrInstr.Pack _ words _)
       (opt-inline-census-value-list index census words)]
     [(CompilerIrInstr.Word _ src _ _)
@@ -24128,9 +24128,9 @@
         op
         (opt-inline-remap-value src sa np base)
         (clone ty))]
-    ;; #2634: Pack/Word were made inline-eligible by #2629 without remap arms,
-    ;; so inlined register-group instructions kept their CALLEE-local var ids
-    ;; inside the caller -- the third opt2 self-build miscompile (the
+    ;; Pack/Word need explicit remap arms; when they were inline-eligible
+    ;; without them, inlined register-group instructions kept their CALLEE-local
+    ;; var ids inside the caller -- an opt2 self-build miscompile (the
     ;; stage2/stage3 fixpoint diverged and no-regalloc builds bounds-aborted
     ;; in intern-str on garbage ids).
     [(CompilerIrInstr.Pack dst words ty)
@@ -26400,7 +26400,7 @@
       [(CompilerIrFunction.Function name _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
-          (if (string.eq (opt-symbol-leaf name) leaf)
+          (if (opt-symbol-leaf-matches? name leaf)
             (opt-reach-add-function index state name)
             state)
           leaf
@@ -26420,16 +26420,33 @@
 
 (define (opt-runtime-prelude-string-helper-name [source-name : String]) : String
   (let
-    [base : String (opt-symbol-leaf source-name)]
-    (cond
-      [(string.eq base "tl_int_to_string") "tl-runtime-int-to-string"]
-      [(string.eq base "tl_substring") "tl-runtime-substring"]
-      [(string.eq base "tl_str_view") "tl-runtime-str-view"]
-      [(string.eq base "tl_string_concat") "tl-runtime-string-concat"]
-      [(string.eq base "tl_string_concat3") "tl-runtime-string-concat3"]
-      [(string.eq base "tl_string_concat4") "tl-runtime-string-concat4"]
-      [(string.eq base "tl_string_concat5") "tl-runtime-string-concat5"]
-      [else ""])))
+    [start : i64 (opt-symbol-leaf-start source-name)]
+    [n : i64 (string.string-length source-name)]
+    ;; Cheap gate: every prelude helper leaf starts with "tl_" -- reject the
+    ;; overwhelming majority of call targets with three char compares before
+    ;; the exact per-name checks (all allocation-free).
+    (if (or
+      (< (- n start) 3)
+      (not (= (string.string-ref source-name start) 't'))
+      (not (= (string.string-ref source-name (+ start 1)) 'l'))
+      (not (= (string.string-ref source-name (+ start 2)) '_')))
+      ""
+      (cond
+        [(opt-symbol-leaf-matches? source-name "tl_int_to_string")
+          "tl-runtime-int-to-string"]
+        [(opt-symbol-leaf-matches? source-name "tl_substring")
+          "tl-runtime-substring"]
+        [(opt-symbol-leaf-matches? source-name "tl_str_view")
+          "tl-runtime-str-view"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat")
+          "tl-runtime-string-concat"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat3")
+          "tl-runtime-string-concat3"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat4")
+          "tl-runtime-string-concat4"]
+        [(opt-symbol-leaf-matches? source-name "tl_string_concat5")
+          "tl-runtime-string-concat5"]
+        [else ""]))))
 
 (define (opt-reach-add-runtime-prelude-string-helper
   [index : OptFunctionIndex]
@@ -26670,7 +26687,7 @@
     [(CompilerIrInstr.Branch cond _ _) (opt-reach-value index state cond)]
     [(CompilerIrInstr.Return maybe) (opt-reach-maybe-value index state maybe)]
     [(CompilerIrInstr.Phi _ inputs _) (opt-reach-phi-inputs index state inputs)]
-    ;; #2386: register-group ops carry word-class scalar operands (vars/consts);
+    ;; Register-group ops carry word-class scalar operands (vars/consts);
     ;; lowering materializes any global/function reference into a var before
     ;; packing, so the group operands themselves reach nothing new.
     [(CompilerIrInstr.Pack _ _ _) state]
@@ -26843,7 +26860,7 @@
               (opt-filter-reachable-globals (box-get rest) reachable))
             (opt-filter-reachable-globals (box-get rest) reachable))])]))
 
-;; Functions exported via #2143 are lowered to a `provided` CompilerIrExtern.Extern whose name
+;; Exported functions are lowered to a `provided` CompilerIrExtern.Extern whose name
 ;; is the function's logical name. Such functions may be called only from outside
 ;; TypeLisp IR (e.g. the backend-emitted bounds/division/shift checks call the
 ;; runtime-prelude handlers), so seed them as roots for the function-level DCE.
@@ -26863,7 +26880,7 @@
               (opt-reach-add-function index state name)
               state))])]))
 
-(define (opt-symbol-leaf [name : String]) : String
+(define (opt-symbol-leaf-start [name : String]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length name)]
@@ -26877,7 +26894,37 @@
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
-      (string.substring name start (- n start)))))
+      start)))
+
+;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf).
+;; The reachability pass tests every call target's leaf against a handful of
+;; fixed runtime helper names; materializing the leaf substring allocated on
+;; every call site in the program.
+(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+  (let
+    [start : i64 (opt-symbol-leaf-start name)]
+    [n : i64 (string.string-length name)]
+    [leaf-len : i64 (string.string-length leaf)]
+    (if (not (= (- n start) leaf-len))
+      false
+      (let
+        [ok : bool true]
+        [i : i64 0]
+        (begin
+          (while (and ok (< i leaf-len))
+            (begin
+              (if (=
+                (string.string-ref name (+ start i))
+                (string.string-ref leaf i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok)))))
+
+(define (opt-symbol-leaf [name : String]) : String
+  (let
+    [start : i64 (opt-symbol-leaf-start name)]
+    (string.substring name start (- (string.string-length name) start))))
 
 (define (opt-prune-unreachable-program
   [globals : CompilerIrGlobalList]
@@ -27273,7 +27320,7 @@
           (opt-loop-bce-length-clean-fixed functions next (- remaining 1))
           next)])))
 
-;; #3468: prove which globals are compile-time constants so their value can be
+;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
 ;; use otherwise emits a rip-relative load, so substituting the literal removes a
 ;; per-iteration memory load (the instruction-count win on opt_crc32/opt_quicksort
@@ -27665,7 +27712,7 @@
       (opt-const-divisors-build globals reachable-functions)
       (hashmap.string-i64-map-with-capacity 1))))
 
-;; #3468 rewrite: substitute a proven constant global with its literal value in
+;; Substitute a proven constant global with its literal value in
 ;; binop operands. For an ordinary operand this lets the backend fold the literal
 ;; instead of emitting a per-use rip-relative load (the opt_crc32/opt_quicksort
 ;; mask-load win). For a div/mod divisor it produces a literal `CompilerIrValue.I64`, which
@@ -27855,8 +27902,8 @@
 ;; looked up and then dropped by its fall-through, so skipping their lookups
 ;; cannot change the produced spans. The entry-list probe stays the linear
 ;; first-match scan: entries are bounded by the 2049 fast-path cutoff, and a
-;; hash-indexed variant measured MORE executed instructions once #2735 moved
-;; hash.string-key into TypeLisp (long keys hash per instruction).
+;; hash-indexed variant measured MORE executed instructions once hash.string-key
+;; moved into TypeLisp (long keys hash per instruction).
 (defenum OptRemapSpanKey
   (NoKey)
   (SomeKey String))
@@ -31332,7 +31379,7 @@
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
 ;; It also CSEs identical CPU probes while preserving probes with different
 ;; register indices or operands.
-;; #3468 self-test: const-global propagation. Verifies the immutability proof
+;; Self-test: const-global propagation. Verifies the immutability proof
 ;; (literal-init globals enter the table; stored, non-literal, address-taken, and
 ;; zero-valued globals are excluded) and the binop-operand rewrite (uses of a
 ;; proven constant global -- both ordinary operands and div/mod divisors -- become
@@ -31570,7 +31617,7 @@
       (unless (= (opt-count-xgetbv-instrs probe-different) 2) (return 9))
       42)))
 
-;; --- cross-block GVN self-tests (#1349) -------------------------------------
+;; --- cross-block GVN self-tests ---------------------------------------------
 (define (opt-gvn-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "a" (AstType.I64) 0)
@@ -32129,7 +32176,7 @@
 ;; destination (dst-redef) var is redefined; rewrites a CSE-introduced copy so
 ;; DCE can drop it (cse: lhs v3 -> v2, leaving 3 instrs); does not propagate an
 ;; unsafe F64 source (f64: lhs stays v1); and leaves phi inputs untouched because
-;; they are edge operands rather than block-local value uses (#1043).
+;; they are edge operands rather than block-local value uses.
 (define (compiler-optimize-copy-self-test) : i64
   (let
     [pos : CompilerIrInstrList
@@ -32316,7 +32363,7 @@
           "bounds_ok.0")
         (CompilerIrInstrList.Nil)))))
 
-;; #930 index-cast canonicalization: two accesses to the same logical index
+;; Index-cast canonicalization: two accesses to the same logical index
 ;; (var0) and array (var1) each emit a fresh `Cast(_, I64->U64)` of var0 and a
 ;; fresh length load; the second bounds check is redundant. Without
 ;; canonicalization the distinct cast vars (10 vs 14) never match, so this case
@@ -34182,7 +34229,7 @@
 ;; The caller passes its args from vars 1/2 (NOT the callee's param ids 0/1)
 ;; and uses a spacer var 0, so a missing remap of the inlined Pack/Word
 ;; operands is observable: the cloned Pack must read vars 1/2 (the call
-;; arguments), never the callee-local 0/1 (#2634 regression -- the inliner
+;; arguments), never the callee-local 0/1 (regression guard -- the inliner
 ;; cloned Pack/Word through its catch-all without remapping).
 (define (opt-inline-pack-word-caller) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -37501,7 +37548,7 @@
           (CompilerIrInstrList.Nil))))
     (CompilerIrBlockList.Nil)))
 
-;; #2386 regression guard: a branch conditioned on an IrInstrWord-extracted enum
+;; Regression guard: a branch conditioned on an IrInstrWord-extracted enum
 ;; tag. Pack/Word dsts must be bound Overdefined in the SCCP lattice; when they
 ;; stayed Unknown the branch marked NO successor executable and both arms were
 ;; folded away as unreachable (the -O2 stale-constant miscompile on matches over
@@ -40806,14 +40853,11 @@
       [(not (opt-program-eq optimized-program again-program)) 5]
       [else 42])))
 
-;; --- noalias / alias fact model (#1510) -------------------------------------
+;; --- noalias / alias fact model ---------------------------------------------
 ;;
 ;; Optimizer-internal alias facts for IR temporaries. This section models facts
 ;; and conservative invalidation, proves the conservatism with self-tests, and
-;; feeds the first local redundant-load CSE consumer (#2342). Later issues derive
-;; richer facts from
-;; borrow/move analysis (#1048/#1049/#1050/#806) and consume them in load/store,
-;; bounds-check, scalar-replacement, and loop passes.
+;; feeds the local redundant-load CSE consumer.
 ;;
 ;; A fact binds an IR temporary (var id) to one of four deliberately
 ;; conservative kinds:
@@ -40836,7 +40880,7 @@
   (MayAlias)
   (Invalidated))
 
-;; Alias facts live in a mutable i64->i64 hashmap keyed by var id (#2614).
+;; Alias facts live in a mutable i64->i64 hashmap keyed by var id.
 ;; Kinds pack into the value: a Derived root is its non-negative root var id,
 ;; the kind-only variants take negative codes. State is threaded linearly
 ;; through a block (helpers mutate and return the same table); control-flow
@@ -41102,7 +41146,7 @@
     [(CompilerIrInstrList.Cons instr rest)
       (opt-alias-run (opt-alias-update-facts facts instr) (box-get rest))]))
 
-;; --- implicit scratch-region candidate report (#2742) -----------------------
+;; --- implicit scratch-region candidate report -------------------------------
 ;;
 ;; Report-only analysis for future automatic scratch regions. It recognizes
 ;; direct `tl_alloc` roots, tracks simple candidate-derived pointers with the
@@ -41745,7 +41789,7 @@
             (arena.tl_region_reset mark)
             (arena.tl_arena_set enclosing)))))))
 
-;; --- implicit scratch-region reset insertion (#2743) -----------------------
+;; --- implicit scratch-region reset insertion -------------------------------
 ;;
 ;; Opt2 may wrap a proven loop-body scratch candidate with one mark before the
 ;; loop and one reset in the latch. The pass deliberately handles only simple
@@ -42659,17 +42703,17 @@
       [(not (= level2-reset-count 1)) 20]
       [else 42])))
 
-;; --- block-local redundant-load CSE (#2342) ---------------------------------
+;; --- block-local redundant-load CSE -----------------------------------------
 ;;
 ;; GAP4: alias-granular invalidation + store-to-load forwarding + canonical
 ;; address keys.
 ;;
 ;; The original pass keyed loads by raw address VALUE (the gep temp) and wiped
 ;; the whole table on ANY memory write. Three upgrades, shared with the
-;; cross-block #2343 pass below:
+;; cross-block pass below:
 ;;
 ;; 1. CANONICAL KEYS: every array/string access re-emits a fresh descriptor
-;;    gep (`Gep arr 0/1 ty`), and the only pass that unified those geps (#1530
+;;    gep (`Gep arr 0/1 ty`), and the only pass that unified those geps (the
 ;;    global GVN) runs LAST in the optimize iteration (and needs a full SSA
 ;;    verify), so load CSE never saw two repeats under one key. A load whose
 ;;    address var is a CONST-offset gep of base B is now keyed structurally as
@@ -42683,7 +42727,7 @@
 ;;      - an ELEMENT store (pointer derived from a loaded array/string data
 ;;        pointer) keeps DESCRIPTOR-FIELD entries: data buffers never contain
 ;;        descriptor headers (descriptors are their own allocations; buffer
-;;        elements are handles/scalars/inline structs) -- the #1801 LICM
+;;        elements are handles/scalars/inline structs) -- the LICM
 ;;        element-only-store proof, ported.
 ;;      - a DESCRIPTOR-FIELD store keeps element entries (same disjointness,
 ;;        mirrored) and same-base entries at provably disjoint byte ranges
@@ -43411,7 +43455,7 @@
       [_ (OptLoadStoreUnknown)])))
 
 ;; GVN stability for a key's referenced vars (the cross-block pass only
-;; caches/forwards through single-source vars, mirroring the original #2343
+;; caches/forwards through single-source vars, mirroring its original
 ;; gates; the block-local pass needs none).
 (define (opt-load-key-gvn-stable?
   [sources : hashmap.I64I64Map]
@@ -43608,9 +43652,9 @@
                   (opt-load-kinds-step kinds hs instr))
                 instr))]))]))
 
-;; Shared per-instruction dispatcher for #2342 (gated? false) and #2343
-;; (gated? true). StorePtr/CopyBytes are matched before the clear-all check:
-;; they ARE memory writes, handled granularly.
+;; Shared per-instruction dispatcher for the block-local (gated? false) and
+;; cross-block (gated? true) passes. StorePtr/CopyBytes are matched before the
+;; clear-all check: they ARE memory writes, handled granularly.
 (define (opt-load-cse-dispatch
   [hs : OptLoadHeaderSet]
   [gated? : bool]
@@ -43661,7 +43705,7 @@
     state
     instrs))
 
-;; --- cross-block redundant-load GVN (#2343) ---------------------------------
+;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState
   (No)
   (Some OptLoadCseState))
@@ -43926,7 +43970,7 @@
         0)
       (opt-gvn-materialize-blocks (struct-get context doms) out blocks))))
 
-;; --- noalias fact model self-test (#1510) -----------------------------------
+;; --- noalias fact model self-test -------------------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Alloc 0 (AstType.I64))
@@ -44389,7 +44433,7 @@
           (CompilerIrInstrList.Nil))))))
 
 ;; GAP4: canonical keys -- two DISTINCT gep temps of the same (base, offset)
-;; slot must CSE (the audit's #2343 bounds-chain miss shape).
+;; slot must CSE (the audit's bounds-chain miss shape).
 (define (opt-load-cse-canonical-gep-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Alloc 0 (AstType.I64))

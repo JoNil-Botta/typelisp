@@ -1,8 +1,7 @@
 # name|source|exit|stdout|args|deps[|extra]
 # Windows omits documented Linux-only or host-gap fixtures; the runner validates
 # that missing integration sources are listed in verify-integration.sh.
-# extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
-# primitives or expected-stderr:<printf escapes> for native trap diagnostics.
+# extra may be expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl
 array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-
@@ -19,6 +18,7 @@ compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|4
 compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
 compile_profile_generated_import|tests/integration/compile_profile_generated_import.tl|42|-|-|stdlib/string.tl
 compile_profile_generated_import_inert|tests/integration/compile_profile_generated_import_inert.tl|42|-|-|compile_profile_generated_import_inert_dep.tl
+compile_profile_cross_file_single_compilation|tests/integration/compile_profile_cross_file_single_compilation.tl|42|-|-|compile_profile_cross_file_single_compilation_a.tl compile_profile_cross_file_single_compilation_b.tl compile_profile_cross_file_single_compilation_c.tl
 compile_profile_named_vector_decls|tests/integration/compile_profile_named_vector_decls.tl|42|-|-|stdlib/vector.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-
@@ -80,13 +80,14 @@ gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdli
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
-atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_make_atomic
+atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 selfloop_redef_writeback|tests/integration/selfloop_redef_writeback.tl|42|-|-|-
 loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
-clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:_tl_clone_u24Bundle
+arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
+clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|42|-|-|-
 comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
@@ -151,9 +152,9 @@ narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
 nested_eval|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
-integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: return type mismatch
+integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-
 integer_literal_default_i32_and_wide_cast|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-
-integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: integer literal -1 does not fit expected type u64
+integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
@@ -165,7 +166,7 @@ region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
 region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/string.tl
-region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-|requires-stage0-symbol:tl_arena_poison_enable
+region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
@@ -180,9 +181,9 @@ spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|-
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
-spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-|requires-stage0-diagnostic:parse: malformed expression
-spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-|requires-stage0-diagnostic:parse: malformed expression
-spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-|requires-stage0-diagnostic:spmd-shuffle
+spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-
+spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
+spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
 spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl
@@ -206,7 +207,7 @@ substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl
 sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-string-contains\nPASS: id-key-value\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
-atomic_intrinsics_thread_counter|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-diagnostic:atomic-fetch-add!
+atomic_intrinsics_thread_counter|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_unit|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
@@ -228,7 +229,7 @@ valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
 with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl
 with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl
 with_arena_mark_stress|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl
-with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:with-escape,_tl_clone_u24EscapeOutcome
+with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 compiler_ast_types_smoke|src/tests/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl compiler_intern.tl stdlib/arena.tl stdlib/hash.tl stdlib/string.tl
 compiler_intern_state_isolation|tests/integration/compiler_intern_state_isolation.tl|42|-|-|compiler_intern_state.tl compiler_intern.tl stdlib/arena.tl stdlib/hash.tl stdlib/string.tl
 compiler_parse_smoke|src/tests/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl stdlib/hash.tl
@@ -272,11 +273,11 @@ register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|4
 struct_match_pattern|tests/integration/struct_match_pattern.tl|42|-|-|struct_match_pattern_geom.tl
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
-arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-diagnostic:typecheck: arena.phase requires a direct ordinary arena owner
+arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_channel_pair_thread_runtime|tests/integration/sync_channel_pair_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_channel_string_thread_runtime|tests/integration/sync_channel_string_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
-box_take_set|tests/integration/box_take_set.tl|42|-|-|-|requires-stage0-diagnostic:parse: set! target must be a name or struct field place
+box_take_set|tests/integration/box_take_set.tl|42|-|-|-

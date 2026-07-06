@@ -1,4 +1,4 @@
-;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
+;; build_run_core.tl - Shared selfhost source build/run execution helpers.
 (import "compiler_driver_core.tl")
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
@@ -46,28 +46,92 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(defenum SourceToolCfgNames
-  (Nil)
-  (Cons String (Box SourceToolCfgNames)))
+(defstruct SourceToolCfgNames
+  (slots (Array String))
+  (len i64))
+
+(define (source-tool-cfg-names-with-capacity [capacity : i64]) : SourceToolCfgNames
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (SourceToolCfgNames (make-array String cap) 0)))
 
 (define (source-tool-cfg-names-empty) : SourceToolCfgNames
-  SourceToolCfgNames.Nil)
+  (source-tool-cfg-names-with-capacity 4))
+
+(define (source-tool-cfg-names-copy-range!
+  [dst : (&mut dst (Array String))]
+  [src : (& src (Array String))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (source-tool-cfg-names-grow! [names : (&mut names SourceToolCfgNames)]) : unit
+  (let
+    [count : i64 (struct-get names len)]
+    [old-cap : i64 (array-length (struct-get names slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array String) (make-array String new-cap)]
+    (begin
+      (source-tool-cfg-names-copy-range!
+        (&mut bigger)
+        (& (struct-get names slots))
+        0
+        count)
+      (set! (struct-get names slots) bigger))))
+
+(define (source-tool-cfg-names-push!
+  [names : (&mut names SourceToolCfgNames)]
+  [name : String]) : unit
+  (begin
+    (if (< (struct-get names len) (array-length (struct-get names slots)))
+      unit
+      (source-tool-cfg-names-grow! names))
+    (let
+      [index : i64 (struct-get names len)]
+      (begin
+        (array-set! (struct-get names slots) index name)
+        (set! (struct-get names len) (+ index 1))))))
+
+(define (source-tool-cfg-names-get
+  [names : (& names SourceToolCfgNames)]
+  [index : i64]) : String
+  (if (if (>= index 0)
+    (< index (struct-get names len))
+    false)
+    (array-ref (struct-get names slots) index)
+    ""))
 
 (define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
-  (SourceToolCfgNames.Cons name (box names)))
+  (let
+    [next : SourceToolCfgNames names]
+    (begin
+      (source-tool-cfg-names-push! (&mut next) name)
+      next)))
 
 (define (source-tool-cfg-names-to-env-from
-  [names : SourceToolCfgNames]
+  [names : (& names SourceToolCfgNames)]
+  [index : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match names
-    [(SourceToolCfgNames.Nil) env]
-    [(SourceToolCfgNames.Cons name rest)
-      (source-tool-cfg-names-to-env-from
-        (box-get rest)
-        (compiler-cfg-enable env name))]))
+  (if (>= index (struct-get names len))
+    env
+    (source-tool-cfg-names-to-env-from
+      names
+      (+ index 1)
+      (compiler-cfg-enable env (source-tool-cfg-names-get names index)))))
 
 (define (source-tool-cfg-names-to-env [names : SourceToolCfgNames]) : sym_i64_env.SymI64Env
-  (source-tool-cfg-names-to-env-from names (compiler-cfg-empty)))
+  (source-tool-cfg-names-to-env-from (& names) 0 (compiler-cfg-empty)))
 
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
   (match target
@@ -233,7 +297,7 @@
     (process.args-empty)))
 
 ;; Wrap a list of fully-resolved archive/object paths (e.g. package dependency
-;; static archives, #1155) as link inputs. They are passed verbatim as raw args
+;; static archives) as link inputs. They are passed verbatim as raw args
 ;; so both `ld` and MSVC `link.exe` treat them as positional inputs.
 (define (source-tool-link-inputs-from-archives
   [archives : process.ProcessStringList]) : SourceToolLinkInputs

@@ -1,9 +1,7 @@
-;; compiler_lower.tl - First selfhost compiler AST-to-IR lowering slice (#446).
+;; compiler_lower.tl - Selfhost compiler AST-to-IR lowering.
 ;;
-;; The lowerer accepts the checked scalar subset and builds a deterministic
-;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
-;; construction/projection; closure, array, and enum-match lowering remain
-;; explicit future work.
+;; The lowerer accepts the checked program and builds a deterministic
+;; CompilerIrProgram.
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)
@@ -16,6 +14,7 @@
 (import "compiler_float.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile (import stdlib.profile))
 (import sym_i64_env)
@@ -24,7 +23,7 @@
   (Nil)
   (Bind String i64 String (Box LowerNameEnv)))
 
-;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
+;; Like LowerTypeCache, a LowerNameCache carries a `parent` marker.
 ;; `LowerNameParent.None` is a complete cache (a miss returns the source name
 ;; unchanged). `LowerNameParent.Global` marks a small per-module overlay that, on
 ;; a miss, falls through to the process-global lowering name cache
@@ -46,7 +45,7 @@
   (values (Array String))
   (parent LowerNameParent))
 
-;; #3759/#3786: the shared global lowering name cache. Set once per sub-phase
+;; The shared global lowering name cache. Set once per sub-phase
 ;; (prune body-index build, then decl lowering) from that phase's whole-program
 ;; name env; per-module overlays fall through here.
 (define lower-active-global-name-cache : LowerNameCache
@@ -61,7 +60,7 @@
     (make-array String 0)
     (LowerNameParent.None)))
 
-;; #3759: LowerTypeCache.Some carries a `parent` marker. `LowerTypeParent.None`
+;; LowerTypeCache.Some carries a `parent` marker. `LowerTypeParent.None`
 ;; is a complete cache (a miss = unbound). `LowerTypeParent.Global` marks a small
 ;; per-module overlay that, on a miss, falls through to the process-global
 ;; decl-lowering type cache `lower-decls-global-type-cache` (set once per
@@ -80,13 +79,13 @@
   (No)
   (Some hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
 
-;; #3759: the shared global decl-lowering type cache (built once per lower-decls
+;; The shared global decl-lowering type cache (built once per lower-decls
 ;; from top-env). Per-module overlay caches (LowerTypeParent.Global) fall through
 ;; here on a miss. Set by lower-decls before the per-module loop runs.
 (define lower-decls-global-type-cache : LowerTypeCache
   (LowerTypeCache.No))
 
-;; #3792: call-slot RVO forwards the current function's hidden sret slot to the
+;; Call-slot RVO forwards the current function's hidden sret slot to the
 ;; callee and then returns that slot. Callees whose body can emit an early exit
 ;; (`return` or `try`) are not yet guaranteed to write that forwarded slot on
 ;; every path; those older paths may still return a heap aggregate pointer. This
@@ -102,8 +101,8 @@
   (Nil)
   (Cons String AstExpr (Box LowerSpmdInlineSubst)))
 
-;; #3792: the prune reachability `reachable` set is keyed on each function's
-;; dense `all-functions` slot (the value `lower-function-set-from-decls` now
+;; The prune reachability `reachable` set is keyed on each function's
+;; dense `all-functions` slot (the value `lower-function-set-from-decls`
 ;; assigns name -> 0..N-1) rather than on the function-name string. The dedup /
 ;; membership in lower-reach-add-logical -- run once per name reference in every
 ;; reachable body, the single biggest caller of string_eq (lower_reach_process,
@@ -375,7 +374,7 @@
   (Ok LowerState sym_i64_env.SymI64Env TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
-;; #3759: The Ok variant carries, in order, the full module-local type
+;; The Ok variant carries, in order, the full module-local type
 ;; env (top-env + module-local type decls), the full module-local name env, the
 ;; module-local-ONLY type env, and the module-local-ONLY name env (just the
 ;; module's own type/name bindings, on empty bases). The last two build small
@@ -399,7 +398,7 @@
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
 ;;
-;; (#605) so each lowered function's source span is recorded alongside the IR.
+;; so each lowered function's source span is recorded alongside the IR.
 (defstruct LowerDeclsSuccess
   (globals CompilerIrGlobalList)
   (functions CompilerIrFunctionList)
@@ -419,7 +418,7 @@
 
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
 ;;
-;; `CompilerSourceSpans` side table (#605) mapping each lowered function's name
+;; `CompilerSourceSpans` side table mapping each lowered function's name
 ;;
 ;; to the `AstSourceSpan` of its source body, so backend diagnostics can report a
 ;;
@@ -759,7 +758,7 @@
 
 ;; Best-available source span for an expression: the outermost `AstExpr.Spanned`
 ;;
-;; wrapper the parser attached (#605). Used to populate the lowering provenance
+;; wrapper the parser attached. Used to populate the lowering provenance
 ;;
 ;; side table from a function's body. Returns `CompilerMaybeSourceSpan.No` for an
 ;;
@@ -773,7 +772,7 @@
   (compiler-diagnostic-with-path diag path))
 
 (define (lower-reference-support-message) : String
-  "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
+  "lower: reference-typed programs require borrow/reference lowering support")
 
 (define (lower-bytes-view-from-parts-name? [name : String]) : bool
   (let
@@ -1082,7 +1081,7 @@
         (make-array String count)
         (LowerNameParent.None)))))
 
-;; #3759: build a small overlay name cache from `names` (the module-local names
+;; Build a small overlay name cache from `names` (the module-local names
 ;; only). On a miss it falls through to the shared global cache
 ;; `lower-active-global-name-cache` (see lower-name-cache-resolve).
 (define (lower-name-cache-overlay [names : LowerNameEnv]) : LowerNameCache
@@ -1238,7 +1237,7 @@
         0
         (LowerTypeParent.None)))))
 
-;; #3759: build a small overlay type cache from `env` (the module-local type
+;; Build a small overlay type cache from `env` (the module-local type
 ;; bindings only). On a miss it falls through to the shared global cache
 ;; `lower-decls-global-type-cache` (see lower-type-cache-lookup).
 (define (lower-type-cache-overlay [env : TcTypeEnv]) : LowerTypeCache
@@ -1777,22 +1776,31 @@
         ""
         (string.substring path 0 (+ last 1))))))
 
-(define (lower-path-segment-vec-render-from
-  [segments : svec.StringVec]
-  [index : i64]
-  [prefix : String]) : String
-  (if (>= index (svec.string-vec-len (& segments)))
-    prefix
-    (let
-      [segment : String (svec.string-vec-get (& segments) index "")]
-      [next-prefix : String
-        (if (= (string.string-length prefix) 0)
-          segment
-          (string.append prefix (string.append "/" segment)))]
-      (lower-path-segment-vec-render-from segments (+ index 1) next-prefix))))
-
+;; Join segments with '/' in one linear text-buf build. The fold-with-append
+;; version copied the whole accumulated prefix on every segment (quadratic in
+;; rendered length) and ran once per normalized path, making it the largest
+;; string.append caller in the lowering phase of a self-compile.
 (define (lower-path-segment-vec-render [segments : svec.StringVec]) : String
-  (lower-path-segment-vec-render-from segments 0 ""))
+  (let
+    [count : i64 (svec.string-vec-len (& segments))]
+    (if (<= count 1)
+      (svec.string-vec-get (& segments) 0 "")
+      (let
+        [buf : text_buf.TextBuf
+          (text_buf.append
+            (text_buf.empty)
+            (svec.string-vec-get (& segments) 0 ""))]
+        [i : i64 1]
+        (begin
+          (while (< i count)
+            (begin
+              (set!
+                buf
+                (text_buf.append
+                  (text_buf.append buf "/")
+                  (svec.string-vec-get (& segments) i "")))
+              (set! i (+ i 1))))
+          (text_buf.render buf))))))
 
 (define (lower-path-normalize-segment
   [segment : String]
@@ -2628,6 +2636,152 @@
             (set! index (+ index 1)))))
       cur-names)))
 
+;; --- per-program module -> decl-position index ------------------
+;; lower-name-env-add-module-aliases-cache, lower-name-env-from-import-aliases-
+;; in-module-cache, and lower-module-local-envs-list all filter the whole-program
+;; decl list down to one module's declarations by scanning every declaration and
+;; tracking `(module NAME)` markers. lower-module-local-envs runs per module
+;; marker and every import alias fanout rescans the list again, so a
+;; self-compile pays O(module markers x imports x program) AstDecl array-ref
+;; copies. This CSR-shaped index maps each module id to the program-order
+;; positions of its declarations (module markers excluded) so those walks touch
+;; only the target module's rows. Built lazily per program over the checked
+;; decl list, which is immutable for the whole lower run;
+;; lower-reset-file-state! drops it between programs and the (len, offset)
+;; stamp re-checks the list shape on every ensure.
+(define lower-module-decl-index-ready : bool
+  false)
+(define lower-module-decl-index-decl-count : i64
+  -1)
+(define lower-module-decl-index-decl-offset : i64
+  -1)
+(define lower-module-decl-index-modules : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define lower-module-decl-index-starts : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-ends : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-positions : (Array i64)
+  (make-array i64 0))
+(define lower-module-decl-index-arena : i64
+  0)
+
+(define (lower-module-decl-index-reset!) : unit
+  (begin
+    (set! lower-module-decl-index-ready false)
+    (set! lower-module-decl-index-decl-count -1)
+    (set! lower-module-decl-index-decl-offset -1)
+    ;; The stale array/map globals are never read while ready is false (every
+    ;; consumer goes through ensure!), so destroying their arena here is safe.
+    (if (= lower-module-decl-index-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy lower-module-decl-index-arena))
+        (set! lower-module-decl-index-arena 0)))))
+
+(define (lower-module-decl-index-ensure! [decls : AstDeclList]) : unit
+  (if (and
+    lower-module-decl-index-ready
+    (= lower-module-decl-index-decl-count (struct-get decls len))
+    (= lower-module-decl-index-decl-offset (struct-get decls offset)))
+    unit
+    (let
+      [count : i64 (struct-get decls len)]
+      [decl-offset : i64 (struct-get decls offset)]
+      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [empty-module-id : i64 (intern "")]
+      ;; The index outlives the transient scratch arenas active during
+      ;; lowering, so its backing allocations live in a dedicated arena
+      ;; (same idiom as tc-hygiene-module-env-cache-arena): allocating them
+      ;; in whatever arena happens to be active would leave the globals
+      ;; dangling when that scratch arena is destroyed.
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [_make-arena : unit
+        (if (= lower-module-decl-index-arena 0)
+          (set! lower-module-decl-index-arena (arena.tl_arena_make))
+          unit)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set lower-module-decl-index-arena))]
+      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [module-count : i64 0]
+      [counts : (Array i64) (make-array i64 (+ count 1))]
+      [starts : (Array i64) (make-array i64 (+ count 1))]
+      [ends : (Array i64) (make-array i64 (+ count 1))]
+      [positions : (Array i64) (make-array i64 (+ count 1))]
+      [cur-module-id : i64 empty-module-id]
+      [i : i64 0]
+      [running : i64 0]
+      (begin
+        ;; Pass 1: assign a dense slot per module id and count its decls.
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (let
+                  [slot : i64
+                    (match (hashmap.i64-i64-map-get modules cur-module-id)
+                      [(hashmap.I64I64MapFound found-slot) found-slot]
+                      [(hashmap.I64I64MapMissing)
+                        (let
+                          [new-slot : i64 module-count]
+                          (begin
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                new-slot))
+                            (set! module-count (+ module-count 1))
+                            new-slot))])]
+                  (array-set! counts slot (+ (array-ref counts slot) 1)))])
+            (set! i (+ i 1))))
+        ;; Prefix sums: starts fixed, ends double as fill cursors below.
+        (set! i 0)
+        (while (< i module-count)
+          (begin
+            (array-set! starts i running)
+            (array-set! ends i running)
+            (set! running (+ running (array-ref counts i)))
+            (set! i (+ i 1))))
+        ;; Pass 2: fill program-order positions per module slot.
+        (set! cur-module-id empty-module-id)
+        (set! i 0)
+        (while (< i count)
+          (begin
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (hashmap.i64-i64-map-get modules cur-module-id)
+                  [(hashmap.I64I64MapFound slot)
+                    (let
+                      [cursor : i64 (array-ref ends slot)]
+                      (begin
+                        (array-set! positions cursor i)
+                        (array-set! ends slot (+ cursor 1))))]
+                  [(hashmap.I64I64MapMissing) unit])])
+            (set! i (+ i 1))))
+        (set! lower-module-decl-index-modules modules)
+        (set! lower-module-decl-index-starts starts)
+        (set! lower-module-decl-index-ends ends)
+        (set! lower-module-decl-index-positions positions)
+        (set! lower-module-decl-index-decl-count count)
+        (set! lower-module-decl-index-decl-offset decl-offset)
+        ;; The arena head advances as it grows; re-capture it so reset!
+        ;; destroys the whole chain, then restore the caller's arena.
+        (set! lower-module-decl-index-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set prev-arena))
+        (set! lower-module-decl-index-ready true)))))
+
+;; Dense slot for a module id, or -1 when the module owns no declarations.
+(define (lower-module-decl-index-slot [module-id : i64]) : i64
+  (match (hashmap.i64-i64-map-get lower-module-decl-index-modules module-id)
+    [(hashmap.I64I64MapFound slot) slot]
+    [(hashmap.I64I64MapMissing) -1]))
+
 (define (lower-name-env-add-module-aliases-cache
   [decls : AstDeclList]
   [base-cache : LowerNameCache]
@@ -2636,40 +2790,44 @@
   [target-module : String]
   [target-module-id : i64]
   [alias : String]
-  [module-id : i64]) : LowerNameEnv
+  [_module-id : i64]) : LowerNameEnv
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 module-id]
-    (begin
-      (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
-          (begin
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (if (= cur-module-id target-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-decl-alias-in-module-cache
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      cur-names
+      (let
+        [j : i64 (array-ref lower-module-decl-index-starts slot)]
+        [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        (begin
+          (while (< j end)
+            (let
+              [decl : AstDecl
+                (array-ref
+                  (struct-get decls slots)
+                  (+
+                    (struct-get decls offset)
+                    (array-ref lower-module-decl-index-positions j)))]
+              (begin
+                (match decl
+                  [(AstDecl.Module _) unit]
+                  [(AstDecl.Import _) unit]
+                  [(AstDecl.IncludeStr _ _) unit]
+                  [(AstDecl.IncludeBin _ _) unit]
+                  [(AstDecl.Test _ _ _) unit]
+                  [_
+                    (set!
                       cur-names
-                      base-cache
-                      dedup-base
-                      alias
-                      target-module
-                      decl))
-                  unit)])
-            (set! index (+ index 1)))))
-      cur-names)))
+                      (lower-name-env-add-decl-alias-in-module-cache
+                        cur-names
+                        base-cache
+                        dedup-base
+                        alias
+                        target-module
+                        decl))])
+                (set! j (+ j 1)))))
+          cur-names)))))
 
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
@@ -2818,50 +2976,52 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [target-current-module-id : i64]
-  [current-module-id : i64]) : LowerNameEnv
+  [_current-module-id : i64]) : LowerNameEnv
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 current-module-id]
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-current-module-id)]
     (begin
       ;; `names` is always a fresh (empty) overlay here, so seed the overlay
       ;; membership set empty; it then mirrors every alias bound below.
       (lower-alias-overlay-reset!)
-      (while (< index count)
+      (if (< slot 0)
+        cur-names
         (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
+          [j : i64 (array-ref lower-module-decl-index-starts slot)]
+          [end : i64 (array-ref lower-module-decl-index-ends slot)]
           (begin
-            (match decl
-              [(AstDecl.Import
-                  (AstImportSpec.Spec
-                    _
-                    _
-                    (AstMaybeModuleName.Some target-module)
-                    (AstMaybeImportAlias.Some alias)
-                    _))
-                (if (= cur-module-id target-current-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-module-aliases-cache
-                      all-decls
-                      base-cache
-                      dedup-base
-                      cur-names
-                      target-module
-                      (intern target-module)
-                      alias
-                      (intern "")))
-                  unit)]
-              [_ unit])
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      cur-names)))
+            (while (< j end)
+              (let
+                [decl : AstDecl
+                  (array-ref
+                    (struct-get decls slots)
+                    (+
+                      (struct-get decls offset)
+                      (array-ref lower-module-decl-index-positions j)))]
+                (begin
+                  (match decl
+                    [(AstDecl.Import
+                        (AstImportSpec.Spec
+                          _
+                          _
+                          (AstMaybeModuleName.Some target-module)
+                          (AstMaybeImportAlias.Some alias)
+                          _))
+                      (set!
+                        cur-names
+                        (lower-name-env-add-module-aliases-cache
+                          all-decls
+                          base-cache
+                          dedup-base
+                          cur-names
+                          target-module
+                          (intern target-module)
+                          alias
+                          (intern "")))]
+                    [_ unit])
+                  (set! j (+ j 1)))))
+            cur-names))))))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : AstDeclList]
@@ -2888,7 +3048,7 @@
       [(LowerNameEnv.Nil) overlay]
       [_ (lower-name-env-append overlay names)])))
 
-;; #3759: `names` is the env to bind onto; `resolve-env` is the env used to
+;; `names` is the env to bind onto; `resolve-env` is the env used to
 ;; resolve dispatch logical names (the only case that consults an env rather than
 ;; the name cache). For the normal full build the two are identical. The
 ;; module-local-only overlay build passes a fresh `names` base but the full env
@@ -3152,15 +3312,22 @@
   [name-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
-  [module-id : i64]) : ResultLowerModuleLocalEnv
+  [_module-id : i64]) : ResultLowerModuleLocalEnv
   (let
     [cur-type-env : TcTypeEnv type-env]
     [cur-local-type-env : TcTypeEnv local-type-env]
     [cur-names : LowerNameEnv names]
     [cur-local-names : LowerNameEnv local-names]
-    [cur-module-id : i64 module-id]
-    [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    [index : i64
+      (if (< slot 0)
+        0
+        (array-ref lower-module-decl-index-starts slot))]
+    [count : i64
+      (if (< slot 0)
+        0
+        (array-ref lower-module-decl-index-ends slot))]
     [decl-offset : i64 (struct-get decls offset)]
     [result : ResultLowerModuleLocalEnv
       (ResultLowerModuleLocalEnv.Err "lower: module local env walk")]
@@ -3169,54 +3336,54 @@
       (while (and (not done) (< index count))
         (let
           [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+            (array-ref
+              (struct-get decls slots)
+              (+
+                decl-offset
+                (array-ref lower-module-decl-index-positions index)))]
           (begin
             (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [(AstDecl.Module _) unit]
               [_
-                (if (= cur-module-id target-module-id)
-                  (match (lower-module-local-type-env-add-decl
-                    top-env
-                    cur-type-env
-                    target-module
-                    decl)
-                    [(ResultTcEnv.Ok next-type-env)
-                      (match (lower-module-local-type-env-add-decl
-                        top-env
-                        cur-local-type-env
-                        target-module
-                        decl)
-                        [(ResultTcEnv.Ok next-local-type-env)
-                          (let
-                            [next-names : LowerNameEnv
-                              (lower-name-env-add-local-decl
-                                cur-names
-                                name-cache
-                                target-module
-                                decl)]
-                            [next-local-names : LowerNameEnv
-                              (lower-name-env-add-local-decl-resolve
-                                cur-local-names
-                                cur-names
-                                name-cache
-                                target-module
-                                decl)]
-                            (begin
-                              (set! cur-type-env next-type-env)
-                              (set! cur-local-type-env next-local-type-env)
-                              (set! cur-names next-names)
-                              (set! cur-local-names next-local-names)))]
-                        [(ResultTcEnv.Err message)
+                (match (lower-module-local-type-env-add-decl
+                  top-env
+                  cur-type-env
+                  target-module
+                  decl)
+                  [(ResultTcEnv.Ok next-type-env)
+                    (match (lower-module-local-type-env-add-decl
+                      top-env
+                      cur-local-type-env
+                      target-module
+                      decl)
+                      [(ResultTcEnv.Ok next-local-type-env)
+                        (let
+                          [next-names : LowerNameEnv
+                            (lower-name-env-add-local-decl
+                              cur-names
+                              name-cache
+                              target-module
+                              decl)]
+                          [next-local-names : LowerNameEnv
+                            (lower-name-env-add-local-decl-resolve
+                              cur-local-names
+                              cur-names
+                              name-cache
+                              target-module
+                              decl)]
                           (begin
-                            (set!
-                              result
-                              (ResultLowerModuleLocalEnv.Err message))
-                            (set! done true))])]
-                    [(ResultTcEnv.Err message)
-                      (begin
-                        (set! result (ResultLowerModuleLocalEnv.Err message))
-                        (set! done true))])
-                  unit)])
+                            (set! cur-type-env next-type-env)
+                            (set! cur-local-type-env next-local-type-env)
+                            (set! cur-names next-names)
+                            (set! cur-local-names next-local-names)))]
+                      [(ResultTcEnv.Err message)
+                        (begin
+                          (set! result (ResultLowerModuleLocalEnv.Err message))
+                          (set! done true))])]
+                  [(ResultTcEnv.Err message)
+                    (begin
+                      (set! result (ResultLowerModuleLocalEnv.Err message))
+                      (set! done true))])])
             (set! index (+ index 1)))))
       (if done
         result
@@ -3248,7 +3415,7 @@
               names
               name-cache
               module)]
-          ;; #3759: the module's import aliases resolve against the global
+          ;; The module's import aliases resolve against the global
           ;; name-cache (not the env base), so building them on an empty base
           ;; yields the module-local-only alias env -- the starting point for the
           ;; per-module name-cache overlay (local decl names are added on top in
@@ -3301,6 +3468,7 @@
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
     (set! lower-spmd-inline-next-temp 0)
     (lower-reach-scratch-globals-reset!)
+    (lower-module-decl-index-reset!)
     (set! lower-no-main-entry-prune-active false)))
 
 (define (lower-reset-intern-owned-state!) : unit
@@ -4126,7 +4294,7 @@
                     decl-path
                     cur-module
                     decl)
-                    ;; #3792: assign each distinct function name a dense slot
+                    ;; Assign each distinct function name a dense slot
                     ;; (0..N-1, its insertion order) instead of a constant 1, so
                     ;; prune reachability `reachable` can key on that i64 slot.
                     ;; Skip names already present so the slot stays a bijection.
@@ -5539,7 +5707,7 @@
     [(AstExpr.Syscall args)
       (lower-clone-roots-expr-list ctx env decls able roots args)]))
 
-;; #3735-followup: `name-cache` is the LowerNameCache built once from the
+;; `name-cache` is the LowerNameCache built once from the
 ;; whole-program `names` env. It is invariant across every module of a single
 ;; clone-roots pass (the global name env never changes mid-pass), so it is
 ;; threaded as a parameter instead of being rebuilt from `names` at each
@@ -5650,7 +5818,7 @@
           name-cache
           ""))]))
 
-;; #3792: copy a clone-root name list into the active (persistent) arena. The
+;; Copy a clone-root name list into the active (persistent) arena. The
 ;; clone-helper names are re-interned (so they live in the persistent intern
 ;; arena) and the cons cells are rebuilt, so the result is independent of the
 ;; scratch arena the original list was discovered in.
@@ -5662,7 +5830,7 @@
         (intern-str (intern name))
         (box (lower-clone-name-list-escape (box-get rest))))]))
 
-;; #3792: copy a clone-roots result into the active (persistent) arena. On the
+;; Copy a clone-roots result into the active (persistent) arena. On the
 ;; (program-valid) Ok path this re-homes the name list; the rare Err path
 ;; rebuilds the diagnostic with a persistent copy of its message so neither
 ;; references the rewound scratch arena.
@@ -5688,7 +5856,7 @@
   [program : AstProgram]
   [_paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
-  ;; #3792: clone-root discovery rebuilds the whole-program symbols, registries
+  ;; Clone-root discovery rebuilds the whole-program symbols, registries
   ;; and top-env plus the clone-ability fixpoint -- ~132MB of the opt1 lower
   ;; peak that adds only a couple dozen AST/type pool nodes, i.e. almost pure
   ;; transient scratch. Build it inside the dedicated lower scratch arena and
@@ -5723,8 +5891,8 @@
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
           (begin
-            ;; Clone-root discovery still calls compatibility AST/type helpers;
-            ;; route both explicit reader helpers and raw legacy reads through
+            ;; Clone-root discovery calls compatibility AST/type helpers;
+            ;; route both explicit reader helpers and raw compatibility reads through
             ;; the state-owned pools instead of mutating active pool state.
             (ast-node-pool-reader-use! pools)
             (ast-node-pool-compat-context-use! pools)
@@ -6539,7 +6707,7 @@
     (make-array LowerMaybeFunctionBody count)
     0))
 
-;; #3786: accumulate a module's local decl names onto `base-names` while
+;; Accumulate a module's local decl names onto `base-names` while
 ;; resolving dispatch logical names against `resolve-names` (the full module
 ;; env), so a module-local-only env can be built for the per-module body
 ;; name-cache overlay without changing dispatch results.
@@ -6579,7 +6747,7 @@
             (set! index (+ index 1)))))
       out)))
 
-;; #3786: build a small per-module overlay name cache holding only the module's
+;; Build a small per-module overlay name cache holding only the module's
 ;; import aliases + local decl names; misses fall through to the shared global
 ;; cache `lower-active-global-name-cache` (set by the prune body-index pass).
 ;; Was O(modules x global-names): a fresh full cache was rebuilt per module.
@@ -7043,7 +7211,7 @@
     names
     state))
 
-;; #3792: `reachable` is keyed by dense `all-functions` slot; resolve a name's
+;; `reachable` is keyed by dense `all-functions` slot; resolve a name's
 ;; slot through the same map the reach walk used and test membership by i64.
 (define (lower-reach-slot-set-contains-name?
   [all-functions : hashmap.StringI64Map]
@@ -7917,6 +8085,21 @@
         (box-get inner-box))]
     [_ used]))
 
+;; A synthesized clone$<T> helper (compiler_clone.tl). Clone helpers are
+;; generated as the exact transitive closure the reachable clone-roots need and
+;; reference one another through `(clone x)` forms the AST reachability walk does
+;; not resolve to names, so a reachable helper's callees would otherwise be
+;; dropped (undefined-symbol link error). Keep every synthesized helper.
+(define (lower-decl-is-clone-helper? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefFn name _ _ _ _)
+      (lower-name-has-clone-prefix? (intern-str name))]
+    [(AstDecl.Unsafe inner-box)
+      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [_ false]))
+
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -7925,18 +8108,22 @@
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [decl : AstDecl]) : bool
-  (match (lower-function-logical-name-from-decl
-    entry-path
-    decl-path
-    module
-    decl)
-    [(TcMaybeString.Some logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        all-functions
-        reachable
-        dispatch-variants
-        logical-name)]
-    [(TcMaybeString.No) true]))
+  (if (lower-decl-is-clone-helper? decl)
+    ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
+    ;; exactly the clone$<T> closure the reachable code needs, so keep them all.
+    true
+    (match (lower-function-logical-name-from-decl
+      entry-path
+      decl-path
+      module
+      decl)
+      [(TcMaybeString.Some logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          all-functions
+          reachable
+          dispatch-variants
+          logical-name)]
+      [(TcMaybeString.No) true])))
 
 (define (lower-used-types-add-type-decl-name
   [pools : AstNodePoolContext]
@@ -8429,7 +8616,7 @@
           state
           (clone-helper-name name)))]))
 
-;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration (#2143) publish a fixed
+;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
 ;; backend-emitted bounds/division/shift checks call the runtime-prelude
 ;; handlers). Seed every exported function as a reachability root so the prune
@@ -8537,7 +8724,7 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        ;; #3786: publish the whole-program global name cache so the per-module
+        ;; Publish the whole-program global name cache so the per-module
         ;; body name-cache overlays built inside lower-function-body-index-from-decls
         ;; (and resolved during lower-reach-process below) can fall through to it.
         ;; Kept in the PERSISTENT (caller) arena so it survives the scratch rewind
@@ -8548,7 +8735,7 @@
               lower-active-global-name-cache
               (lower-name-cache-from-env names))
             unit)]
-        ;; #3792: the reachability scratch (function/dispatch sets, body index and
+        ;; The reachability scratch (function/dispatch sets, body index and
         ;; its per-module name overlays, the reachable map) is the bulk of the
         ;; ~163MB / ~12% opt1 lower-phase prune cost and adds zero AST/type pool
         ;; nodes -- pure transient scratch. Build it inside the dedicated lower
@@ -9213,7 +9400,7 @@
   [ctx : TcContext]
   [ty : AstType]
   [fallback : i64]) : i64
-  ;; #2386/#2624 (compile-time): a bare struct/enum size is memoized by stable
+  ;; Compile-time: a bare struct/enum size is memoized by stable
   ;; interned type-name id
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
   ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
@@ -9591,7 +9778,7 @@
     [(= chunk 2) (AstType.U16)]
     [else (AstType.U8)]))
 
-;; #2386: the byte address `base + offset` as an IR value (the base itself when
+;; The byte address `base + offset` as an IR value (the base itself when
 ;; offset is 0, avoiding a no-op gep).
 (define (lower-offset-addr
   [state : LowerState]
@@ -9601,8 +9788,8 @@
     (LowerExpr.Expr state base (AstType.U64))
     (lower-gep-byte state base offset)))
 
-;; #2386 / lever #1: inline the hottest by-value aggregate copies. The flip to
-;; inline-by-value aggregates (#1867) made the 17-64 B band, especially
+;; Inline the hottest by-value aggregate copies. The flip to
+;; inline-by-value aggregates made the 17-64 B band, especially
 ;; AstTypeList/AstType and ResultTcType/ResultTcType.Ok copies, dynamically dominant,
 ;; but the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88
 ;; dynamic instructions each). Inline they cost only `size/8` load+store pairs.
@@ -9613,9 +9800,9 @@
 (define lower-inline-copy-threshold : i64
   64)
 
-;; #2386: copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
+;; Copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
 ;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle
-;; structs to inline-by-value aggregates (#1867) turned every large by-value
+;; structs to inline-by-value aggregates turned every large by-value
 ;; aggregate copy (set!, pass/return, clone of a >16 B struct) into a long run of
 ;; word copies -- the dominant `movq` source at -O1 (the `movq ...,%r10 ; movq
 ;; off(%r10),%rax ; movq %rax,SLOT` runs). One call collapses each run to a few
@@ -9734,13 +9921,13 @@
     [(AstType.EnumArgs _ _) true]
     [_ false]))
 
-;; #2386: a register-resident aggregate is an inline struct/enum that fits in a
+;; A register-resident aggregate is an inline struct/enum that fits in a
 ;; single 8-byte word and is built only of word-class fields. Such a value is
 ;; carried through the IR as the packed word itself (an i64-shaped SSA value)
 ;; rather than a pointer to a stack slot: construction packs the fields with
 ;; shift/or, `struct-get`/`match` extract them with shift/mask, and the value is
 ;; passed/returned/cloned exactly like a scalar - never touching memory.
-;; #2605: AstType.StructArgs/AstType.EnumArgs here are lifetime-arg forms; they share
+;; AstType.StructArgs/AstType.EnumArgs here are lifetime-arg forms; they share
 ;; the same layout and representation as the bare declaration.
 (define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -9752,20 +9939,20 @@
       (tc-name-register-resident? ctx (intern-str name))]
     [_ false]))
 
-;; #2386: number of machine words a register-resident aggregate occupies
-;; (ceil(size/8)). 1 word => carried as a single scalar value (slice 1/2); 2
+;; Number of machine words a register-resident aggregate occupies
+;; (ceil(size/8)). 1 word => carried as a single scalar value; 2
 ;; words => carried as a register-group value built with CompilerIrInstr.Pack and read
 ;; with IrInstrWord. Only meaningful when `lower-type-register-resident?` holds.
 (define (lower-type-register-word-count [ctx : TcContext] [ty : AstType]) : i64
   (/ (+ (lower-type-size ctx ty) 7) 8))
 
-;; #2386: true for a register-resident aggregate that needs the multi-word
+;; True for a register-resident aggregate that needs the multi-word
 ;; register-group representation (2+ words) rather than the single-word scalar
 ;; representation. Drives the CompilerIrInstr.Pack/CompilerIrInstr.Word lowering paths.
 (define (lower-type-register-group? [ctx : TcContext] [ty : AstType]) : bool
   (> (lower-type-register-words ctx ty) 1))
 
-;; #2386: register-residency in ONE inline-layout build, vs the THREE transient
+;; Register-residency in ONE inline-layout build, vs the THREE transient
 ;; layout rebuilds of calling register-resident? + register-group? (which itself
 ;; rebuilds for resident? and for the size) separately. Returns the machine-word
 ;; count (1 or 2) of a register-resident aggregate, else 0. Used on the hot match
@@ -10117,7 +10304,7 @@
                       (+ field-index 1)
                       layout)])))]))]))
 
-;; #2386: emit an CompilerIrInstr.Pack forming a register-group value from its word values.
+;; Emit an CompilerIrInstr.Pack forming a register-group value from its word values.
 (define (lower-emit-pack
   [state : LowerState]
   [words : CompilerIrValueList]
@@ -10129,7 +10316,7 @@
         (CompilerIrValue.Var var-id)
         ty)]))
 
-;; #2386: emit an CompilerIrInstr.Word extracting word `index` of a register-group value.
+;; Emit an CompilerIrInstr.Word extracting word `index` of a register-group value.
 (define (lower-emit-word
   [state : LowerState]
   [group : CompilerIrValue]
@@ -10160,7 +10347,7 @@
       (lower-bitcast-value state value (AstType.U64) word-ty)
       (LowerExpr.Expr state value word-ty))))
 
-;; #2386: `=` / `!=` on a 2-word register-group aggregate must compare BOTH
+;; `=` / `!=` on a 2-word register-group aggregate must compare BOTH
 ;; words; the scalar CompilerIrInstr.BinOp compared only word0, so two enum values with
 ;; equal tags but different payloads compared equal.
 (define (lower-binop-group-eq? [op : AstBinOp]) : bool
@@ -10239,7 +10426,7 @@
                                   (CompilerIrValue.Var combined)
                                   expr-ty))])])])])])])]))
 
-;; #2386: read a payload field of a register-group enum scrutinee. `base` is the
+;; Read a payload field of a register-group enum scrutinee. `base` is the
 ;; enum group var; the field at enum byte `offset` lives in word `offset/8` (the
 ;; payload word for a 16-byte enum), extracted with CompilerIrInstr.Word then shift/mask at
 ;; its relative offset.
@@ -10264,7 +10451,7 @@
         (- offset (* (/ offset 8) 8))
         field-ty)]))
 
-;; #2386: store a 2-word register-group `value` to memory at pointer `ptr`
+;; Store a 2-word register-group `value` to memory at pointer `ptr`
 ;; (word0 at [ptr], word1 at [ptr+8]) -- used when a group is embedded in a
 ;; pointer-addressed container (array element, dynarray, box, ...).
 (define (lower-store-group-at-ptr
@@ -10294,7 +10481,7 @@
                   w1
                   (lower-register-word-type ctx ty 1)))])])]))
 
-;; #2386: load a 2-word register-group from memory at pointer `ptr` and reassemble
+;; Load a 2-word register-group from memory at pointer `ptr` and reassemble
 ;; it with CompilerIrInstr.Pack (word0 from [ptr], word1 from [ptr+8]).
 (define (lower-load-group-from-ptr
   [ctx : TcContext]
@@ -10327,7 +10514,7 @@
       [(LowerExpr.Expr load-state loaded _)
         (LowerExpr.Expr load-state loaded ty)])))
 
-;; #2386: build the packed value for ONE machine word (`word-index`) of a
+;; Build the packed value for ONE machine word (`word-index`) of a
 ;; register-group struct: fold in only the fields that live in that word, each at
 ;; its offset RELATIVE to the word base, leaving an all-zero accumulator for words
 ;; with no field. Fields straddling a word boundary cannot occur for word-class
@@ -10419,8 +10606,8 @@
                     layout
                     word-index))))]))]))
 
-;; #2386: construct a register-group struct value: pack each machine word and
-;; combine them with IrInstrPack. Two-word integer-class structs only (slice 3).
+;; Construct a register-group struct value: pack each machine word and
+;; combine them with IrInstrPack. Two-word integer-class structs only.
 (define (lower-construct-struct-register-group
   [ctx : TcContext]
   [state : LowerState]
@@ -10474,7 +10661,7 @@
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-;; #2386: fold a register-group enum variant's payload values into word1 (the
+;; Fold a register-group enum variant's payload values into word1 (the
 ;; payload word), each field masked + shifted to its offset RELATIVE to the
 ;; payload word (payload starts at enum byte 8, i.e. relative offset 0).
 (define (lower-pack-enum-payload-word
@@ -10509,7 +10696,7 @@
                 (box-get rest-values)
                 rest-fields)])))]))
 
-;; #2386: construct a register-group enum value: word0 = discriminant tag, word1 =
+;; Construct a register-group enum value: word0 = discriminant tag, word1 =
 ;; the variant's packed (word-class) payload (0 for a nullary variant).
 (define (lower-construct-enum-register-group
   [ctx : TcContext]
@@ -10553,7 +10740,7 @@
   [value : CompilerIrValue]
   [ty : AstType]
   [size : i64]) : LowerState
-  ;; #2386: a register-resident aggregate is carried as a word, so embedding it
+  ;; A register-resident aggregate is carried as a word, so embedding it
   ;; in a memory aggregate is a scalar store of that word, not a byte-copy from a
   ;; pointer. A 2-word register-group stores BOTH words (word0 at offset, word1 at
   ;; offset+8). Only a genuine memory aggregate (inline struct/enum that is not
@@ -10598,7 +10785,7 @@
   [offset : i64]
   [ty : AstType]
   [mode : CompilerLowerMode]) : LowerExpr
-  ;; #2386: a register-resident aggregate field is loaded as a word (a scalar
+  ;; A register-resident aggregate field is loaded as a word (a scalar
   ;; load), not returned as a pointer into the containing slot. A 2-word
   ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
   ;; genuine memory aggregate keeps the pointer-return shape.
@@ -10670,7 +10857,7 @@
         [(LowerExpr.Expr copy-state copy-value _)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              ;; #2386: a register-resident source is carried as word(s), so
+              ;; A register-resident source is carried as word(s), so
               ;; materialize via the group-aware store -- a 2-word group must
               ;; write BOTH words (a bare scalar store dropped word1).
               (if (lower-type-register-resident? ctx ty)
@@ -10700,7 +10887,7 @@
         [(LowerExpr.Expr copy-state copy-value _)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              ;; #2386: group-aware store here too -- the Win64 C-ABI byref
+              ;; Group-aware store here too -- the Win64 C-ABI byref
               ;; path spills register-resident aggregates through this copy,
               ;; and a 2-word group must write BOTH words.
               (if (lower-type-register-resident? ctx ty)
@@ -10731,7 +10918,7 @@
   [ty : AstType]) : bool
   (and
     (lower-mode-inline-aggregates? (lower-state-mode state))
-    ;; #2386: a register-resident aggregate is returned/passed in a register,
+    ;; A register-resident aggregate is returned/passed in a register,
     ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
     (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty))))
@@ -11539,7 +11726,7 @@
   [field : String]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  ;; #2386: a register-resident receiver has no address; materialize the packed
+  ;; A register-resident receiver has no address; materialize the packed
   ;; word to a fresh slot, then take the field address through the same memory
   ;; helper used for borrowed struct references.
   (if (tc-name-register-resident? ctx struct-name)
@@ -12587,7 +12774,7 @@
         [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))
 
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
-;; binding) just load/bind; a refutable literal subpattern (#651) loads the
+;; binding) just load/bind; a refutable literal subpattern loads the
 ;; field, compares it to the literal, and on mismatch branches to `fail-label`
 ;; (the enclosing arm's next-arm test) so matching continues. Nested variant
 ;; subpatterns recurse on the field's tag. `fail-label` is unused when every subpattern
@@ -12606,7 +12793,7 @@
   [index : i64]
   [cursor : i64]
   [fail-label : String]
-  ;; #2386: whether the scrutinee enum is a 2-word register-group value, computed
+  ;; Whether the scrutinee enum is a 2-word register-group value, computed
   ;; ONCE by the caller and threaded here. Recomputing it per payload field (a full
   ;; transient layout rebuild) at every binding site across the whole compiler was
   ;; heavy enough to overflow the per-function scratch arena into a second chunk
@@ -12761,7 +12948,7 @@
                         (lower-diagnostic
                           "lower: unsupported enum payload literal pattern type"))))]
                 [(AstPattern.Variant nested-name nested-args-box)
-                  ;; Refutable nested variant payloads (#651) test the loaded
+                  ;; Refutable nested variant payloads test the loaded
                   ;; enum tag and branch to `fail-label` on mismatch. An
                   ;; explicit `(box ...)` payload pattern is irrefutable here;
                   ;; it loads the boxed value and binds the inner pattern.
@@ -12842,7 +13029,7 @@
                                           field-state
                                           field-value
                                           _)
-                                        ;; #2386: for a register-resident enum field
+                                        ;; For a register-resident enum field
                                         ;; the loaded value IS the tag word; for a
                                         ;; memory enum it is a pointer to the field,
                                         ;; so the tag is loaded from offset 0.
@@ -13826,7 +14013,7 @@
           (= capture-offset offset))])))
 
 (define (lower-unsupported-capture-message) : String
-  "lower: unsupported lambda capture type (#1553)")
+  "lower: unsupported lambda capture type")
 
 (define (lower-capture-support-message [ctx : TcContext] [ty : AstType]) : String
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -13928,7 +14115,7 @@
         (tc-type-without-regions (tc-context-type-get ctx elem-ty))
         count
         ty)]
-    ;; #2386: a register-resident aggregate is word-class POD held in a register;
+    ;; A register-resident aggregate is word-class POD held in a register;
     ;; its capture snapshot is the value itself (nothing on the heap to copy).
     [(AstType.Struct name)
       (if (lower-type-register-resident? ctx ty)
@@ -14478,7 +14665,7 @@
                     [slot-ty : AstType (lower-capture-slot-type capture-ty)]
                     [offset : i64
                       (lower-align-up cursor (lower-type-align ctx slot-ty))]
-                    ;; #2386: a register-group capture occupies 16 bytes inline (two
+                    ;; A register-group capture occupies 16 bytes inline (two
                     ;; words), not an 8-byte handle slot.
                     [slot-size : i64
                       (if (lower-type-register-group? ctx capture-ty)
@@ -14545,7 +14732,7 @@
                   (lower-store-captures-from-index
                     ctx
                     (if (lower-type-register-group? ctx capture-ty)
-                      ;; #2386: a captured 2-word group stores both words.
+                      ;; A captured 2-word group stores both words.
                       (match (lower-gep-byte snap-state env-value offset)
                         [(LowerExpr.Expr gep-state ptr _)
                           (lower-store-group-at-ptr
@@ -14649,7 +14836,7 @@
       (match capture
         [(LowerCapture.Capture name _ capture-ty offset)
           (match (if (lower-type-register-group? ctx capture-ty)
-            ;; #2386: a captured 2-word group loads both words and repacks.
+            ;; A captured 2-word group loads both words and repacks.
             (match (lower-gep-byte state env-value offset)
               [(LowerExpr.Expr gep-state ptr _)
                 (lower-load-group-from-ptr ctx gep-state ptr capture-ty)])
@@ -14716,7 +14903,7 @@
     (let
       [param-count : i64 (+ 1 (lower-param-count params))]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-      ;; #1867 sret ABI for closures: hidden result-slot pointer at var
+      ;; sret ABI for closures: hidden result-slot pointer at var
       ;; `param-count` (just past env + real params).
       [sret-needed : bool
         (and
@@ -15258,9 +15445,9 @@
         [_ (ResultLowerState.Ok state)]))
     (ResultLowerState.Ok state)))
 
-;; #2598: emit the cleanup/region-reset calls a binding env keeps active. This
+;; Emit the cleanup/region-reset calls a binding env keeps active. This
 ;; walks the whole TcTypeEnv chain once per scope exit; it used to be a
-;; tail-recursive walk, but the inline-aggregate TCO guard (#2597) declines
+;; tail-recursive walk, but the inline-aggregate TCO guard declines
 ;; frame reuse here, so deep envs stacked one ~12KB frame per binding (8,164
 ;; frames = 100MB of the measured 502MB stack peak). Iterate instead.
 (define (lower-emit-active-exits-with
@@ -15647,7 +15834,7 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstType.Unit) (LowerExpr.Expr state CompilerIrValue.Unit resolved)]
-      ;; #1867: a Result/Option payload (offset 8 past the i64 tag) can be an
+      ;; A Result/Option payload (offset 8 past the i64 tag) can be an
       ;; inline struct/enum; materialize it via the inline-aware load.
       [_
         (lower-load-inline-value-at-offset
@@ -15693,7 +15880,7 @@
                 [payload-state : LowerState
                   (match err-ty
                     [(AstType.Unit) tag-state]
-                    ;; #1867: an inline struct/enum err payload must be
+                    ;; An inline struct/enum err payload must be
                     ;; byte-copied into the err slot, not scalar-stored.
                     [_
                       (lower-store-inline-value-at-offset
@@ -15705,7 +15892,7 @@
                         err-ty
                         (lower-type-size ctx err-ty))])]
                 [ret-ty : AstType (AstType.Enum (intern enum-name))]
-                ;; #2386: when the function's result enum is register-resident
+                ;; When the function's result enum is register-resident
                 ;; the caller reads the return value from registers, so load
                 ;; the constructed enum back out of the buffer (word or
                 ;; 2-word group) instead of returning the buffer pointer.
@@ -15732,7 +15919,7 @@
               (lower-diagnostic
                 (string.append "lower: unknown variant " err-name))))))]))
 
-;; #2386: the try tag/payload reads below address the operand as MEMORY. A
+;; The try tag/payload reads below address the operand as MEMORY. A
 ;; register-resident Result/Option (e.g. 16-byte (Ok i64)/(Err i64)) is carried
 ;; as word(s), so spill it to a temp inline slot first and continue with the
 ;; slot address; otherwise the tag load dereferences the packed value.
@@ -15937,7 +16124,7 @@
     [_ : String name]
     false))
 
-;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
+;; First-class arena primitives. arena-mark/arena-rewind reuse the
 ;; existing region runtime (they snapshot/rewind the current arena's bump).
 (define (lower-arena-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-arena-id? name-id))
@@ -16059,14 +16246,14 @@
     (lower-tls-current-arena-read-call state args result-ty)
     (lower-tls-current-arena-set-call ctx state env type-env args result-ty)))
 
-;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
+;; Lower `(clone x)`: the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
 ;; array values allocate fresh storage and recursively clone each element; Box
 ;; values allocate a fresh box for the cloned inner value; named aggregates
 ;; dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl) so
 ;; recursive enum/struct values recurse at runtime instead of lower time; and
 ;; scalar values are returned as-is.
-;; #1867 sret ABI: the synthesized `clone$<Name>` helper returns an aggregate,
+;; sret ABI: the synthesized `clone$<Name>` helper returns an aggregate,
 ;; so it carries the hidden sret param; append the result-slot pointer here to
 ;; match (the same gate as the helper's definition, so a non-aggregate clone$
 ;; target -- e.g. a type variable -- passes only the value).
@@ -16611,7 +16798,7 @@
   [value : CompilerIrValue]
   [inner-ty : AstType]
   [result-ty : AstType]) : ResultLowerExpr
-  ;; #1867: a (Box T) with inline struct/enum T addresses the T storage at the
+  ;; A (Box T) with inline struct/enum T addresses the T storage at the
   ;; box pointer; load it as a value (pointer) rather than scalar-loading the
   ;; leading word, mirroring lower-box-get.
   (match (lower-load-inline-value-at-offset
@@ -16699,7 +16886,7 @@
           value
           (tc-type-without-regions (tc-context-type-get ctx elem-ty))
           clone-ty)]
-      ;; #2386: a register-resident aggregate is word-class POD held in a
+      ;; A register-resident aggregate is word-class POD held in a
       ;; register, so cloning it is a value copy -- no deep-clone helper, no
       ;; memory traversal.
       [(AstType.Enum name)
@@ -17136,7 +17323,7 @@
     [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
         [(TcInlineAggregateLayout.Struct size _ _)
-          ;; #2386: a register-resident struct is built directly in registers by
+          ;; A register-resident struct is built directly in registers by
           ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
           ;; struct packs each word and combines them with IrInstrPack.
           (if (tc-inline-aggregate-layout-register-resident? layout)
@@ -17226,11 +17413,11 @@
     [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
         [(TcInlineAggregateLayout.Enum size _ _)
-          ;; #2386: a 1-word register-resident enum is nullary, so its single word
+          ;; A 1-word register-resident enum is nullary, so its single word
           ;; is the discriminant tag. A 2-word register-group enum packs the tag
           ;; into word0 and the variant payload into word1.
           (if (tc-inline-aggregate-layout-register-resident? layout)
-            ;; #2386: a register-resident enum is 8 (nullary tag) or 16 bytes (tag
+            ;; A register-resident enum is 8 (nullary tag) or 16 bytes (tag
             ;; word0 + payload word1); derive the 2-word group case from the size we
             ;; already have rather than rebuilding the layout (lower-type-register-
             ;; group?), whose transient per-call allocation -- summed over every
@@ -18204,7 +18391,7 @@
         (lower-function-value-or-var ctx state env name expr-ty)))
     (lower-function-value-or-var ctx state env name expr-ty)))
 
-;; #2386: a register-group GLOBAL stores its two words inline at the symbol; a
+;; A register-group GLOBAL stores its two words inline at the symbol; a
 ;; read of it yields `CompilerIrValue.Global name` (the storage), which must be
 ;; materialized into a register-group VALUE by loading both words from the
 ;; symbol's address. Local group vars (CompilerIrValue.Var) and non-group values pass
@@ -18256,7 +18443,7 @@
   [type-env : TcTypeEnv]
   [name-id : i64]
   [expr-ty : AstType]) : ResultLowerExpr
-  ;; #2357: mirror lower-var-or-nullary-variant -- a register-group GLOBAL read
+  ;; Mirror lower-var-or-nullary-variant -- a register-group GLOBAL read
   ;; yields CompilerIrValue.Global and must be materialized into a group VALUE (load both
   ;; words) before any CompilerIrInstr.Word/struct-get/match extraction; main's interned
   ;; -id path dropped this wrapper, so reg-group globals faulted.
@@ -18866,7 +19053,7 @@
         [_ (ResultTcType.Err "lower: box-get result type is not fast-pathable")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
-;; #2386 (compile-time): memoize lower-expr-result-type-fast by AST node id.
+;; Compile-time: memoize lower-expr-result-type-fast by AST node id.
 ;; lower-expr-origin computes each expr's result type (walking the result-
 ;; determining spine) BEFORE lowering, and lowering the children re-walks their
 ;; spines -- so for deeply-nested functions a node's spine is recomputed once per
@@ -19467,7 +19654,7 @@
     [(AstExpr.Binary op left-box right-box)
       ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
       ;; operand is evaluated only when the left does not already decide the
-      ;; result, matching the Rust lowerer in `src/lower.rs` (#1132 / #1165):
+      ;; result, matching the Rust lowerer in `src/lower.rs`:
       ;; `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`. Every
       ;; other binop evaluates both operands eagerly into an `CompilerIrInstr.BinOp`.
       (let
@@ -19926,7 +20113,7 @@
       (lower-loop-control-form ctx state env type-env origin "break")]
     [(AstExpr.Continue)
       (lower-loop-control-form ctx state env type-env origin "continue")]
-    ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
+    ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator.
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars and unsupported CTFE forms surface as lower errors.
     [(AstExpr.Comptime inner-box)
@@ -20585,7 +20772,7 @@
     [(ResultLowerFieldInfo.Ok info)
       (match info
         [(LowerFieldInfo.Info offset field-ty)
-          ;; #2386: when the receiver is a register-resident struct, its value is
+          ;; When the receiver is a register-resident struct, its value is
           ;; the packed word itself; extract the field with shift/mask instead of
           ;; computing an address and loading from memory.
           (if (tc-name-register-resident? ctx struct-name)
@@ -20632,7 +20819,7 @@
                     (LowerExpr.Expr ext-state ext-value result-ty))]))
             (match (lower-gep-byte state receiver-value offset)
               [(LowerExpr.Expr ptr-state ptr _)
-                ;; #2386: a register-resident field is carried as a packed word,
+                ;; A register-resident field is carried as a packed word,
                 ;; so its value is the LOADED word, never the field address --
                 ;; exclude it from the in-place pointer-return shape (otherwise a
                 ;; later `match`/`=` would read the address as if it were the tag).
@@ -20790,7 +20977,7 @@
                     "lower: struct-get requires struct")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-;; Lower `(box expr)` (#1443): evaluate `expr`, reserve arena storage sized for
+;; Lower `(box expr)`: evaluate `expr`, reserve arena storage sized for
 ;; its (pointer-shaped) value via `tl_alloc`, store the value at offset 0, and
 ;; return the box handle (the storage pointer) typed as the `(Box T)` result.
 (define (lower-box
@@ -20818,7 +21005,7 @@
                 (lower-type-size ctx inner-ty)
                 result-ty)
                 [(LowerExpr.Expr base-state base _)
-                  ;; #2386: a register-resident inner value is a word; store it
+                  ;; A register-resident inner value is a word; store it
                   ;; scalar into the box rather than byte-copying from a pointer.
                   (if (and
                     (lower-type-inline-storage? ctx inner-ty)
@@ -20863,7 +21050,7 @@
     [(ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr inner message)))]))
 
-;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
+;; Lower `(box-get b)`: evaluate the box handle and load the boxed value
 ;; of type `T` (the result type) from offset 0 of the box storage.
 (define (lower-box-get
   [ctx : TcContext]
@@ -20883,7 +21070,7 @@
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr box-state box-value _)
-          ;; #1867: when the boxed value is an inline aggregate, the box pointer
+          ;; When the boxed value is an inline aggregate, the box pointer
           ;; already addresses the T storage, so box-get yields that pointer
           ;; (offset 0) rather than scalar-loading the first 8 bytes (which would
           ;; read only the leading word, e.g. an enum tag, and treat it as the
@@ -21919,7 +22106,7 @@
 (define (lower-c-abi-two-register-return-message [ty : AstType]) : String
   (string.append
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
-    (string.append (tc-type-render ty) "; see #1995")))
+    (tc-type-render ty)))
 
 (define (lower-c-abi-sysv-slot-size [size : i64] [slot-index : i64]) : i64
   (if (= slot-index 0)
@@ -22503,7 +22690,7 @@
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.Integer scalar-ty size)
-                    ;; #2386: a register-resident aggregate is carried as a
+                    ;; A register-resident aggregate is carried as a
                     ;; single-word scalar -- `value` is already the word the C
                     ;; ABI wants in a register, so pass it directly. Any other
                     ;; aggregate (a memory-backed value, e.g. a mixed
@@ -22708,7 +22895,7 @@
     [(LowerCAbiAggregate.No)
       (ResultLowerExpr.Ok (LowerExpr.Expr state call-value result-ty))]
     [(LowerCAbiAggregate.Integer scalar-ty size)
-      ;; #2386: a register-resident aggregate is carried as a single-word scalar --
+      ;; A register-resident aggregate is carried as a single-word scalar --
       ;; the C call returns the whole value in a register, which IS that word
       ;; representation, so hand it back directly. Any other aggregate (a
       ;; memory-backed value, e.g. a mixed int/float sub-word struct) is
@@ -22780,7 +22967,7 @@
             origin
             (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
     [(LowerCAbiAggregate.Sret _)
-      ;; #2386: the C callee wrote the >8B result into the caller-provided sret
+      ;; The C callee wrote the >8B result into the caller-provided sret
       ;; buffer, so `call-value` is the buffer pointer. A register-resident result
       ;; (a 16B word-class struct: a 2-word register group in this backend) must
       ;; be materialized back into that two-word group VALUE -- load both words
@@ -22912,7 +23099,7 @@
                   (lower-state-mode args-state)
                   result-ty))))]
         [(LowerCAbiAggregate.Sret size)
-          ;; #2386: reserve the sret buffer typed as a scalar pointer (U64), NOT
+          ;; Reserve the sret buffer typed as a scalar pointer (U64), NOT
           ;; the aggregate result type. A register-resident result type would make
           ;; the backend classify the hidden sret pointer as a 2-word register
           ;; group, shifting every real argument by one slot (and reading an
@@ -23050,7 +23237,7 @@
             origin
             (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
     [(LowerCAbiAggregate.Sret size)
-      ;; #2386: reserve the sret buffer typed as a scalar pointer (U64) -- see
+      ;; Reserve the sret buffer typed as a scalar pointer (U64) -- see
       ;; lower-direct-c-abi-call -- so a register-resident result type does not make
       ;; the backend classify the hidden sret pointer as a 2-register group arg.
       (match (lower-reserve-heap-storage state size (AstType.U64))
@@ -23114,7 +23301,7 @@
                   [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-;; #1867 sret ABI caller side: append the sret pointer as the trailing arg to a
+;; sret ABI caller side: append the sret pointer as the trailing arg to a
 ;; value list (matching the callee's `__sret` param).
 (define (lower-value-list-append-one
   [values : CompilerIrValueList]
@@ -25629,7 +25816,7 @@
         bounds-ok-state
         (CompilerIrInstr.BoundsCheck index length bounds-ok-label))]))
 
-;; #1867/#3580: address an array element, striding by the element's full inline
+;; Address an array element, striding by the element's full inline
 ;; size. Memory aggregates use a byte-offset GEP so fixed arrays, structs, and
 ;; enums use their real layout size instead of an address-sized backend scale.
 ;; Scalars and pointer-slot handles keep the type-scaled GEP.
@@ -26707,7 +26894,7 @@
     (and
       (= (lower-type-size ctx resolved) 8)
       (not (tc-type-eq resolved (AstType.F64)))
-      ;; #1867/#2386: memory-resident inline aggregates are pointers to
+      ;; Memory-resident inline aggregates are pointers to
       ;; storage, but a one-word register-resident aggregate is the word
       ;; itself, so fill8 can replicate it directly.
       (or
@@ -27017,7 +27204,7 @@
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
-;; #1867/#3580: read an array element given its address. For a memory aggregate
+;; Read an array element given its address. For a memory aggregate
 ;; element the address IS the value (pointer representation); for scalars and
 ;; pointer-slot types (tuple/box/dynarray/string handles) load the register-width
 ;; value. Mirrors lower-load-inline-value-at-offset at offset 0 but preserves the
@@ -27027,7 +27214,7 @@
   [addr-state : LowerState]
   [elem-ptr : CompilerIrValue]
   [elem-ir-ty : AstType]) : ResultLowerExpr
-  ;; #2386: a register-resident element is loaded as a word, not returned as the
+  ;; A register-resident element is loaded as a word, not returned as the
   ;; element address.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
@@ -27150,7 +27337,7 @@
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr arr message)))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
-;; #1867/#3580: store a value into an array element slot. A memory aggregate
+;; Store a value into an array element slot. A memory aggregate
 ;; value is byte-copied into the full-size element slot; scalars and pointer-slot
 ;; handles use a register-width store.
 (define (lower-array-elem-store-state
@@ -27159,7 +27346,7 @@
   [elem-ptr : CompilerIrValue]
   [value-ir : CompilerIrValue]
   [elem-ir-ty : AstType]) : LowerState
-  ;; #2386: a register-resident element value is a word; store it scalar instead
+  ;; A register-resident element value is a word; store it scalar instead
   ;; of byte-copying from a pointer.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
@@ -29691,7 +29878,7 @@
     [(AstReduceOp.Max)
       (spmd-reduce-acc-select-update pools (AstBinOp.Gt) value)]))
 
-;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
+;; Scalar `spmd-reduce` loop scaffold: desugar to an accumulator loop and
 ;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
 ;; loop (so `init`/`end`/`start` evaluate exactly once); an empty range returns
 ;; `init` without evaluating `acc-update`. `acc`/`end`/temp use lexer-impossible
@@ -29776,7 +29963,7 @@
     [root : AstExpr (lower-context-expr-get ctx root-id)]
     (lower-expr ctx state env type-env root)))
 
-;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
+;; Scalar lowering for all reduction ops: `sum` (wrapping `+`, also f64
 ;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
 ;; select). Each supplies its per-iteration accumulator update to the shared
 ;; loop scaffold.
@@ -38257,7 +38444,7 @@
         end-value
         body)]))
 
-;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
+;; Scalar `foreach` lowering. `(foreach ([i : ty start end]) body)`
 ;; lowers to the half-open reference loop `i = start; while (i < end) { body;
 ;; i = i + 1 }`, yielding unit. `start` and `end` are each lowered exactly once
 ;; before the loop; the index binding is scoped to the body. Mirrors lower-while
@@ -38845,14 +39032,14 @@
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-;; Scalar `match` lowering (#568). The scrutinee is lowered once into a fresh
+;; Scalar `match` lowering. The scrutinee is lowered once into a fresh
 ;; local, then literal arms become a chain of `CompilerIrBinOp.Eq` tests + `CompilerIrInstr.Branch`
 ;; (mirroring `lower-if`). The typechecker guarantees exhaustiveness and arm-type
 ;; agreement, so the final arm reached must match: it is lowered as an
 ;; irrefutable catch-all (no test, jump straight to the merge block). A
 ;; value-typed match merges arm results with an `CompilerIrInstr.Phi`; a `unit`-typed
 ;; match emits no value phi. Enum matches reuse the same merge path, but load the
-;; heap tag once and dispatch variant arms by tag (#517).
+;; heap tag once and dispatch variant arms by tag.
 (define (lower-match-value
   [ctx : TcContext]
   [state : LowerState]
@@ -38989,7 +39176,7 @@
       [(ResultLowerExpr.Ok place-lowered)
         (match place-lowered
           [(LowerExpr.Expr place-state place-value _)
-            ;; #2386: the borrowed payload bindings and literal compares below
+            ;; The borrowed payload bindings and literal compares below
             ;; address the scrutinee as MEMORY (gep off the pointer). A
             ;; register-resident enum place lowers to its packed word(s), so
             ;; spill it to a temp inline slot and run the whole match on the
@@ -39116,7 +39303,7 @@
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
   [force-memory : bool]) : ResultLowerExpr
-  ;; #2386: a 1-word register-resident enum value IS the tag word (nullary, no
+  ;; A 1-word register-resident enum value IS the tag word (nullary, no
   ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
   ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
   ;; layout build (lower-type-register-words) decides all three cases.
@@ -39813,7 +40000,7 @@
                     fields)]
                 ;; The final arm has no next-arm continuation, so a refutable
                 ;; payload subpattern here would have nowhere to fall through to;
-                ;; require a trailing catch-all instead (#651).
+                ;; require a trailing catch-all instead.
                 (if (lower-pattern-list-refutable-for-types?
                   ctx
                   args
@@ -40543,7 +40730,7 @@
           (lower-tail-match-arms-candidate? ctx state env arms)])]
     [_ false]))
 
-;; #1867 sret return ABI (Phase 1): when `sret-var` >= 0 the caller passed a
+;; sret return ABI: when `sret-var` >= 0 the caller passed a
 ;; hidden result-slot pointer (bound to that var). Copy the result aggregate
 ;; into the caller's slot and return the slot pointer -- no per-return arena
 ;; alloc + escape copy. `sret-var` < 0 keeps the arena escape-copy path, which
@@ -40899,7 +41086,7 @@
     [(AstExpr.Syscall args) (lower-rvo-expr-list-has-early-return? ctx args)]
     [_ true]))
 
-;; #3792 aliasing guard for sret-forwarding RVO. The forwarded sret is the
+;; Aliasing guard for sret-forwarding RVO. The forwarded sret is the
 ;; current function's result slot, which a CALLER may legally have aliased with
 ;; one of this call's arguments (the `(set! place (f place ...))` /
 ;; aggregate-place-update pattern -- HARD CONSTRAINT #4). If a callee then reads
@@ -40956,7 +41143,7 @@
     lower-rvo-early-return-functions
     (lower-resolve-call-name state env name)))
 
-;; #3792 call-slot RVO for a tail-position direct CALL whose aggregate result is
+;; Call-slot RVO for a tail-position direct CALL whose aggregate result is
 ;; returned by the current function. The value path lowers the call into a fresh
 ;; reserved result slot (`lower-call-append-sret-arg`) and then `lower-copy-bytes`
 ;; copies that slot into the caller-owned sret. Instead, forward the caller's own
@@ -41416,7 +41603,7 @@
                   "lower: comptime-error is compile-time only")))]
           [(and
               unshadowed
-              ;; #2357: only suppress TCO when THIS call actually involves inline
+              ;; Only suppress TCO when THIS call actually involves inline
               ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
               ;; disabled tail-call optimization for every call (mode is always on),
               ;; losing TCO entirely (deep self-recursion, smoke shape failure).
@@ -42533,7 +42720,7 @@
             idx)
           (lower-param-list-at ctx params (+ index 1) (+ idx 1)))])))
 
-;; #1867 sret ABI: append the hidden result-slot pointer param at index
+;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
 ;; convention only -- C-ABI externs keep their own ABI on a separate path.
 (define (lower-param-list-append-sret
@@ -42565,8 +42752,8 @@
       (lower-type-contains-inline-aggregate?
         ctx
         (tc-context-type-get ctx inner))]
-    ;; #1867: a reference can point INTO the current frame (memory-aggregate
-    ;; locals live in frame slots now), so a ref arg whose referent is or
+    ;; A reference can point INTO the current frame (memory-aggregate
+    ;; locals live in frame slots), so a ref arg whose referent is or
     ;; contains an inline aggregate makes a tail call unsafe -- the callee
     ;; would read through a pointer into the reused/abandoned frame.
     [(AstType.Ref _ referent)
@@ -42669,7 +42856,7 @@
       (>= name-len prefix-len)
       (string.eq (string.substring logical-name 0 prefix-len) prefix))))
 
-;; #1867 sret ABI: a `__global_init_<name>` initializer's result is stored into
+;; sret ABI: a `__global_init_<name>` initializer's result is stored into
 ;; a forever-lived global by the backend's startup sequence (not a normal call
 ;; site), so it must return stable arena storage -- never a caller stack sret
 ;; slot. Keep these on the arena return path.
@@ -42696,7 +42883,7 @@
       [param-count : i64 (lower-param-count params)]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       [ret-ir-ty : AstType (lower-one-word-register-storage-type ctx ret-ty)]
-      ;; #1867 sret ABI: an aggregate-returning function takes a hidden
+      ;; sret ABI: an aggregate-returning function takes a hidden
       ;; result-slot pointer at var `param-count` (just past the real params);
       ;; the body writes the result through it instead of arena-copying.
       [sret-needed : bool
@@ -42804,7 +42991,7 @@
           [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env actual)])]
       [_ (tc-top-decl-type-with-env ctx env actual)])))
 
-;; Record `name -> body span` into the provenance table (#605). A function whose
+;; Record `name -> body span` into the provenance table. A function whose
 ;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
 ;;
@@ -42818,7 +43005,7 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerMaybeSourceSpan.No) spans]))
 
-;; Reusable per-function lowering scratch arena (#1917). Lowering one function
+;; Reusable per-function lowering scratch arena. Lowering one function
 ;; allocates a fresh `LowerState` plus the transient IR/AST-walk scratch the bump
 ;; allocator never frees; summed across cli.tl's ~5000 functions this transient
 ;; dominates the lower phase's peak live (the headline self-build memory number).
@@ -42862,7 +43049,7 @@
         (arena.tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
-;; #2596: dedicated arena for the escaped (lowered) IR function bodies. The
+;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
 ;; (optimize-function-escaping), after which the entire input IR is dead --
@@ -42959,7 +43146,7 @@
       ;; pass and invalidate them before rewinding this function's scratch arena.
       (tc-nominal-owner-cache-reset!)
       (intern-persistent-storage-enable!)
-      ;; #2386 (compile-time): new generation for the result-type-fast memo, so
+      ;; Compile-time: new generation for the result-type-fast memo, so
       ;; this function's cached node types are independent of every other
       ;; function's (and never outlive this function's scratch arena).
       (tc-rtf-next-gen!)
@@ -44013,7 +44200,7 @@
         "<source>"
         dispatch-name-cache)]
     (begin
-      ;; #3759: build the shared global name/type caches once; per-module caches
+      ;; Build the shared global name/type caches once; per-module caches
       ;; are small overlays that fall through to them. The initial cur caches are
       ;; empty overlays (everything resolves via the global caches) for decls in
       ;; the leading "" module before the first (module ...) marker.
@@ -44038,11 +44225,11 @@
         mode
         ""))))
 
-;; #2598: lower every top-level decl of the expanded program. This used to be
+;; Lower every top-level decl of the expanded program. This used to be
 ;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
-;; guard (#2597) declines frame reuse here, so a whole-compiler input stacked
+;; guard declines frame reuse here, so a whole-compiler input stacked
 ;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
-;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
+;; peak that forced the 1GB Windows reserves). Iterate instead; the
 ;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module [decls : AstDeclList]) : AstDeclList
   (match (ast-decl-list-step decls)
@@ -44353,14 +44540,14 @@
                           local-name-only)
                         (begin
                           (set! cur-local-top-env next-local-top-env)
-                          ;; #3759: overlay just this module's local names;
+                          ;; Overlay just this module's local names;
                           ;; misses fall through to the shared global name cache
                           ;; (set once) instead of rebuilding the whole global
                           ;; name set per module.
                           (set!
                             cur-name-cache
                             (lower-name-cache-overlay local-name-only))
-                          ;; #3759: overlay just this module's local type
+                          ;; Overlay just this module's local type
                           ;; bindings; misses fall through to the shared global
                           ;; type cache (set once from top-env) instead of
                           ;; rebuilding the whole global type set per module.
@@ -44677,6 +44864,14 @@
                           entry-path
                           LowerNameEnv.Nil))])
                   names)]
+              ;; P4/C4.1-C4.2: the reachability gate has moved AFTER typecheck
+              ;; (see below) so typecheck stays complete and whole-program while
+              ;; lower/optimize/codegen are still gated on reachability. This
+              ;; up-front prune is retained ONLY to scope clone-root discovery to
+              ;; the reachable set (so we synthesize exactly the clone$<T> helpers
+              ;; the emitted code needs, matching pre-P4 behavior); the FULL
+              ;; specialized program is what actually flows into clone-augment and
+              ;; typecheck below.
               (match (lower-prune-unreachable-functions-with-clone-roots
                 pools
                 entry-path
@@ -44684,7 +44879,7 @@
                 specialized-paths
                 prune-names
                 (CloneNameList.Nil))
-                [(LowerPrunedProgram.Program base-program base-paths)
+                [(LowerPrunedProgram.Program reach-program reach-paths)
                   (begin
                     (cfg
                       compile-profile
@@ -44694,8 +44889,8 @@
                       [clone-pools : AstNodePoolContext pools]
                       (match (lower-reachable-clone-roots
                         clone-pools
-                        base-program
-                        base-paths
+                        reach-program
+                        reach-paths
                         prune-names)
                         [(ResultLowerCloneRoots.Ok clone-roots)
                           (begin
@@ -44704,17 +44899,22 @@
                               (compiler-lower-profile-finish "clone_roots"))
                             (cfg compile-profile (compiler-lower-profile-start))
                             (let
+                              ;; P4/C4.2: clone-augment the FULL specialized
+                              ;; program (not the reachable subset) so typecheck
+                              ;; sees every declaration; clone-roots was scoped to
+                              ;; the reachable set above so only the needed
+                              ;; clone$<T> helpers are synthesized.
                               [checked-compaction : AstProgramCompaction
                                 (if lower-checked-dest-pools-active
                                   (clone-augment-program-with-roots-from-pools
                                     clone-pools
                                     lower-checked-dest-pools-context
-                                    base-program
+                                    specialized
                                     clone-roots)
                                   (AstProgramCompaction
                                     (clone-augment-program-with-roots-and-pools
                                       clone-pools
-                                      base-program
+                                      specialized
                                       clone-roots)
                                     clone-pools))]
                               [checked-program : AstProgram
@@ -44738,9 +44938,9 @@
                               [checked-paths : AstDeclPathList
                                 (if lower-checked-dest-pools-active
                                   (lower-copy-paths-into-pools
-                                    base-paths
+                                    specialized-paths
                                     checked-pools)
-                                  base-paths)]
+                                  specialized-paths)]
                               [escaped-names : LowerNameEnv
                                 (if (and
                                   lower-checked-dest-pools-active
@@ -44815,12 +45015,30 @@
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-start))
-                                      (match (lower-compiler-program-checked-with-names-mode
-                                        ctx
-                                        top-env
+                                      ;; P4/C4.2: the whole program was typechecked
+                                      ;; above; run the reachability gate NOW so
+                                      ;; unreachable decls produce no native code
+                                      ;; while every decl is still fully typechecked.
+                                      ;; clone-roots is seeded so the synthesized
+                                      ;; clone$<T> helpers survive the prune; any
+                                      ;; clone helper reachable only from dead code
+                                      ;; is later dropped by the IR-level DCE.
+                                      (match (match (lower-prune-unreachable-functions-with-clone-roots
+                                        checked-pools
+                                        checked-entry-path
                                         checked-program
-                                        lower-names
-                                        mode)
+                                        checked-paths
+                                        checked-names
+                                        clone-roots)
+                                        [(LowerPrunedProgram.Program
+                                            pruned-program
+                                            _pruned-paths)
+                                          (lower-compiler-program-checked-with-names-mode
+                                            ctx
+                                            top-env
+                                            pruned-program
+                                            lower-names
+                                            mode)])
                                         [(ResultCompilerLower.Ok ir spans)
                                           (begin
                                             (cfg
@@ -45814,7 +46032,7 @@
   (let [r : (& n i64) (& n)]
     ((lambda () : i64 (let [copy : (& n i64) r] 42)))))")
 
-;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
+;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator.
 ;; These fixtures exercise arithmetic, f64, `if`, and `let` folds, plus the
 ;; runtime-variable rejection path.
 (define (compiler-lower-comptime-arith-source) : String
@@ -45917,7 +46135,7 @@
         (not
           (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "main"))))))
 
-;; Scalar match lowering smoke (#568): an i64 literal match with a binding
+;; Scalar match lowering smoke: an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
 (define (compiler-lower-match-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
@@ -45943,15 +46161,15 @@
     (announce (classify 1))
     (+ (sign 7) (+ (classify 1) (flag-score true)))))")
 
-;; Dynamic-array length lowering smoke (#528): `array-length` and `length` on a
+;; Dynamic-array length lowering smoke: `array-length` and `length` on a
 ;; dynamic array lower to a fat-value length load rather than a runtime call.
 (define (compiler-lower-array-length-source) : String
   "(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
 (define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
-;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store
-;; (#528). Taking the array as a parameter avoids needing `make-array` here.
+;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
+;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
@@ -46159,7 +46377,7 @@
     (array-length items)))")
 
 ;; Private string length lowers to the same fat `{ptr, len}` length load as
-;; `array-length` (#527): both lay out the i64 length at offset 8.
+;; `array-length`: both lay out the i64 length at offset 8.
 (define (compiler-lower-string-length-source) : String
   "(define (str-len [s : String]) : i64 (__tl_string_length s))
 (define (str-len-alias [s : String]) : i64 (__tl_string_length s))
@@ -46525,7 +46743,7 @@
       (array-set! fixed 0 (init))
       (+ n (+ called (+ (struct-get point x) (+ (struct-get constructed x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed))))))))))")
 
-;; Tuple construction + ref lowering (#1583): `(tuple true 42)` reserves
+;; Tuple construction + ref lowering: `(tuple true 42)` reserves
 ;; struct-shaped aggregate storage and stores each element at its field offset;
 ;; `(tuple-ref t 1)` gep+loads the indexed element. The whole computation lives
 ;; in `main` so it is not pruned as unreachable.
@@ -46943,7 +47161,7 @@
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")
 
-;; #3447: payload offset lookup must not depend on earlier enum families or on
+;; Payload offset lookup must not depend on earlier enum families or on
 ;; helper/constructor ordering when String and i64 payload result enums coexist.
 (define (compiler-lower-inline-enum-layout-cache-order-source-a) : String
   "(defenum FirstResult
@@ -47094,7 +47312,7 @@
             0)])]
     [(ResultCompilerLower.Err _) false]))
 
-;; #2386: `id-pair` is the identity on a 16-byte all-integer struct, which is now
+;; `id-pair` is the identity on a 16-byte all-integer struct, which is
 ;; register-resident -- it is carried in a register pair end-to-end, so the
 ;; passthrough needs NO memory traffic at all: zero byte-copies and zero stores
 ;; (before register-residency this copied the 16 bytes through a slot). The
@@ -47314,7 +47532,7 @@
   (+ (score (Maybe.Some 4))
      (+ (zero-call Maybe.None) (or-zero (Maybe.Pair 3 4)))))")
 
-;; A refutable literal payload subpattern (#651): `(Some 0)` tests the payload
+;; A refutable literal payload subpattern: `(Some 0)` tests the payload
 ;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
 ;; `(Some n)` keeps the match exhaustive.
 (define (compiler-lower-enum-literal-payload-source) : String
@@ -47326,7 +47544,7 @@
     [None 5]))
 (define (main) : i64 0)")
 
-;; A refutable nested-variant payload subpattern (#651): `(Wrap (A n))` tests
+;; A refutable nested-variant payload subpattern: `(Wrap (A n))` tests
 ;; the inner enum's tag and, on mismatch, falls through to `(Wrap inner)` (the
 ;; irrefutable Wrap arm keeps the match exhaustive).
 (define (compiler-lower-enum-nested-payload-source) : String
@@ -47514,7 +47732,7 @@
     [(ResultCompilerLower.Ok _ _) true]
     [(ResultCompilerLower.Err _) false]))
 
-;; Provenance side-table smoke (#605): the smoke source defines two functions
+;; Provenance side-table smoke: the smoke source defines two functions
 ;;
 ;; (`inc` on line 3 and `main` on line 4 with its body on line 5). After lowering
 ;;
@@ -47522,7 +47740,7 @@
 ;;
 ;; recording each function body's source start line. The instruction/value span
 ;;
-;; side table should also receive entries from expression-backed emits (#744).
+;; side table should also receive entries from expression-backed emits.
 (define (compiler-lower-span-start-line-ok?
   [spans : CompilerSourceSpans]
   [name : String]
@@ -47585,7 +47803,7 @@
     [(ResultCompilerLower.Err _) false]))
 
 ;; Count `CompilerIrInstr.Phi` nodes, to assert the merge-phi shape of lowered scalar
-;; matches (#602): value-returning matches emit a merge phi, unit matches none.
+;; matches: value-returning matches emit a merge phi, unit matches none.
 (define (lower-test-instr-phi-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.Phi _ _ _) 1]
@@ -50752,8 +50970,8 @@
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "big-use") 1)
-            ;; #2386: `Big` is a 16-byte all-integer struct, now register-resident,
-            ;; so building `(Big 1 2)` no longer heap-allocates -- the value is
+            ;; `Big` is a 16-byte all-integer struct, register-resident,
+            ;; so building `(Big 1 2)` does not heap-allocate -- the value is
             ;; constructed in a register pair. The Win64 C ABI still requires the
             ;; >8 B aggregate to be passed BY REFERENCE, so exactly one tl_alloc
             ;; remains: the byref buffer the register pair is spilled into before
@@ -51425,7 +51643,7 @@
     (compiler-lower-tail-indirect-aggregate-return-shape-ok?)
     (compiler-lower-tail-cleanup-shape-ok?)))
 
-;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
+;; CTFE fold verification: a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected literal and no
 ;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
 (define (lower-test-instr-i64-mov-count [instr : CompilerIrInstr] [want : i64]) : i64
@@ -53569,7 +53787,7 @@
             (> (lower-test-function-gep-offset-count functions "main" 12) 0))])]
     [(ResultCompilerLower.Err _) false]))
 
-;; `foreach` scalar lowering (#1012): a foreach `main` lowers to a loop, so its
+;; `foreach` scalar lowering: a foreach `main` lowers to a loop, so its
 ;; body holds at least the guard branch (`i < end`) and two binops (the `<`
 ;; guard and the `+ 1` increment).
 (define (compiler-lower-foreach-shape-ok? [src : String]) : bool
@@ -54720,9 +54938,9 @@
       8)
     true))
 
-;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
+;; `spmd-reduce` lowering: integer and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment
-;; binops), while the not-yet-lowered min/max/all/any ops reject gracefully.
+;; binops), and the min/max/all/any reduction ops lower as well.
 (define (compiler-lower-spmd-reduce-tests-ok?) : bool
   (and
     (compiler-lower-ok?
@@ -54744,7 +54962,7 @@
 
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,
-;; complementing the `+`/`<`/`*`/`let` cases already in the self-test (#1043).
+;; complementing the `+`/`<`/`*`/`let` cases already in the self-test.
 (define (compiler-lower-comptime-op-fold-tests-ok?) : bool
   (and
     (compiler-lower-comptime-fold-ok?
@@ -54775,7 +54993,7 @@
       "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
       42)))
 
-;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
+;; `size-of`/`align-of` comptime layout queries: a scalar type
 ;; folds to its byte size / alignment (equal for primitives) inside `(comptime ...)`.
 (define (compiler-lower-layout-query-fold-tests-ok?) : bool
   (and
@@ -54824,7 +55042,7 @@
       "(define (main) : i64 (size-of (type i64)))"
       "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
 
-;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
+;; `and`/`or` short-circuit lowering: `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
 ;; of two boolean params must emit at least one branch and NO eager binop (the
 ;; old `CompilerIrBinOp.And`/`CompilerIrBinOp.Or` path would have produced one binop and no branch).

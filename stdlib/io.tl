@@ -1,4 +1,4 @@
-;# File I/O utility library for TypeLisp (#702).
+;# File I/O utility library for TypeLisp.
 ;#
 ;# Provides file, argv, panic, and stdio helpers through direct extern bindings
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
@@ -51,7 +51,7 @@
     (set! io-private-error-code code)
     unit))
 
-;: Windows kernel32 bindings backing the file-IO primitives (#2142 slice 1).
+;: Windows kernel32 bindings backing the file-IO primitives.
 ;: These replace the former backend-emitted `_open`/`_read`/`_write`/`_close`/
 ;: `_lseeki64`/`_access` CRT-ABI shims: the TypeLisp bodies below call kernel32
 ;: directly, mirroring how the Linux side issues raw syscalls.
@@ -227,7 +227,7 @@
         (cast 0 : i32)))))
 
 ;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
-;: former backend `exit` CRT-ABI shim (#2142 slice 1).
+;: former backend `exit` CRT-ABI shim.
 (cfg
   windows
   (extern (io-win-exit-process [arg0 : i32]) : never (:symbol "ExitProcess")))
@@ -1733,8 +1733,7 @@
 
 ;: Streaming file read chunk backed by active-arena owned bytes.
 ;:
-;: `bytes` currently uses `String` as a byte container until #807 splits text
-;: strings from binary byte slices.
+;: `bytes` uses `String` as a byte container.
 (defstruct FileRead
   (bytes String)
   (eof bool))
@@ -1746,9 +1745,7 @@
 
 ;: Stdin read result containing the bytes/text read plus the post-read EOF flag.
 ;:
-;: `text` is currently a `String` for both line and fixed-byte reads. This will
-;: remain source-compatible but may gain a byte-slice variant after #807 splits
-;: owned text strings from borrowed/binary bytes.
+;: `text` is a `String` for both line and fixed-byte reads.
 (defstruct StdinRead
   (text String)
   (eof bool))
@@ -1942,9 +1939,8 @@
 
 ;: Read up to `count` bytes from a stdlib-managed read-mode file handle.
 ;:
-;: The returned bytes are represented as `String` until #807 adds a distinct
-;: byte-string/slice type. A short read does not imply EOF; EOF becomes true
-;: only after the stdlib receives a zero-byte host read.
+;: The returned bytes are represented as `String`. A short read does not imply
+;: EOF; EOF becomes true only after the stdlib receives a zero-byte host read.
 (define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
   (if (< count 0)
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
@@ -2099,8 +2095,7 @@
 
 ;: Read up to `count` bytes from stdin and report post-read EOF.
 ;:
-;: The returned bytes are represented as `String` until #807 adds a distinct
-;: byte-string/slice type.
+;: The returned bytes are represented as `String`.
 (define (stdin-read-bytes [count : i64]) : StdinRead
   (let
     [text : String (read-stdin-bytes count)]
@@ -2161,7 +2156,7 @@
           (/ 1 0)
           unit)))))
 
-;; Inline coverage migrated from stdlib/tests/io_edges.tl (#3085).
+;; Inline test coverage.
 (cfg
   test
   (define (io-edges-test-fail [message : String]) : unit
@@ -2416,7 +2411,7 @@
       unit
       (io-edges-test-fail "io-edges-api did not return 42"))))
 
-;; Inline coverage migrated from stdlib/tests/io_file_handle.tl (#3085).
+;; Inline test coverage.
 (cfg
   test
   (define (io-handle-test-fail [message : String]) : unit

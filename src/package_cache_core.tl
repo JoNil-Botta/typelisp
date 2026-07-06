@@ -1,4 +1,4 @@
-;; package_cache_core.tl - Deterministic package cache layout helpers (#2002).
+;; package_cache_core.tl - Deterministic package cache layout helpers.
 ;;
 ;; This module plans local cache entries for normalized remote package
 ;; dependencies and classifies existing entries as reusable, missing, or

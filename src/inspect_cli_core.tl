@@ -1,4 +1,4 @@
-;; inspect_cli_core.tl - Public tlci inspection command (#2655).
+;; inspect_cli_core.tl - Public tlci inspection command.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)

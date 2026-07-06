@@ -1,4 +1,4 @@
-;; format_rules.tl - TypeLisp-aware formatter rules (#367).
+;; format_rules.tl - TypeLisp-aware formatter rules.
 ;;
 ;; `format_core.tl` stays syntax-neutral. This module adds deterministic
 ;; gofmt-like rules for common TypeLisp special forms. The normal source

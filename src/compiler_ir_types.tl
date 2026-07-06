@@ -1,4 +1,4 @@
-;; compiler_ir_types.tl - Self-hosted compiler IR model (#446).
+;; compiler_ir_types.tl - Self-hosted compiler IR model.
 ;;
 ;; This is the first selfhost IR shape for the real compiler pipeline. The data
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
@@ -212,7 +212,7 @@
   (Branch CompilerIrValue String String)
   (Return CompilerIrMaybeValue)
   (Phi i64 CompilerIrPhiInputList AstType)
-  ;; #2386 multi-word register-resident aggregates: a small (<=16 B) inline
+  ;; Multi-word register-resident aggregates: a small (<=16 B) inline
   ;; struct/enum whose fields are all word-class can live in N general-purpose
   ;; registers (N = ceil(size/8)) instead of a memory slot. CompilerIrInstr.Pack forms
   ;; such a group var `dst` (typed `ty`, the aggregate type) from its N word
@@ -477,8 +477,8 @@
 (define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
   (= (struct-get instrs len) 0))
 
-;; #2357: MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum
-;; (#1867), so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
+;; MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum,
+;; so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
 ;; garbage; the array macro lowers with the correct element size.
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
@@ -626,7 +626,7 @@
 (define (compiler-ir-block-seq-count [blocks : CompilerIrBlockSeq]) : i64
   (struct-get blocks len))
 
-;; #2357: MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
+;; MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
 (define (compiler-ir-block-seq-ref [blocks : CompilerIrBlockSeq] [index : i64]) : CompilerIrBlock
   (array-ref (struct-get blocks slots) index))
 
@@ -982,8 +982,8 @@
 
 ;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
 ;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
-;; source's ty-pool nodes. That breaks the per-function optimizer arena escape
-;; (#1633): a type pushed during optimization lives in the scratch arena, so a
+;; source's ty-pool nodes. That breaks the per-function optimizer arena
+;; escape: a type pushed during optimization lives in the scratch arena, so a
 ;; shared id dangles once the scratch is rewound. Re-pushing each child here puts
 ;; the cloned subtree's nodes in the (enclosing) arena current during the escape
 ;; clone, so the escaped function owns valid type nodes after the rewind.
@@ -2135,7 +2135,7 @@
     [(CompilerIrInstr.TailCallIndirect _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Switch _ _ _ _) CompilerIrEffect.ControlFlow]))
 
-;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
+;; Source provenance side table for the lowered IR. Kept OUTSIDE
 ;;
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged,
 ;;
@@ -2624,7 +2624,7 @@
             (compiler-source-spans-value-key function dst))]
         [_ (CompilerMaybeSourceSpan.No)])]))
 
-;; Number of recorded entries; supports provenance smoke assertions (#605).
+;; Number of recorded entries; supports provenance smoke assertions.
 (define (compiler-source-spans-entry-list-count
   [entries : CompilerSourceSpansEntryList]) : i64
   (match entries

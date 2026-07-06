@@ -1,23 +1,22 @@
 ;; read.tl - The s-expression READER for TypeLisp's own syntax, factored out
-;; as a `main`-less, importable module (refs #27/#44).
+;; as a `main`-less, importable module.
 ;;
 ;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for reusable reader code, refs
-;; #44/#81).
+;; Why this module exists (the module signal for reusable reader code).
 ;; --------------------------------------------------------------------------
 ;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
 ;; `main` that reads a sample and folds the resulting tree with `sum-ints`.
 ;; Reusable frontend modules need the reader's `read : (-> (Array token.Token) Sexpr)`
 ;; and the `Sexpr` AST it builds without inheriting that demo `main`.
 ;;
-;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
+;; The legacy stage0 module loader is whole-program: it concatenates every
 ;; imported module's declarations into a single program, then runs the unchanged
 ;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
-;; `main` and are loaded together produce a duplicate `main` symbol - the known
-;; legacy limitation. The selfhost namespace model specified in SPEC.md replaces
+;; `main` and are loaded together produce a duplicate `main` symbol. The
+;; selfhost namespace model specified in SPEC.md replaces
 ;; this flat import behavior with qualified module identities. Importing
 ;; `reader.tl` (which HAS a `main`) into another command driver that also needs
-;; a `main` would clash today.
+;; a `main` would clash.
 ;;
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
@@ -39,7 +38,7 @@
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------
-;; The Sexpr AST: cons cells, the way Lisp represents read source (refs #13/#27).
+;; The Sexpr AST: cons cells, the way Lisp represents read source.
 ;; --------------------------------------------------------------------------
 ;; An s-expression is an atom (an integer, float, or symbol), the empty list, or a cons
 ;; cell pairing a head s-expression with a tail s-expression. A *proper list*
@@ -50,10 +49,10 @@
 ;; finite and every constructed node that escapes via a return is heap-promoted.
 ;; The reader builds this tree; importers can walk it with `match`-based
 ;; recursion. `Sexpr.Str` carries the inner text of a `"..."` string-literal
-;; datum: the reader consumes the lexer's `token.Token.Str` token (#128) into it, so a
+;; datum: the reader consumes the lexer's `token.Token.Str` token into it, so a
 ;; quoted string reads as a distinct atom rather than being conflated with a
 ;; `Sexpr.Sym` of the same characters. `Sexpr.Char` carries a character-literal
-;; datum (`'x'`; #333), likewise keeping chars distinct from symbols, ints, and strings. `Sexpr.Str` and `Sexpr.Char`
+;; datum (`'x'`), likewise keeping chars distinct from symbols, ints, and strings. `Sexpr.Str` and `Sexpr.Char`
 ;; are appended last so the existing variants keep their stable ordering for
 ;; every importer.
 (defenum Sexpr
@@ -83,7 +82,7 @@
   (Ok SpannedSexpr)
   (Err token.SourceError))
 
-;; --- flat SpannedSexpr node pool (mirrors the AstExpr flat pool, #2294) ---
+;; --- flat SpannedSexpr node pool (mirrors the AstExpr flat pool) ---
 ;; SpannedSexpr.Cons / SpannedSexpr.BracketList children are i64 ids into this pool instead of
 ;; (box ...). Two plain globals (array + count), NOT a struct, to avoid the
 ;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
@@ -300,8 +299,8 @@
 ;;   token.Token.Int n text -> Sexpr.Int n text  an integer atom with source spelling
 ;;   token.Token.Float s -> Sexpr.Float s        a float atom carrying source text
 ;;   token.Token.Sym s -> Sexpr.Sym s            a symbol atom
-;;   token.Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`, refs #128)
-;;   token.Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`, refs #333)
+;;   token.Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`)
+;;   token.Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`)
 ;;   token.Token.LParen -> read-list             consume '(' then read a list to its ')'
 ;;   token.Token.RParen -> error                 a stray ')' with no opening '(' is malformed
 ;;   token.Token.End -> error                    end of stream where a form was expected

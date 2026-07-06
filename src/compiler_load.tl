@@ -1846,9 +1846,7 @@
                     "compiler-load: GitHub dependency '"
                     (string.append
                       first
-                      (string.append
-                        "' requires fetch support (#1157): "
-                        module-name))))
+                      (string.append "' requires fetch support: " module-name))))
                 (ResultPkgResolve.Ok
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
@@ -8212,7 +8210,7 @@
           [_ false])]
       [(CompilerLoadNoDecl) false])))
 
-;; Diamond import dedup (#1074 / #1041): entry imports A and B, both of which
+;; Diamond import dedup: entry imports A and B, both of which
 ;; import C; C must load exactly once. Writes fixture modules under target/ and
 ;; loads through the file loader, mirroring the existing dedup/cycle self-test.
 (define (compiler-load-diamond-import-ok?) : bool
@@ -8249,7 +8247,7 @@
           (sym_i64_env.sym-i64-contains seen "diamond.entry"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
-;; Transitive import dedup (#1074 / #1041): entry imports A, A imports B, B
+;; Transitive import dedup: entry imports A, A imports B, B
 ;; imports C; the whole chain loads with the deterministic loaded decl count and
 ;; every module recorded in the seen set.
 (define (compiler-load-transitive-import-ok?) : bool
@@ -8284,7 +8282,7 @@
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; An `(import ...)` of a path that does not resolve to a readable file reports
-;; a `cannot read import <path>` diagnostic (the imported-file diagnostic; #1074).
+;; a `cannot read import <path>` diagnostic (the imported-file diagnostic).
 (define (compiler-load-missing-import-ok?) : bool
   (match (compiler-load-source
     "src/app.tl"
@@ -8416,7 +8414,7 @@
       false]))
 
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
-;; imported file (not the importer), preserving imported-file provenance (#1074).
+;; imported file (not the importer), preserving imported-file provenance.
 (define (compiler-load-imported-parse-error-path-ok?) : bool
   (begin
     (io.write-file
@@ -8442,7 +8440,7 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A duplicate `(module ...)` declaration inside an imported file surfaces a
-;; diagnostic whose path is the imported file, not the importer (#1074).
+;; diagnostic whose path is the imported file, not the importer.
 (define (compiler-load-imported-duplicate-module-path-ok?) : bool
   (begin
     (io.write-file
@@ -8469,7 +8467,7 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A `stdlib/<x>` import whose importer-relative path is absent resolves through
-;; a configured `--stdlib-root` (root fallback) (#1074).
+;; a configured `--stdlib-root` (root fallback).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
     (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
@@ -8488,7 +8486,7 @@
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; `--stdlib-root` resolution searches roots in order; the first existing
-;; candidate wins, so a missing leading root is skipped (#1074).
+;; candidate wins, so a missing leading root is skipped.
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
     (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
@@ -8507,7 +8505,7 @@
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; A `stdlib/<x>` import found in no configured root reports a cannot-read
-;; diagnostic naming the importer-relative candidate path (#1074).
+;; diagnostic naming the importer-relative candidate path.
 (define (compiler-load-stdlib-unresolved-ok?) : bool
   (begin
     (io.write-file
@@ -8526,7 +8524,7 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A configured stdlib root must not serve a suffix that lexically escapes the
-;; root with `..` (#1681).
+;; root with `..`.
 (define (compiler-load-stdlib-root-escape-rejected-ok?) : bool
   (let
     [root-dir : String "target/cl_sre_root"]
@@ -8550,7 +8548,7 @@
         [(ResultCompilerLoadWithPaths.Err _) true]
         [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
-;: --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
+;: --- typelisp.pkg manifest parser --------------------------------------------
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
 ;:   (package (name "...") (version "...") (kind "bin") (entry "...")
 ;:            (dependencies (alias "path") ...))
@@ -10150,7 +10148,7 @@
     (compiler-load-manifest-link-default-ok?)
     (compiler-load-manifest-link-rejections-ok?)))
 
-;: Aggregate manifest-parser self-test (#834).
+;: Aggregate manifest-parser self-test.
 (define (compiler-load-pkg-manifest-ok?) : bool
   (and
     (compiler-load-manifest-valid-full-ok?)
@@ -10172,7 +10170,7 @@
     (compiler-load-pkg-manifest-github-validation-ok?)
     (compiler-load-pkg-manifest-diagnostic-ok?)))
 
-;: --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
+;: --- pkg:<alias>/... import resolution ---------------------------------------
 ;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
 ;: list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
 ;: normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
@@ -10242,9 +10240,7 @@
                     "compiler-load: GitHub dependency '"
                     (string.append
                       alias
-                      (string.append
-                        "' requires fetch support (#1157): "
-                        import-path))))
+                      (string.append "' requires fetch support: " import-path))))
                 (let
                   [norm-rest : String (compiler-load-normalize-path rest)]
                   (if (compiler-load-path-escapes? norm-rest)
@@ -10351,7 +10347,7 @@
     [(ResultPkgResolve.Err m) (string.eq m expected)]
     [(ResultPkgResolve.Ok _) false]))
 
-;: Aggregate pkg-import resolution self-test (#834).
+;: Aggregate pkg-import resolution self-test.
 (define (compiler-load-pkg-resolve-ok?) : bool
   (and
     (compiler-load-pkg-resolves? "pkg:math/src/add.tl" "math/src/add.tl")
@@ -10367,7 +10363,7 @@
       "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl")
     (compiler-load-pkg-resolve-rejects?
       "pkg:remote/src/lib.tl"
-      "compiler-load: GitHub dependency 'remote' requires fetch support (#1157): pkg:remote/src/lib.tl")))
+      "compiler-load: GitHub dependency 'remote' requires fetch support: pkg:remote/src/lib.tl")))
 
 ;: True when `parent-dir dir` yields exactly `expected`.
 (define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool
@@ -10382,7 +10378,7 @@
     [(CompilerLoadSomePath _) false]))
 
 ;: The manifest-discovery walk-up steps one directory at a time, descending to
-;: the cwd (``) before stopping (#834).
+;: the cwd (``) before stopping.
 (define (compiler-load-pkg-parent-dir-ok?) : bool
   (and
     (compiler-load-pkg-parent-dir-is? "a/b/" "a/")
@@ -10424,7 +10420,7 @@
       (compiler-pkg-deps-alias-seen? deps "beta")
       (compiler-load-manifest-dep-path-is? deps "beta" "dep-beta"))))
 
-;; relative-resolution variants (#1074): importer-relative join, parent-directory
+;; relative-resolution variants: importer-relative join, parent-directory
 ;; (`..`) resolution end-to-end (join then normalize), and absolute-path
 ;; preservation (Unix-rooted and Windows-drive imports ignore the importer dir).
 ;; Pure path-string logic; complements `compiler-load-normalize-ok?` which covers

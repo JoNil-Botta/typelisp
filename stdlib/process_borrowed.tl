@@ -1,4 +1,4 @@
-;# Borrowed process command storage companion surface (#1915).
+;# Borrowed process command storage companion surface.
 ;#
 ;# `ProcessBorrowedCommand` stores executable, argv, cwd, env, and stdin text as
 ;# `(& lifetime str)` values without copying at each builder step. Rendering to

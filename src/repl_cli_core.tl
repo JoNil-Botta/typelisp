@@ -1,4 +1,4 @@
-;; repl_cli_core.tl - Selfhost REPL session command logic (#591/#798/#1641).
+;; repl_cli_core.tl - Selfhost REPL session command logic.
 ;;
 ;; Shared by the retained `repl.tl` compatibility/coverage wrapper and the
 ;; unified `cli.tl` dispatcher.

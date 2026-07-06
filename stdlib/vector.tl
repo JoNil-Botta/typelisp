@@ -1,4 +1,4 @@
-;# Generated concrete vector family (collections v1, #835/#1989).
+;# Generated concrete vector family (collections v1).
 ;#
 ;# A growable, owned sequence built on the fixed `(Array T)` primitive: a
 ;# backing array plus a live-element count (`len`). Capacity is the backing array
@@ -19,9 +19,8 @@
 ;# move pattern as scalar and `String` families: `push`/`set!` move the element
 ;# into a live slot, `pop` moves the last live element out with the shrunk
 ;# vector, and copying/growth/snapshot helpers move the live prefix into fresh
-;# arrays. On the current handle representation aggregate elements occupy
-;# handle slots; after the inline-aggregate representation flip (#1867/#2357)
-;# the same source API stores aggregate elements inline in the backing array.
+;# arrays. The same source API works whether aggregate elements occupy handle
+;# slots or are stored inline in the backing array.
 ;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
@@ -64,7 +63,6 @@
 (module stdlib.vector)
 
 (import stdlib.array)
-(import stdlib.comptime)
 
 ;: Local string equality fallback used when bootstrapping with a compiler that
 ;: does not yet expose private string intrinsics.
@@ -89,15 +87,14 @@
 ;: Emit a generated growable vector module for element type `T`.
 (defmacro (vector [T : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append "stdlib.vector.generated." (type-key T)))]
-    [vec-name : comptime.Expr (comptime.expr-var "Vec")]
-    [pop-name : comptime.Expr (comptime.expr-var "Pop")]
-    [pop-empty-name : comptime.Expr (comptime.expr-var "Pop.Empty")]
-    [pop-ok-name : comptime.Expr (comptime.expr-var "Pop.Ok")]
+    [module-name : Expr
+      (expr-var (string-append "stdlib.vector.generated." (type-key T)))]
+    [vec-name : Expr (expr-var "Vec")]
+    [pop-name : Expr (expr-var "Pop")]
+    [pop-empty-name : Expr (expr-var "Pop.Empty")]
+    [pop-ok-name : Expr (expr-var "Pop.Ok")]
     [kind : String (type-kind T)]
-    [eq-body : comptime.Expr
+    [eq-body : Expr
       (match kind
         ["string"
           `(cfg
@@ -130,7 +127,7 @@
         ["f64" `(= a b)]
         ["f32" `(= a b)]
         [_ `false])]
-    [contains-hit : comptime.Expr
+    [contains-hit : Expr
       (match kind
         ["string"
           `(cfg
@@ -361,30 +358,22 @@
 ;: `pop`, so it can store aggregate values that are not cloneable.
 (defmacro (family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
   (match prefix
-    [(comptime.ExprVar base)
+    [(ExprVar base)
       (match vec-name
-        [(comptime.ExprVar _)
+        [(ExprVar _)
           (let
-            [slots-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-slots"))]
-            [len-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-len"))]
-            [capacity-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-capacity"))]
-            [with-capacity-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-with-capacity"))]
-            [new-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-new"))]
-            [get-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-get"))]
-            [set-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-set!"))]
-            [copy-range-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-copy-range"))]
-            [grow-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-grow"))]
-            [push-name : comptime.Expr
-              (comptime.expr-var (comptime.string-append base "-push"))]
+            [slots-name : Expr (expr-var (string-append base "-slots"))]
+            [len-name : Expr (expr-var (string-append base "-len"))]
+            [capacity-name : Expr (expr-var (string-append base "-capacity"))]
+            [with-capacity-name : Expr
+              (expr-var (string-append base "-with-capacity"))]
+            [new-name : Expr (expr-var (string-append base "-new"))]
+            [get-name : Expr (expr-var (string-append base "-get"))]
+            [set-name : Expr (expr-var (string-append base "-set!"))]
+            [copy-range-name : Expr
+              (expr-var (string-append base "-copy-range"))]
+            [grow-name : Expr (expr-var (string-append base "-grow"))]
+            [push-name : Expr (expr-var (string-append base "-push"))]
             `(begin
               (defstruct ,vec-name
                 (slots (Array ,T))
@@ -1060,7 +1049,7 @@
   (define (string-vec-contains? [v : (& v StringVec)] [x : String]) : bool
     (string-vec-contains-from? v x 0)))
 
-;; Inline coverage migrated from stdlib/tests/vector_api.tl (#3082).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 
 (cfg
@@ -1660,7 +1649,7 @@
             (vector-test-pop-value-or pe -1)
             -1
             "empty pop value fallback")))
-      ;; --- from-array / to-array round-trip (#1212) ---
+      ;; --- from-array / to-array round-trip ---
       (let
         [src : (Array i64) (array.make-array i64 3)]
         (begin
@@ -1718,7 +1707,7 @@
                   (test.assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
                   (test.assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
                   (test.assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
-      ;; --- I64Vec higher-order fold/map helpers (#2067) ---
+      ;; --- I64Vec higher-order fold/map helpers ---
       (let
         [src : (Array i64) (array.make-array i64 5)]
         (begin
@@ -1944,7 +1933,7 @@
                               (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
                             107
                             "tag snapshot independent")))))))))))
-      ;; --- generated nominal struct element vector witness (#2564) ---
+      ;; --- generated nominal struct element vector witness ---
       (let
         [pv2 : VecApiPointVec
           (vec-api-point-vec-push

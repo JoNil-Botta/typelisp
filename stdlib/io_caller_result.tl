@@ -1,4 +1,4 @@
-;# Lifetime-preserving I/O caller-result APIs (#1913/#1962).
+;# Lifetime-preserving I/O caller-result APIs.
 ;#
 ;# This module stays separate from `io.tl` while the compatibility wrapper keeps
 ;# the owned `String` API. It exposes helpers that may return caller-provided

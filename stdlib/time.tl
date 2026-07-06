@@ -1,9 +1,9 @@
-;# Portable wall-clock and monotonic timestamp helpers (#2679).
+;# Portable wall-clock and monotonic timestamp helpers.
 ;#
 ;# This module owns user-facing time names separately from `profile.tl`.
 ;# It exposes coarse millisecond timestamps only: Unix wall-clock milliseconds
 ;# and monotonic elapsed milliseconds. Calendar conversion, formatting, time
-;# zones, locale behavior, sleep, timers, and scheduling are deferred.
+;# zones, locale behavior, sleep, timers, and scheduling are out of scope.
 ;#
 ;# Usage: `(import stdlib.time)`
 ;#

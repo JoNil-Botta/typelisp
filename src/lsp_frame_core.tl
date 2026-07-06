@@ -1,4 +1,4 @@
-;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice (#592/#789).
+;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice.
 ;;
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
@@ -4766,7 +4766,7 @@
         (LspHandleResult.Continue docs))]))
 
 ;; tl/expandMacro - Find the form at cursor position and return its text
-;; For now, returns the top-level form by name.
+;; Returns the top-level form by name.
 ;; Full macro expansion would require compiler macro expansion integration.
 (define (lsp-handle-tl-expand-macro
   [id : json.Json]

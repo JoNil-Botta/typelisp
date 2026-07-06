@@ -1,4 +1,4 @@
-;# stdlib/runtime.tl - Always-linked runtime prelude (#2142 / #2150).
+;# stdlib/runtime.tl - Always-linked runtime prelude.
 ;#
 ;# This module holds the pieces of the runtime that call into the OS but that
 ;# the backend used to hand-write as assembly: the fault/abort handlers
@@ -209,7 +209,7 @@
       unit)))
 
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
-;: symbol (#2143) so the backend's emitted bounds checks call it unchanged.
+;: symbol so the backend's emitted bounds checks call it unchanged.
 (define (tl-runtime-oob-abort)
   (:export-symbol "tl_oob_abort") : never
   (begin
@@ -483,7 +483,7 @@
     (abort-write "tl: invalid region mark\n")
     (os-exit 134)))
 
-;: Out-of-memory abort, exported as `tl_oom_abort` (#2221). Reached from the
+;: Out-of-memory abort, exported as `tl_oom_abort`. Reached from the
 ;: allocator (`tl_alloc`) when it cannot obtain more memory, so it MUST NOT
 ;: allocate: `abort-write` only takes the address/length of a static
 ;: string literal, and current Windows builds use `ptr-addr-of` so

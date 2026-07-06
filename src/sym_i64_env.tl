@@ -1,5 +1,5 @@
 ; sym_i64_env module - Immutable scoped interned-symbol -> i64 table.
-; A focused child of #42: functional binding, head-first lookup, shadowing.
+; Functional binding, head-first lookup, shadowing.
 (module sym_i64_env)
 
 (import compiler_intern as ci)

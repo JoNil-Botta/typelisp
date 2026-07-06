@@ -864,7 +864,7 @@
                   unit
                   (fail))))))))))
 
-;; Inline coverage migrated from stdlib/tests/string_edges.tl (#3082).
+;; Inline test coverage.
 (cfg test (import stdlib.test))
 
 (cfg

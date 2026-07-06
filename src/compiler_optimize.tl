@@ -31430,20 +31430,37 @@
               (opt-reach-add-function index state name)
               state))])]))
 
+;; Return the byte offset just past the last '/' or ':' separator in `name`
+;; (0 when there is none). Scanning backward from the end stops at the final
+;; separator instead of walking the whole string, and reading the raw String
+;; bytes skips the per-char bounds check of `string.string-ref`. This runs once
+;; per call target in the reachability pass, so it is one of the optimizer's
+;; hottest predicates in the self-compile.
 (define (opt-symbol-leaf-start [name : String]) : i64
   (let
-    [i : i64 0]
     [n : i64 (string.string-length name)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data name))]
+    [i : i64 (- n 1)]
     [start : i64 0]
+    [done : bool false]
     (begin
-      (while (< i n)
-        (begin
-          (if (or
-            (= (string.string-ref name i) '/')
-            (= (string.string-ref name i) ':'))
-            (set! start (+ i 1))
-            unit)
-          (set! i (+ i 1))))
+      (while (if done
+        false
+        (>= i 0))
+        (let
+          ;; '/' = 47, ':' = 58
+          [b : i64
+            (unsafe
+              (cast (ptr-read (ptr-offset data i)) : i64))]
+          (if (if (= b 47)
+            true
+            (= b 58))
+            (begin
+              (set! start (+ i 1))
+              (set! done true))
+            (set! i (- i 1)))))
       start)))
 
 ;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf).
@@ -31458,17 +31475,25 @@
     (if (not (= (- n start) leaf-len))
       false
       (let
+        [name-data : (Ptr u8)
+          (unsafe
+            (string-data name))]
+        [leaf-data : (Ptr u8)
+          (unsafe
+            (string-data leaf))]
         [ok : bool true]
         [i : i64 0]
         (begin
-          (while (and ok (< i leaf-len))
-            (begin
-              (if (=
-                (string.string-ref name (+ start i))
-                (string.string-ref leaf i))
-                unit
-                (set! ok false))
-              (set! i (+ i 1))))
+          (while (if ok
+            (< i leaf-len)
+            false)
+            (if (=
+              (unsafe
+                (ptr-read (ptr-offset name-data (+ start i))))
+              (unsafe
+                (ptr-read (ptr-offset leaf-data i))))
+              (set! i (+ i 1))
+              (set! ok false)))
           ok)))))
 
 (define (opt-symbol-leaf [name : String]) : String

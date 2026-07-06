@@ -9044,9 +9044,9 @@
 ;: An empty link scope (no libraries, search paths, or args).
 (define (compiler-pkg-link-set-empty) : CompilerPkgLinkSet
   (CompilerPkgLinkSet
-    (fs.fs-string-vector-new)
-    (fs.fs-string-vector-new)
-    (fs.fs-string-vector-new)))
+    (fs.string-vector-new)
+    (fs.string-vector-new)
+    (fs.string-vector-new)))
 
 ;: An empty `(link ...)` section (every scope empty).
 (define (compiler-pkg-link-empty) : CompilerPkgLink
@@ -9154,7 +9154,7 @@
   [acc : fs.FsStringVector]) : ResultPkgStrVec
   (match values
     [(Sexpr.Nil)
-      (if (= (fs.fs-string-vector-len (& acc)) 0)
+      (if (= (fs.string-vector-len (& acc)) 0)
         (ResultPkgStrVec.Err
           (string.append
             "`link` field `"
@@ -9171,7 +9171,7 @@
             (let
               [out : fs.FsStringVector acc]
               (begin
-                (fs.fs-string-vector-push! (&mut out) val)
+                (fs.string-vector-push! (&mut out) val)
                 (compiler-load-manifest-link-values (box-get vrest) fname out))))]
         [_
           (ResultPkgStrVec.Err
@@ -9198,7 +9198,7 @@
         (string.append "unknown `link` field `" (string.append fname "`")))
       (let
         [existing : fs.FsStringVector (compiler-pkg-link-get-vec acc scope cat)]
-        (if (> (fs.fs-string-vector-len (& existing)) 0)
+        (if (> (fs.string-vector-len (& existing)) 0)
           (ResultCompilerPkgLink.Err
             (string.append "duplicate `link` field `" (string.append fname "`")))
           (ResultCompilerPkgLink.Ok
@@ -9218,7 +9218,7 @@
               (match (compiler-load-manifest-link-values
                 (box-get etail)
                 fname
-                (fs.fs-string-vector-new))
+                (fs.string-vector-new))
                 [(ResultPkgStrVec.Err m) (ResultCompilerPkgLink.Err m)]
                 [(ResultPkgStrVec.Ok values)
                   (match (compiler-load-manifest-link-store acc fname values)
@@ -10055,15 +10055,15 @@
 
 ;: True when a package link string vector is empty.
 (define (compiler-load-link-vec-empty? [vec : (& vec fs.FsStringVector)]) : bool
-  (= (fs.fs-string-vector-len vec) 0))
+  (= (fs.string-vector-len vec) 0))
 
 ;: True when a package link string vector holds exactly one value equal to `a`.
 (define (compiler-load-link-vec-single?
   [vec : (& vec fs.FsStringVector)]
   [a : String]) : bool
   (and
-    (= (fs.fs-string-vector-len vec) 1)
-    (string.eq (fs.fs-string-vector-get vec 0 "") a)))
+    (= (fs.string-vector-len vec) 1)
+    (string.eq (fs.string-vector-get vec 0 "") a)))
 
 ;: True when a package link string vector holds exactly `a` then `b`, in order.
 (define (compiler-load-link-vec-pair?
@@ -10071,9 +10071,9 @@
   [a : String]
   [b : String]) : bool
   (and
-    (= (fs.fs-string-vector-len vec) 2)
-    (string.eq (fs.fs-string-vector-get vec 0 "") a)
-    (string.eq (fs.fs-string-vector-get vec 1 "") b)))
+    (= (fs.string-vector-len vec) 2)
+    (string.eq (fs.string-vector-get vec 0 "") a)
+    (string.eq (fs.string-vector-get vec 1 "") b)))
 
 ;: Self-test: a `(link ...)` section parses into all-target and per-target sets
 ;: with manifest order preserved.

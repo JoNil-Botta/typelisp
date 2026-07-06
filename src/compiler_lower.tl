@@ -4749,11 +4749,17 @@
       state)))
 
 (define (lower-reach-used-type-name-add-source! [source : String] [name : i64]) : unit
-  (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
-    (set!
-      lower-reach-active-body-used-types
-      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
-    unit))
+  ;; Intern `source` once and read both id-keyed metadata slots, instead of
+  ;; hashing it twice (qualified? + first-dot). Refs #4427.
+  (let
+    [source-id : i64 (intern source)]
+    (if (or
+      (tc-name-qualified-id? source-id)
+      (>= (intern-first-dot source-id) 0))
+      (set!
+        lower-reach-active-body-used-types
+        (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+      unit)))
 
 (define (lower-reach-used-types-add-pattern-roots! [pattern : AstPattern]) : unit
   (match pattern
@@ -7258,7 +7264,9 @@
   (let
     [source : String (intern-str name)]
     [with-source : hashmap.I64I64Map (hashmap.i64-i64-map-put used name 1)]
-    (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+    ;; `name` is already the interned id of `source`, so read the id-keyed
+    ;; metadata slots directly instead of re-hashing `source`. Refs #4427.
+    (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
       (let
         [leaf : String (lower-used-type-name-leaf source)]
         (if (string.eq leaf source)
@@ -7274,7 +7282,8 @@
     true
     (let
       [source : String (intern-str name)]
-      (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+      ;; `name` is already the interned id of `source`. Refs #4427.
+      (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
         (let
           [leaf : String (lower-used-type-name-leaf source)]
           (if (string.eq leaf source)

@@ -9013,8 +9013,18 @@
     [(AstType.Var _) true]
     [_ false]))
 
+;; id-keyed variant: reads the O(1) precomputed "contains-'/'" metadata slot
+;; instead of re-hashing the name. The hygiene check needs the string, which
+;; intern-str recovers in O(1). `tc-name-qualified? name` ==
+;; `tc-name-qualified-id? (intern name)`, so threading the already-interned id
+;; from callers is semantics-preserving and skips the hash. Refs #4427.
+(define (tc-name-qualified-id? [name-id : i64]) : bool
+  (and
+    (not (tc-hygiene-local-name? (intern-str name-id)))
+    (intern-qualified? name-id)))
+
 (define (tc-name-qualified? [name : String]) : bool
-  (and (not (tc-hygiene-local-name? name)) (intern-name-qualified? name)))
+  (tc-name-qualified-id? (intern name)))
 
 (define (tc-name-first-char [name : String] [needle : char]) : i64
   (let
@@ -10849,11 +10859,14 @@
 (define (tc-qualified-lookup-owner-name
   [lookup-name : String]
   [owner-name : String]) : String
-  (if (and
-    (or (tc-name-qualified? lookup-name) (>= (tc-name-first-dot lookup-name) 0))
-    (not (tc-name-qualified? owner-name)))
-    lookup-name
-    owner-name))
+  ;; Intern `lookup-name` once and read both id-keyed slots. Refs #4427.
+  (let
+    [lookup-id : i64 (intern lookup-name)]
+    (if (and
+      (or (tc-name-qualified-id? lookup-id) (>= (intern-first-dot lookup-id) 0))
+      (not (tc-name-qualified? owner-name)))
+      lookup-name
+      owner-name)))
 
 (define tc-nominal-owner-cache-handle : i64
   0)

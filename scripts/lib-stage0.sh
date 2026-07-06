@@ -56,3 +56,28 @@ resolve_stage0_compiler() {
     fi
     printf '%s\n' "$_ls0_bin"
 }
+
+# build_selfhost_stage2 ROOT SEED OUT_DIR
+#   Build the fixpoint opt2 stage2 compiler from SEED and echo its path. Runs
+#   scripts/build-stage0.sh twice (SEED -> stage1 -> stage2); that script
+#   compiles src/main.tl at --opt-level 2, so the result is the same
+#   register-allocated, self-hosted compiler that the published stage0 and the
+#   check-instruction-counts.sh CI gate measure. Local self-compile measurement
+#   and profiling must run this compiler, not the raw seed: the seed is an older
+#   build whose per-function codegen differs, so measuring it does not reflect
+#   the metric CI ratchets (self_compile/compile_cli_opt1). Progress goes to
+#   stderr so the stage2 path stays the only value on stdout.
+build_selfhost_stage2() {
+    _bss_root=$1
+    _bss_seed=$2
+    _bss_dir=$3
+    _bss_suffix=$(stage0_host_exe_suffix)
+    _bss_stage1="$_bss_dir/stage1/typelisp$_bss_suffix"
+    _bss_stage2="$_bss_dir/stage2/typelisp$_bss_suffix"
+    mkdir -p "$_bss_dir/stage1" "$_bss_dir/stage2" || return 1
+    echo "[stage2-build] seed -> stage1: $_bss_stage1" >&2
+    "$_bss_root/scripts/build-stage0.sh" "$_bss_seed" "$_bss_stage1" >&2 || return 1
+    echo "[stage2-build] stage1 -> stage2 (opt2): $_bss_stage2" >&2
+    "$_bss_root/scripts/build-stage0.sh" "$_bss_stage1" "$_bss_stage2" >&2 || return 1
+    printf '%s\n' "$_bss_stage2"
+}

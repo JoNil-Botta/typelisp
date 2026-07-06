@@ -11,6 +11,15 @@ set -eu
 # it. If a future tiny case needs startup exclusion, use callgrind region
 # toggling in a separate gate.
 #
+# The self_compile metric measures an opt2-built stage2 compiling src/main.tl,
+# matching check-instruction-counts.sh (the CI gate) and the number it ratchets
+# (self_compile/compile_cli_opt1). When no compiler is given explicitly, the
+# harness builds that stage2 from the seed (seed -> stage1 -> stage2, opt2) so a
+# standalone run measures the same register-allocated compiler CI does rather
+# than the older seed. Pass a compiler explicitly (positional arg or
+# TYPELISP_BIN) to measure it as-is, or set TYPELISP_IR_SELF_STAGE2=0 to measure
+# the raw seed.
+#
 # The opt-in `--c-scalar` mode (env TYPELISP_IR_MEASURE_C_SCALAR=1) additionally
 # builds each C baseline with clang vectorization disabled
 # (-fno-vectorize -fno-slp-vectorize) and measures it as
@@ -218,6 +227,15 @@ if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     command -v clang >/dev/null 2>&1 || fail "missing tool: clang (C baseline compiler)"
 fi
 
+# SELF_STAGE2 (default on) builds an opt2 stage2 from the seed so a standalone
+# run measures the same register-allocated self-hosted compiler as the CI
+# instruction-count gate (check-instruction-counts.sh passes its bootstrap
+# stage2 in explicitly). An explicit compiler -- a positional seed (CI passes
+# its prebuilt stage2 here) or TYPELISP_BIN -- is measured as given. Set
+# TYPELISP_IR_SELF_STAGE2=0 to measure the raw seed instead (faster, but does
+# not reflect the metric CI ratchets).
+SELF_STAGE2=${TYPELISP_IR_SELF_STAGE2:-1}
+BUILD_STAGE2_FROM_SEED=0
 if [ -n "$SEED_ARG" ]; then
     COMPILER=$SEED_ARG
 elif [ -n "${TYPELISP_BIN:-}" ]; then
@@ -225,6 +243,9 @@ elif [ -n "${TYPELISP_BIN:-}" ]; then
 else
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+    if [ "$SELF_STAGE2" = 1 ]; then
+        BUILD_STAGE2_FROM_SEED=1
+    fi
 fi
 
 [ -x "$COMPILER" ] || {
@@ -234,6 +255,16 @@ fi
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"
+
+if [ "$BUILD_STAGE2_FROM_SEED" -eq 1 ]; then
+    echo "[ir-count] building opt2 stage2 from seed to match the CI self-compile metric" >&2
+    echo "[ir-count]   (set TYPELISP_IR_SELF_STAGE2=0 to measure the raw seed instead)" >&2
+    COMPILER=$(build_selfhost_stage2 "$ROOT" "$COMPILER" "$WORKDIR/stage2-compiler") || exit 1
+    [ -x "$COMPILER" ] || {
+        echo "stage2 compiler not executable after build: $COMPILER" >&2
+        exit 1
+    }
+fi
 RUNS_TSV="$WORKDIR/runs.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
 printf 'kind\tname\trun\tir_count\texit_status\n' > "$RUNS_TSV"

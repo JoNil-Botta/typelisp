@@ -1086,8 +1086,8 @@
   [source : String]) : i64
   (compiler-load-source-index-at-line-col
     source
-    (struct-get span end-line)
-    (struct-get span end-col)))
+    (ast-source-span-end-line span)
+    (ast-source-span-end-col span)))
 
 (define (compiler-load-source-name-before-ok? [source : String] [idx : i64]) : bool
   (or
@@ -3127,7 +3127,7 @@
             [_ false]))])))
 
 (define (compiler-load-surface-zero-span) : AstSourceSpan
-  (AstSourceSpan 0 0 0 0))
+  (ast-source-span 0 0 0 0))
 
 (define (compiler-load-surface-module-maybe [module-name : AstMaybeModuleName]) : CompilerLoadSurfaceMaybeString
   (match module-name
@@ -3693,7 +3693,7 @@
             import-path
             expected-module
             alias
-            (AstSourceSpan 0 0 0 0)))
+            (ast-source-span 0 0 0 0)))
         rest)]
     [(AstMaybeImportAlias.No) rest]))
 

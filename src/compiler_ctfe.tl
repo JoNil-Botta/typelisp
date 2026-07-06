@@ -10203,7 +10203,7 @@
       false
       unit-expr
       unit-expr
-      (AstSourceSpan 0 0 0 0))))
+      (ast-source-span 0 0 0 0))))
 
 (define (ctfe-expr-binding-clause-list-head [lst : AstExprBindingClauseList]) : AstExprBindingClause
   (if (ast-expr-binding-clause-list-empty? (& lst))

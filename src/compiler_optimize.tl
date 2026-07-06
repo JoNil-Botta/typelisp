@@ -33346,15 +33346,15 @@
         [_ (opt-mov-dst-f64-bits? (box-get rest) dst want)])]))
 
 (define (opt-test-span [line : i64] [col : i64]) : AstSourceSpan
-  (AstSourceSpan line col line col))
+  (ast-source-span line col line col))
 
 (define (opt-source-span-line-col-ok?
   [span : AstSourceSpan]
   [line : i64]
   [col : i64]) : bool
   (and
-    (= (struct-get span start-line) line)
-    (= (struct-get span start-col) col)))
+    (= (ast-source-span-start-line span) line)
+    (= (ast-source-span-start-col span) col)))
 
 (define (opt-span-lookup-ok?
   [spans : CompilerSourceSpans]

@@ -47760,7 +47760,7 @@
   [want-line : i64]) : bool
   (match (compiler-source-spans-lookup spans name)
     [(CompilerMaybeSourceSpan.Some span)
-      (= (struct-get span start-line) want-line)]
+      (= (ast-source-span-start-line span) want-line)]
     [(CompilerMaybeSourceSpan.No) false]))
 
 (define (compiler-lower-spans-ok? [src : String]) : bool
@@ -56173,7 +56173,7 @@
             (ast-decl-test
               "uses-imported-mark-annotation"
               test-body
-              (AstSourceSpan 1 1 1 1))
+              (ast-source-span 1 1 1 1))
             (ast-decl-cons
               (ast-decl-def-fn
                 "main"

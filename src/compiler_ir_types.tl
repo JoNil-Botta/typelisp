@@ -4172,8 +4172,8 @@
 
 (define (compiler-ir-source-spans-boxed-list-ok?) : bool
   (let
-    [span1 : AstSourceSpan (AstSourceSpan 1 2 1 3)]
-    [span2 : AstSourceSpan (AstSourceSpan 4 5 4 8)]
+    [span1 : AstSourceSpan (ast-source-span 1 2 1 3)]
+    [span2 : AstSourceSpan (ast-source-span 4 5 4 8)]
     [entries : CompilerSourceSpansEntryList
       (compiler-source-spans-entry-list-append
         (compiler-source-spans-entry-list-append
@@ -4191,8 +4191,8 @@
       (match (compiler-source-spans-entry-list-lookup entries "second")
         [(CompilerMaybeSourceSpan.Some found)
           (and
-            (= (struct-get found start-line) 4)
-            (= (struct-get found end-col) 8))]
+            (= (ast-source-span-start-line found) 4)
+            (= (ast-source-span-end-col found) 8))]
         [(CompilerMaybeSourceSpan.No) false]))))
 
 (define (compiler-ir-instr-list-first-mov-dst?

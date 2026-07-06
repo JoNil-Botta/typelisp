@@ -4819,6 +4819,12 @@
     movq %rax, -80(%rbp)
     movq %rax, 16(%rbp)
     movq %r8, 16(%rbp)
+    movq -88(%rbp), %r12
+    call _tl_side
+    movq -88(%rbp), %rax
+    movq -96(%rbp), %r8
+    call _tl_side
+    movq -96(%rbp), %r10
     movq -8(%rbp), %r8
     addq %r8, %rax
     movq $0, %r8
@@ -4842,6 +4848,12 @@
     movq %rax, -80(%rbp)
     movq %rax, 16(%rbp)
     movq %r8, 16(%rbp)
+    movq -88(%rbp), %r12
+    call _tl_side
+    movq %r12, %rax
+    movq -96(%rbp), %r8
+    call _tl_side
+    movq -96(%rbp), %r10
     movq -8(%rbp), %r8
     addq %r8, %rax
     movq $0, %r8

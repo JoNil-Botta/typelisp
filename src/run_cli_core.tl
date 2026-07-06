@@ -245,10 +245,7 @@
     [(io.OkIoString text)
       (let
         [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots
-            source
-            text
-            (cli-string-vec-to-legacy (& stdlib-roots)))]
+          (doc-test-typecheck-source-with-roots source text stdlib-roots)]
         (if (doc-test-run-report-ok? report)
           0
           (begin

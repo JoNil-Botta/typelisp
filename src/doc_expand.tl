@@ -2,8 +2,9 @@
 (import stdlib.io)
 (import stdlib.string)
 (import sym_i64_env)
-(import stdlib.vector as svec)
+(import (vector.vector String) as doc_svec)
 (import "doc_render.tl")
+(import "doc_string_vec_bridge.tl")
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
 
@@ -1074,14 +1075,14 @@
 (define (doc-expanded-generated-modules-from-loaded-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
+  [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (let
     [macro-examples : DocMacroImportExampleList
       (doc-macro-import-examples-from-decls decls)]
     (match (typecheck-compiler-doc-expand-program-with-paths
       (ast-program decls)
       paths
-      stdlib-roots)
+      (doc-string-vec-to-legacy (& stdlib-roots)))
       [(ResultCompilerDocExpand.Ok expanded _)
         (match expanded
           [(AstProgram.Program expanded-box)
@@ -1201,7 +1202,7 @@
 (define (doc-expanded-generated-modules-from-source-docs
   [source-path : String]
   [docs : DocExtraction]
-  [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
+  [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (match docs
     [(DocExtraction.Extraction module-doc _)
       (let
@@ -1212,7 +1213,7 @@
             (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))
             (sym_i64_env.sym-i64-empty)
-            stdlib-roots)
+            (doc-string-vec-to-legacy (& stdlib-roots)))
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (doc-expanded-generated-modules-from-loaded-decls
                 decls
@@ -1228,7 +1229,7 @@
   (doc-expanded-generated-modules-from-source-docs
     source-path
     docs
-    (svec.string-vec-new)))
+    (doc_svec.new)))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)
@@ -1253,34 +1254,38 @@
 (import (boxmod i64) as ibox)")
 
 (define (doc-expand-smoke) : i64
-  (match (compiler-load-source-with-paths-and-roots
-    "doc_expand_smoke.tl"
-    (doc-expand-smoke-source)
-    (sym_i64_env.sym-i64-empty)
-    (svec.string-vec-new))
-    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (match (doc-expanded-generated-modules-from-loaded-decls
-        decls
-        paths
-        (svec.string-vec-new))
-        [(ResultDocExpandedModules.Ok modules)
-          (let
-            [rendered : String (doc-render-module-graph-markdown modules)]
-            (if (and
-              (doc-string-contains? rendered "doc.generated.fixture.box\\_i64")
-              (doc-string-contains? rendered "(import (boxmod i64) as ibox)")
-              (doc-string-contains? rendered "### Box")
-              (doc-string-contains? rendered "### Status")
-              (doc-string-contains? rendered "### new"))
-              42
-              (io.panic "doc-expand: generated module docs smoke mismatch")))]
-        [(ResultDocExpandedModules.Err message)
-          (io.panic (doc-cat2 "doc-expand: expansion failed: " message))])]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (io.panic
-        (doc-cat2
-          "doc-expand: load failed: "
-          (compiler-diagnostic-render (box-get diag))))]))
+  (let
+    [roots : doc_svec.Vec (doc_svec.new)]
+    (match (compiler-load-source-with-paths-and-roots
+      "doc_expand_smoke.tl"
+      (doc-expand-smoke-source)
+      (sym_i64_env.sym-i64-empty)
+      (doc-string-vec-to-legacy (& roots)))
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (match (doc-expanded-generated-modules-from-loaded-decls
+          decls
+          paths
+          roots)
+          [(ResultDocExpandedModules.Ok modules)
+            (let
+              [rendered : String (doc-render-module-graph-markdown modules)]
+              (if (and
+                (doc-string-contains?
+                  rendered
+                  "doc.generated.fixture.box\\_i64")
+                (doc-string-contains? rendered "(import (boxmod i64) as ibox)")
+                (doc-string-contains? rendered "### Box")
+                (doc-string-contains? rendered "### Status")
+                (doc-string-contains? rendered "### new"))
+                42
+                (io.panic "doc-expand: generated module docs smoke mismatch")))]
+          [(ResultDocExpandedModules.Err message)
+            (io.panic (doc-cat2 "doc-expand: expansion failed: " message))])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (io.panic
+          (doc-cat2
+            "doc-expand: load failed: "
+            (compiler-diagnostic-render (box-get diag))))])))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

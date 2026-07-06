@@ -127,9 +127,7 @@
   [input-path : String]
   [stdlib-roots : cli_svec.Vec]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-file-with-roots
-      input-path
-      (cli-string-vec-to-legacy (& stdlib-roots)))))
+    (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
 
 (define (selfhost-check-package-doctests
   [paths : AstDeclPathList]
@@ -139,7 +137,7 @@
   (selfhost-check-doctest-report
     (doc-test-typecheck-package-paths-with-roots
       paths
-      (cli-string-vec-to-legacy (& stdlib-roots))
+      stdlib-roots
       manifest-dir
       deps)))
 

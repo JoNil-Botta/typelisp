@@ -4320,10 +4320,7 @@
     [(io.ErrIoString _) 0]
     [(io.OkIoString text)
       (build-doctest-report
-        (doc-test-typecheck-source-with-roots
-          source
-          text
-          (cli-string-vec-to-legacy (& stdlib-roots))))]))
+        (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
 
 (define (build-doctest-typecheck-package-paths
   [paths : AstDeclPathList]
@@ -4333,7 +4330,7 @@
   (build-doctest-report
     (doc-test-typecheck-package-paths-with-roots
       paths
-      (cli-string-vec-to-legacy (& stdlib-roots))
+      stdlib-roots
       manifest-dir
       deps)))
 

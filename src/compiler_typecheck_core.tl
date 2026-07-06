@@ -44207,6 +44207,16 @@
       (macro-decl-import-placeholder? (box-get template-box))]
     [_ false]))
 
+(define (macro-decl-module-import-placeholder? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Macro _ _) true]
+        [_ false])]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-module-import-placeholder? (box-get template-box))]
+    [_ false]))
+
 (define (macro-wrap-generated-decl
   [decl : AstDecl]
   [generator : String]
@@ -51900,6 +51910,91 @@
           span))
       (ast-decl-list-new))))
 
+(define (macro-module-import-marker-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Module) true]
+        [_ false])]
+    [_ false]))
+
+(define (macro-module-import-marker-only? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons decl rest)
+      (if (macro-module-import-marker-decl? decl)
+        (match (ast-decl-list-step rest)
+          [(AstDeclListStep.Nil) true]
+          [_ false])
+        false)]
+    [(AstDeclListStep.Nil) false]))
+
+(define (macro-decl-list-filter-path
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [wanted-path : String]) : AstDeclList
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [out-rev : AstDeclList (ast-decl-list-new)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [rest : AstDeclList rest]
+              [decl-path : String
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
+              [path-rest : AstDeclPathList
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ next) next]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+              (begin
+                (if (string.eq decl-path wanted-path)
+                  (set! out-rev (ast-decl-list-prepend-builder decl out-rev))
+                  unit)
+                (set! cur-decls rest)
+                (set! cur-paths path-rest)))]))
+      (macro-decl-list-reverse out-rev))))
+
+(define (macro-extend-top-env-with-module-marker
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [module : String]) : ResultTcEnv
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons decl _)
+      (match decl
+        [(AstDecl.Import
+            (AstImportSpec.Spec
+              _
+              _
+              (AstMaybeModuleName.Some target-module)
+              (AstMaybeImportAlias.Some alias)
+              _))
+          (if (string.eq alias "")
+            (tc-bind-import-alias-module
+              ctx
+              all-decls
+              top-env
+              target-module
+              ""
+              module
+              true)
+            (begin
+              (tc-lazy-import-stub-record!
+                (intern module)
+                (compiler-symbols-import-alias-key module alias)
+                target-module
+                false)
+              (ResultTcEnv.Ok top-env)))]
+        [_ (ResultTcEnv.Ok top-env)])]
+    [(AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)]))
+
 (define (macro-existing-module-import-target
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -54099,48 +54194,127 @@
                                 (set! cur-decls rest)
                                 (set! cur-paths rest-paths))]
                             [_
-                              ;; Force the splice inline: rebuild the live
-                              ;; symbols/env over the spliced whole-program view so
-                              ;; the generated names resolve, and continue the walk
-                              ;; over the spliced body itself (its nested
-                              ;; placeholders and generated file imports included).
-                              (let
-                                [next-decls : AstDeclList
-                                  (macro-decl-list-append
-                                    (macro-decl-list-reverse out-rev)
-                                    (macro-decl-list-append expanded rest))]
-                                [next-paths : AstDeclPathList
-                                  (macro-decl-path-list-append
-                                    (macro-decl-path-list-reverse out-paths-rev)
+                              (if (and
+                                (macro-decl-module-import-placeholder? decl)
+                                (macro-module-import-marker-only? expanded))
+                                (let
+                                  [marker-tail : AstDeclList
+                                    (macro-decl-list-append expanded rest)]
+                                  [next-decls : AstDeclList
+                                    (macro-decl-list-append
+                                      (macro-decl-list-reverse out-rev)
+                                      marker-tail)]
+                                  [next-decls-for-ctx : AstDeclList
+                                    (AstDeclList
+                                      (struct-get next-decls slots)
+                                      (struct-get next-decls offset)
+                                      (struct-get next-decls len)
+                                      false)]
+                                  [next-ctx : TcContext
+                                    (tc-context-with-program
+                                      cur-ctx
+                                      (ast-program next-decls-for-ctx))]
+                                  [refresh-decls : AstDeclList
+                                    (macro-decl-list-filter-path
+                                      rest
+                                      rest-paths
+                                      decl-path)]
+                                  (begin
+                                    (match (macro-extend-top-env-with-module-marker
+                                      cur-ctx
+                                      cur-top-env
+                                      next-decls
+                                      expanded
+                                      cur-module)
+                                      [(ResultTcEnv.Ok next-top-env)
+                                        (begin
+                                          (tc-nominal-owner-cache-reset!)
+                                          (macro-alias-derived-cache-reset!)
+                                          (match (tc-build-top-env-list-in-module
+                                            next-ctx
+                                            refresh-decls
+                                            next-top-env
+                                            cur-module)
+                                            [(ResultTcEnv.Ok refreshed-top-env)
+                                              (begin
+                                                (set!
+                                                  cur-top-env
+                                                  (tc-env-with-cache
+                                                    refreshed-top-env))
+                                                (set! cur-orig-decls next-decls)
+                                                (set! cur-ctx next-ctx)
+                                                (set!
+                                                  out-rev
+                                                  (macro-decl-list-reverse-into
+                                                    expanded
+                                                    out-rev))
+                                                (set!
+                                                  out-paths-rev
+                                                  (macro-decl-path-list-reverse-into
+                                                    expanded-paths
+                                                    out-paths-rev))
+                                                (set! cur-decls rest)
+                                                (set! cur-paths rest-paths))]
+                                            [(ResultTcEnv.Err refresh-message)
+                                              (begin
+                                                (set!
+                                                  result
+                                                  (ResultMacroDeclsWithPaths.Err
+                                                    (box
+                                                      (tc-diag-at-start
+                                                        refresh-message))))
+                                                (set! done true))]))]
+                                      [(ResultTcEnv.Err message)
+                                        (begin
+                                          (set!
+                                            result
+                                            (ResultMacroDeclsWithPaths.Err
+                                              (box (tc-diag-at-start message))))
+                                          (set! done true))])
+                                    unit))
+                                ;; Force the splice inline: rebuild the live
+                                ;; symbols/env over the spliced whole-program view
+                                ;; so the generated names resolve, and continue the
+                                ;; walk over the spliced body itself (its nested
+                                ;; placeholders and generated file imports included).
+                                (let
+                                  [spliced-tail : AstDeclList
+                                    (macro-decl-list-append expanded rest)]
+                                  [spliced-path-tail : AstDeclPathList
                                     (macro-decl-path-list-append
                                       expanded-paths
-                                      rest-paths))]
-                                (match (macro-expand-rebuild-context-for-splice
-                                  cur-ctx
-                                  next-decls
-                                  next-paths
-                                  cur-module)
-                                  [(ResultMacroSpliceRebuild.Ok
-                                      next-ctx
-                                      next-top-env)
-                                    (begin
-                                      (set! cur-ctx next-ctx)
-                                      (set! cur-orig-decls next-decls)
-                                      (set! cur-top-env next-top-env)
-                                      (set!
-                                        cur-decls
-                                        (macro-decl-list-append expanded rest))
-                                      (set!
-                                        cur-paths
-                                        (macro-decl-path-list-append
-                                          expanded-paths
-                                          rest-paths)))]
-                                  [(ResultMacroSpliceRebuild.Err diag)
-                                    (begin
-                                      (set!
-                                        result
-                                        (ResultMacroDeclsWithPaths.Err diag))
-                                      (set! done true))]))])]
+                                      rest-paths)]
+                                  [next-decls : AstDeclList
+                                    (macro-decl-list-append
+                                      (macro-decl-list-reverse out-rev)
+                                      spliced-tail)]
+                                  [next-paths : AstDeclPathList
+                                    (macro-decl-path-list-append
+                                      (macro-decl-path-list-reverse
+                                        out-paths-rev)
+                                      spliced-path-tail)]
+                                  (begin
+                                    (match (macro-expand-rebuild-context-for-splice
+                                      cur-ctx
+                                      next-decls
+                                      next-paths
+                                      cur-module)
+                                      [(ResultMacroSpliceRebuild.Ok
+                                          next-ctx
+                                          next-top-env)
+                                        (begin
+                                          (set! cur-ctx next-ctx)
+                                          (set! cur-orig-decls next-decls)
+                                          (set! cur-top-env next-top-env)
+                                          (set! cur-decls spliced-tail)
+                                          (set! cur-paths spliced-path-tail))]
+                                      [(ResultMacroSpliceRebuild.Err diag)
+                                        (begin
+                                          (set!
+                                            result
+                                            (ResultMacroDeclsWithPaths.Err diag))
+                                          (set! done true))])
+                                    unit)))])]
                         [(ResultMacroDeclExpansion.Err diag)
                           (begin
                             (set! result (ResultMacroDeclsWithPaths.Err diag))

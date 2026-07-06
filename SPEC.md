@@ -5851,9 +5851,9 @@ in documentation passes.
   masked varying `if`, varying `while`, and varying `match` (enum tags and
   payload bindings). AVX2/AVX-512 contiguous `foreach` map/zip subsets over
   all scalar integer and float lane types; eligible vectorized
-  `spmd-reduce` folds; an AVX-512 masked varying `if` subset including
-  value-producing selects; runtime dispatch via `defdispatch` with cached
-  CPUID/XGETBV selection.
+  `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
+  nested branch-mask composition and value-producing selects; runtime
+  dispatch via `defdispatch` with cached CPUID/XGETBV selection.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
@@ -5866,8 +5866,8 @@ in documentation passes.
 | Feature | Status |
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
-| AVX2 masked varying control flow | Rejected with an explicit diagnostic; scalar and the AVX-512 subset implement masked varying `if`. |
-| SIMD lowering for varying `while`/`match` and early exits | Scalar reference lowering only. |
+| SIMD lowering for standalone bool dynamic-array lanes | AVX-512 subset only; scalar reference lowering is complete and AVX2 reports an explicit diagnostic outside supported masked-if lowering. |
+| AVX2 lowering for varying `while`/`match`, and SIMD early exits | Deferred; scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics. |
 | Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Designed; not implemented. |
@@ -6577,4 +6577,3 @@ Import grammar constraints:
   selects items from its generated declarations.
 - Multi-segment item paths and multi-item `:only` selected imports are
   reserved and rejected.
-

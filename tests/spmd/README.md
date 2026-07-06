@@ -15,9 +15,10 @@ AVX2-only hosts, and scalar otherwise.
 
 The corpus emphasizes the cases where SIMD bugs hide:
 
-Masked varying `if` fixtures intentionally compile and run in `avx512`, while
-`avx2` compile is expected to fail with an explicit staged diagnostic instead of
-falling back to scalar code.
+Masked varying `if` fixtures intentionally compile and run in `avx2` and
+`avx512`. Varying `while`, varying `match`, standalone bool dynamic-array
+lanes, and gather fixtures keep explicit staged diagnostics in `avx2` instead
+of falling back to scalar code.
 
 - `tail_i64_add.tl` — `foreach` add over `n = 13` (not a multiple of the i64
   vector width 4/8): forces a masked/scalar tail. Exit 247.
@@ -38,27 +39,27 @@ falling back to scalar code.
 - `inline_helper_f64.tl` - `foreach` over `n = 13` f64 lanes through a direct
   source-known helper with a varying floating-point argument and result. Exit
   42.
-- `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
+- `masked_if_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
-- `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
+- `masked_if_offset_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 12`
   i64 lanes with shifted contiguous `(+ i 1)` predicated reads/writes. Exit 42.
-- `masked_if_index_value_i64.tl` - AVX-512-only masked varying `if` over
+- `masked_if_index_value_i64.tl` - AVX2/AVX-512 masked varying `if` over
   `n = 13` i64 lanes whose condition and stores use the foreach index as a
   varying value. Exit 42.
-- `masked_if_index_mod_i64.tl` - AVX-512-only masked varying `if` over
+- `masked_if_index_mod_i64.tl` - AVX2/AVX-512 masked varying `if` over
   `n = 13` i64 lanes whose condition uses `% i 2` lane-index arithmetic.
   Exit 42.
-- `masked_if_value_i64.tl` - AVX-512-only value-producing masked `if` over
+- `masked_if_value_i64.tl` - AVX2/AVX-512 value-producing masked `if` over
   `n = 13` i64 lanes feeding a predicated store. Exit 42.
-- `masked_if_value_types.tl` - AVX-512-only value-producing masked `if` over
+- `masked_if_value_types.tl` - AVX2/AVX-512 value-producing masked `if` over
   u32, u64, f32, f64, and bool lane results, each with a non-full tail. Exit
   42.
-- `masked_if_nested_i64.tl` - AVX-512-only nested masked varying `if` over
+- `masked_if_nested_i64.tl` - AVX2/AVX-512 nested masked varying `if` over
   `n = 13` i64 lanes, covering parent/child branch-mask composition and a
   masked tail. Exit 42.
-- `masked_if_i16_u16.tl` - AVX-512-only masked varying `if` over i16 and u16
+- `masked_if_i16_u16.tl` - AVX2/AVX-512 masked varying `if` over i16 and u16
   lanes, including signed and unsigned comparisons. Exit 42.
-- `inline_helper_masked_if_i64.tl` - AVX-512-only masked varying `if` whose
+- `inline_helper_masked_if_i64.tl` - AVX2/AVX-512 masked varying `if` whose
   condition calls a direct helper returning a varying bool and whose taken
   branch calls a direct source-known helper with a varying scalar argument.
   Exit 42.
@@ -124,7 +125,7 @@ Coverage map:
   diagnostic until vector gather lowering is implemented.
 - AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
   an explicit staged diagnostic for the same source shape.
-- AVX-512 masked varying `if` direct-index, shifted-contiguous-index,
+- AVX2/AVX-512 masked varying `if` direct-index, shifted-contiguous-index,
   foreach-index-as-value, value-producing i64 select, nested branch-mask
   composition, and i16/u16 coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,

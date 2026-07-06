@@ -14815,6 +14815,7 @@
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]
+  [mask-vars-use-vector-registers : bool]
   [abi : CompilerRegTargetAbi]) : CompilerRegPlan
   (let
     [moves
@@ -15162,13 +15163,24 @@
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef.Def _ vars) vars])]
+    [vector-candidate-vars : CompilerLiveI64Set
+      (if mask-vars-use-vector-registers
+        (compiler-live-set-union vector-vars mask-vars)
+        vector-vars)]
+    [mask-candidate-vars : CompilerLiveI64Set
+      (if mask-vars-use-vector-registers
+        (compiler-live-set-empty)
+        mask-vars)]
     [vector-preferences : (Array i64)
       (compiler-reg-function-select-false-preferences
         func
         (array-length (struct-get interval-index starts)))]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals vector-vars blocked)
+        (compiler-reg-special-candidates
+          intervals
+          vector-candidate-vars
+          blocked)
         (compiler-reg-vector-registers)
         CompilerRegActiveList.Nil
         scalar-assignments
@@ -15179,7 +15191,7 @@
         [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals mask-vars blocked)
+        (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
         (compiler-reg-mask-registers)
         CompilerRegActiveList.Nil
         vector-assignments
@@ -15258,6 +15270,32 @@
       ineligible
       ineligible
       false
+      false
+      CompilerRegTargetAbi.Linux)))
+
+(define (compiler-reg-plan-function-avx2 [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-live-intervals func liveness)]
+    [ineligible : CompilerLiveI64Set
+      (compiler-reg-ineligible-vars-simd func type-info types intervals)]
+    [vars : i64
+      (match func
+        [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+    (compiler-reg-plan-from
+      func
+      type-info
+      types
+      intervals
+      (compiler-reg-interval-index-build intervals vars)
+      (compiler-reg-assignment-table-make vars)
+      ineligible
+      ineligible
+      false
+      true
       CompilerRegTargetAbi.Linux)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
@@ -15453,6 +15491,7 @@
                 ineligible
                 blocked
                 true
+                false
                 abi)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan

@@ -4001,6 +4001,65 @@
       (compiler-backend-string-contains? shared "    leave\n    ret\n")
       (not (string.eq shared "")))))
 
+(define (compiler-backend-callee-save-push-prologue-rebase-ok?) : bool
+  (let
+    [_abi : unit (compiler-backend-set-current-fn-linux!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (Array String) (compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler-backend-fill-push-csr-regs! assignments push-regs)]
+    [prologue : String
+      (compiler-backend-emit-function-entry-fpo-push
+        "_tl_gap1_push_unit"
+        64
+        push-regs
+        push-count)]
+    [post-prologue : String
+      "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+"]
+    [rebased : String
+      (compiler-backend-rsp-rebase-full
+        post-prologue
+        64
+        true
+        push-regs
+        push-count
+        3)]
+    (and
+      (= push-count 3)
+      (string.eq
+        prologue
+        "_tl_gap1_push_unit:
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $64, %rsp
+")
+      compiler-backend-rsp-rebase-last-ok
+      (string.eq
+        rebased
+        "    movq 56(%rsp), %rax
+    addq $64, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    ret
+")
+      (not (compiler-backend-string-contains? rebased "-32(%rbp)"))
+      (not (compiler-backend-string-contains? rebased "-40(%rbp)"))
+      (not (compiler-backend-string-contains? rebased "-48(%rbp)"))
+      (not (compiler-backend-string-contains? rebased "    leave\n")))))
+
 (define (compiler-backend-win64-callee-save-homes-ok?) : bool
   (let
     [_win : unit (compiler-backend-set-current-fn-win64!)]
@@ -19197,6 +19256,7 @@
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
+        (compiler-backend-callee-save-push-prologue-rebase-ok?)
         (compiler-backend-win64-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and

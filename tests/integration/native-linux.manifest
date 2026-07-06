@@ -61,6 +61,7 @@ tail_arg_reg|tests/integration/tail_arg_reg.tl|42|-|-|stdlib/io.tl
 callregion_split|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl
 callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl
 divmagic_hoist|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl
+target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
 group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl

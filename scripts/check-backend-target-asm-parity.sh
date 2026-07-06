@@ -67,6 +67,7 @@ lambda_capture_struct_enum tests/integration/lambda_capture_struct_enum.tl _tl__
 many_args tests/integration/many_args.tl _tl_many_args_sum8
 register_group_phi_return tests/integration/register_group_phi_return.tl _tl_register_group_phi_return_pick_address_taken
 register_resident_enum tests/integration/register_resident_enum.tl _tl_register_resident_enum_turn_right,_tl_register_resident_enum_code
+target_asm_loop_divmod_parity tests/integration/target_asm_loop_divmod_parity.tl _tl_target_asm_loop_divmod_parity_loop_divmod_parity
 EOF
 }
 
@@ -187,6 +188,28 @@ normalize_asm() {
             }
             return s
         }
+        function loop_divmod_parity_normalize_enabled() {
+            # This corpus member is intentionally about loop-carried constant
+            # div/mod lowering, not exact target allocator GP register
+            # choices. Keep %rax/%rdx fixed because they are load-bearing for
+            # imul/idiv-style lowering, and collapse caller/callee-save scratch
+            # choices plus the target-specific pop-run epilogue spelling.
+            return opt_level == "2" &&
+                name == "target_asm_loop_divmod_parity"
+        }
+        function normalize_loop_divmod_parity_regs(s) {
+            if (!loop_divmod_parity_normalize_enabled()) return s
+            gsub(/%r(8|9|10|11|12|13|14|15)/, "%G", s)
+            gsub(/%r(di|si|cx)/, "%G", s)
+            gsub(/%e(di|si|cx)/, "%Gd", s)
+            return s
+        }
+        function skip_loop_divmod_parity_epilogue(s) {
+            if (!loop_divmod_parity_normalize_enabled()) return 0
+            if (s ~ /^leaq [0-9]+\(%rsp\), %rsp$/) return 1
+            if (s ~ /^popq %G$/) return 1
+            return 0
+        }
         function stack_arg_for_offset(offset) {
             arg_index = (offset / 8) - 1
             if (!abi_arg_allowed(arg_index)) {
@@ -302,6 +325,10 @@ normalize_asm() {
             line = normalize_frame_teardown(line)
             line = normalize_arg_regs(line)
             line = consume_pending_stack_arg(line)
+            line = normalize_loop_divmod_parity_regs(line)
+            if (skip_loop_divmod_parity_epilogue(line)) {
+                next
+            }
             if (maybe_capture_stack_arg_load(line)) {
                 next
             }

@@ -5919,7 +5919,7 @@ in documentation passes.
 | Dotted module imports everywhere | Migration in progress: legacy path imports remain accepted while the repository migrates. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Removal of legacy `comptime-decl` forms | Migration in progress: declaration-emitting `defmacro` is the end state. |
+| Removal of legacy `comptime-decl` forms | Stdlib well-known declarations now use plain declarations; legacy syntax remains accepted as parser/typechecker compatibility pending final removal. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: CTFE is the executing path today, with byte-identical expansion required between the two paths. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | LSP/IDE features beyond diagnostics | Pending. |

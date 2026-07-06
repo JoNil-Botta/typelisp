@@ -9064,6 +9064,291 @@
       8
       "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
 
+(define (compiler-backend-avx512-mask-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -24))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%r12"))
+          CompilerRegAssignmentList.Nil)))))
+
+(define (compiler-backend-avx512-mask-spill-compare-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        5
+        (CompilerRegLocation.Register "%vec7"))
+      (compiler-backend-avx512-mask-spill-assignments))))
+
+(define (compiler-backend-avx512-mask-spill-compare-emits-ok?) : bool
+  (let
+    [_mode : unit
+      (compiler-backend-set-current-mode! (CompilerBackendMode.Avx512))]
+    [ok : bool
+      (match (compiler-backend-emit-vector-compare
+        (compiler-backend-avx512-mask-spill-compare-assignments)
+        2
+        (CompilerIrBinOp.Eq)
+        (CompilerIrValue.Var 4)
+        (CompilerIrValue.Var 5)
+        8
+        (AstType.I64)
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vpcmpq $0, %zmm7, %zmm6, %k7\n")
+            (compiler-backend-string-contains? asm "    kmovw %k7, -24(%rbp)\n")
+            (not (compiler-backend-string-contains? asm "%ymm"))
+            (not (compiler-backend-string-contains? asm "%k0")))]
+        [(ResultCompilerBackend.Err _) false])]
+    (begin
+      (compiler-backend-set-current-mode! (CompilerBackendMode.Scalar))
+      ok)))
+
+(define (compiler-backend-avx512-mask-spill-binop-emits-ok?) : bool
+  (match (compiler-backend-emit-avx512-mask-binop
+    (compiler-backend-avx512-mask-spill-assignments)
+    2
+    (CompilerIrMaskBinOp.And)
+    (CompilerIrValue.Var 0)
+    (CompilerIrValue.Var 1)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    kmovw -8(%rbp), %k7\n")
+        (compiler-backend-string-contains? asm "    kmovw %k7, %eax\n")
+        (compiler-backend-string-contains? asm "    kmovw -16(%rbp), %k7\n")
+        (compiler-backend-string-contains? asm "    kmovw %k7, %r10d\n")
+        (compiler-backend-string-contains? asm "    andl %r10d, %eax\n")
+        (compiler-backend-string-contains? asm "    kmovw %eax, %k7\n")
+        (compiler-backend-string-contains? asm "    kmovw %k7, -24(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%k0")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-mask-spill-not-emits-ok?) : bool
+  (match (compiler-backend-emit-avx512-mask-not
+    (compiler-backend-avx512-mask-spill-assignments)
+    2
+    (CompilerIrValue.Var 0)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    kmovw -8(%rbp), %k7\n")
+        (compiler-backend-string-contains? asm "    xorl $255, %eax\n")
+        (compiler-backend-string-contains? asm "    kmovw %eax, %k7\n")
+        (compiler-backend-string-contains? asm "    kmovw %k7, -24(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%k0")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-mask-spill-reduce-emits-ok?) : bool
+  (match (compiler-backend-emit-avx512-mask-reduce
+    (compiler-backend-avx512-mask-spill-assignments)
+    3
+    (CompilerIrMaskReduceOp.Any)
+    (CompilerIrValue.Var 0)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    kmovw -8(%rbp), %k7\n")
+        (compiler-backend-string-contains? asm "    kortestw %k7, %k7\n")
+        (compiler-backend-string-contains? asm "    movq %rax, %r12\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
+  (match (compiler-backend-emit-avx512-mask-load
+    (compiler-backend-avx512-mask-spill-assignments)
+    2
+    (CompilerIrValue.Var 3)
+    (CompilerIrValue.I64 0)
+    (CompilerIrValue.Var 1)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok load-asm)
+      (match (compiler-backend-emit-avx512-mask-store
+        (compiler-backend-avx512-mask-spill-assignments)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        8
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok store-asm)
+          (and
+            (compiler-backend-string-contains?
+              load-asm
+              "    kmovw -16(%rbp), %k7\n")
+            (compiler-backend-string-contains? load-asm "    vpcmpub $4, ")
+            (compiler-backend-string-contains?
+              load-asm
+              "    kmovw %k7, -24(%rbp)\n")
+            (compiler-backend-string-contains?
+              store-asm
+              "    kmovw -8(%rbp), %k7\n")
+            (compiler-backend-string-contains?
+              store-asm
+              "    kmovw -16(%rbp), %k7\n")
+            (compiler-backend-string-contains? store-asm "    vmovdqu8 %zmm"))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-mask-spill-direct-ok?) : bool
+  (and
+    (compiler-backend-avx512-mask-spill-compare-emits-ok?)
+    (compiler-backend-avx512-mask-spill-binop-emits-ok?)
+    (compiler-backend-avx512-mask-spill-not-emits-ok?)
+    (compiler-backend-avx512-mask-spill-reduce-emits-ok?)
+    (compiler-backend-avx512-mask-spill-load-store-emits-ok?)))
+
+(define (compiler-backend-avx512-mask-spill-sums) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.BinOp
+      14
+      (CompilerIrBinOp.Add)
+      (CompilerIrValue.Var 7)
+      (CompilerIrValue.Var 8)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        15
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 14)
+        (CompilerIrValue.Var 9)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          16
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 15)
+          (CompilerIrValue.Var 10)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            17
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 16)
+            (CompilerIrValue.Var 11)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              18
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 17)
+              (CompilerIrValue.Var 12)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                19
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 18)
+                (CompilerIrValue.Var 13)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 19)))
+                CompilerIrInstrList.Nil))))))))
+
+(define (compiler-backend-avx512-mask-spill-reduces
+  [i : i64]
+  [rest : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (> i 6)
+    rest
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.MaskReduce
+        (+ 7 i)
+        (CompilerIrMaskReduceOp.Any)
+        (CompilerIrValue.Var i)
+        8)
+      (compiler-backend-avx512-mask-spill-reduces (+ i 1) rest))))
+
+(define (compiler-backend-avx512-mask-spill-tails
+  [i : i64]
+  [rest : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (> i 6)
+    rest
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.TailMask
+        i
+        (CompilerIrValue.I64 i)
+        (CompilerIrValue.I64 8)
+        8)
+      (compiler-backend-avx512-mask-spill-tails (+ i 1) rest))))
+
+(define (compiler-backend-avx512-mask-spill-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "mask_spill"
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    20
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-backend-avx512-mask-spill-tails
+          0
+          (compiler-backend-avx512-mask-spill-reduces
+            0
+            (compiler-backend-avx512-mask-spill-sums))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-maybe-location-mask-stack?
+  [location : CompilerRegMaybeLocation]) : bool
+  (match location
+    [(CompilerRegMaybeLocation.Some found)
+      (match found
+        [(CompilerRegLocation.Spill _) true]
+        [_ false])]
+    [(CompilerRegMaybeLocation.No) true]))
+
+(define (compiler-backend-avx512-mask-spill-assignment?
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : bool
+  (if (> var 6)
+    false
+    (or
+      (compiler-backend-maybe-location-mask-stack?
+        (compiler-reg-assignment-lookup assignments var))
+      (compiler-backend-avx512-mask-spill-assignment? assignments (+ var 1)))))
+
+(define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
+  (match (compiler-reg-plan-function
+    (compiler-backend-avx512-mask-spill-function))
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))
+
+(define (compiler-backend-avx512-mask-spill-compile-ok?) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program
+      (compiler-backend-avx512-mask-spill-function))
+    (CompilerBackendTarget.Linux)
+    (CompilerBackendMode.Avx512)
+    (compiler-source-spans-empty)
+    true)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-avx512-mask-spill-plan-ok?)
+        (compiler-backend-string-contains? asm "kmovw")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "mask spills are not implemented")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-mask-spill-ok?) : bool
+  (and
+    (compiler-backend-avx512-mask-spill-direct-ok?)
+    (compiler-backend-avx512-mask-spill-plan-ok?)
+    (compiler-backend-avx512-mask-spill-compile-ok?)))
+
 (define (compiler-backend-vector-call-lifetime-spill-ok?) : bool
   (match (compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
@@ -9427,6 +9712,7 @@
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
+    (compiler-backend-avx512-mask-spill-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
     (compiler-backend-avx2-data-pointer-cse-ok?)
     (compiler-backend-simd-indexed-address-ok?)

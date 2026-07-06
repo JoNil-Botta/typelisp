@@ -37,64 +37,310 @@
   (No)
   (Some DocItem))
 
-(defenum DocImportFormList
-  (Nil)
-  (Cons String (Box DocImportFormList)))
+(defstruct DocImportFormList
+  (slots (Array String))
+  (len i64))
 
 (defstruct DocImportFormScan
   (forms DocImportFormList)
   (has-macro bool))
 
-(defenum DocMacroImportExampleList
-  (Nil)
-  (Cons String String (Box DocMacroImportExampleList)))
+(defstruct DocMacroImportExample
+  (alias String)
+  (form String))
 
-(defenum DocGeneratedTargetExampleList
-  (Nil)
-  (Cons String String (Box DocGeneratedTargetExampleList)))
+(defstruct DocMacroImportExampleList
+  (slots (Array DocMacroImportExample))
+  (len i64))
+
+(defstruct DocGeneratedTargetExample
+  (target String)
+  (form String))
+
+(defstruct DocGeneratedTargetExampleList
+  (slots (Array DocGeneratedTargetExample))
+  (len i64))
 
 (defenum ResultDocExpandedModules
   (Ok DocModuleList)
   (Err String))
 
-(define (doc-import-form-list-cons [form : String] [rest : DocImportFormList]) : DocImportFormList
-  (DocImportFormList.Cons form (box rest)))
+(define (doc-import-form-list-slots [forms : (& forms DocImportFormList)]) : (&
+    forms
+    (Array String))
+  (& (struct-get forms slots)))
+
+(define (doc-import-form-list-len [forms : (& forms DocImportFormList)]) : i64
+  (struct-get forms len))
+
+(define (doc-import-form-list-with-capacity [capacity : i64]) : DocImportFormList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (DocImportFormList (make-array String cap) 0)))
+
+(define (doc-import-form-list-new) : DocImportFormList
+  (doc-import-form-list-with-capacity 4))
+
+(define (doc-import-form-list-get
+  [forms : (& forms DocImportFormList)]
+  [index : i64]
+  [fallback : String]) : String
+  (if (if (>= index 0)
+    (< index (doc-import-form-list-len forms))
+    false)
+    (array-ref (doc-import-form-list-slots forms) index)
+    fallback))
+
+(define (doc-import-form-list-copy-range
+  [dst : (&mut dst (Array String))]
+  [src : (& src (Array String))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (doc-import-form-list-copy-range dst src (+ index 1) count))))
+
+(define (doc-import-form-list-grow [forms : (&mut forms DocImportFormList)]) : unit
+  (let
+    [n : i64 (struct-get forms len)]
+    [old-cap : i64 (array-length (struct-get forms slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array String) (make-array String new-cap)]
+    (begin
+      (doc-import-form-list-copy-range
+        (&mut bigger)
+        (& (struct-get forms slots))
+        0
+        n)
+      (set! (struct-get forms slots) bigger))))
+
+(define (doc-import-form-list-push
+  [forms : (&mut forms DocImportFormList)]
+  [form : String]) : unit
+  (begin
+    (if (< (struct-get forms len) (array-length (struct-get forms slots)))
+      unit
+      (doc-import-form-list-grow forms))
+    (let
+      [index : i64 (struct-get forms len)]
+      (begin
+        (array-set! (struct-get forms slots) index form)
+        (set! (struct-get forms len) (+ index 1))))))
+
+(define (doc-macro-import-example-list-slots
+  [examples : (& examples DocMacroImportExampleList)]) : (&
+    examples
+    (Array DocMacroImportExample))
+  (& (struct-get examples slots)))
+
+(define (doc-macro-import-example-list-len
+  [examples : (& examples DocMacroImportExampleList)]) : i64
+  (struct-get examples len))
+
+(define (doc-macro-import-example-list-with-capacity [capacity : i64]) : DocMacroImportExampleList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (DocMacroImportExampleList (make-array DocMacroImportExample cap) 0)))
+
+(define (doc-macro-import-example-list-new) : DocMacroImportExampleList
+  (doc-macro-import-example-list-with-capacity 4))
+
+(define (doc-macro-import-example-list-get
+  [examples : (& examples DocMacroImportExampleList)]
+  [index : i64]
+  [fallback : DocMacroImportExample]) : DocMacroImportExample
+  (if (if (>= index 0)
+    (< index (doc-macro-import-example-list-len examples))
+    false)
+    (array-ref (doc-macro-import-example-list-slots examples) index)
+    fallback))
+
+(define (doc-macro-import-example-list-copy-range
+  [dst : (&mut dst (Array DocMacroImportExample))]
+  [src : (& src (Array DocMacroImportExample))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (doc-macro-import-example-list-copy-range dst src (+ index 1) count))))
+
+(define (doc-macro-import-example-list-grow
+  [examples : (&mut examples DocMacroImportExampleList)]) : unit
+  (let
+    [n : i64 (struct-get examples len)]
+    [old-cap : i64 (array-length (struct-get examples slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array DocMacroImportExample)
+      (make-array DocMacroImportExample new-cap)]
+    (begin
+      (doc-macro-import-example-list-copy-range
+        (&mut bigger)
+        (& (struct-get examples slots))
+        0
+        n)
+      (set! (struct-get examples slots) bigger))))
+
+(define (doc-macro-import-example-list-push
+  [examples : (&mut examples DocMacroImportExampleList)]
+  [example : DocMacroImportExample]) : unit
+  (begin
+    (if (< (struct-get examples len) (array-length (struct-get examples slots)))
+      unit
+      (doc-macro-import-example-list-grow examples))
+    (let
+      [index : i64 (struct-get examples len)]
+      (begin
+        (array-set! (struct-get examples slots) index example)
+        (set! (struct-get examples len) (+ index 1))))))
+
+(define (doc-generated-target-example-list-slots
+  [examples : (& examples DocGeneratedTargetExampleList)]) : (&
+    examples
+    (Array DocGeneratedTargetExample))
+  (& (struct-get examples slots)))
+
+(define (doc-generated-target-example-list-len
+  [examples : (& examples DocGeneratedTargetExampleList)]) : i64
+  (struct-get examples len))
+
+(define (doc-generated-target-example-list-with-capacity [capacity : i64]) : DocGeneratedTargetExampleList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (DocGeneratedTargetExampleList (make-array DocGeneratedTargetExample cap) 0)))
+
+(define (doc-generated-target-example-list-new) : DocGeneratedTargetExampleList
+  (doc-generated-target-example-list-with-capacity 4))
+
+(define (doc-generated-target-example-list-get
+  [examples : (& examples DocGeneratedTargetExampleList)]
+  [index : i64]
+  [fallback : DocGeneratedTargetExample]) : DocGeneratedTargetExample
+  (if (if (>= index 0)
+    (< index (doc-generated-target-example-list-len examples))
+    false)
+    (array-ref (doc-generated-target-example-list-slots examples) index)
+    fallback))
+
+(define (doc-generated-target-example-list-copy-range
+  [dst : (&mut dst (Array DocGeneratedTargetExample))]
+  [src : (& src (Array DocGeneratedTargetExample))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (doc-generated-target-example-list-copy-range dst src (+ index 1) count))))
+
+(define (doc-generated-target-example-list-grow
+  [examples : (&mut examples DocGeneratedTargetExampleList)]) : unit
+  (let
+    [n : i64 (struct-get examples len)]
+    [old-cap : i64 (array-length (struct-get examples slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array DocGeneratedTargetExample)
+      (make-array DocGeneratedTargetExample new-cap)]
+    (begin
+      (doc-generated-target-example-list-copy-range
+        (&mut bigger)
+        (& (struct-get examples slots))
+        0
+        n)
+      (set! (struct-get examples slots) bigger))))
+
+(define (doc-generated-target-example-list-push
+  [examples : (&mut examples DocGeneratedTargetExampleList)]
+  [example : DocGeneratedTargetExample]) : unit
+  (begin
+    (if (< (struct-get examples len) (array-length (struct-get examples slots)))
+      unit
+      (doc-generated-target-example-list-grow examples))
+    (let
+      [index : i64 (struct-get examples len)]
+      (begin
+        (array-set! (struct-get examples slots) index example)
+        (set! (struct-get examples len) (+ index 1))))))
+
+(define (doc-import-form-list-contains-from?
+  [forms : (& forms DocImportFormList)]
+  [form : String]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (if (string.eq (doc-import-form-list-get forms index "") form)
+      true
+      (doc-import-form-list-contains-from? forms form (+ index 1) count))))
 
 (define (doc-import-form-list-contains?
-  [forms : DocImportFormList]
+  [forms : (& forms DocImportFormList)]
   [form : String]) : bool
-  (match forms
-    [(DocImportFormList.Nil) false]
-    [(DocImportFormList.Cons existing rest)
-      (if (string.eq existing form)
-        true
-        (doc-import-form-list-contains? (box-get rest) form))]))
+  (doc-import-form-list-contains-from?
+    forms
+    form
+    0
+    (doc-import-form-list-len forms)))
 
-(define (doc-import-form-list-cons-unique
+(define (doc-import-form-list-mut-contains-from?
+  [forms : (&mut forms DocImportFormList)]
   [form : String]
-  [rest : DocImportFormList]) : DocImportFormList
-  (if (doc-import-form-list-contains? rest form)
-    rest
-    (doc-import-form-list-cons form rest)))
+  [index : i64]) : bool
+  (if (>= index (struct-get forms len))
+    false
+    (if (string.eq (array-ref (struct-get forms slots) index) form)
+      true
+      (doc-import-form-list-mut-contains-from? forms form (+ index 1)))))
 
-(define (doc-import-form-list-reverse-into
+(define (doc-import-form-list-mut-contains?
+  [forms : (&mut forms DocImportFormList)]
+  [form : String]) : bool
+  (doc-import-form-list-mut-contains-from? forms form 0))
+
+(define (doc-import-form-list-push-unique!
+  [forms : (&mut forms DocImportFormList)]
+  [form : String]) : unit
+  (if (doc-import-form-list-mut-contains? forms form)
+    unit
+    (doc-import-form-list-push forms form)))
+
+(define (doc-import-form-list-source-from
   [forms : DocImportFormList]
-  [acc : DocImportFormList]) : DocImportFormList
-  (match forms
-    [(DocImportFormList.Nil) acc]
-    [(DocImportFormList.Cons form rest)
-      (doc-import-form-list-reverse-into
-        (box-get rest)
-        (doc-import-form-list-cons form acc))]))
-
-(define (doc-import-form-list-reverse [forms : DocImportFormList]) : DocImportFormList
-  (doc-import-form-list-reverse-into forms DocImportFormList.Nil))
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (doc-cat3
+      (doc-import-form-list-get (& forms) index "")
+      "\n"
+      (doc-import-form-list-source-from forms (+ index 1) count))))
 
 (define (doc-import-form-list-source [forms : DocImportFormList]) : String
-  (match forms
-    [(DocImportFormList.Nil) ""]
-    [(DocImportFormList.Cons form rest)
-      (doc-cat3 form "\n" (doc-import-form-list-source (box-get rest)))]))
+  (doc-import-form-list-source-from
+    forms
+    0
+    (doc-import-form-list-len (& forms))))
 
 (define (doc-import-alias-string [alias : AstMaybeImportAlias]) : String
   (match alias
@@ -265,21 +511,40 @@
     [(AstExpr.Spanned inner _) (doc-ast-expr-source inner)]
     [_ "..."]))
 
-(define (doc-macro-import-example-cons
+(define (doc-macro-import-example-fallback) : DocMacroImportExample
+  (DocMacroImportExample "" ""))
+
+(define (doc-macro-import-example-push!
+  [examples : (&mut examples DocMacroImportExampleList)]
   [alias : String]
-  [form : String]
-  [rest : DocMacroImportExampleList]) : DocMacroImportExampleList
-  (DocMacroImportExampleList.Cons alias form (box rest)))
+  [form : String]) : unit
+  (doc-macro-import-example-list-push
+    examples
+    (DocMacroImportExample alias form)))
+
+(define (doc-macro-import-example-find-from
+  [examples : (& examples DocMacroImportExampleList)]
+  [alias : String]
+  [index : i64]) : String
+  (if (< index 0)
+    ""
+    (let
+      [example : DocMacroImportExample
+        (doc-macro-import-example-list-get
+          examples
+          index
+          (doc-macro-import-example-fallback))]
+      (if (string.eq (struct-get example alias) alias)
+        (struct-get example form)
+        (doc-macro-import-example-find-from examples alias (- index 1))))))
 
 (define (doc-macro-import-example-find
   [examples : DocMacroImportExampleList]
   [alias : String]) : String
-  (match examples
-    [(DocMacroImportExampleList.Nil) ""]
-    [(DocMacroImportExampleList.Cons example-alias form rest)
-      (if (string.eq example-alias alias)
-        form
-        (doc-macro-import-example-find (box-get rest) alias))]))
+  (doc-macro-import-example-find-from
+    (& examples)
+    alias
+    (- (doc-macro-import-example-list-len (& examples)) 1)))
 
 (define (doc-macro-import-form [call-id : i64] [alias : AstMaybeImportAlias]) : String
   (match alias
@@ -290,67 +555,112 @@
 
 (define (doc-macro-import-examples-from-decl
   [decl : AstDecl]
-  [acc : DocMacroImportExampleList]) : DocMacroImportExampleList
+  [examples : (&mut examples DocMacroImportExampleList)]) : unit
   (match decl
     [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias _))
       (match kind
         [(AstImportKind.Macro call-id _)
-          (doc-macro-import-example-cons
+          (doc-macro-import-example-push!
+            examples
             (doc-import-alias-string alias)
-            (doc-macro-import-form call-id alias)
-            acc)]
-        [_ acc])]
+            (doc-macro-import-form call-id alias))]
+        [_ unit])]
     [(AstDecl.ComptimeDecl _ inner-box)
-      (doc-macro-import-examples-from-decl (box-get inner-box) acc)]
+      (doc-macro-import-examples-from-decl (box-get inner-box) examples)]
     [(AstDecl.Unsafe inner-box)
-      (doc-macro-import-examples-from-decl (box-get inner-box) acc)]
+      (doc-macro-import-examples-from-decl (box-get inner-box) examples)]
     [(AstDecl.ModuleBody _ body-box)
-      (doc-macro-import-examples-from-decls (box-get body-box) acc)]
-    [_ acc]))
+      (doc-macro-import-examples-from-decls-into (box-get body-box) examples)]
+    [_ unit]))
 
-(define (doc-macro-import-examples-from-decls
+(define (doc-macro-import-examples-from-decls-into
   [decls : AstDeclList]
-  [acc : DocMacroImportExampleList]) : DocMacroImportExampleList
+  [examples : (&mut examples DocMacroImportExampleList)]) : unit
   (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Nil) unit]
     [(AstDeclListStep.Cons decl rest)
-      (doc-macro-import-examples-from-decls
-        rest
-        (doc-macro-import-examples-from-decl decl acc))]))
+      (begin
+        (doc-macro-import-examples-from-decl decl examples)
+        (doc-macro-import-examples-from-decls-into rest examples))]))
 
-(define (doc-generated-target-example-cons
+(define (doc-macro-import-examples-from-decls [decls : AstDeclList]) : DocMacroImportExampleList
+  (let
+    [examples : DocMacroImportExampleList (doc-macro-import-example-list-new)]
+    (begin
+      (doc-macro-import-examples-from-decls-into decls (&mut examples))
+      examples)))
+
+(define (doc-generated-target-example-fallback) : DocGeneratedTargetExample
+  (DocGeneratedTargetExample "" ""))
+
+(define (doc-generated-target-example-find-from
+  [examples : (& examples DocGeneratedTargetExampleList)]
   [target : String]
-  [form : String]
-  [rest : DocGeneratedTargetExampleList]) : DocGeneratedTargetExampleList
-  (DocGeneratedTargetExampleList.Cons target form (box rest)))
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (let
+      [example : DocGeneratedTargetExample
+        (doc-generated-target-example-list-get
+          examples
+          index
+          (doc-generated-target-example-fallback))]
+      (if (string.eq (struct-get example target) target)
+        (struct-get example form)
+        (doc-generated-target-example-find-from
+          examples
+          target
+          (+ index 1)
+          count)))))
 
 (define (doc-generated-target-example-find
-  [examples : DocGeneratedTargetExampleList]
+  [examples : (& examples DocGeneratedTargetExampleList)]
   [target : String]) : String
-  (match examples
-    [(DocGeneratedTargetExampleList.Nil) ""]
-    [(DocGeneratedTargetExampleList.Cons example-target form rest)
-      (if (string.eq example-target target)
-        form
-        (doc-generated-target-example-find (box-get rest) target))]))
+  (doc-generated-target-example-find-from
+    examples
+    target
+    0
+    (doc-generated-target-example-list-len examples)))
 
-(define (doc-generated-target-example-add
-  [examples : DocGeneratedTargetExampleList]
+(define (doc-generated-target-example-mut-find-from
+  [examples : (&mut examples DocGeneratedTargetExampleList)]
   [target : String]
-  [form : String]) : DocGeneratedTargetExampleList
+  [index : i64]) : String
+  (if (>= index (struct-get examples len))
+    ""
+    (let
+      [example : DocGeneratedTargetExample
+        (array-ref (struct-get examples slots) index)]
+      (if (string.eq (struct-get example target) target)
+        (struct-get example form)
+        (doc-generated-target-example-mut-find-from examples target (+ index 1))))))
+
+(define (doc-generated-target-example-mut-find
+  [examples : (&mut examples DocGeneratedTargetExampleList)]
+  [target : String]) : String
+  (doc-generated-target-example-mut-find-from examples target 0))
+
+(define (doc-generated-target-example-add!
+  [examples : (&mut examples DocGeneratedTargetExampleList)]
+  [target : String]
+  [form : String]) : unit
   (if (or
     (= (string.string-length target) 0)
     (= (string.string-length form) 0)
     (>
-      (string.string-length (doc-generated-target-example-find examples target))
+      (string.string-length
+        (doc-generated-target-example-mut-find examples target))
       0))
-    examples
-    (doc-generated-target-example-cons target form examples)))
+    unit
+    (doc-generated-target-example-list-push
+      examples
+      (DocGeneratedTargetExample target form))))
 
 (define (doc-generated-target-examples-from-decl
   [decl : AstDecl]
   [macro-examples : DocMacroImportExampleList]
-  [targets : DocGeneratedTargetExampleList]) : DocGeneratedTargetExampleList
+  [targets : (&mut targets DocGeneratedTargetExampleList)]) : unit
   (match decl
     [(AstDecl.Import (AstImportSpec.Spec kind _ expected alias _))
       (match kind
@@ -362,9 +672,9 @@
                   (doc-macro-import-example-find
                     macro-examples
                     (doc-import-alias-string alias))]
-                (doc-generated-target-example-add targets target-module form))]
-            [(AstMaybeModuleName.No) targets])]
-        [_ targets])]
+                (doc-generated-target-example-add! targets target-module form))]
+            [(AstMaybeModuleName.No) unit])]
+        [_ unit])]
     [(AstDecl.ComptimeDecl _ inner-box)
       (doc-generated-target-examples-from-decl
         (box-get inner-box)
@@ -376,23 +686,38 @@
         macro-examples
         targets)]
     [(AstDecl.ModuleBody _ body-box)
-      (doc-generated-target-examples-from-decls
+      (doc-generated-target-examples-from-decls-into
         (box-get body-box)
         macro-examples
         targets)]
-    [_ targets]))
+    [_ unit]))
+
+(define (doc-generated-target-examples-from-decls-into
+  [decls : AstDeclList]
+  [macro-examples : DocMacroImportExampleList]
+  [targets : (&mut targets DocGeneratedTargetExampleList)]) : unit
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) unit]
+    [(AstDeclListStep.Cons decl rest)
+      (begin
+        (doc-generated-target-examples-from-decl decl macro-examples targets)
+        (doc-generated-target-examples-from-decls-into
+          rest
+          macro-examples
+          targets))]))
 
 (define (doc-generated-target-examples-from-decls
   [decls : AstDeclList]
-  [macro-examples : DocMacroImportExampleList]
-  [targets : DocGeneratedTargetExampleList]) : DocGeneratedTargetExampleList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) targets]
-    [(AstDeclListStep.Cons decl rest)
-      (doc-generated-target-examples-from-decls
-        rest
+  [macro-examples : DocMacroImportExampleList]) : DocGeneratedTargetExampleList
+  (let
+    [targets : DocGeneratedTargetExampleList
+      (doc-generated-target-example-list-new)]
+    (begin
+      (doc-generated-target-examples-from-decls-into
+        decls
         macro-examples
-        (doc-generated-target-examples-from-decl decl macro-examples targets))]))
+        (&mut targets))
+      targets)))
 
 (define (doc-ast-maybe-type-source [maybe-ty : AstMaybeType]) : String
   (match maybe-ty
@@ -659,28 +984,46 @@
     "Concrete generated-module import that produced this API."
     form))
 
-(define (doc-generated-flush-module
+(define (doc-generated-copy-items
+  [out : (&mut out DocItemList)]
+  [items : DocItemList]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (doc-item-list-push out (doc-item-list-ref items index))
+      (doc-generated-copy-items out items (+ index 1) count))))
+
+(define (doc-generated-module-items [form : String] [items : DocItemList]) : DocItemList
+  (let
+    [count : i64 (doc-item-list-count items)]
+    [out : DocItemList (doc-item-list-with-capacity (+ count 1))]
+    (begin
+      (doc-item-list-push (&mut out) (doc-generated-import-item form))
+      (doc-generated-copy-items (&mut out) items 0 count)
+      out)))
+
+(define (doc-generated-flush-module!
   [module-name : String]
-  [items-rev : DocItemList]
+  [items : DocItemList]
   [has-generated : bool]
   [targets : DocGeneratedTargetExampleList]
-  [modules : DocModuleList]) : DocModuleList
+  [modules : (&mut modules DocModuleList)]) : unit
   (let
-    [form : String (doc-generated-target-example-find targets module-name)]
+    [form : String (doc-generated-target-example-find (& targets) module-name)]
     (if (and
       has-generated
       (> (string.string-length module-name) 0)
       (> (string.string-length form) 0))
-      (doc-module-list-cons
+      (doc-module-list-push
+        modules
         (DocModule.Module
           module-name
           (DocExtraction.Extraction
             "Generated module API."
-            (DocItemList.Cons
-              (doc-generated-import-item form)
-              (box (doc-item-list-reverse items-rev)))))
-        modules)
-      modules)))
+            (doc-generated-module-items form items))))
+      unit)))
 
 (define (doc-generated-modules-from-expanded-decls
   [decls : AstDeclList]
@@ -688,49 +1031,45 @@
   (let
     [cursor : AstDeclList decls]
     [current-module : String ""]
-    [items-rev : DocItemList DocItemList.Nil]
+    [items : DocItemList (doc-item-list-new)]
     [has-generated : bool false]
-    [modules-rev : DocModuleList DocModuleList.Nil]
+    [modules : DocModuleList (doc-module-list-new)]
     [done : bool false]
     (begin
       (while (not done)
         (match (ast-decl-list-step cursor)
           [(AstDeclListStep.Nil)
             (begin
-              (set!
-                modules-rev
-                (doc-generated-flush-module
-                  current-module
-                  items-rev
-                  has-generated
-                  targets
-                  modules-rev))
+              (doc-generated-flush-module!
+                current-module
+                items
+                has-generated
+                targets
+                (&mut modules))
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (begin
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
-                    (set!
-                      modules-rev
-                      (doc-generated-flush-module
-                        current-module
-                        items-rev
-                        has-generated
-                        targets
-                        modules-rev))
+                    (doc-generated-flush-module!
+                      current-module
+                      items
+                      has-generated
+                      targets
+                      (&mut modules))
                     (set! current-module (intern-str next-module))
-                    (set! items-rev DocItemList.Nil)
+                    (set! items (doc-item-list-new))
                     (set! has-generated false))]
                 [_
                   (match (doc-ast-generated-decl-item decl)
                     [(DocMaybeItem.Some item)
                       (begin
-                        (set! items-rev (DocItemList.Cons item (box items-rev)))
+                        (doc-item-list-push (&mut items) item)
                         (set! has-generated true))]
                     [(DocMaybeItem.No) unit])])
               (set! cursor rest))]))
-      (doc-module-list-append modules-rev DocModuleList.Nil))))
+      modules)))
 
 (define (doc-expanded-generated-modules-from-loaded-decls
   [decls : AstDeclList]
@@ -738,7 +1077,7 @@
   [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
   (let
     [macro-examples : DocMacroImportExampleList
-      (doc-macro-import-examples-from-decls decls DocMacroImportExampleList.Nil)]
+      (doc-macro-import-examples-from-decls decls)]
     (match (typecheck-compiler-doc-expand-program-with-paths
       (ast-program decls)
       paths
@@ -751,8 +1090,7 @@
               [targets : DocGeneratedTargetExampleList
                 (doc-generated-target-examples-from-decls
                   expanded-decls
-                  macro-examples
-                  DocGeneratedTargetExampleList.Nil)]
+                  macro-examples)]
               (ResultDocExpandedModules.Ok
                 (doc-generated-modules-from-expanded-decls
                   expanded-decls
@@ -832,7 +1170,7 @@
   (let
     [cursor : i64 0]
     [n : i64 (string.string-length doc-text)]
-    [forms-rev : DocImportFormList DocImportFormList.Nil]
+    [forms : DocImportFormList (doc-import-form-list-new)]
     [has-macro : bool false]
     (begin
       (while (< cursor n)
@@ -847,15 +1185,13 @@
                 [end : i64 (doc-scan-form-end doc-text start n)]
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
-                  (set!
-                    forms-rev
-                    (doc-import-form-list-cons-unique form forms-rev))
+                  (doc-import-form-list-push-unique! (&mut forms) form)
                   (if (doc-string-prefix-at? doc-text "(import (" start)
                     (set! has-macro true)
                     unit)
                   (set! cursor end)))
               (set! cursor n)))))
-      (DocImportFormScan (doc-import-form-list-reverse forms-rev) has-macro))))
+      (DocImportFormScan forms has-macro))))
 
 (define (doc-expanded-example-source [forms : DocImportFormList]) : String
   (doc-cat2
@@ -871,7 +1207,7 @@
       (let
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not (struct-get scan has-macro))
-          (ResultDocExpandedModules.Ok DocModuleList.Nil)
+          (ResultDocExpandedModules.Ok (doc-module-list-new))
           (match (compiler-load-source-with-paths-and-roots
             (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))

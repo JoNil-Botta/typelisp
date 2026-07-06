@@ -58,55 +58,77 @@
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-cli-module-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
-  (DocModuleList.Cons module (box rest)))
-
 (define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
-  (if (>= idx end)
-    DocModuleList.Nil
-    (doc-cli-module-cons
-      (DocModule.Module (io.arg idx) (doc-extract-file (io.arg idx)))
-      (doc-read-modules (+ idx 1) end))))
-
-(define (doc-module-list-count [modules : DocModuleList]) : i64
-  (match modules
-    [(DocModuleList.Nil) 0]
-    [(DocModuleList.Cons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
+  (let
+    [i : i64 idx]
+    [modules : DocModuleList (doc-module-list-with-capacity (- end idx))]
+    (begin
+      (while (< i end)
+        (begin
+          (doc-module-list-push
+            (&mut modules)
+            (DocModule.Module (io.arg i) (doc-extract-file (io.arg i))))
+          (set! i (+ i 1))))
+      modules)))
 
 (define (doc-modules-from-string-vec-from
   [paths : PackageSourceList]
-  [index : i64]) : DocModuleList
+  [index : i64]
+  [modules : (&mut modules DocModuleList)]) : unit
   (if (>= index (package-source-list-len paths))
-    DocModuleList.Nil
+    unit
     (let
       [path : String (package-source-list-get paths index "")]
-      (doc-cli-module-cons
-        (DocModule.Module path (doc-extract-file path))
-        (doc-modules-from-string-vec-from paths (+ index 1))))))
+      (begin
+        (doc-module-list-push
+          modules
+          (DocModule.Module path (doc-extract-file path)))
+        (doc-modules-from-string-vec-from paths (+ index 1) modules)))))
 
 (define (doc-modules-from-string-vec [paths : PackageSourceList]) : DocModuleList
-  (doc-modules-from-string-vec-from paths 0))
+  (let
+    [modules : DocModuleList
+      (doc-module-list-with-capacity (package-source-list-len paths))]
+    (begin
+      (doc-modules-from-string-vec-from paths 0 (&mut modules))
+      modules)))
 
-(define (doc-modules-from-paths
+(define (doc-modules-from-paths-into
   [paths : AstDeclPathList]
-  [seen : sym_i64_env.SymI64Env]) : DocModuleList
+  [seen : sym_i64_env.SymI64Env]
+  [modules : (&mut modules DocModuleList)]) : unit
   (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) DocModuleList.Nil]
+    [(AstDeclPathListStep.Nil) unit]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
         (if (sym_i64_env.sym-i64-contains seen path)
-          (doc-modules-from-paths rest seen)
-          (doc-cli-module-cons
-            (DocModule.Module path (doc-extract-file path))
-            (doc-modules-from-paths rest (sym_i64_env.sym-i64-bind seen path 1)))))]))
+          (doc-modules-from-paths-into rest seen modules)
+          (begin
+            (doc-module-list-push
+              modules
+              (DocModule.Module path (doc-extract-file path)))
+            (doc-modules-from-paths-into
+              rest
+              (sym_i64_env.sym-i64-bind seen path 1)
+              modules))))]))
+
+(define (doc-modules-from-paths
+  [paths : AstDeclPathList]
+  [seen : sym_i64_env.SymI64Env]) : DocModuleList
+  (let
+    [modules : DocModuleList (doc-module-list-new)]
+    (begin
+      (doc-modules-from-paths-into paths seen (&mut modules))
+      modules)))
 
 (define (doc-generated-modules-from-source-paths
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
   (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) (ResultDocExpandedModules.Ok DocModuleList.Nil)]
+    [(AstDeclPathListStep.Nil)
+      (ResultDocExpandedModules.Ok (doc-module-list-new))]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
@@ -173,7 +195,7 @@
                 paths
                 stdlib-roots)
                 [(ResultDocExpandedModules.Ok modules) modules]
-                [(ResultDocExpandedModules.Err _) DocModuleList.Nil])]
+                [(ResultDocExpandedModules.Err _) (doc-module-list-new)])]
             (begin
               (io.write-file
                 output-path
@@ -263,13 +285,20 @@
   [paths : svec.StringVec]
   [index : i64]
   [last-index : i64]) : DocModuleList
-  (if (>= index last-index)
-    DocModuleList.Nil
-    (let
-      [path : String (svec.string-vec-get (& paths) index "")]
-      (doc-cli-module-cons
-        (DocModule.Module path (doc-extract-file path))
-        (doc-modules-from-input-paths-before-last paths (+ index 1) last-index)))))
+  (let
+    [i : i64 index]
+    [modules : DocModuleList
+      (doc-module-list-with-capacity (- last-index index))]
+    (begin
+      (while (< i last-index)
+        (let
+          [path : String (svec.string-vec-get (& paths) i "")]
+          (begin
+            (doc-module-list-push
+              (&mut modules)
+              (DocModule.Module path (doc-extract-file path)))
+            (set! i (+ i 1)))))
+      modules)))
 
 (define (doc-generate-module-graph-from-input-paths [paths : svec.StringVec]) : i64
   (let

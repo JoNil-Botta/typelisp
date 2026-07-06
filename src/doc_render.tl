@@ -10,20 +10,110 @@
 (defenum DocModule
   (Module String DocExtraction))
 
-(defenum DocModuleList
-  (Nil)
-  (Cons DocModule (Box DocModuleList)))
+(defstruct DocModuleList
+  (slots (Array DocModule))
+  (len i64))
 
-(define (doc-module-list-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
-  (DocModuleList.Cons module (box rest)))
+(define (doc-module-fallback) : DocModule
+  (DocModule.Module "" (DocExtraction.Extraction "" (doc-item-list-new))))
+
+(define (doc-module-list-slots [modules : (& modules DocModuleList)]) : (&
+    modules
+    (Array DocModule))
+  (& (struct-get modules slots)))
+
+(define (doc-module-list-count [modules : DocModuleList]) : i64
+  (doc-module-list-len (& modules)))
+
+(define (doc-module-list-len [modules : (& modules DocModuleList)]) : i64
+  (struct-get modules len))
+
+(define (doc-module-list-ref [modules : DocModuleList] [index : i64]) : DocModule
+  (doc-module-list-get (& modules) index (doc-module-fallback)))
+
+(define (doc-module-list-with-capacity [capacity : i64]) : DocModuleList
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (DocModuleList (make-array DocModule cap) 0)))
+
+(define (doc-module-list-new) : DocModuleList
+  (doc-module-list-with-capacity 4))
+
+(define (doc-module-list-get
+  [modules : (& modules DocModuleList)]
+  [index : i64]
+  [fallback : DocModule]) : DocModule
+  (if (if (>= index 0)
+    (< index (doc-module-list-len modules))
+    false)
+    (array-ref (doc-module-list-slots modules) index)
+    fallback))
+
+(define (doc-module-list-copy-range
+  [dst : (&mut dst (Array DocModule))]
+  [src : (& src (Array DocModule))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (doc-module-list-copy-range dst src (+ index 1) count))))
+
+(define (doc-module-list-grow [modules : (&mut modules DocModuleList)]) : unit
+  (let
+    [n : i64 (struct-get modules len)]
+    [old-cap : i64 (array-length (struct-get modules slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array DocModule) (make-array DocModule new-cap)]
+    (begin
+      (doc-module-list-copy-range
+        (&mut bigger)
+        (& (struct-get modules slots))
+        0
+        n)
+      (set! (struct-get modules slots) bigger))))
+
+(define (doc-module-list-push
+  [modules : (&mut modules DocModuleList)]
+  [module : DocModule]) : unit
+  (begin
+    (if (< (struct-get modules len) (array-length (struct-get modules slots)))
+      unit
+      (doc-module-list-grow modules))
+    (let
+      [index : i64 (struct-get modules len)]
+      (begin
+        (array-set! (struct-get modules slots) index module)
+        (set! (struct-get modules len) (+ index 1))))))
+
+(define (doc-module-list-append-from
+  [out : (&mut out DocModuleList)]
+  [src : DocModuleList]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (doc-module-list-push out (doc-module-list-ref src index))
+      (doc-module-list-append-from out src (+ index 1) count))))
 
 (define (doc-module-list-append [left : DocModuleList] [right : DocModuleList]) : DocModuleList
-  (match left
-    [(DocModuleList.Nil) right]
-    [(DocModuleList.Cons module rest)
-      (doc-module-list-cons
-        module
-        (doc-module-list-append (box-get rest) right))]))
+  (let
+    [left-count : i64 (doc-module-list-count left)]
+    [right-count : i64 (doc-module-list-count right)]
+    [out : DocModuleList
+      (doc-module-list-with-capacity (+ left-count right-count))]
+    (begin
+      (doc-module-list-append-from (&mut out) left 0 left-count)
+      (doc-module-list-append-from (&mut out) right 0 right-count)
+      out)))
 
 (define (doc-module-path [module : DocModule]) : String
   (match module
@@ -135,18 +225,23 @@
               "\n"
               (string.append (doc-render-item-doc (doc-item-doc item)) "\n"))))))))
 
+(define (doc-render-item-list-from
+  [items : DocItemList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-render-item (doc-item-list-ref items index))
+      (doc-render-item-list-from items (+ index 1) count))))
+
 (define (doc-render-item-list [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil) ""]
-    [(DocItemList.Cons item rest)
-      (string.append
-        (doc-render-item item)
-        (doc-render-item-list (box-get rest)))]))
+  (doc-render-item-list-from items 0 (doc-item-list-count items)))
 
 (define (doc-render-items [items : DocItemList]) : String
-  (match items
-    [(DocItemList.Nil) "_No documented declarations._\n"]
-    [_ (doc-render-item-list items)]))
+  (if (= (doc-item-list-count items) 0)
+    "_No documented declarations._\n"
+    (doc-render-item-list items)))
 
 (define (doc-render-markdown [docs : DocExtraction]) : String
   (string.append
@@ -166,13 +261,18 @@
         (doc-render-escape-markdown path)
         (string.append "](#" (string.append (doc-render-anchor path) ")\n"))))))
 
+(define (doc-render-module-nav-from
+  [modules : DocModuleList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-render-module-nav-item (doc-module-list-ref modules index))
+      (doc-render-module-nav-from modules (+ index 1) count))))
+
 (define (doc-render-module-nav [modules : DocModuleList]) : String
-  (match modules
-    [(DocModuleList.Nil) ""]
-    [(DocModuleList.Cons module rest)
-      (string.append
-        (doc-render-module-nav-item module)
-        (doc-render-module-nav (box-get rest)))]))
+  (doc-render-module-nav-from modules 0 (doc-module-list-count modules)))
 
 (define (doc-render-module-section [module : DocModule]) : String
   (let
@@ -196,13 +296,18 @@
                     (doc-render-module-doc (doc-extraction-module-doc docs))
                     (doc-render-items (doc-extraction-items docs))))))))))))
 
+(define (doc-render-module-sections-from
+  [modules : DocModuleList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string.append
+      (doc-render-module-section (doc-module-list-ref modules index))
+      (doc-render-module-sections-from modules (+ index 1) count))))
+
 (define (doc-render-module-sections [modules : DocModuleList]) : String
-  (match modules
-    [(DocModuleList.Nil) ""]
-    [(DocModuleList.Cons module rest)
-      (string.append
-        (doc-render-module-section module)
-        (doc-render-module-sections (box-get rest)))]))
+  (doc-render-module-sections-from modules 0 (doc-module-list-count modules)))
 
 (define (doc-render-module-graph-markdown [modules : DocModuleList]) : String
   (string.append

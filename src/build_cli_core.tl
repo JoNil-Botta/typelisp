@@ -11,12 +11,14 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
+(import stdlib.vector)
 (import (hashmap String i64) as build_string_i64_map)
-(import stdlib.vector as svec)
+(import (vector.vector String) as cli_svec)
 (import "host_plan.tl")
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
+(import "cli_string_vec_bridge.tl")
 (import "package_source_core.tl")
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
@@ -39,7 +41,7 @@
     bool
     i64
     BuildPackageLockPolicy
-    svec.StringVec))
+    cli_svec.Vec))
 
 (defenum ResultBuildConfig
   (Ok BuildConfig)
@@ -53,7 +55,7 @@
     bool
     CompilerBackendTarget
     CompilerBackendMode
-    svec.StringVec
+    cli_svec.Vec
     i64
     SourceToolLinkInputs))
 
@@ -179,7 +181,7 @@
   (profile BuildProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
-  (stdlib-roots svec.StringVec)
+  (stdlib-roots cli_svec.Vec)
   (resolved-deps CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
@@ -379,7 +381,7 @@
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-lines : String]
-  [stdlib-roots : svec.StringVec]) : ResultBuildConfig
+  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
   (if (>= idx count)
     (if has-source
       (begin
@@ -493,11 +495,9 @@
               lock-policy
               (build-append-stdlib stdlib-lines (io.arg (+ idx 1)))
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))))]
         [(string.eq current "--target")
           (if (>= (+ idx 1) count)
@@ -721,7 +721,7 @@
     false
     (BuildPackageLockPolicy.Default)
     ""
-    (svec.string-vec-new)))
+    (cli_svec.new)))
 
 (define (build-package-worker-parse-options
   [idx : i64]
@@ -734,7 +734,7 @@
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
@@ -932,11 +932,9 @@
               has-opt-level
               lock-policy
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               resolved-deps))]
         [(string.eq current "--resolved-dep")
@@ -979,7 +977,7 @@
     (build-package-default-opt-level)
     false
     (BuildPackageLockPolicy.Default)
-    (svec.string-vec-new)
+    (cli_svec.new)
     CompilerPkgDepNil))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
@@ -2997,7 +2995,7 @@
       (BuildProfile.Release)
       (CompilerBackendMode.Scalar)
       (BuildPackageLockPolicy.Default)
-      (svec.string-vec-new)
+      (cli_svec.new)
       (build-package-graph-worker-vec-new))
       [(ResultBuildPackageSchedulePass.Err _) false]
       [(ResultBuildPackageSchedulePass.Ok pass)
@@ -3253,14 +3251,14 @@
   [owner : String]
   [entry-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : i64
   (match (compiler-driver-load-package-file-with-runtime
     entry-path
     target
-    stdlib-roots
+    (cli-string-vec-to-legacy (& stdlib-roots))
     manifest-dir
     deps
     emit-entry)
@@ -3277,7 +3275,7 @@
 
 (define (build-inline-test-typecheck-package-sources
   [manifest-path : String]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [name : String]
   [deps : CompilerPkgDeps]
@@ -3290,7 +3288,7 @@
     [(ResultPackageSourceSet.Ok source-set)
       (tltest-inline-typecheck-package-sources-with-cfg
         (struct-get source-set sources)
-        stdlib-roots
+        (cli-string-vec-to-legacy (& stdlib-roots))
         manifest-dir
         name
         deps
@@ -3305,7 +3303,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [dep-libs : process.ProcessStringList]) : i64
   (let
     ;; Windows package DAG nodes are serial same-process compiles; keep only
@@ -3381,7 +3379,7 @@
               (match (compiler-driver-load-package-file-with-runtime
                 entry-path
                 target
-                stdlib-roots
+                (cli-string-vec-to-legacy (& stdlib-roots))
                 manifest-dir
                 (struct-get manifest deps)
                 emit-entry)
@@ -3395,7 +3393,7 @@
                       (compiler-load-package-owned-paths-for-decls
                         name
                         manifest-dir
-                        stdlib-roots
+                        (cli-string-vec-to-legacy (& stdlib-roots))
                         entry-path
                         decls
                         paths)]
@@ -3503,10 +3501,10 @@
 
 (define (build-package-worker-append-stdlib-roots
   [args : process.ProcessStringList]
-  [roots : svec.StringVec]) : process.ProcessStringList
+  [roots : cli_svec.Vec]) : process.ProcessStringList
   (let
     [i : i64 0]
-    [n : i64 (svec.string-vec-len (& roots))]
+    [n : i64 (cli_svec.len (& roots))]
     [out : process.ProcessStringList args]
     (begin
       (while (< i n)
@@ -3516,7 +3514,7 @@
             (build-package-worker-append-option
               out
               "--stdlib-root"
-              (svec.string-vec-get (& roots) i "")))
+              (cli_svec.get (& roots) i "")))
           (set! i (+ i 1))))
       out)))
 
@@ -3574,7 +3572,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : CompilerPkgDepList]
-  [stdlib-roots : svec.StringVec]) : process.ProcessStringList
+  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
@@ -3615,7 +3613,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : process.ProcessStringList
+  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
     manifest-path
@@ -3634,7 +3632,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : process.ProcessCommand
+  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args
@@ -3654,7 +3652,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : CompilerPkgDepList]
-  [stdlib-roots : svec.StringVec]) : process.ProcessCommand
+  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
@@ -3687,7 +3685,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [deps : CompilerPkgDeps]
   [resolved-deps : CompilerPkgDepList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [emit-entry : bool]) : i64
   (match (process.output
@@ -3956,7 +3954,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : ResultBuildPackageGraphWorker
+  [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String (struct-get node manifest-path)]
     [manifest : CompilerPkgManifest (struct-get node manifest)]
@@ -3993,7 +3991,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
   (let
     [index : i64 0]
@@ -4176,7 +4174,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [scheduled : build_string_i64_map.Map]
   [built : build_string_i64_map.Map]) : i64
   (if (build-package-all-built? nodes built)
@@ -4226,7 +4224,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
     target
@@ -4245,7 +4243,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -4287,7 +4285,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (if (and
     (build-package-async-process-supported?)
     (build-package-worker-spawn-supported?))
@@ -4317,22 +4315,25 @@
 
 (define (build-doctest-typecheck-file
   [source : String]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& source))
     [(io.ErrIoString _) 0]
     [(io.OkIoString text)
       (build-doctest-report
-        (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
+        (doc-test-typecheck-source-with-roots
+          source
+          text
+          (cli-string-vec-to-legacy (& stdlib-roots))))]))
 
 (define (build-doctest-typecheck-package-paths
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (build-doctest-report
     (doc-test-typecheck-package-paths-with-roots
       paths
-      stdlib-roots
+      (cli-string-vec-to-legacy (& stdlib-roots))
       manifest-dir
       deps)))
 
@@ -4341,7 +4342,7 @@
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
@@ -4352,7 +4353,7 @@
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             source
-            stdlib-roots
+            (cli-string-vec-to-legacy (& stdlib-roots))
             (compiler-driver-target-cfgs target (compiler-cfg-empty))
             "typecheck-prefix-inline-build")]
         (if (= inline-test-status 0)
@@ -4379,7 +4380,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (build-parse-target target-text)
     [(ResultBuildTarget.Err message)
       (begin
@@ -4439,7 +4440,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ResultSourceToolBackendMode.Err message)
       (begin
@@ -4619,7 +4620,7 @@
   [has-output : bool]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
   (if (>= idx count)
@@ -4671,11 +4672,9 @@
               target
               mode
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               opt-level
               link-inputs))]
@@ -4835,7 +4834,7 @@
     false
     (source-tool-default-target)
     (CompilerBackendMode.Scalar)
-    (svec.string-vec-new)
+    (cli_svec.new)
     (compiler-optimize-default-level)
     (source-tool-link-inputs-empty)))
 

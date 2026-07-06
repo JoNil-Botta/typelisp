@@ -4,18 +4,20 @@
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
 (import stdlib.io)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector.vector String) as cli_svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "test_cli_core.tl")
+(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 
 (defenum SelfhostCheckConfig
-  (File String svec.StringVec)
-  (Package String bool svec.StringVec))
+  (File String cli_svec.Vec)
+  (Package String bool cli_svec.Vec))
 
 (defenum ResultSelfhostCheckConfig
   (Ok SelfhostCheckConfig)
@@ -29,7 +31,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : cli_svec.Vec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ResultSelfhostCheckConfig.Err
@@ -46,7 +48,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : cli_svec.Vec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -69,11 +71,9 @@
               manifest-path
               has-manifest
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
@@ -109,14 +109,7 @@
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args
-    start
-    count
-    ""
-    false
-    ""
-    false
-    (svec.string-vec-new)))
+  (selfhost-check-parse-args start count "" false "" false (cli_svec.new)))
 
 (define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
@@ -132,32 +125,36 @@
 
 (define (selfhost-check-file-doctests
   [input-path : String]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
+    (doc-test-typecheck-file-with-roots
+      input-path
+      (cli-string-vec-to-legacy (& stdlib-roots)))))
 
 (define (selfhost-check-package-doctests
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-doctest-report
     (doc-test-typecheck-package-paths-with-roots
       paths
-      stdlib-roots
+      (cli-string-vec-to-legacy (& stdlib-roots))
       manifest-dir
       deps)))
 
 (define (selfhost-check-file
   [input-path : String]
-  [stdlib-roots : svec.StringVec]) : i64
-  (match (compiler-check-file-with-roots input-path stdlib-roots)
+  [stdlib-roots : cli_svec.Vec]) : i64
+  (match (compiler-check-file-with-roots
+    input-path
+    (cli-string-vec-to-legacy (& stdlib-roots)))
     [(ResultCompilerCheck.Ok _)
       (let
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             input-path
-            stdlib-roots
+            (cli-string-vec-to-legacy (& stdlib-roots))
             (compiler-check-language-cfgs)
             "typecheck-prefix-inline-check")]
         (if (= inline-test-status 0)
@@ -187,7 +184,7 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (package-source-discover-for "check" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
@@ -205,7 +202,7 @@
         [_reset-file-state : unit (compiler-driver-reset-file-state!)]
         (match (compiler-check-package-entry-file-with-roots
           entry-path
-          stdlib-roots
+          (cli-string-vec-to-legacy (& stdlib-roots))
           manifest-dir
           (struct-get manifest deps)
           emit-entry)
@@ -220,7 +217,7 @@
               [inline-test-status : i64
                 (tltest-inline-typecheck-package-sources-with-cfg
                   (struct-get source-set sources)
-                  stdlib-roots
+                  (cli-string-vec-to-legacy (& stdlib-roots))
                   manifest-dir
                   name
                   (struct-get manifest deps)

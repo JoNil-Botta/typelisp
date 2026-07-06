@@ -2574,7 +2574,11 @@
                 (compiler-backend-string-contains?
                   body
                   "    leaq 0(%rsp), %r10\n"))
-              (not (compiler-backend-string-contains? body "16(%r11)")))
+              (not (compiler-backend-string-contains? body "16(%r11)"))
+              (not
+                (compiler-backend-string-contains? body "    subq $32, %rsp\n"))
+              (not
+                (compiler-backend-string-contains? body "    addq $32, %rsp\n")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -2928,7 +2932,9 @@
         (not (compiler-backend-string-contains? asm "    movq %rcx, %rax\n"))
         (not (compiler-backend-string-contains? asm "    movq %rcx, %r13\n"))
         (not (compiler-backend-string-contains? asm "    call *%r13\n"))
-        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
+        (not (compiler-backend-string-contains? asm "    call *%rax\n"))
+        (not (compiler-backend-string-contains? asm "    subq $"))
+        (not (compiler-backend-string-contains? asm "    addq $")))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-return-store-two-int-slots) : CompilerIrCAbiReturnSlotList
@@ -6104,103 +6110,200 @@
       [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
-  (match (compiler-backend-emit-phi-edge-copies
-    (compiler-backend-phi-same-home-assignments)
-    (compiler-backend-phi-same-home-blocks)
-    "join"
-    "entry"
-    (compiler-backend-program-index-build
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)
-    0)
-    [(ResultCompilerBackend.Ok same-home)
+  (let
+    [prev-count : i64 compiler-backend-cycle-temp-used-count]
+    [prev-base : i64 compiler-backend-cycle-temp-base-offset]
+    [_set : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count 0)
+        (set! compiler-backend-cycle-temp-base-offset -512))]
+    [ok : bool
       (match (compiler-backend-emit-phi-edge-copies
-        CompilerRegAssignmentList.Nil
-        (compiler-backend-phi-cycle-blocks)
+        (compiler-backend-phi-same-home-assignments)
+        (compiler-backend-phi-same-home-blocks)
         "join"
-        "back"
+        "entry"
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         0)
-        [(ResultCompilerBackend.Ok cycle)
-          (and
-            (string.eq same-home "")
-            (compiler-backend-string-contains? cycle "    pushq -8(%rbp)\n")
-            (compiler-backend-string-contains? cycle "    movq -16(%rbp), %")
-            (compiler-backend-string-contains? cycle ", -8(%rbp)\n")
-            (compiler-backend-string-contains? cycle "    popq -16(%rbp)\n")
-            (not (compiler-backend-string-contains? cycle "%rax")))]
+        [(ResultCompilerBackend.Ok same-home)
+          (match (compiler-backend-emit-phi-edge-copies
+            CompilerRegAssignmentList.Nil
+            (compiler-backend-phi-cycle-blocks)
+            "join"
+            "back"
+            (compiler-backend-program-index-build
+              CompilerIrFunctionList.Nil
+              CompilerIrExternList.Nil)
+            0)
+            [(ResultCompilerBackend.Ok cycle)
+              (and
+                (string.eq same-home "")
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movq -8(%rbp), %r10\n")
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movq %r10, -512(%rbp)\n")
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movq -512(%rbp), %r10\n")
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movq %r10, -16(%rbp)\n")
+                (not (compiler-backend-string-contains? cycle "pushq"))
+                (not (compiler-backend-string-contains? cycle "popq"))
+                (not (compiler-backend-string-contains? cycle "%rax")))]
+            [(ResultCompilerBackend.Err _) false])]
         [(ResultCompilerBackend.Err _) false])]
-    [(ResultCompilerBackend.Err _) false]))
+    [_restore : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count prev-count)
+        (set! compiler-backend-cycle-temp-base-offset prev-base))]
+    ok))
 
 (define (compiler-backend-phi-group-cycle-copy-ok?) : bool
-  (match (compiler-backend-emit-phi-edge-copies
-    (compiler-backend-phi-group-cycle-assignments)
-    (compiler-backend-phi-group-cycle-blocks)
-    "join"
-    "back"
-    (compiler-backend-register-group-test-index)
-    4)
-    [(ResultCompilerBackend.Ok cycle)
-      (and
-        (compiler-backend-string-contains? cycle "    pushq %r12\n")
-        (compiler-backend-string-contains? cycle "    pushq %r13\n")
-        (compiler-backend-string-contains? cycle "    movq %r14, %r12\n")
-        (compiler-backend-string-contains? cycle "    movq %r15, %r13\n")
-        (compiler-backend-string-contains? cycle "    popq %r15\n")
-        (compiler-backend-string-contains? cycle "    popq %r14\n")
-        (not (compiler-backend-string-contains? cycle "%rax"))
-        (not (compiler-backend-string-contains? cycle "%rdx")))]
-    [(ResultCompilerBackend.Err _) false]))
+  (let
+    [prev-count : i64 compiler-backend-cycle-temp-used-count]
+    [prev-base : i64 compiler-backend-cycle-temp-base-offset]
+    [_set : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count 0)
+        (set! compiler-backend-cycle-temp-base-offset -512))]
+    [ok : bool
+      (match (compiler-backend-emit-phi-edge-copies
+        (compiler-backend-phi-group-cycle-assignments)
+        (compiler-backend-phi-group-cycle-blocks)
+        "join"
+        "back"
+        (compiler-backend-register-group-test-index)
+        4)
+        [(ResultCompilerBackend.Ok cycle)
+          (and
+            (compiler-backend-string-contains?
+              cycle
+              "    movq %r12, -512(%rbp)\n")
+            (compiler-backend-string-contains?
+              cycle
+              "    movq %r13, -520(%rbp)\n")
+            (compiler-backend-string-contains? cycle "    movq %r14, %r12\n")
+            (compiler-backend-string-contains? cycle "    movq %r15, %r13\n")
+            (compiler-backend-string-contains?
+              cycle
+              "    movq -520(%rbp), %r15\n")
+            (compiler-backend-string-contains?
+              cycle
+              "    movq -512(%rbp), %r14\n")
+            (not (compiler-backend-string-contains? cycle "pushq"))
+            (not (compiler-backend-string-contains? cycle "popq"))
+            (not (compiler-backend-string-contains? cycle "%rax"))
+            (not (compiler-backend-string-contains? cycle "%rdx")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count prev-count)
+        (set! compiler-backend-cycle-temp-base-offset prev-base))]
+    ok))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
-  (and
-    (match (compiler-backend-emit-phi-edge-copies
-      (compiler-backend-phi-f64-cycle-assignments)
-      (compiler-backend-phi-f64-cycle-blocks)
-      "join"
-      "back"
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      2)
-      [(ResultCompilerBackend.Ok cycle)
-        (and
-          (compiler-backend-string-contains?
-            cycle
-            "    subq $8, %rsp\n    movsd %xmm2, (%rsp)\n")
-          (compiler-backend-string-contains?
-            cycle
-            "    movsd (%rsp), %xmm3\n    addq $8, %rsp\n")
-          (not (compiler-backend-string-contains? cycle "%xmm0"))
-          (not (compiler-backend-string-contains? cycle "%xmm14"))
-          (not (compiler-backend-string-contains? cycle "%xmm15")))]
-      [(ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-phi-edge-copies
-      (compiler-backend-phi-group-f64-cycle-assignments)
-      (compiler-backend-phi-group-f64-cycle-blocks)
-      "join"
-      "back"
-      (compiler-backend-register-group-f64-test-index)
-      4)
-      [(ResultCompilerBackend.Ok cycle)
-        (and
-          (compiler-backend-string-contains?
-            cycle
-            "    subq $8, %rsp\n    movq %xmm2, (%rsp)\n")
-          (compiler-backend-string-contains?
-            cycle
-            "    subq $8, %rsp\n    movq %xmm3, (%rsp)\n")
-          (compiler-backend-string-contains?
-            cycle
-            "    movq (%rsp), %xmm5\n    addq $8, %rsp\n")
-          (compiler-backend-string-contains?
-            cycle
-            "    movq (%rsp), %xmm4\n    addq $8, %rsp\n")
-          (not (compiler-backend-string-contains? cycle "%xmm14"))
-          (not (compiler-backend-string-contains? cycle "%xmm15")))]
-      [(ResultCompilerBackend.Err _) false])))
+  (let
+    [prev-count : i64 compiler-backend-cycle-temp-used-count]
+    [prev-base : i64 compiler-backend-cycle-temp-base-offset]
+    [_set : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count 0)
+        (set! compiler-backend-cycle-temp-base-offset -512))]
+    [ok : bool
+      (and
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-phi-f64-cycle-assignments)
+          (compiler-backend-phi-f64-cycle-blocks)
+          "join"
+          "back"
+          (compiler-backend-program-index-build
+            CompilerIrFunctionList.Nil
+            CompilerIrExternList.Nil)
+          2)
+          [(ResultCompilerBackend.Ok cycle)
+            (and
+              (compiler-backend-string-contains?
+                cycle
+                "    movsd %xmm2, -512(%rbp)\n")
+              (compiler-backend-string-contains?
+                cycle
+                "    movsd -512(%rbp), %xmm3\n")
+              (not (compiler-backend-string-contains? cycle "%rsp"))
+              (not (compiler-backend-string-contains? cycle "%xmm0"))
+              (not (compiler-backend-string-contains? cycle "%xmm14"))
+              (not (compiler-backend-string-contains? cycle "%xmm15")))]
+          [(ResultCompilerBackend.Err _) false])
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-phi-group-f64-cycle-assignments)
+          (compiler-backend-phi-group-f64-cycle-blocks)
+          "join"
+          "back"
+          (compiler-backend-register-group-f64-test-index)
+          4)
+          [(ResultCompilerBackend.Ok cycle)
+            (and
+              (compiler-backend-string-contains?
+                cycle
+                "    movq %xmm2, -512(%rbp)\n")
+              (compiler-backend-string-contains?
+                cycle
+                "    movq %xmm3, -520(%rbp)\n")
+              (compiler-backend-string-contains?
+                cycle
+                "    movq -520(%rbp), %xmm5\n")
+              (compiler-backend-string-contains?
+                cycle
+                "    movq -512(%rbp), %xmm4\n")
+              (not (compiler-backend-string-contains? cycle "%rsp"))
+              (not (compiler-backend-string-contains? cycle "%xmm14"))
+              (not (compiler-backend-string-contains? cycle "%xmm15")))]
+          [(ResultCompilerBackend.Err _) false]))]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count prev-count)
+        (set! compiler-backend-cycle-temp-base-offset prev-base))]
+    ok))
+
+(define (compiler-backend-arg-cycle-temp-slot-ok?) : bool
+  (let
+    [prev-count : i64 compiler-backend-cycle-temp-used-count]
+    [prev-base : i64 compiler-backend-cycle-temp-base-offset]
+    [_set : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count 0)
+        (set! compiler-backend-cycle-temp-base-offset -512))]
+    [restore : ResultCompilerBackend
+      (compiler-backend-emit-arg-move
+        CompilerRegAssignmentList.Nil
+        (BackendArgMove "%rsi" BackendArgMoveStackPop))]
+    [ok : bool
+      (match restore
+        [(ResultCompilerBackend.Ok restore-asm)
+          (let
+            [save-asm : String
+              (compiler-backend-emit-arg-cycle-temp-save "%rdi")]
+            [asm : String (string.append save-asm restore-asm)]
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    movq %rdi, -512(%rbp)\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movq -512(%rbp), %rsi\n")
+              (not (compiler-backend-string-contains? asm "pushq"))
+              (not (compiler-backend-string-contains? asm "popq"))
+              (not (compiler-backend-string-contains? asm "%rsp"))))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-cycle-temp-used-count prev-count)
+        (set! compiler-backend-cycle-temp-base-offset prev-base))]
+    ok))
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
@@ -9488,6 +9591,8 @@
       compiler-backend-emergency-pending-count]
     [prev-emergency-used-count : i64 compiler-backend-emergency-used-count]
     [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
+    [prev-cycle-temp-used-count : i64 compiler-backend-cycle-temp-used-count]
+    [prev-cycle-temp-base-offset : i64 compiler-backend-cycle-temp-base-offset]
     [prev-emergency-restore-suppressed : bool
       compiler-backend-emergency-restore-suppressed]
     [blocks : CompilerIrBlockList
@@ -9563,6 +9668,12 @@
                 compiler-backend-emergency-slot-offset
                 prev-emergency-slot-offset)
               (set!
+                compiler-backend-cycle-temp-used-count
+                prev-cycle-temp-used-count)
+              (set!
+                compiler-backend-cycle-temp-base-offset
+                prev-cycle-temp-base-offset)
+              (set!
                 compiler-backend-emergency-restore-suppressed
                 prev-emergency-restore-suppressed))]
           (ResultCompilerBackend.Ok asm))]
@@ -9607,6 +9718,12 @@
               (set!
                 compiler-backend-emergency-slot-offset
                 prev-emergency-slot-offset)
+              (set!
+                compiler-backend-cycle-temp-used-count
+                prev-cycle-temp-used-count)
+              (set!
+                compiler-backend-cycle-temp-base-offset
+                prev-cycle-temp-base-offset)
               (set!
                 compiler-backend-emergency-restore-suppressed
                 prev-emergency-restore-suppressed))]
@@ -18468,6 +18585,7 @@
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
+        (compiler-backend-arg-cycle-temp-slot-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?)
         (compiler-backend-phi-immediate-stack-copy-ok?)
         (compiler-backend-phi-direct-scalar-copy-ok?)

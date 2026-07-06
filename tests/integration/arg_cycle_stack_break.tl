@@ -11,14 +11,13 @@
 ;;
 ;; The old fallback was a RAW `movq srcreg, %r11` -- neither occupancy-checked
 ;; nor save/restore-wrapped -- so a value homed in %r11 would be clobbered. The
-;; fix breaks the cycle through the STACK instead (`pushq srcreg` / `popq
-;; consumer`), a register-free swap that clobbers nothing. Building the compiler
-;; with `--cfg arg-cycle-stack` forces that saturation path for every cycle break
+;; fix breaks the cycle through a reserved frame temp instead, a register-free
+;; swap that clobbers nothing. Building the compiler with `--cfg arg-cycle-stack`
+;; forces that saturation path for every cycle break
 ;; (the natural path never reaches it: %r10/%r11 are caller-saved and never join
 ;; a gp-parallel arg cycle nor hold a call-survivor, so a free scratch always
-;; exists); target/arg-cycle-gate.sh compiles this fixture with such a compiler
-;; and asserts a `pushq`-form break with NO bare `movq ...,%r11` cycle break, and
-;; that the program still returns 42 (the stack rotation is correct).
+;; exists). Run with such a compiler, this fixture asserts that the frame-temp
+;; rotation is correct and still returns 42.
 ;;
 ;; Run normally (register-temp break) it is a runtime regression guard on
 ;; argument-cycle correctness. Values come from (io.arg-count) so the optimizer

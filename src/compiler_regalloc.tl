@@ -6675,7 +6675,8 @@
 ;; caller-saved unavailable across it). But idiv clobbers only rax:rdx, and a variable shift only rcx, so a value CAN cross a
 ;; div in %r9/%rcx and a shift in %r9/%rdx. These per-kind point sets let the
 ;; greedy forbid only the registers an op actually clobbers.
-;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv   kind 2 = shift
+;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv
+;;   kind 2 = shift                          kind 4 = loop-split rdx use
 (define (compiler-reg-clobber-binop-div? [op : CompilerIrBinOp]) : bool
   (match op
     [(CompilerIrBinOp.Div) true]
@@ -6683,6 +6684,11 @@
     [(CompilerIrBinOp.SafeDiv) true]
     [(CompilerIrBinOp.SafeMod) true]
     [_ false]))
+
+(define (compiler-reg-clobber-binop-rdx? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Mul) true]
+    [_ (compiler-reg-clobber-binop-div? op)]))
 
 ;; A shift binop clobbers %rcx ONLY when its count is emitted through the %cl
 ;; register path. The backend emits a CONSTANT, in-range count as an immediate
@@ -6738,11 +6744,11 @@
   [kind : i64]) : bool
   (match instr
     [(CompilerIrInstr.BinOp _ op _ rhs ty)
-      (if (= kind 1)
-        (compiler-reg-clobber-binop-div? op)
-        (if (= kind 2)
-          (compiler-reg-clobber-binop-shift? op rhs ty)
-          false))]
+      (cond
+        [(= kind 1) (compiler-reg-clobber-binop-div? op)]
+        [(= kind 2) (compiler-reg-clobber-binop-shift? op rhs ty)]
+        [(= kind 4) (compiler-reg-clobber-binop-rdx? op)]
+        [else false])]
     ;; kind 3 = switch dispatch points (GAP3c pin gate only; never kind 0 --
     ;; a switch clobbers no register per se, but its DISPATCH emitter's
     ;; emergency scavenge wraps a save/restore around the indirect jmp whose
@@ -6876,6 +6882,51 @@
   [start : i64]
   [end : i64]) : bool
   (compiler-reg-call-set-in-range-words? set start end 0))
+
+(define (compiler-reg-clobber-word-in-range-inclusive-start?
+  [bits : i64]
+  [var-base : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (if (= bits 0)
+    false
+    (let
+      [i : i64 (compiler-reg-low-bit-index bits)]
+      [c : i64 (+ var-base i)]
+      (if (if (<= start c)
+        (< c end)
+        false)
+        true
+        (compiler-reg-clobber-word-in-range-inclusive-start?
+          (bit-and bits (- bits 1))
+          var-base
+          start
+          end)))))
+
+(define (compiler-reg-clobber-set-in-range-inclusive-start-words?
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]
+  [word-index : i64]) : bool
+  (if (>= word-index (compiler-live-set-word-count set))
+    false
+    (if (compiler-reg-clobber-word-in-range-inclusive-start?
+      (compiler-live-set-word-at set word-index)
+      (* word-index (compiler-live-set-word-bits))
+      start
+      end)
+      true
+      (compiler-reg-clobber-set-in-range-inclusive-start-words?
+        set
+        start
+        end
+        (+ word-index 1)))))
+
+(define (compiler-reg-clobber-set-in-range-inclusive-start?
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]) : bool
+  (compiler-reg-clobber-set-in-range-inclusive-start-words? set start end 0))
 
 (define (compiler-reg-call-word-count-in-range-model
   [bits : i64]
@@ -8920,12 +8971,13 @@
         remap)]))
 
 ;; A loop region (one loop block) is clobber-free for caller-saved registers iff it
-;; contains no call/syscall -- those clobber the whole caller-saved set. (div/mod/
-;; shift clobber only rax/rdx/rcx, which the widened candidate set below excludes;
-;; cpuid/xgetbv don't touch r8/r9/rsi/rdi.) In a clobber-free region a caller-saved
-;; reg survives the loop and is protected from scratch use by the scavenger freeness
-;; check (the rescued var's home is occupied while live) -- exactly as for the
-;; callee-saved regs the rescue already uses, so no prologue save is needed.
+;; contains no call/syscall -- those clobber the whole caller-saved set. Per-reg
+;; fixed-use hazards are handled separately: %rcx is offered only when the region
+;; crosses no variable shift, and %rdx only when it crosses no div/mod/mul fixed
+;; use. In a clobber-free region a caller-saved reg survives the loop and is
+;; protected from scratch use by the scavenger freeness check (the rescued var's
+;; home is occupied while live) -- exactly as for the callee-saved regs the rescue
+;; already uses, so no prologue save is needed.
 (define (compiler-reg-loop-split-seq-has-call-or-syscall?
   [instrs : CompilerIrInstrSeq]) : bool
   (let
@@ -8951,11 +9003,46 @@
           (set! index (+ index 1))))
       found)))
 
+(define (compiler-reg-loop-split-region-crosses-kind?
+  [func : CompilerIrFunction]
+  [kind : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (compiler-reg-clobber-set-in-range-inclusive-start?
+    (compiler-reg-clobber-kind-points func kind)
+    start
+    end))
+
+(define (compiler-reg-loop-split-region-rcx-safe?
+  [func : CompilerIrFunction]
+  [start : i64]
+  [end : i64]) : bool
+  (not (compiler-reg-loop-split-region-crosses-kind? func 2 start end)))
+
+(define (compiler-reg-loop-split-region-rdx-safe?
+  [func : CompilerIrFunction]
+  [start : i64]
+  [end : i64]) : bool
+  (not (compiler-reg-loop-split-region-crosses-kind? func 4 start end)))
+
+(define (compiler-reg-loop-split-cons-if
+  [enabled : bool]
+  [reg : String]
+  [rest : CompilerRegStringList]) : CompilerRegStringList
+  (if enabled
+    (compiler-reg-string-cons reg rest)
+    rest))
+
 ;; Candidate registers for the loop-split rescue. Always the 5 callee-saved (sound
-;; everywhere). When the region is clobber-free, ALSO offer caller-saved r8/r9/rsi/
-;; rdi (tried first), so a clobber-free hot loop can keep a value in a register
-;; without adding a callee reg to the prologue save set.
-(define (compiler-reg-loop-split-candidate-regs [clobber-free? : bool]) : CompilerRegStringList
+;; everywhere). When the region is clobber-free, ALSO offer caller-saved
+;; r8/r9/rsi/rdi and the fixed-use regs %rcx/%rdx when the region-specific
+;; clobber scan proves they are not overwritten. Caller-saved candidates are tried
+;; first, so a clobber-free hot loop can keep a value in a register without adding
+;; a callee reg to the prologue save set.
+(define (compiler-reg-loop-split-candidate-regs
+  [clobber-free? : bool]
+  [rcx-safe? : bool]
+  [rdx-safe? : bool]) : CompilerRegStringList
   (if clobber-free?
     (compiler-reg-string-cons
       "%r8"
@@ -8965,7 +9052,13 @@
           "%rsi"
           (compiler-reg-string-cons
             "%rdi"
-            (compiler-reg-sysv-integer-registers)))))
+            (compiler-reg-loop-split-cons-if
+              rcx-safe?
+              "%rcx"
+              (compiler-reg-loop-split-cons-if
+                rdx-safe?
+                "%rdx"
+                (compiler-reg-sysv-integer-registers)))))))
     (compiler-reg-sysv-integer-registers)))
 
 ;; ---------------------------------------------------------------------------
@@ -9342,6 +9435,7 @@
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -9483,47 +9577,41 @@
                               mentions
                               depth
                               copy-count))
-                            (let
-                              [cregs : CompilerRegStringList
-                                (compiler-reg-loop-split-candidate-regs
-                                  (not
-                                    (compiler-reg-loop-split-seq-has-call-or-syscall?
-                                      instrs)))]
-                              (match (compiler-reg-loop-split-first-register
-                                cregs
-                                assignments
-                                intervals
-                                region-intervals
-                                var)
-                                [(CompilerRegMaybeString.Some reg)
-                                  (CompilerRegLoopSplitCandidate.Candidate
-                                    var
-                                    labels
-                                    ty
-                                    reg
-                                    copies
-                                    (- 0 1))]
-                                [(CompilerRegMaybeString.No)
-                                  (match (compiler-reg-loop-split-first-register-evict
-                                    cregs
-                                    assignments
-                                    intervals
-                                    region-intervals
-                                    var
-                                    weights
-                                    (if (< var (array-length weights))
-                                      (array-ref weights var)
-                                      0))
-                                    [(CompilerRegLoopSplitEvict ereg evar)
-                                      (CompilerRegLoopSplitCandidate.Candidate
-                                        var
-                                        labels
-                                        ty
-                                        ereg
-                                        copies
-                                        evar)]
-                                    [(CompilerRegLoopSplitEvictNone)
-                                      (CompilerRegLoopSplitCandidate.NoCandidate)])]))
+                            (match (compiler-reg-loop-split-first-register
+                              candidate-regs
+                              assignments
+                              intervals
+                              region-intervals
+                              var)
+                              [(CompilerRegMaybeString.Some reg)
+                                (CompilerRegLoopSplitCandidate.Candidate
+                                  var
+                                  labels
+                                  ty
+                                  reg
+                                  copies
+                                  (- 0 1))]
+                              [(CompilerRegMaybeString.No)
+                                (match (compiler-reg-loop-split-first-register-evict
+                                  candidate-regs
+                                  assignments
+                                  intervals
+                                  region-intervals
+                                  var
+                                  weights
+                                  (if (< var (array-length weights))
+                                    (array-ref weights var)
+                                    0))
+                                  [(CompilerRegLoopSplitEvict ereg evar)
+                                    (CompilerRegLoopSplitCandidate.Candidate
+                                      var
+                                      labels
+                                      ty
+                                      ereg
+                                      copies
+                                      evar)]
+                                  [(CompilerRegLoopSplitEvictNone)
+                                    (CompilerRegLoopSplitCandidate.NoCandidate)])])
                             (CompilerRegLoopSplitCandidate.NoCandidate)))]
                       [(CompilerRegEdgeCopyPlan.Refused _)
                         (CompilerRegLoopSplitCandidate.NoCandidate)]))]
@@ -9543,6 +9631,7 @@
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -9563,6 +9652,7 @@
       region-start
       region-end
       depth
+      candidate-regs
       vars
       var
       type-info
@@ -9582,6 +9672,7 @@
           region-start
           region-end
           depth
+          candidate-regs
           vars
           (+ var 1)
           type-info
@@ -9635,6 +9726,11 @@
               (if (< block-index (array-length depths))
                 (array-ref depths block-index)
                 0)]
+            [candidate-regs : CompilerRegStringList
+              (compiler-reg-loop-split-candidate-regs
+                (not (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
+                (compiler-reg-loop-split-region-rcx-safe? func point next-point)
+                (compiler-reg-loop-split-region-rdx-safe? func point next-point))]
             (if (and
               (< block-index (array-length live-blocks))
               (> depth 0)
@@ -9657,6 +9753,7 @@
                 point
                 next-point
                 depth
+                candidate-regs
                 vars
                 0
                 type-info
@@ -9894,7 +9991,7 @@
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
-  [clobber-free? : bool]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -9945,45 +10042,41 @@
                           mentions
                           depth
                           (compiler-reg-edge-copy-list-count copies)))
-                        (let
-                          [cregs : CompilerRegStringList
-                            (compiler-reg-loop-split-candidate-regs
-                              clobber-free?)]
-                          (match (compiler-reg-loop-split-first-register
-                            cregs
-                            assignments
-                            intervals
-                            region-intervals
-                            var)
-                            [(CompilerRegMaybeString.Some reg)
-                              (CompilerRegLoopSplitCandidate.Candidate
-                                var
-                                region-labels
-                                ty
-                                reg
-                                copies
-                                (- 0 1))]
-                            [(CompilerRegMaybeString.No)
-                              (match (compiler-reg-loop-split-first-register-evict
-                                cregs
-                                assignments
-                                intervals
-                                region-intervals
-                                var
-                                weights
-                                (if (< var (array-length weights))
-                                  (array-ref weights var)
-                                  0))
-                                [(CompilerRegLoopSplitEvict ereg evar)
-                                  (CompilerRegLoopSplitCandidate.Candidate
-                                    var
-                                    region-labels
-                                    ty
-                                    ereg
-                                    copies
-                                    evar)]
-                                [(CompilerRegLoopSplitEvictNone)
-                                  (CompilerRegLoopSplitCandidate.NoCandidate)])]))
+                        (match (compiler-reg-loop-split-first-register
+                          candidate-regs
+                          assignments
+                          intervals
+                          region-intervals
+                          var)
+                          [(CompilerRegMaybeString.Some reg)
+                            (CompilerRegLoopSplitCandidate.Candidate
+                              var
+                              region-labels
+                              ty
+                              reg
+                              copies
+                              (- 0 1))]
+                          [(CompilerRegMaybeString.No)
+                            (match (compiler-reg-loop-split-first-register-evict
+                              candidate-regs
+                              assignments
+                              intervals
+                              region-intervals
+                              var
+                              weights
+                              (if (< var (array-length weights))
+                                (array-ref weights var)
+                                0))
+                              [(CompilerRegLoopSplitEvict ereg evar)
+                                (CompilerRegLoopSplitCandidate.Candidate
+                                  var
+                                  region-labels
+                                  ty
+                                  ereg
+                                  copies
+                                  evar)]
+                              [(CompilerRegLoopSplitEvictNone)
+                                (CompilerRegLoopSplitCandidate.NoCandidate)])])
                         (CompilerRegLoopSplitCandidate.NoCandidate))]
                     [(CompilerRegEdgeCopyPlan.Refused _)
                       (CompilerRegLoopSplitCandidate.NoCandidate)]))]
@@ -10004,7 +10097,7 @@
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
-  [clobber-free? : bool]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -10025,7 +10118,7 @@
       region-start
       region-end
       depth
-      clobber-free?
+      candidate-regs
       vars
       var
       type-info
@@ -10045,7 +10138,7 @@
           region-start
           region-end
           depth
-          clobber-free?
+          candidate-regs
           vars
           (+ var 1)
           type-info
@@ -10090,45 +10183,62 @@
         (> (array-ref depths h) 0)
         (< body (array-length pred-counts))
         (= (array-ref pred-counts body) 1))
-        (match (compiler-reg-loop-phi-mb-select-var
-          func
-          block-array
-          h
-          end-idx
-          (match (array-ref block-array h)
-            [(CompilerIrBlock.Block _ instrs) instrs])
-          (compiler-reg-loop-phi-mb-region-labels block-array h end-idx)
-          (array-ref points h)
-          (array-ref points (+ end-idx 1))
-          (array-ref depths h)
-          (not
-            (compiler-reg-loop-phi-mb-region-has-call? block-array h end-idx))
-          vars
-          0
-          type-info
-          assignments
-          intervals
-          group-vars
-          parents
-          weights)
-          [(CompilerRegLoopSplitCandidate.NoCandidate)
-            (compiler-reg-loop-phi-mb-select-headers
-              func
-              block-array
-              points
-              loop-ends
-              pred-counts
-              depths
-              (+ h 1)
-              vars
-              type-info
-              assignments
-              intervals
-              group-vars
-              parents
-              weights)]
-          [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
-            (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])
+        (let
+          [region-start : i64 (array-ref points h)]
+          [region-end : i64 (array-ref points (+ end-idx 1))]
+          [candidate-regs : CompilerRegStringList
+            (compiler-reg-loop-split-candidate-regs
+              (not
+                (compiler-reg-loop-phi-mb-region-has-call?
+                  block-array
+                  h
+                  end-idx))
+              (compiler-reg-loop-split-region-rcx-safe?
+                func
+                region-start
+                region-end)
+              (compiler-reg-loop-split-region-rdx-safe?
+                func
+                region-start
+                region-end))]
+          (match (compiler-reg-loop-phi-mb-select-var
+            func
+            block-array
+            h
+            end-idx
+            (match (array-ref block-array h)
+              [(CompilerIrBlock.Block _ instrs) instrs])
+            (compiler-reg-loop-phi-mb-region-labels block-array h end-idx)
+            region-start
+            region-end
+            (array-ref depths h)
+            candidate-regs
+            vars
+            0
+            type-info
+            assignments
+            intervals
+            group-vars
+            parents
+            weights)
+            [(CompilerRegLoopSplitCandidate.NoCandidate)
+              (compiler-reg-loop-phi-mb-select-headers
+                func
+                block-array
+                points
+                loop-ends
+                pred-counts
+                depths
+                (+ h 1)
+                vars
+                type-info
+                assignments
+                intervals
+                group-vars
+                parents
+                weights)]
+            [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
+              (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)]))
         (compiler-reg-loop-phi-mb-select-headers
           func
           block-array
@@ -10390,6 +10500,7 @@
   [region-end : i64]
   ;; lint-allow: unused-variable
   [depth : i64]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -10461,10 +10572,7 @@
                       ;; free over the region; if so a preheader unblocks it.
                       [(CompilerRegEdgeCopyPlan.Refused _)
                         (match (compiler-reg-loop-split-first-register
-                          (compiler-reg-loop-split-candidate-regs
-                            (not
-                              (compiler-reg-loop-split-seq-has-call-or-syscall?
-                                instrs)))
+                          candidate-regs
                           assignments
                           intervals
                           region-intervals
@@ -10484,6 +10592,7 @@
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
+  [candidate-regs : CompilerRegStringList]
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
@@ -10504,6 +10613,7 @@
           region-start
           region-end
           depth
+          candidate-regs
           vars
           var
           type-info
@@ -10521,6 +10631,7 @@
           region-start
           region-end
           depth
+          candidate-regs
           vars
           (+ var 1)
           type-info
@@ -10558,6 +10669,11 @@
               (if (< block-index (array-length depths))
                 (array-ref depths block-index)
                 0)]
+            [candidate-regs : CompilerRegStringList
+              (compiler-reg-loop-split-candidate-regs
+                (not (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
+                (compiler-reg-loop-split-region-rcx-safe? func point next-point)
+                (compiler-reg-loop-split-region-rdx-safe? func point next-point))]
             (if (and
               (< block-index (array-length live-blocks))
               (> depth 0)
@@ -10576,6 +10692,7 @@
                     point
                     next-point
                     depth
+                    candidate-regs
                     vars
                     0
                     type-info
@@ -10688,9 +10805,10 @@
 
 (define (compiler-reg-loop-split-max-rounds-for-abi
   [abi : CompilerRegTargetAbi]) : i64
-  ;; Campaign: +4 for the caller-saved rescue rounds (r8/r9/rsi/rdi) in
+  ;; Campaign: +6 for the caller-saved rescue rounds (r8/r9/rsi/rdi plus
+  ;; guarded rcx/rdx) in
   ;; clobber-free regions; extra rounds stop early when no free candidate remains.
-  (+ (compiler-reg-callee-saved-integer-register-count-for-abi abi) 4))
+  (+ (compiler-reg-callee-saved-integer-register-count-for-abi abi) 6))
 
 (define (compiler-reg-loop-split-rewrite-rounds
   [abi : CompilerRegTargetAbi]
@@ -10916,11 +11034,11 @@
     [_ (compiler-reg-backend-clobber-point-instr? instr)]))
 
 ;; Shadow register pool: caller-saved registers with NO fixed-use hazard
-;; inside a kind-0-free region (mirrors the clobber-free caller-saved prefix
-;; of compiler-reg-loop-split-candidate-regs and the splitkit safe-register
-;; analysis): rax/rcx/rdx carry div/shift/return fixed uses, r10/r11 are the
-;; emergency scavenger's default picks. %rsi/%rdi are callee-saved on Win64
-;; and excluded there (the backend saves only the SysV callee set).
+;; inside a kind-0-free region. Unlike loop-split's guarded rcx/rdx widening,
+;; call-region shadows keep the stable r8/r9/rsi/rdi subset: rax/rcx/rdx carry
+;; div/shift/return fixed uses, r10/r11 are the emergency scavenger's default
+;; picks. %rsi/%rdi are callee-saved on Win64 and excluded there (the backend
+;; saves only the SysV callee set).
 (define (compiler-reg-call-region-pool [abi : CompilerRegTargetAbi]) : (Array
     String)
   (match abi
@@ -14870,6 +14988,7 @@
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]
+  [mask-vars-use-vector-registers : bool]
   [abi : CompilerRegTargetAbi]) : CompilerRegPlan
   (let
     [moves
@@ -15217,13 +15336,24 @@
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef.Def _ vars) vars])]
+    [vector-candidate-vars : CompilerLiveI64Set
+      (if mask-vars-use-vector-registers
+        (compiler-live-set-union vector-vars mask-vars)
+        vector-vars)]
+    [mask-candidate-vars : CompilerLiveI64Set
+      (if mask-vars-use-vector-registers
+        (compiler-live-set-empty)
+        mask-vars)]
     [vector-preferences : (Array i64)
       (compiler-reg-function-select-false-preferences
         func
         (array-length (struct-get interval-index starts)))]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals vector-vars blocked)
+        (compiler-reg-special-candidates
+          intervals
+          vector-candidate-vars
+          blocked)
         (compiler-reg-vector-registers)
         CompilerRegActiveList.Nil
         scalar-assignments
@@ -15234,7 +15364,7 @@
         [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals mask-vars blocked)
+        (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
         (compiler-reg-mask-registers)
         CompilerRegActiveList.Nil
         vector-assignments
@@ -15313,6 +15443,32 @@
       ineligible
       ineligible
       false
+      false
+      CompilerRegTargetAbi.Linux)))
+
+(define (compiler-reg-plan-function-avx2 [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-live-intervals func liveness)]
+    [ineligible : CompilerLiveI64Set
+      (compiler-reg-ineligible-vars-simd func type-info types intervals)]
+    [vars : i64
+      (match func
+        [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+    (compiler-reg-plan-from
+      func
+      type-info
+      types
+      intervals
+      (compiler-reg-interval-index-build intervals vars)
+      (compiler-reg-assignment-table-make vars)
+      ineligible
+      ineligible
+      false
+      true
       CompilerRegTargetAbi.Linux)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
@@ -15508,6 +15664,7 @@
                 ineligible
                 blocked
                 true
+                false
                 abi)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
@@ -23727,6 +23884,98 @@
 
 (cfg
   test
+  (define (compiler-reg-loop-split-clobber-scan-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      "loop_split_clobber_scan"
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      5
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 3)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  2
+                  (CompilerIrBinOp.Shl)
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    3
+                    (CompilerIrBinOp.Div)
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      4
+                      (CompilerIrBinOp.Mul)
+                      (CompilerIrValue.Var 0)
+                      (CompilerIrValue.Var 1)
+                      (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "loop")
+                      CompilerIrInstrList.Nil)))))))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-rcx-rdx-candidates-ok?) : bool
+    (let
+      [safe : CompilerRegStringList
+        (compiler-reg-loop-split-candidate-regs true true true)]
+      [unsafe : CompilerRegStringList
+        (compiler-reg-loop-split-candidate-regs true false false)]
+      [call-region : CompilerRegStringList
+        (compiler-reg-loop-split-candidate-regs false true true)]
+      (and
+        (compiler-reg-string-list-contains? safe "%rcx")
+        (compiler-reg-string-list-contains? safe "%rdx")
+        (not (compiler-reg-string-list-contains? unsafe "%rcx"))
+        (not (compiler-reg-string-list-contains? unsafe "%rdx"))
+        (compiler-reg-string-list-contains? unsafe "%r8")
+        (compiler-reg-string-list-contains? unsafe "%rdi")
+        (not (compiler-reg-string-list-contains? call-region "%r8"))
+        (not (compiler-reg-string-list-contains? call-region "%rcx"))
+        (not (compiler-reg-string-list-contains? call-region "%rdx"))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-fixed-clobber-scan-ok?) : bool
+    (let
+      [func : CompilerIrFunction
+        (compiler-reg-loop-split-clobber-scan-function)]
+      [full-window : CompilerRegStringList
+        (compiler-reg-loop-split-candidate-regs
+          true
+          (compiler-reg-loop-split-region-rcx-safe? func 0 12)
+          (compiler-reg-loop-split-region-rdx-safe? func 0 12))]
+      (and
+        ;; Point 4 is the variable shift; inclusive-start makes [4,6) unsafe.
+        (compiler-reg-loop-split-region-crosses-kind? func 2 4 6)
+        ;; Points 6 and 8 are the div and mul %rdx fixed-use sites.
+        (compiler-reg-loop-split-region-crosses-kind? func 4 6 8)
+        (compiler-reg-loop-split-region-crosses-kind? func 4 8 10)
+        ;; The half-open end still excludes a clobber exactly at end.
+        (not (compiler-reg-loop-split-region-crosses-kind? func 2 0 4))
+        (not (compiler-reg-string-list-contains? full-window "%rcx"))
+        (not (compiler-reg-string-list-contains? full-window "%rdx"))
+        (compiler-reg-string-list-contains? full-window "%r8")
+        (compiler-reg-string-list-contains? full-window "%rdi")))))
+
+(cfg
+  test
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       "many_call_live"
@@ -25133,7 +25382,9 @@
     (cfg test (compiler-reg-loop-split-rewrite-ok?) true)
     (cfg test (compiler-reg-loop-split-multiple-rewrite-ok?) true)
     (cfg test (compiler-reg-loop-split-low-benefit-ok?) true)
-    (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)))
+    (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)
+    (cfg test (compiler-reg-loop-split-rcx-rdx-candidates-ok?) true)
+    (cfg test (compiler-reg-loop-split-fixed-clobber-scan-ok?) true)))
 
 (define (compiler-regalloc-storage-self-test?) : bool
   (and

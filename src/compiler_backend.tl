@@ -11308,12 +11308,52 @@
           (compiler-backend-sized-reg staging-reg ty)))]
     [_ (CompilerBackendMaybeAsm.No)]))
 
+;; Strength-reduce a three-operand constant multiply: a SIB-scale power of two
+;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
+;; of two whose source already sits in the destination register becomes a bare
+;; `shlq` -- both the same instruction count as the imulq they replace and
+;; strictly cheaper to execute. Every other constant keeps the imulq (a
+;; mov+shl pair would trade latency for count, which the Ir gate weighs).
+;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
+;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
+;; `disp(,%rbp,1)` idiom mem-base-address already relies on.
+(define (compiler-backend-mul-immediate-direct-asm
+  [lhs-reg : String]
+  [dst-home : String]
+  [imm : String]
+  [rhs : CompilerIrValue]) : String
+  (match rhs
+    [(CompilerIrValue.I64 n)
+      (if (or (= n 2) (= n 4) (= n 8))
+        (str_cat.str-cat
+          "    leaq (,"
+          lhs-reg
+          ","
+          (string.int->string n)
+          "), "
+          dst-home
+          "\n")
+        (if (and (> n 8) (string.eq lhs-reg dst-home))
+          (match (compiler-backend-power-of-two-shift n)
+            [(option_i64.Some count)
+              (str_cat.str-cat
+                "    shlq $"
+                (string.int->string count)
+                ", "
+                dst-home
+                "\n")]
+            [(option_i64.None)
+              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])
+          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
+    [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
+
 (define (compiler-backend-emit-binop-direct-immediate
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
   [mnem : String]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
   [ty : AstType]
   [imm : String]) : ResultCompilerBackend
   (let
@@ -11325,7 +11365,7 @@
         [(CompilerIrBinOp.Mul) true]
         [_ false]))
       (ResultCompilerBackend.Ok
-        (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
+        (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
       (if (and
         (not (string.eq lhs-reg ""))
         ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
@@ -11626,6 +11666,7 @@
                 mnem
                 op
                 lhs
+                rhs
                 operand-ty
                 imm))]
           [(CompilerBackendMaybeImmediate.No)
@@ -13745,6 +13786,21 @@
 
 ;; Fold the scaled index into base-reg in place for non-SIB scales (1 or odd),
 ;; so a scavenged base register works the same way the old fixed scratch did.
+;; The shift count for a power-of-two scale > 1, or None. Scales are small
+;; positive type sizes, so the scan is bounded.
+(define (compiler-backend-power-of-two-shift [scale : i64]) : option_i64.Option
+  (let
+    [count : i64 0]
+    [value : i64 scale]
+    (begin
+      (while (and (> value 1) (= (% value 2) 0))
+        (begin
+          (set! value (/ value 2))
+          (set! count (+ count 1))))
+      (if (and (= value 1) (> count 0))
+        (option_i64.Some count)
+        (option_i64.None)))))
+
 (define (compiler-backend-gep-index-base-asm
   [base-reg : String]
   [scale : i64]
@@ -13763,12 +13819,69 @@
         base-reg
         "\n"
         "")
-      (string.append
-        (str_cat.str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
-        (str_cat.str-cat "    addq " index-reg ", " base-reg "\n")))))
+      ;; Power-of-two stride (16-byte inline enums/structs are the common
+      ;; case): shift the index in place instead of a multiply. Same operand
+      ;; shape as the imulq it replaces, strictly cheaper to execute.
+      (let
+        [scale-asm : String
+          (match (compiler-backend-power-of-two-shift scale)
+            [(option_i64.Some count)
+              (str_cat.str-cat
+                "    shlq $"
+                (string.int->string count)
+                ", "
+                index-reg
+                "\n"
+                "")]
+            [(option_i64.None)
+              (str_cat.str-cat
+                "    imulq $"
+                (string.int->string scale)
+                ", "
+                index-reg
+                "\n"
+                "")])]
+        (string.append
+          scale-asm
+          (str_cat.str-cat "    addq " index-reg ", " base-reg "\n"))))))
 
 (define (compiler-backend-gep-sib-scale? [scale : i64]) : bool
   (or (= scale 1) (= scale 2) (= scale 4) (= scale 8)))
+
+;; GAP9 disp-aware SIB operand: `D(base,index,scale)`. The displacement is a
+;; folded gep constant (compiler-backend-gep-fold-disp); 0 keeps the plain
+;; spelling, and the non-SIB "" contract is unchanged.
+(define (compiler-backend-gep-index-address-disp
+  [disp : i64]
+  [base-reg : String]
+  [scale : i64]
+  [index-reg : String]) : String
+  (let
+    [sib : String (compiler-backend-gep-index-address base-reg scale index-reg)]
+    (if (or (= disp 0) (string.eq sib ""))
+      sib
+      (string.append (string.int->string disp) sib))))
+
+;; GAP9 disp-aware staged address: compose base+index*scale as before, then
+;; add the folded displacement into the base register.
+(define (compiler-backend-gep-index-base-asm-disp
+  [disp : i64]
+  [base-reg : String]
+  [scale : i64]
+  [index-reg : String]) : String
+  (let
+    [tail : String
+      (if (= disp 0)
+        ""
+        (str_cat.str-cat
+          "    addq $"
+          (string.int->string disp)
+          ", "
+          base-reg
+          "\n"))]
+    (string.append
+      (compiler-backend-gep-index-base-asm base-reg scale index-reg)
+      tail)))
 
 (define (compiler-backend-gep-index-address
   [base-reg : String]
@@ -13787,7 +13900,13 @@
     (CompilerBackendMaybeAsm.Some "")
     (if (compiler-backend-imm32? disp)
       (CompilerBackendMaybeAsm.Some
-        (str_cat.str-cat "    addq $" (int->string disp) ", " base-reg "\n" ""))
+        (str_cat.str-cat
+          "    addq $"
+          (string.int->string disp)
+          ", "
+          base-reg
+          "\n"
+          ""))
       (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-emit-gep
@@ -13795,7 +13914,8 @@
   [dst : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
-  [elem-ty : AstType]) : ResultCompilerBackend
+  [elem-ty : AstType]
+  [gep-disp : i64]) : ResultCompilerBackend
   ;; vreg-model: when the GEP result has a register home and the base is already
   ;; in a register, compute the address straight into that home with a single
   ;; leaq (constant offset). Variable-index GEPs and spilled/stack operands fall
@@ -13847,7 +13967,8 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   "    leaq "
-                  (compiler-backend-gep-index-address
+                  (compiler-backend-gep-index-address-disp
+                    gep-disp
                     base-reg
                     scale
                     offset-home)
@@ -13859,8 +13980,15 @@
                 dst
                 base
                 offset
-                elem-ty)))])
-      (compiler-backend-emit-gep-staged assignments dst base offset elem-ty))))
+                elem-ty
+                gep-disp)))])
+      (compiler-backend-emit-gep-staged
+        assignments
+        dst
+        base
+        offset
+        elem-ty
+        gep-disp))))
 
 (define (compiler-backend-emit-gep-staged-avoid
   [assignments : CompilerRegAssignmentList]
@@ -13868,6 +13996,7 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
+  [gep-disp : i64]
   [avoid1 : String]
   [avoid2 : String]) : ResultCompilerBackend
   (let
@@ -13931,7 +14060,8 @@
                             (str_cat.str-cat
                               offset-asm
                               (str_cat.str-cat
-                                (compiler-backend-gep-index-base-asm
+                                (compiler-backend-gep-index-base-asm-disp
+                                  gep-disp
                                   result-reg
                                   scale
                                   scav-idx)
@@ -13985,7 +14115,8 @@
                       (str_cat.str-cat
                         offset-asm
                         (str_cat.str-cat
-                          (compiler-backend-gep-index-base-asm
+                          (compiler-backend-gep-index-base-asm-disp
+                            gep-disp
                             result-reg
                             scale
                             scav-idx)
@@ -14005,13 +14136,15 @@
   [dst : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
-  [elem-ty : AstType]) : ResultCompilerBackend
+  [elem-ty : AstType]
+  [gep-disp : i64]) : ResultCompilerBackend
   (compiler-backend-emit-gep-staged-avoid
     assignments
     dst
     base
     offset
     elem-ty
+    gep-disp
     ""
     ""))
 
@@ -14699,7 +14832,8 @@
   [src : CompilerIrValue]
   [size : i64]
   [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
+  [protect-n : i64]
+  [gep-disp : i64]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-value-as-i64 offset)
@@ -14709,7 +14843,9 @@
           base
           src
           size
-          (* n (compiler-backend-type-size elem-ty))
+          ;; gep-disp is 0 here in practice (only Var-index geps carry a
+          ;; folded displacement); merged for totality.
+          (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)
           protect
           protect-n)]
       [(option_i64.None)
@@ -14721,7 +14857,8 @@
           src
           size
           protect
-          protect-n)])))
+          protect-n
+          gep-disp)])))
 
 ;; Constant-offset fused Gep+CopyBytes. When every chunk address (disp ..
 ;; disp+size) fits imm32 the gep displacement folds into the chunk DST
@@ -14844,7 +14981,8 @@
   [src : CompilerIrValue]
   [size : i64]
   [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
+  [protect-n : i64]
+  [gep-disp : i64]) : ResultCompilerBackend
   (let
     [scale : i64 (compiler-backend-type-size elem-ty)]
     [base-home : String
@@ -14874,7 +15012,8 @@
       offset-home
       src-home
       protect
-      protect-n)
+      protect-n
+      gep-disp)
       [(ResultCompilerBackend.Ok addr-asm)
         (let
           [src-reg : String
@@ -14935,7 +15074,8 @@
   [offset-home : String]
   [src-home : String]
   [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
+  [protect-n : i64]
+  [gep-disp : i64]) : ResultCompilerBackend
   (if (and
     (not (string.eq base-home ""))
     (not (string.eq offset-home ""))
@@ -14943,7 +15083,11 @@
     (ResultCompilerBackend.Ok
       (str-cat
         "    leaq "
-        (compiler-backend-gep-index-address base-home scale offset-home)
+        (compiler-backend-gep-index-address-disp
+          gep-disp
+          base-home
+          scale
+          offset-home)
         ", "
         scav-base
         "\n"))
@@ -14958,7 +15102,11 @@
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
               base-asm
-              (compiler-backend-gep-index-base-asm scav-base scale offset-home)))
+              (compiler-backend-gep-index-base-asm-disp
+                gep-disp
+                scav-base
+                scale
+                offset-home)))
           ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
           ;; the active set. Scavenged only on this path so a dead pick never
           ;; triggers an emergency spill.
@@ -14982,7 +15130,8 @@
                     base-asm
                     (str_cat.str-cat
                       offset-asm
-                      (compiler-backend-gep-index-base-asm
+                      (compiler-backend-gep-index-base-asm-disp
+                        gep-disp
                         scav-base
                         scale
                         scav-idx))))]
@@ -15030,11 +15179,14 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [load-ty : AstType]
-  [base-reg-in : String]) : ResultCompilerBackend
+  [base-reg-in : String]
+  [gep-disp : i64]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
-        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
+        ;; displacement); merged for totality.
+        [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
         ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
         ;; the caller-supplied register (the gep-pair shares one base across both
         ;; loads so the 2nd doesn't reload).
@@ -15130,10 +15282,18 @@
               7
               "%r8"))]
         [addr : String
-          (compiler-backend-gep-index-address base-reg scale index-reg)]
+          (compiler-backend-gep-index-address-disp
+            gep-disp
+            base-reg
+            scale
+            index-reg)]
         [addr-asm : String
           (if (string.eq addr "")
-            (compiler-backend-gep-index-base-asm base-reg scale index-reg)
+            (compiler-backend-gep-index-base-asm-disp
+              gep-disp
+              base-reg
+              scale
+              index-reg)
             "")]
         [load-addr : String
           (if (string.eq addr "")
@@ -15511,11 +15671,14 @@
   [elem-ty : AstType]
   [value : CompilerIrValue]
   [store-ty : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [gep-disp : i64]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
-        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
+        ;; displacement); merged for totality.
+        [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
         [base-home : String
           (compiler-backend-value-register-home assignments base)]
         [value-home : String
@@ -15569,7 +15732,11 @@
           (if (and
             (not (string.eq base-home ""))
             (not (string.eq offset-home "")))
-            (compiler-backend-gep-index-address base-home scale offset-home)
+            (compiler-backend-gep-index-address-disp
+              gep-disp
+              base-home
+              scale
+              offset-home)
             "")]
         (if (not (string.eq direct-addr ""))
           (compiler-backend-emit-store-value-to-address
@@ -15590,7 +15757,8 @@
             scale
             value-home
             base-home
-            offset-home)))]))
+            offset-home
+            gep-disp)))]))
 
 ;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
 ;; fold-base scratch for non-SIB scales), load the offset into it, then store
@@ -15606,7 +15774,8 @@
   [scale : i64]
   [value-home : String]
   [base-home : String]
-  [offset-home : String]) : ResultCompilerBackend
+  [offset-home : String]
+  [gep-disp : i64]) : ResultCompilerBackend
   (let
     [scav-idx : String
       (compiler-backend-scavenge-reg-here
@@ -15643,14 +15812,19 @@
             (let
               [base-reg : String (struct-get base-plan reg)]
               [addr : String
-                (compiler-backend-gep-index-address base-reg scale scav-idx)]
+                (compiler-backend-gep-index-address-disp
+                  gep-disp
+                  base-reg
+                  scale
+                  scav-idx)]
               [addr-asm : String
                 (if (string.eq addr "")
                   (str_cat.str-cat
                     (if (string.eq base-reg scav-fold)
                       ""
                       (str_cat.str-cat "    movq " base-reg ", " scav-fold "\n"))
-                    (compiler-backend-gep-index-base-asm
+                    (compiler-backend-gep-index-base-asm-disp
+                      gep-disp
                       scav-fold
                       scale
                       scav-idx))
@@ -20597,6 +20771,15 @@
           (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")
           (compiler-backend-scavenge-reg dst exclude exclude-n "%r8"))
         dst-home)]
+    ;; On BACK edges the scavenged staging register may host a loop-carried
+    ;; value whose linear interval already ended (its next use is the next
+    ;; iteration), so the occupancy mask reads it free; bracket the staged GP
+    ;; copy with push/pop so the occupant survives into the next iteration.
+    ;; See compiler-backend-phi-edge-back? for the full account. Homes are
+    ;; frame-relative at emission, so the transient %rsp shift cannot skew the
+    ;; operands, and the FPO audit tracks push/pop deltas. Forward edges keep
+    ;; the cheap unbracketed shape (their live-through values still have
+    ;; interval cover at the emit point).
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       assignments
       value
@@ -20606,13 +20789,29 @@
       [(ResultCompilerBackend.Ok load)
         (ResultCompilerBackend.Ok
           (if (string.eq dst-home "")
-            (string.append
-              load
-              (compiler-backend-emit-store-typed-var-with-plan
-                assignments
-                dst
+            (if (or
+              (compiler-backend-float-type? ty)
+              (not compiler-backend-phi-edge-back))
+              (string.append
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  reg
+                  ty))
+              (str_cat.str-cat
+                "    pushq "
                 reg
-                ty))
+                "\n"
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  reg
+                  ty)
+                "    popq "
+                reg
+                "\n"))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -21088,7 +21287,83 @@
       (ResultCompilerBackend.Err
         (box (compiler-diagnostic-at-start "" message)))]))
 
+;; Back-edge phi-copy protection. A loop-carried register-homed value's linear
+;; interval ends at its LAST in-body use, so at the latch/branch tail -- where
+;; edge phi copies are emitted -- the scavenge occupancy mask reads its
+;; register as free even though the next iteration reads it again. A staged
+;; slot-destination copy scavenging that register clobbers the live value
+;; (stage2 self-build: opt-inline-slot-order's len(next) bound riding %r9 was
+;; overwritten by the latch edge copies, corrupting the following iteration's
+;; bounds compare). Forward edges are safe: a value live-in at a forward join
+;; still has a use after the branch point, so its interval covers the emit
+;; point and the mask reports it occupied. The edge classification scans the
+;; CURRENT block list directly -- a compilation-arena-backed global label
+;; table dangles across emissions (the carry-safe lesson) -- and the
+;; load-store staging brackets its scratch register with push/pop only on
+;; back edges.
+(define compiler-backend-phi-edge-back : bool
+  false)
+
+(define (compiler-backend-phi-label-position
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [index : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) (- 0 1)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block block-label _)
+          (if (string.eq block-label label)
+            index
+            (compiler-backend-phi-label-position
+              (box-get rest)
+              label
+              (+ index 1)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-phi-label-position
+        (compiler-ir-block-seq-to-list seq)
+        label
+        index)]))
+
+;; True when `target` does not come after `from` in block layout order: a loop
+;; back edge (or self loop). Unknown labels classify as forward, which keeps
+;; the cheap unbracketed staging.
+(define (compiler-backend-phi-edge-back?
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]) : bool
+  (let
+    [target-pos : i64
+      (compiler-backend-phi-label-position blocks target-label 0)]
+    [from-pos : i64 (compiler-backend-phi-label-position blocks from-label 0)]
+    (and (>= target-pos 0) (>= from-pos 0) (<= target-pos from-pos))))
+
 (define (compiler-backend-emit-phi-edge-copies
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [was-back : bool compiler-backend-phi-edge-back]
+    [_set : unit
+      (set!
+        compiler-backend-phi-edge-back
+        (compiler-backend-phi-edge-back? blocks target-label from-label))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-phi-edge-copies-scan
+        assignments
+        blocks
+        target-label
+        from-label
+        program-index
+        vars)]
+    (begin
+      (set! compiler-backend-phi-edge-back was-back)
+      result)))
+
+(define (compiler-backend-emit-phi-edge-copies-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : String]
@@ -21112,7 +21387,7 @@
               from-label
               program-index
               vars)
-            (compiler-backend-emit-phi-edge-copies
+            (compiler-backend-emit-phi-edge-copies-scan
               assignments
               (box-get rest)
               target-label
@@ -21120,7 +21395,7 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-phi-edge-copies
+      (compiler-backend-emit-phi-edge-copies-scan
         assignments
         (compiler-ir-block-seq-to-list seq)
         target-label
@@ -21129,6 +21404,35 @@
         vars)]))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [was-back : bool compiler-backend-phi-edge-back]
+    [_set : unit
+      (set!
+        compiler-backend-phi-edge-back
+        (compiler-backend-phi-edge-back? blocks target-label from-label))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-mov-phi-copy-edge-scan
+        assignments
+        blocks
+        target-label
+        from-label
+        moved-dst
+        moved-src
+        program-index
+        vars)]
+    (begin
+      (set! compiler-backend-phi-edge-back was-back)
+      result)))
+
+(define (compiler-backend-emit-mov-phi-copy-edge-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : String]
@@ -21174,7 +21478,7 @@
               [(ResultBackendPhiCopies.Err message)
                 (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-at-start "" message)))])
-            (compiler-backend-emit-mov-phi-copy-edge
+            (compiler-backend-emit-mov-phi-copy-edge-scan
               assignments
               (box-get rest)
               target-label
@@ -21184,7 +21488,7 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-mov-phi-copy-edge
+      (compiler-backend-emit-mov-phi-copy-edge-scan
         assignments
         (compiler-ir-block-seq-to-list seq)
         target-label
@@ -23761,7 +24065,13 @@
                   (box-get message)
                   instr-diag)))])]
       [(CompilerIrInstr.Gep dst base offset elem-ty)
-        (match (compiler-backend-emit-gep assignments dst base offset elem-ty)
+        (match (compiler-backend-emit-gep
+          assignments
+          dst
+          base
+          offset
+          elem-ty
+          (compiler-backend-gep-fold-next! offset elem-ty))
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -25991,6 +26301,9 @@
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
+  ;; GAP9: the fused compare consumes this gep's ordinal at the dispatch
+  ;; site; the path is const-offset-only so the displacement is always 0.
+  [_gep-fold-disp : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
@@ -26066,6 +26379,259 @@
               func-diag
               ""))))]))
 
+;; GAP8: fold a single-use fused-load result straight into the consuming ALU
+;; op's memory operand -- `movq (b,i,8), %t; addq %t, %acc` becomes
+;; `addq (b,i,8), %acc` -- one instruction and one register shorter, exactly
+;; clang's selection for reduction loops. The probe is PURE (no scavenges, so
+;; a rejected fold leaks no emergency-pending registers -- the M-D lesson);
+;; the emitter mirrors emit-load-from-gep's two addressing arms and appends
+;; the ALU line instead of the load. The non-loaded operand lands in the ALU
+;; dst's home FIRST, so the probe rejects any dst-home that aliases an
+;; address operand home, and every scavenge excludes dst-home.
+(defenum CompilerBackendGepLoadAluFold
+  (No)
+  (Some String i64 CompilerIrValue (Box CompilerIrInstrList)))
+
+;; Two-operand memory-form mnemonics only; Mul is excluded (imul mem needs
+;; the two-operand register form and folds worse than the fused load).
+(define (compiler-backend-gep-load-alu-mnemonic [op : CompilerIrBinOp]) : String
+  (match op
+    [(CompilerIrBinOp.Add) "add"]
+    [(CompilerIrBinOp.Sub) "sub"]
+    [(CompilerIrBinOp.BitAnd) "and"]
+    [(CompilerIrBinOp.BitOr) "or"]
+    [(CompilerIrBinOp.BitXor) "xor"]
+    [_ ""]))
+
+(define (compiler-backend-gep-load-alu-probe
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [use-counts : (Array i64)]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [load-dst : i64]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]) : CompilerBackendGepLoadAluFold
+  (if (or
+    (compiler-backend-float-type? load-ty)
+    (not (= (compiler-backend-type-size load-ty) 8))
+    (not (compiler-backend-var-single-use? use-counts load-dst)))
+    (CompilerBackendGepLoadAluFold.No)
+    (match rest
+      [(CompilerIrInstrList.Cons maybe-binop after-binop)
+        (match maybe-binop
+          [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+            (let
+              [mnem : String (compiler-backend-gep-load-alu-mnemonic op)]
+              [dst-home : String
+                (compiler-backend-var-register-home assignments dst)]
+              [base-home : String
+                (compiler-backend-value-scalar-register assignments base)]
+              [offset-home : String
+                (compiler-backend-value-scalar-register assignments offset)]
+              (if (and
+                (not (string.eq mnem ""))
+                (compiler-backend-branch-uses-var? rhs load-dst)
+                (not (compiler-backend-branch-uses-var? lhs load-dst))
+                (not
+                  (compiler-backend-binop-f64? types global-types lhs rhs ty))
+                (=
+                  (compiler-backend-type-size
+                    (compiler-backend-binop-operand-ty
+                      types
+                      global-types
+                      op
+                      lhs
+                      rhs
+                      ty))
+                  8)
+                (not (string.eq dst-home ""))
+                (not (string.eq dst-home base-home))
+                (not (string.eq dst-home offset-home)))
+                (CompilerBackendGepLoadAluFold.Some
+                  mnem
+                  dst
+                  lhs
+                  (box after-binop))
+                (CompilerBackendGepLoadAluFold.No)))]
+          [_ (CompilerBackendGepLoadAluFold.No)])]
+      [_ (CompilerBackendGepLoadAluFold.No)])))
+
+;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
+;; with the ALU destination home.
+(define (compiler-backend-gep-load-alu-index-exclude
+  [base-reg : String]
+  [offset-home : String]
+  [dst-home : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 base-reg)
+      (array-set!
+        a
+        4
+        (if (string.eq offset-home "")
+          base-reg
+          offset-home))
+      (array-set! a 5 dst-home)
+      a)))
+
+(define (compiler-backend-emit-gep-load-alu
+  [assignments : CompilerRegAssignmentList]
+  [mnem : String]
+  [alu-dst : i64]
+  [x : CompilerIrValue]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [gep-disp : i64]) : ResultCompilerBackend
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments alu-dst)]
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          ;; gep-disp is 0 here in practice (only Var-index geps carry a
+          ;; folded displacement); merged for totality.
+          [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
+          [base-home : String
+            (compiler-backend-address-base-filter-direct
+              (compiler-backend-value-scalar-register assignments base))]
+          [base-reg : String
+            (if (string.eq base-home "")
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-one-exclude dst-home)
+                1
+                "%r10")
+              base-home)]
+          [addr : String (compiler-backend-base-address disp base-reg)]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            base-reg)
+            [(ResultCompilerBackend.Ok base-asm)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                x
+                dst-home)
+                [(ResultCompilerBackend.Ok x-asm)
+                  (ResultCompilerBackend.Ok
+                    (string.append
+                      base-asm
+                      (string.append
+                        x-asm
+                        (str_cat.str-cat
+                          "    "
+                          mnem
+                          "q "
+                          addr
+                          ", "
+                          dst-home
+                          "\n"))))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))]
+      [(option_i64.None)
+        (let
+          [scale : i64 (compiler-backend-type-size elem-ty)]
+          [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
+          [base-home : String
+            (compiler-backend-address-base-filter
+              (compiler-backend-value-scalar-register assignments base))]
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          [use-base-home? : bool
+            (and sib-scale? (not (string.eq base-home "")))]
+          [base-reg : String
+            (if use-base-home?
+              base-home
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-two-exclude offset-home dst-home)
+                2
+                "%r10"))]
+          [use-offset-home? : bool
+            (and
+              sib-scale?
+              (not (string.eq offset-home ""))
+              (not (string.eq offset-home base-reg)))]
+          [index-reg : String
+            (if use-offset-home?
+              offset-home
+              (compiler-backend-scavenge-reg
+                alu-dst
+                (compiler-backend-gep-load-alu-index-exclude
+                  base-reg
+                  offset-home
+                  dst-home)
+                6
+                "%r8"))]
+          [addr : String
+            (compiler-backend-gep-index-address-disp
+              gep-disp
+              base-reg
+              scale
+              index-reg)]
+          [addr-asm : String
+            (if (string.eq addr "")
+              (compiler-backend-gep-index-base-asm-disp
+                gep-disp
+                base-reg
+                scale
+                index-reg)
+              "")]
+          [load-addr : String
+            (if (string.eq addr "")
+              (str_cat.str-cat "(" base-reg ")" "")
+              addr)]
+          (match (if use-base-home?
+            (ResultCompilerBackend.Ok "")
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              base
+              base-reg))
+            [(ResultCompilerBackend.Ok base-asm)
+              (match (if use-offset-home?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  offset
+                  index-reg))
+                [(ResultCompilerBackend.Ok offset-asm)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    x
+                    dst-home)
+                    [(ResultCompilerBackend.Ok x-asm)
+                      (ResultCompilerBackend.Ok
+                        (string.append
+                          base-asm
+                          (string.append
+                            offset-asm
+                            (string.append
+                              addr-asm
+                              (string.append
+                                x-asm
+                                (str_cat.str-cat
+                                  "    "
+                                  mnem
+                                  "q "
+                                  load-addr
+                                  ", "
+                                  dst-home
+                                  "\n"))))))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))])))
+
 (define (compiler-backend-emit-fused-gep-load-rest
   [target : CompilerBackendTarget]
   [function : String]
@@ -26074,6 +26640,108 @@
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
+  [gep-fold-disp : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [load-dst : i64]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
+  ;; nothing and falls through to the existing single/pair load fusion.
+  (match (compiler-backend-gep-load-alu-probe
+    assignments
+    types
+    global-types
+    use-counts
+    base
+    offset
+    load-dst
+    load-ty
+    rest)
+    [(CompilerBackendGepLoadAluFold.Some mnem alu-dst x after-binop)
+      (compiler-backend-emit-fused-result-rest
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        (compiler-backend-emit-gep-load-alu
+          assignments
+          mnem
+          alu-dst
+          x
+          base
+          offset
+          elem-ty
+          gep-fold-disp)
+        (box-get after-binop)
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]
+    [(CompilerBackendGepLoadAluFold.No)
+      (compiler-backend-emit-fused-gep-load-plain-rest
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        _gep-dst
+        gep-fold-disp
+        base
+        offset
+        elem-ty
+        load-dst
+        load-ty
+        rest
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]))
+
+(define (compiler-backend-emit-fused-gep-load-plain-rest
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [_gep-dst : i64]
+  [gep-fold-disp : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
@@ -26138,17 +26806,25 @@
                                 blocks
                                 current-label
                                 fallthrough
-                                (compiler-backend-emit-load-from-gep-pair
-                                  assignments
-                                  base
-                                  offset
-                                  elem-ty
-                                  load-dst
-                                  load-ty
-                                  offset2
-                                  elem-ty2
-                                  load-dst2
-                                  load-ty2)
+                                (let
+                                  ;; GAP9: the pair consumes a SECOND gep;
+                                  ;; advance its ordinal too (const-offset
+                                  ;; geps never fold, so the value is unused).
+                                  [_gep-fold-disp2 : i64
+                                    (compiler-backend-gep-fold-next!
+                                      offset2
+                                      elem-ty2)]
+                                  (compiler-backend-emit-load-from-gep-pair
+                                    assignments
+                                    base
+                                    offset
+                                    elem-ty
+                                    load-dst
+                                    load-ty
+                                    offset2
+                                    elem-ty2
+                                    load-dst2
+                                    load-ty2))
                                 (box-get after-load2)
                                 assignments
                                 vars
@@ -26177,7 +26853,8 @@
                                   offset
                                   elem-ty
                                   load-ty
-                                  "")
+                                  ""
+                                  gep-fold-disp)
                                 rest
                                 assignments
                                 vars
@@ -26207,7 +26884,8 @@
                                 offset
                                 elem-ty
                                 load-ty
-                                "")
+                                ""
+                                gep-fold-disp)
                               rest
                               assignments
                               vars
@@ -26237,7 +26915,8 @@
                             offset
                             elem-ty
                             load-ty
-                            "")
+                            ""
+                            gep-fold-disp)
                           rest
                           assignments
                           vars
@@ -26267,7 +26946,8 @@
                         offset
                         elem-ty
                         load-ty
-                        "")
+                        ""
+                        gep-fold-disp)
                       rest
                       assignments
                       vars
@@ -26296,7 +26976,8 @@
                     offset
                     elem-ty
                     load-ty
-                    "")
+                    ""
+                    gep-fold-disp)
                   rest
                   assignments
                   vars
@@ -26326,7 +27007,8 @@
                   offset
                   elem-ty
                   load-ty
-                  "")
+                  ""
+                  gep-fold-disp)
                 rest
                 assignments
                 vars
@@ -26356,7 +27038,8 @@
               offset
               elem-ty
               load-ty
-              "")
+              ""
+              gep-fold-disp)
             rest
             assignments
             vars
@@ -26386,7 +27069,8 @@
           offset
           elem-ty
           load-ty
-          "")
+          ""
+          gep-fold-disp)
         rest
         assignments
         vars
@@ -26410,6 +27094,7 @@
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
+  [gep-fold-disp : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
@@ -26436,7 +27121,8 @@
     elem-ty
     value
     store-ty
-    program-index)
+    program-index
+    gep-fold-disp)
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
@@ -28312,6 +28998,9 @@
                                                   current-label
                                                   fallthrough
                                                   gep-dst
+                                                  (compiler-backend-gep-fold-next!
+                                                    offset
+                                                    elem-ty)
                                                   base
                                                   offset
                                                   elem-ty
@@ -28345,6 +29034,9 @@
                                                   current-label
                                                   fallthrough
                                                   gep-dst
+                                                  (compiler-backend-gep-fold-next!
+                                                    offset
+                                                    elem-ty)
                                                   base
                                                   offset
                                                   elem-ty
@@ -28373,6 +29065,9 @@
                                                 current-label
                                                 fallthrough
                                                 gep-dst
+                                                (compiler-backend-gep-fold-next!
+                                                  offset
+                                                  elem-ty)
                                                 base
                                                 offset
                                                 elem-ty
@@ -28401,6 +29096,9 @@
                                             current-label
                                             fallthrough
                                             gep-dst
+                                            (compiler-backend-gep-fold-next!
+                                              offset
+                                              elem-ty)
                                             base
                                             offset
                                             elem-ty
@@ -28428,6 +29126,9 @@
                                         current-label
                                         fallthrough
                                         gep-dst
+                                        (compiler-backend-gep-fold-next!
+                                          offset
+                                          elem-ty)
                                         base
                                         offset
                                         elem-ty
@@ -28456,6 +29157,9 @@
                                       current-label
                                       fallthrough
                                       gep-dst
+                                      (compiler-backend-gep-fold-next!
+                                        offset
+                                        elem-ty)
                                       base
                                       offset
                                       elem-ty
@@ -28484,6 +29188,9 @@
                                   current-label
                                   fallthrough
                                   gep-dst
+                                  (compiler-backend-gep-fold-next!
+                                    offset
+                                    elem-ty)
                                   base
                                   offset
                                   elem-ty
@@ -28511,6 +29218,7 @@
                               current-label
                               fallthrough
                               gep-dst
+                              (compiler-backend-gep-fold-next! offset elem-ty)
                               base
                               offset
                               elem-ty
@@ -28562,6 +29270,7 @@
                             current-label
                             fallthrough
                             gep-dst
+                            (compiler-backend-gep-fold-next! offset elem-ty)
                             base
                             offset
                             elem-ty
@@ -28632,7 +29341,8 @@
                                 copy-src
                                 copy-size
                                 protect
-                                protect-n)
+                                protect-n
+                                (compiler-backend-gep-fold-next! offset elem-ty))
                               (box-get after-load)
                               assignments
                               vars
@@ -28733,6 +29443,7 @@
                             base
                             offset
                             elem-ty
+                            (compiler-backend-gep-fold-next! offset elem-ty)
                             (compiler-backend-value-scalar-register
                               assignments
                               load-base)
@@ -28772,6 +29483,9 @@
                                       current-label
                                       fallthrough
                                       gep-dst
+                                      (compiler-backend-gep-fold-next!
+                                        offset
+                                        elem-ty)
                                       base
                                       offset
                                       elem-ty
@@ -28891,6 +29605,7 @@
                             current-label
                             fallthrough
                             gep-dst
+                            (compiler-backend-gep-fold-next! offset elem-ty)
                             base
                             offset
                             elem-ty
@@ -28942,6 +29657,7 @@
                             current-label
                             fallthrough
                             gep-dst
+                            (compiler-backend-gep-fold-next! offset elem-ty)
                             base
                             offset
                             elem-ty
@@ -29009,7 +29725,8 @@
                                 copy-src
                                 copy-size
                                 protect
-                                protect-n)
+                                protect-n
+                                (compiler-backend-gep-fold-next! offset elem-ty))
                               (box-get after-gep)
                               assignments
                               vars
@@ -33490,6 +34207,15 @@
   (array.make-array i64 65536))
 (define compiler-backend-sweep-disp-arr : (Array i64)
   (array.make-array i64 65536))
+
+;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
+;; rsp-relative bytes as [lo, hi]. Empty (em-lo > em-hi) when the function used
+;; no emergency scavenge slots or has outgoing stack-arg space (whose callee
+;; reads are invisible to the text scan and may alias the emergency window).
+(define compiler-backend-sweep-em-lo-arr : (Array i64)
+  (array.make-array i64 65536))
+(define compiler-backend-sweep-em-hi-arr : (Array i64)
+  (array.make-array i64 65536))
 (define compiler-backend-sweep-sym-bytes : (Array u8)
   (array.make-array u8 4194304))
 (define compiler-backend-sweep-sym-bytes-count : i64
@@ -33518,7 +34244,9 @@
   [symbol : String]
   [lo : i64]
   [hi : i64]
-  [disp : i64]) : unit
+  [disp : i64]
+  [em-lo : i64]
+  [em-hi : i64]) : unit
   (let
     [len : i64 (string.string-length symbol)]
     [sdata : (Ptr u8)
@@ -33545,6 +34273,8 @@
           (array-set! compiler-backend-sweep-lo-arr idx lo)
           (array-set! compiler-backend-sweep-hi-arr idx hi)
           (array-set! compiler-backend-sweep-disp-arr idx disp)
+          (array-set! compiler-backend-sweep-em-lo-arr idx em-lo)
+          (array-set! compiler-backend-sweep-em-hi-arr idx em-hi)
           (set! compiler-backend-sweep-sym-bytes-count (+ start len))
           (set! compiler-backend-sweep-count (+ idx 1)))))))
 
@@ -33560,7 +34290,10 @@
   [symbol : String]
   [frame : i64]
   [push-count : i64]
-  [slot-vars : i64]) : unit
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]) : unit
   (let
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
     [pm : bool (> push-count 0)]
@@ -33572,11 +34305,26 @@
       (if pm
         (+ (* push-count 8) sub-s)
         (+ frame 8))]
+    ;; Emergency scavenge slots live at rbp offset em-slot-offset - 8*i for
+    ;; i in [0, em-used-count); canonical = bias_neg + (negative rbp offset).
+    ;; They are read only by their own restores (visible in the text), EXCEPT
+    ;; when the function has outgoing stack-arg space: arg slots share the
+    ;; frame bottom and are read by callees, so the window stays empty then.
+    [em-hi : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (+ bias-neg em-slot-offset)
+        0)]
+    [em-lo : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (- em-hi (* 8 (- em-used-count 1)))
+        8)]
     (compiler-backend-sweep-record!
       symbol
       (- bias-neg (* 8 slot-vars))
       (- bias-neg 8)
-      disp)))
+      disp
+      em-lo
+      em-hi)))
 
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
@@ -33796,7 +34544,9 @@
   [rend : i64]
   [lo : i64]
   [hi : i64]
-  [disp : i64]) : text_buf.TextBuf
+  [disp : i64]
+  [em-lo : i64]
+  [em-hi : i64]) : text_buf.TextBuf
   (let
     [buf : text_buf.TextBuf out]
     [delta : i64 (- 0 disp)]
@@ -34034,9 +34784,12 @@
                 [ls : i64 (array-ref cand-pos k)]
                 (begin
                   (if (and
-                    (>= c lo)
-                    (<= c hi)
-                    (= (bit-and (- c lo) 7) 0)
+                    (or
+                      (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
+                      (and
+                        (>= c em-lo)
+                        (<= c em-hi)
+                        (= (bit-and (- c em-lo) 7) 0)))
                     (< c watermark))
                     (let
                       [r : i64 0]
@@ -34138,7 +34891,9 @@
                         rend
                         (array-ref compiler-backend-sweep-lo-arr cursor)
                         (array-ref compiler-backend-sweep-hi-arr cursor)
-                        (array-ref compiler-backend-sweep-disp-arr cursor)))
+                        (array-ref compiler-backend-sweep-disp-arr cursor)
+                        (array-ref compiler-backend-sweep-em-lo-arr cursor)
+                        (array-ref compiler-backend-sweep-em-hi-arr cursor)))
                     (set! flush rend)
                     (set! cursor (+ cursor 1))
                     (set! i rend)))
@@ -34170,6 +34925,663 @@
                 false))
             (text_buf.render out)))))))
 
+;; ============================================================================
+;; GAP9: gep displacement folding (codegen phase 9 / P7a).
+;;
+;; The optimizer's affine rebase (phase 6) leaves unrolled loop bodies
+;; addressing arrays with PARALLEL offset vars -- `i1 = i + 1; i2 = i + 2;
+;; i3 = i + 3` -- each materialized as a leaq/addq and consumed as a Gep
+;; index. clang folds the constant into the addressing displacement instead:
+;; `addq 8(%rax,%r13,8), %r14`, no offset materialization at all.
+;;
+;; This pre-pass runs on the function's blocks BEFORE the register plan is
+;; computed, so liveness and allocation see the folded program (the shared
+;; base counter stays live through the folded uses; the offset vars vanish
+;; and stop costing registers):
+;;   * candidate: `dst = Add (Var j) (I64 k)` (either operand order) at
+;;     64-bit int type, dst defined exactly once in the function, k != 0
+;;     and |k| small;
+;;   * every use of dst (function-wide use counts) must be the INDEX operand
+;;     of a Gep in the SAME BLOCK after the add, whose own dst is single-def
+;;     and whose byte displacement k*type-size stays small. Any other use --
+;;     another block, a bounds check, a phi input, a store value, a gep
+;;     BASE -- keeps the add;
+;;   * no def of j between the add and the last folded gep (linear in-block
+;;     execution then guarantees the gep reads the same j the add read);
+;;   * a candidate whose base j is ITSELF an elided candidate is dropped
+;;     (its add is deleted, so the value would never exist).
+;; The rewrite deletes the add, retargets the gep's index operand to j, and
+;; records gep-dst -> byte displacement in a per-function side table sized
+;; by the pre-rewrite var count (the later register rewrites insert copies
+;; but never renumber a Gep's dst). Emission threads the displacement into
+;; the two bottom-most address builders, so every addressing form -- SIB,
+;; staged non-SIB, spilled-operand fallbacks -- applies it exactly once.
+(defenum CompilerBackendMaybeVarImm
+  (No)
+  (Some i64 i64))
+
+(define compiler-backend-gep-fold-ready : bool
+  false)
+
+;; Ordinal-indexed (walk-order) per-gep tables: the register pipeline's later
+;; IR rewrites (caller-save spills, loop-split region remaps, remat) RENAME
+;; vars inside loop regions but never create, delete, or reorder Gep
+;; instructions, so the n-th Gep the emitter walks is the n-th Gep the
+;; pre-pass saw. Each entry carries the byte displacement plus the gep's
+;; offset kind (1 = Var, 0 = other) and element size as a drift check: a
+;; consumption mismatch marks the function poisoned and emission fails loudly
+;; rather than addressing with a stale displacement.
+(define compiler-backend-gep-fold-disp-table : (Array i64)
+  (array.make-array i64 0))
+(define compiler-backend-gep-fold-kind-table : (Array i64)
+  (array.make-array i64 0))
+(define compiler-backend-gep-fold-scale-table : (Array i64)
+  (array.make-array i64 0))
+(define compiler-backend-gep-fold-cursor : i64
+  0)
+(define compiler-backend-gep-fold-drift : bool
+  false)
+
+(define (compiler-backend-gep-fold-disable!) : unit
+  (begin
+    (set! compiler-backend-gep-fold-ready false)
+    (set! compiler-backend-gep-fold-disp-table (array.make-array i64 0))
+    (set! compiler-backend-gep-fold-kind-table (array.make-array i64 0))
+    (set! compiler-backend-gep-fold-scale-table (array.make-array i64 0))
+    (set! compiler-backend-gep-fold-cursor 0)
+    (set! compiler-backend-gep-fold-drift false)))
+
+(define (compiler-backend-gep-fold-offset-kind [offset : CompilerIrValue]) : i64
+  (match offset
+    [(CompilerIrValue.Var _) 1]
+    [_ 0]))
+
+;; Consume the next gep ordinal and return its folded displacement (0 for
+;; unfolded geps). Called EXACTLY ONCE per Gep instruction the block walker
+;; dispatches; kind/scale must match what the pre-pass recorded or the
+;; function is poisoned (checked after body emission).
+(define (compiler-backend-gep-fold-next!
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]) : i64
+  (if (not compiler-backend-gep-fold-ready)
+    0
+    (let
+      [cursor : i64 compiler-backend-gep-fold-cursor]
+      (if (>= cursor (array-length compiler-backend-gep-fold-disp-table))
+        (begin
+          (set! compiler-backend-gep-fold-drift true)
+          0)
+        (begin
+          (set! compiler-backend-gep-fold-cursor (+ cursor 1))
+          (if (and
+            (=
+              (array-ref compiler-backend-gep-fold-kind-table cursor)
+              (compiler-backend-gep-fold-offset-kind offset))
+            (=
+              (array-ref compiler-backend-gep-fold-scale-table cursor)
+              (compiler-backend-type-size elem-ty)))
+            (array-ref compiler-backend-gep-fold-disp-table cursor)
+            (begin
+              (set! compiler-backend-gep-fold-drift true)
+              0)))))))
+
+(define (compiler-backend-gep-fold-drift?) : bool
+  (and compiler-backend-gep-fold-ready compiler-backend-gep-fold-drift))
+
+;; Conservative magnitude cap for the folded element offset and its byte
+;; displacement: far below imm32 so downstream constant-offset merges can
+;; never overflow.
+(define (compiler-backend-gep-fold-k-bound) : i64
+  16777216)
+
+(define (compiler-backend-gep-fold-64bit-int? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [_ false]))
+
+;; The (var j, imm k) split of a candidate add's operands, or No.
+(define (compiler-backend-gep-fold-add-operands
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerBackendMaybeVarImm
+  (match lhs
+    [(CompilerIrValue.Var v)
+      (match rhs
+        [(CompilerIrValue.I64 k) (CompilerBackendMaybeVarImm.Some v k)]
+        [_ (CompilerBackendMaybeVarImm.No)])]
+    [(CompilerIrValue.I64 k)
+      (match rhs
+        [(CompilerIrValue.Var v) (CompilerBackendMaybeVarImm.Some v k)]
+        [_ (CompilerBackendMaybeVarImm.No)])]
+    [_ (CompilerBackendMaybeVarImm.No)]))
+
+(define (compiler-backend-gep-fold-block-instrs [block : CompilerIrBlock]) : CompilerIrInstrSeq
+  (match block
+    [(CompilerIrBlock.Block _ instrs) instrs]))
+
+;; Blocks as an array so per-candidate segment scans can address their block
+;; by ordinal.
+(define (compiler-backend-gep-fold-block-array [blocks : CompilerIrBlockList]) : (Array
+    CompilerIrBlock)
+  (let
+    [flat : CompilerIrBlockList (compiler-ir-block-list-force-cons blocks)]
+    [count : i64 (compiler-ir-block-list-count-cons flat)]
+    [out : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [cursor : CompilerIrBlockList flat]
+    [j : i64 0]
+    (begin
+      (while (< j count)
+        (match cursor
+          [(CompilerIrBlockList.Cons block rest)
+            (begin
+              (array-set! out j block)
+              (set! cursor (box-get rest))
+              (set! j (+ j 1)))]
+          [_ (set! j count)]))
+      out)))
+
+(define (compiler-backend-gep-fold-count-geps [barr : (Array CompilerIrBlock)]) : i64
+  (let
+    [total : i64 0]
+    [b : i64 0]
+    (begin
+      (while (< b (array-length barr))
+        (begin
+          (let
+            [instrs : CompilerIrInstrSeq
+              (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
+            [n : i64 (struct-get instrs len)]
+            [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+            [j : i64 0]
+            (while (< j n)
+              (begin
+                (match (array-ref slots j)
+                  [(CompilerIrInstr.Gep _ _ _ _) (set! total (+ total 1))]
+                  [_ unit])
+                (set! j (+ j 1)))))
+          (set! b (+ b 1))))
+      total)))
+
+(define (compiler-backend-gep-fold-count-defs
+  [defs : (Array i64)]
+  [barr : (Array CompilerIrBlock)]) : unit
+  (let
+    [b : i64 0]
+    (while (< b (array-length barr))
+      (begin
+        (let
+          [instrs : CompilerIrInstrSeq
+            (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
+          [n : i64 (struct-get instrs len)]
+          [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+          [j : i64 0]
+          (while (< j n)
+            (begin
+              (let
+                [dst : i64 (compiler-reg-instr-def-var (array-ref slots j))]
+                (if (and (>= dst 0) (< dst (array-length defs)))
+                  (array-set! defs dst (+ (array-ref defs dst) 1))
+                  unit))
+              (set! j (+ j 1)))))
+        (set! b (+ b 1))))))
+
+;; Pass 1: record candidate adds (base, k, block ordinal, position).
+(define (compiler-backend-gep-fold-scan-adds
+  [barr : (Array CompilerIrBlock)]
+  [defs : (Array i64)]
+  [cand-base : (Array i64)]
+  [cand-k : (Array i64)]
+  [cand-block : (Array i64)]
+  [cand-pos : (Array i64)]) : unit
+  (let
+    [b : i64 0]
+    (while (< b (array-length barr))
+      (begin
+        (let
+          [instrs : CompilerIrInstrSeq
+            (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
+          [n : i64 (struct-get instrs len)]
+          [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+          [j : i64 0]
+          (while (< j n)
+            (begin
+              (match (array-ref slots j)
+                [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                  (match op
+                    [(CompilerIrBinOp.Add)
+                      (if (and
+                        (compiler-backend-gep-fold-64bit-int? ty)
+                        (>= dst 0)
+                        (< dst (array-length cand-base))
+                        (= (array-ref defs dst) 1))
+                        (match (compiler-backend-gep-fold-add-operands lhs rhs)
+                          [(CompilerBackendMaybeVarImm.Some base k)
+                            (if (and
+                              (not (= k 0))
+                              (not (= base dst))
+                              (< k (compiler-backend-gep-fold-k-bound))
+                              (> k (- 0 (compiler-backend-gep-fold-k-bound))))
+                              (begin
+                                (array-set! cand-base dst base)
+                                (array-set! cand-k dst k)
+                                (array-set! cand-block dst b)
+                                (array-set! cand-pos dst j))
+                              unit)]
+                          [(CompilerBackendMaybeVarImm.No) unit])
+                        unit)]
+                    [_ unit])]
+                [_ unit])
+              (set! j (+ j 1)))))
+        (set! b (+ b 1))))))
+
+;; Pass 2: count qualifying gep-index uses per candidate and track the last
+;; folded gep position; a disqualifying gep-index use kills the candidate.
+(define (compiler-backend-gep-fold-scan-geps
+  [barr : (Array CompilerIrBlock)]
+  [defs : (Array i64)]
+  [cand-base : (Array i64)]
+  [cand-k : (Array i64)]
+  [cand-block : (Array i64)]
+  [cand-pos : (Array i64)]
+  [gep-uses : (Array i64)]
+  [gep-last : (Array i64)]) : unit
+  (let
+    [b : i64 0]
+    (while (< b (array-length barr))
+      (begin
+        (let
+          [instrs : CompilerIrInstrSeq
+            (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
+          [n : i64 (struct-get instrs len)]
+          [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+          [j : i64 0]
+          (while (< j n)
+            (begin
+              (match (array-ref slots j)
+                [(CompilerIrInstr.Gep gdst _ offset elem-ty)
+                  (match offset
+                    [(CompilerIrValue.Var ov)
+                      (if (and
+                        (>= ov 0)
+                        (< ov (array-length cand-base))
+                        (>= (array-ref cand-base ov) 0))
+                        (let
+                          [scale : i64 (compiler-backend-type-size elem-ty)]
+                          [bdisp : i64 (* (array-ref cand-k ov) scale)]
+                          (if (and
+                            (= (array-ref cand-block ov) b)
+                            (> j (array-ref cand-pos ov))
+                            (>= gdst 0)
+                            (< gdst (array-length defs))
+                            (= (array-ref defs gdst) 1)
+                            (> scale 0)
+                            (< bdisp (compiler-backend-gep-fold-k-bound))
+                            (> bdisp (- 0 (compiler-backend-gep-fold-k-bound))))
+                            (begin
+                              (array-set!
+                                gep-uses
+                                ov
+                                (+ (array-ref gep-uses ov) 1))
+                              (if (> j (array-ref gep-last ov))
+                                (array-set! gep-last ov j)
+                                unit))
+                            ;; disqualifying gep-index use: kill the candidate.
+                            (array-set! cand-base ov (- 0 1)))
+                          unit)
+                        unit)]
+                    [_ unit])]
+                [_ unit])
+              (set! j (+ j 1)))))
+        (set! b (+ b 1))))))
+
+;; True when any instruction in (from, to] defines `var`.
+(define (compiler-backend-gep-fold-segment-defines?
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [to : i64]
+  [var : i64]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [j : i64 (+ from 1)]
+    [found : bool false]
+    (begin
+      (while (<= j to)
+        (if (= (compiler-reg-instr-def-var (array-ref slots j)) var)
+          (begin
+            (set! found true)
+            (set! j (+ to 1)))
+          (set! j (+ j 1))))
+      found)))
+
+;; Pass 3: totality (every use is a folded gep index), no def of the base
+;; inside the (add, last-gep] segment, and the base is not itself an elided
+;; candidate (two rounds cover the parallel-offset shape; deeper chains
+;; conservatively keep their adds).
+(define (compiler-backend-gep-fold-validate
+  [barr : (Array CompilerIrBlock)]
+  [uses : (Array i64)]
+  [cand-base : (Array i64)]
+  [cand-block : (Array i64)]
+  [cand-pos : (Array i64)]
+  [gep-uses : (Array i64)]
+  [gep-last : (Array i64)]) : unit
+  (begin
+    (let
+      [v : i64 0]
+      (while (< v (array-length cand-base))
+        (begin
+          (if (>= (array-ref cand-base v) 0)
+            (if (or
+              (= (array-ref gep-uses v) 0)
+              (not (= (array-ref uses v) (array-ref gep-uses v)))
+              (compiler-backend-gep-fold-segment-defines?
+                (compiler-backend-gep-fold-block-instrs
+                  (array-ref barr (array-ref cand-block v)))
+                (array-ref cand-pos v)
+                (array-ref gep-last v)
+                (array-ref cand-base v)))
+              (array-set! cand-base v (- 0 1))
+              unit)
+            unit)
+          (set! v (+ v 1)))))
+    (let
+      [round : i64 0]
+      (while (< round 2)
+        (begin
+          (let
+            [v : i64 0]
+            (while (< v (array-length cand-base))
+              (begin
+                (if (>= (array-ref cand-base v) 0)
+                  (let
+                    [bv : i64 (array-ref cand-base v)]
+                    (if (and
+                      (< bv (array-length cand-base))
+                      (>= (array-ref cand-base bv) 0))
+                      (array-set! cand-base v (- 0 1))
+                      unit))
+                  unit)
+                (set! v (+ v 1)))))
+          (set! round (+ round 1)))))))
+
+(define (compiler-backend-gep-fold-any-valid? [cand-base : (Array i64)]) : bool
+  (let
+    [v : i64 0]
+    [found : bool false]
+    (begin
+      (while (< v (array-length cand-base))
+        (if (>= (array-ref cand-base v) 0)
+          (begin
+            (set! found true)
+            (set! v (array-length cand-base)))
+          (set! v (+ v 1))))
+      found)))
+
+;; Pass 4: rebuild each block with elided adds deleted and folded geps
+;; retargeted to the base var; fill the dst -> byte-displacement table.
+(define (compiler-backend-gep-fold-record-ordinal!
+  [cursor-cell : (Array i64)]
+  [disp : i64]
+  [kind : i64]
+  [scale : i64]
+  [disp-table : (Array i64)]
+  [kind-table : (Array i64)]
+  [scale-table : (Array i64)]) : unit
+  (let
+    [cursor : i64 (array-ref cursor-cell 0)]
+    (if (< cursor (array-length disp-table))
+      (begin
+        (array-set! disp-table cursor disp)
+        (array-set! kind-table cursor kind)
+        (array-set! scale-table cursor scale)
+        (array-set! cursor-cell 0 (+ cursor 1)))
+      unit)))
+
+(define (compiler-backend-gep-fold-rewrite-seq
+  [instrs : CompilerIrInstrSeq]
+  [block-ord : i64]
+  [cand-base : (Array i64)]
+  [cand-k : (Array i64)]
+  [cand-block : (Array i64)]
+  [cursor-cell : (Array i64)]
+  [disp-table : (Array i64)]
+  [kind-table : (Array i64)]
+  [scale-table : (Array i64)]) : CompilerIrInstrSeq
+  (let
+    [n : i64 (struct-get instrs len)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr n)]
+    [w : i64 0]
+    [j : i64 0]
+    (begin
+      (while (< j n)
+        (begin
+          (match (array-ref slots j)
+            [(CompilerIrInstr.BinOp dst _ _ _ _)
+              (if (and
+                (>= dst 0)
+                (< dst (array-length cand-base))
+                (>= (array-ref cand-base dst) 0))
+                ;; elided offset add: drop it.
+                unit
+                (begin
+                  (array-set! out w (array-ref slots j))
+                  (set! w (+ w 1))))]
+            [(CompilerIrInstr.Gep gdst base offset elem-ty)
+              (let
+                [scale : i64 (compiler-backend-type-size elem-ty)]
+                (match offset
+                  [(CompilerIrValue.Var ov)
+                    (if (and
+                      (>= ov 0)
+                      (< ov (array-length cand-base))
+                      (>= (array-ref cand-base ov) 0)
+                      (= (array-ref cand-block ov) block-ord))
+                      (begin
+                        ;; folded: post-rewrite offset stays a Var (the base
+                        ;; counter), so the recorded kind is 1.
+                        (compiler-backend-gep-fold-record-ordinal!
+                          cursor-cell
+                          (* (array-ref cand-k ov) scale)
+                          1
+                          scale
+                          disp-table
+                          kind-table
+                          scale-table)
+                        (array-set!
+                          out
+                          w
+                          (CompilerIrInstr.Gep
+                            gdst
+                            base
+                            (CompilerIrValue.Var (array-ref cand-base ov))
+                            elem-ty))
+                        (set! w (+ w 1)))
+                      (begin
+                        (compiler-backend-gep-fold-record-ordinal!
+                          cursor-cell
+                          0
+                          1
+                          scale
+                          disp-table
+                          kind-table
+                          scale-table)
+                        (array-set! out w (array-ref slots j))
+                        (set! w (+ w 1))))]
+                  [_
+                    (begin
+                      (compiler-backend-gep-fold-record-ordinal!
+                        cursor-cell
+                        0
+                        (compiler-backend-gep-fold-offset-kind offset)
+                        scale
+                        disp-table
+                        kind-table
+                        scale-table)
+                      (array-set! out w (array-ref slots j))
+                      (set! w (+ w 1)))]))]
+            [_
+              (begin
+                (array-set! out w (array-ref slots j))
+                (set! w (+ w 1)))])
+          (set! j (+ j 1))))
+      (CompilerIrInstrSeq out w))))
+
+(define (compiler-backend-gep-fold-rewrite-blocks
+  [barr : (Array CompilerIrBlock)]
+  [cand-base : (Array i64)]
+  [cand-k : (Array i64)]
+  [cand-block : (Array i64)]
+  [disp-table : (Array i64)]
+  [kind-table : (Array i64)]
+  [scale-table : (Array i64)]) : CompilerIrBlockList
+  (let
+    [cursor-cell : (Array i64) (array.make-array i64 1)]
+    [rebuilt : (Array CompilerIrBlock)
+      (array.make-array CompilerIrBlock (array-length barr))]
+    [b : i64 0]
+    [out : CompilerIrBlockList CompilerIrBlockList.Nil]
+    [r : i64 (- (array-length barr) 1)]
+    (begin
+      ;; forward pass keeps the ordinal cursor in walk order ...
+      (while (< b (array-length barr))
+        (begin
+          (match (array-ref barr b)
+            [(CompilerIrBlock.Block label instrs)
+              (array-set!
+                rebuilt
+                b
+                (CompilerIrBlock.Block
+                  label
+                  (compiler-backend-gep-fold-rewrite-seq
+                    instrs
+                    b
+                    cand-base
+                    cand-k
+                    cand-block
+                    cursor-cell
+                    disp-table
+                    kind-table
+                    scale-table)))])
+          (set! b (+ b 1))))
+      ;; ... and the list is assembled back-to-front.
+      (while (>= r 0)
+        (begin
+          (set! out (compiler-ir-block-cons (array-ref rebuilt r) out))
+          (set! r (- r 1))))
+      out)))
+
+;; Cheap prescan: a variable-index gep at all? Most functions have none; the
+;; full pass only runs when one exists.
+(define (compiler-backend-gep-fold-blocks-have-candidate?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (let
+        [instrs : CompilerIrInstrSeq
+          (compiler-backend-gep-fold-block-instrs block)]
+        [n : i64 (struct-get instrs len)]
+        [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+        [j : i64 0]
+        [found : bool false]
+        (begin
+          (while (< j n)
+            (begin
+              (match (array-ref slots j)
+                [(CompilerIrInstr.Gep _ _ offset _)
+                  (match offset
+                    [(CompilerIrValue.Var _) (set! found true)]
+                    [_ unit])]
+                [_ unit])
+              (set! j (+ j 1))))
+          (if found
+            true
+            (compiler-backend-gep-fold-blocks-have-candidate? (box-get rest)))))]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-gep-fold-blocks-have-candidate?
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Entry: returns the (possibly rewritten) blocks and installs the
+;; per-function displacement table; when nothing folds the input list is
+;; returned unchanged and the table stays disabled.
+(define (compiler-backend-gep-fold-blocks
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (begin
+    (compiler-backend-gep-fold-disable!)
+    (if (or
+      (<= vars 0)
+      (not (compiler-backend-gep-fold-blocks-have-candidate? blocks)))
+      blocks
+      (let
+        [barr : (Array CompilerIrBlock)
+          (compiler-backend-gep-fold-block-array blocks)]
+        [defs : (Array i64) (array.make-array i64 vars)]
+        [uses : (Array i64) (compiler-backend-function-use-counts vars blocks)]
+        [cand-base : (Array i64) (array.make-array i64 vars)]
+        [cand-k : (Array i64) (array.make-array i64 vars)]
+        [cand-block : (Array i64) (array.make-array i64 vars)]
+        [cand-pos : (Array i64) (array.make-array i64 vars)]
+        [gep-uses : (Array i64) (array.make-array i64 vars)]
+        [gep-last : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-backend-gep-fold-count-defs defs barr)
+          (let
+            [v : i64 0]
+            (while (< v vars)
+              (begin
+                (array-set! cand-base v (- 0 1))
+                (set! v (+ v 1)))))
+          (compiler-backend-gep-fold-scan-adds
+            barr
+            defs
+            cand-base
+            cand-k
+            cand-block
+            cand-pos)
+          (compiler-backend-gep-fold-scan-geps
+            barr
+            defs
+            cand-base
+            cand-k
+            cand-block
+            cand-pos
+            gep-uses
+            gep-last)
+          (compiler-backend-gep-fold-validate
+            barr
+            uses
+            cand-base
+            cand-block
+            cand-pos
+            gep-uses
+            gep-last)
+          (if (compiler-backend-gep-fold-any-valid? cand-base)
+            (let
+              [gep-count : i64 (compiler-backend-gep-fold-count-geps barr)]
+              [disp-table : (Array i64) (array.make-array i64 gep-count)]
+              [kind-table : (Array i64) (array.make-array i64 gep-count)]
+              [scale-table : (Array i64) (array.make-array i64 gep-count)]
+              [out : CompilerIrBlockList
+                (compiler-backend-gep-fold-rewrite-blocks
+                  barr
+                  cand-base
+                  cand-k
+                  cand-block
+                  disp-table
+                  kind-table
+                  scale-table)]
+              (begin
+                (set! compiler-backend-gep-fold-disp-table disp-table)
+                (set! compiler-backend-gep-fold-kind-table kind-table)
+                (set! compiler-backend-gep-fold-scale-table scale-table)
+                (set! compiler-backend-gep-fold-cursor 0)
+                (set! compiler-backend-gep-fold-drift false)
+                (set! compiler-backend-gep-fold-ready true)
+                out))
+            blocks))))))
+
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -34191,7 +35603,13 @@
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
-        [blocks : CompilerIrBlockList raw-blocks]
+        ;; GAP9: fold constant gep index offsets into addressing displacements
+        ;; BEFORE the register plan, so liveness sees the folded program (the
+        ;; shared counter stays live; the offset adds vanish).
+        [blocks : CompilerIrBlockList
+          (compiler-backend-gep-fold-blocks
+            vars
+            (compiler-ir-block-list-force-cons raw-blocks))]
         [walk-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic
@@ -34575,206 +35993,231 @@
                     func-diag
                     use-counts)
                     [(ResultCompilerBackend.Ok body)
-                      (let
-                        [frame : i64
-                          (+
+                      ;; GAP9 drift check: every Gep must have consumed its
+                      ;; ordinal with a matching shape; a mismatch means a
+                      ;; displacement could have been misapplied, so fail the
+                      ;; compile loudly instead of emitting wrong addressing.
+                      (if (compiler-backend-gep-fold-drift?)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (compiler-diagnostic-at-start
+                                ""
+                                (string.append
+                                  "backend: gep displacement ordinal drift in "
+                                  name))
+                              func-diag)))
+                        (let
+                          [frame : i64
                             (+
-                              (compiler-backend-frame-size
-                                (if compiler-backend-emergency-used
-                                  ;; an emergency fired -> reserve the max
-                                  ;; callee-save area so the emergency slot
-                                  ;; (placed below it) is in-bounds and never
-                                  ;; overlaps an on-demand callee-save slot.
-                                  (compiler-backend-frame-slots-emergency-max
-                                    slot-vars
-                                    has-group-vars)
-                                  (compiler-backend-frame-slots-with-groups
-                                    slot-vars
-                                    assignments
-                                    has-group-vars)))
-                              (compiler-backend-outgoing-frame-space
+                              (+
+                                (compiler-backend-frame-size
+                                  (if compiler-backend-emergency-used
+                                    ;; an emergency fired -> reserve the max
+                                    ;; callee-save area so the emergency slot
+                                    ;; (placed below it) is in-bounds and never
+                                    ;; overlaps an on-demand callee-save slot.
+                                    (compiler-backend-frame-slots-emergency-max
+                                      slot-vars
+                                      has-group-vars)
+                                    (compiler-backend-frame-slots-with-groups
+                                      slot-vars
+                                      assignments
+                                      has-group-vars)))
+                                (compiler-backend-outgoing-frame-space
+                                  target
+                                  emit-blocks-list
+                                  program-index))
+                              (compiler-backend-emergency-frame-extra
+                                compiler-backend-emergency-used-count))]
+                          [_addr-forward-done : unit
+                            (begin
+                              (set!
+                                compiler-backend-identity-tail-forwarder-active
+                                false)
+                              (compiler-backend-addr-of-forwarding-disable!)
+                              (compiler-backend-fuse-need-disable!)
+                              (compiler-backend-gep-fold-disable!))]
+                          [post-prologue : String
+                            (str_cat.str-cat
+                              (compiler-backend-mode-prologue mode)
+                              (compiler-backend-emit-save-callee-regs
+                                assignments
+                                slot-vars)
+                              (compiler-backend-emit-windows-main-argv-capture
                                 target
-                                emit-blocks-list
-                                program-index))
-                            (compiler-backend-emergency-frame-extra
-                              compiler-backend-emergency-used-count))]
-                        [_addr-forward-done : unit
-                          (begin
-                            (set!
-                              compiler-backend-identity-tail-forwarder-active
-                              false)
-                            (compiler-backend-addr-of-forwarding-disable!)
-                            (compiler-backend-fuse-need-disable!))]
-                        [post-prologue : String
-                          (str_cat.str-cat
-                            (compiler-backend-mode-prologue mode)
-                            (compiler-backend-emit-save-callee-regs
-                              assignments
-                              slot-vars)
-                            (compiler-backend-emit-windows-main-argv-capture
-                              target
-                              name
-                              emit-entry
-                              plan)
-                            (compiler-backend-emit-linux-crt-main-argv-capture
-                              target
-                              name
-                              crt-entry
-                              plan)
-                            (if (and
-                              (string.eq name "main")
-                              (or
-                                (compiler-backend-target-windows? target)
-                                (and
-                                  crt-entry
-                                  (compiler-backend-target-linux? target))))
-                              (compiler-backend-global-initializers
-                                globals
-                                program-index)
-                              "")
-                            spills
-                            body
-                            (compiler-backend-return-epilogue
-                              name
-                              assignments
-                              slot-vars
-                              emit-blocks-list)
-                            "")]
-                        ;; M-G3 stage 2: attempt frame-pointer omission on the
-                        ;; Linux text path (Win64 keeps the rbp prologue: its
-                        ;; SEH unwind uses `.seh_setframe %rbp` because the
-                        ;; in-body rsp dips -- c-abi calls, cycle-break pushes
-                        ;; -- require a frame register for valid unwind info).
-                        ;; Stage-1 mode (fpo=false) elsewhere, byte-identical.
-                        [fpo-attempt : bool
-                          (compiler-backend-target-linux? target)]
-                        ;; GAP1: push-style CSR saves ride the FPO audit --
-                        ;; the plan-saved CSR set is fixed pre-body (the
-                        ;; scavenger only hands out plan-saved callee regs;
-                        ;; emergency picks are wrapped locally), so the push
-                        ;; prologue below and the pass's save-deletion /
-                        ;; epilogue rewrites see the same registers. On audit
-                        ;; failure the ORIGINAL text (mov saves intact) feeds
-                        ;; the stage-1 keep-rbp fallback unchanged.
-                        [push-regs : (Array String)
-                          (compiler-backend-rsp-rebase-make-push-regs)]
-                        [push-count : i64
-                          (if fpo-attempt
-                            (compiler-backend-fill-push-csr-regs!
-                              assignments
-                              push-regs)
-                            0)]
-                        [rebased : String
-                          (compiler-backend-rsp-rebase-full
-                            post-prologue
-                            frame
+                                name
+                                emit-entry
+                                plan)
+                              (compiler-backend-emit-linux-crt-main-argv-capture
+                                target
+                                name
+                                crt-entry
+                                plan)
+                              (if (and
+                                (string.eq name "main")
+                                (or
+                                  (compiler-backend-target-windows? target)
+                                  (and
+                                    crt-entry
+                                    (compiler-backend-target-linux? target))))
+                                (compiler-backend-global-initializers
+                                  globals
+                                  program-index)
+                                "")
+                              spills
+                              body
+                              (compiler-backend-return-epilogue
+                                name
+                                assignments
+                                slot-vars
+                                emit-blocks-list)
+                              "")]
+                          ;; M-G3 stage 2: attempt frame-pointer omission on the
+                          ;; Linux text path (Win64 keeps the rbp prologue: its
+                          ;; SEH unwind uses `.seh_setframe %rbp` because the
+                          ;; in-body rsp dips -- c-abi calls, cycle-break pushes
+                          ;; -- require a frame register for valid unwind info).
+                          ;; Stage-1 mode (fpo=false) elsewhere, byte-identical.
+                          [fpo-attempt : bool
+                            (compiler-backend-target-linux? target)]
+                          ;; GAP1: push-style CSR saves ride the FPO audit --
+                          ;; the plan-saved CSR set is fixed pre-body (the
+                          ;; scavenger only hands out plan-saved callee regs;
+                          ;; emergency picks are wrapped locally), so the push
+                          ;; prologue below and the pass's save-deletion /
+                          ;; epilogue rewrites see the same registers. On audit
+                          ;; failure the ORIGINAL text (mov saves intact) feeds
+                          ;; the stage-1 keep-rbp fallback unchanged.
+                          [push-regs : (Array String)
+                            (compiler-backend-rsp-rebase-make-push-regs)]
+                          [push-count : i64
+                            (if fpo-attempt
+                              (compiler-backend-fill-push-csr-regs!
+                                assignments
+                                push-regs)
+                              0)]
+                          [rebased : String
+                            (compiler-backend-rsp-rebase-full
+                              post-prologue
+                              frame
+                              fpo-attempt
+                              push-regs
+                              push-count
+                              slot-vars)]
+                          [fpo-ok : bool
+                            (and
+                              fpo-attempt
+                              compiler-backend-rsp-rebase-last-ok)]
+                          (if (and
                             fpo-attempt
-                            push-regs
-                            push-count
-                            slot-vars)]
-                        [fpo-ok : bool
-                          (and fpo-attempt compiler-backend-rsp-rebase-last-ok)]
-                        (if (and
-                          fpo-attempt
-                          (not fpo-ok)
-                          (compiler-backend-plan-uses-reg? assignments "%rbp"))
-                          ;; DEMOTE: the FPO audit failed but the plan homes a
-                          ;; value in %rbp (which has no frame base to fall
-                          ;; back to) -- re-plan and re-emit without %rbp in
-                          ;; the pool. The retry cannot demote again
-                          ;; (allow-rbp=false => no %rbp homes).
-                          (begin
-                            (set!
-                              compiler-backend-fpo-demote-count
-                              (+ compiler-backend-fpo-demote-count 1))
-                            ;; DEMOTE retry: re-plan/re-emit without %rbp in the
-                            ;; pool (allow-rbp=false => no %rbp homes, so it
-                            ;; cannot demote again).
-                            (compiler-backend-emit-function
-                              target
-                              mode
-                              func
-                              functions
-                              globals
-                              global-types
-                              externs
-                              plan
-                              program-index
-                              spans
-                              span-index
-                              emit-entry
-                              crt-entry
-                              false))
-                          (let
-                            [_fpo-census : unit
-                              (if fpo-ok
-                                (begin
-                                  (set!
-                                    compiler-backend-fpo-count
-                                    (+ compiler-backend-fpo-count 1))
-                                  (if (> push-count 0)
-                                    (set!
-                                      compiler-backend-fpo-push-count
-                                      (+ compiler-backend-fpo-push-count 1))
-                                    unit)
-                                  (if (compiler-backend-plan-uses-reg?
-                                    assignments
-                                    "%rbp")
-                                    (set!
-                                      compiler-backend-fpo-rbp-plan-count
-                                      (+ compiler-backend-fpo-rbp-plan-count 1))
-                                    unit)
-                                  ;; GAP5: record this FPO function's var-region
-                                  ;; slot span so the post-peephole sweep can
-                                  ;; drop never-read local frame stores. Slots
-                                  ;; are rsp-relative here; keep-rbp functions
-                                  ;; (audit failed) are NOT recorded and stay
-                                  ;; untouched -- conservative by design.
-                                  (compiler-backend-sweep-record-fpo!
-                                    symbol
-                                    frame
-                                    push-count
-                                    slot-vars))
-                                unit)]
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                (compiler-backend-function-symbol-map-comment
-                                  program-index
-                                  name)
-                                ".globl "
-                                symbol
-                                "\n"
+                            (not fpo-ok)
+                            (compiler-backend-plan-uses-reg? assignments "%rbp"))
+                            ;; DEMOTE: the FPO audit failed but the plan homes a
+                            ;; value in %rbp (which has no frame base to fall
+                            ;; back to) -- re-plan and re-emit without %rbp in
+                            ;; the pool. The retry cannot demote again
+                            ;; (allow-rbp=false => no %rbp homes).
+                            (begin
+                              (set!
+                                compiler-backend-fpo-demote-count
+                                (+ compiler-backend-fpo-demote-count 1))
+                              ;; DEMOTE retry: re-plan/re-emit without %rbp in the
+                              ;; pool (allow-rbp=false => no %rbp homes, so it
+                              ;; cannot demote again).
+                              (compiler-backend-emit-function
+                                target
+                                mode
+                                func
+                                functions
+                                globals
+                                global-types
+                                externs
+                                plan
+                                program-index
+                                spans
+                                span-index
+                                emit-entry
+                                crt-entry
+                                false))
+                            (let
+                              [_fpo-census : unit
                                 (if fpo-ok
-                                  (if (> push-count 0)
-                                    (compiler-backend-emit-function-entry-fpo-push
+                                  (begin
+                                    (set!
+                                      compiler-backend-fpo-count
+                                      (+ compiler-backend-fpo-count 1))
+                                    (if (> push-count 0)
+                                      (set!
+                                        compiler-backend-fpo-push-count
+                                        (+ compiler-backend-fpo-push-count 1))
+                                      unit)
+                                    (if (compiler-backend-plan-uses-reg?
+                                      assignments
+                                      "%rbp")
+                                      (set!
+                                        compiler-backend-fpo-rbp-plan-count
+                                        (+
+                                          compiler-backend-fpo-rbp-plan-count
+                                          1))
+                                      unit)
+                                    ;; GAP5: record this FPO function's var-region
+                                    ;; slot span so the post-peephole sweep can
+                                    ;; drop never-read local frame stores. Slots
+                                    ;; are rsp-relative here; keep-rbp functions
+                                    ;; (audit failed) are NOT recorded and stay
+                                    ;; untouched -- conservative by design.
+                                    (compiler-backend-sweep-record-fpo!
                                       symbol
                                       frame
-                                      push-regs
-                                      push-count)
-                                    (compiler-backend-emit-function-entry-fpo
+                                      push-count
+                                      slot-vars
+                                      compiler-backend-emergency-slot-offset
+                                      compiler-backend-emergency-used-count
+                                      (compiler-backend-outgoing-frame-space
+                                        target
+                                        emit-blocks-list
+                                        program-index)))
+                                  unit)]
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  (compiler-backend-function-symbol-map-comment
+                                    program-index
+                                    name)
+                                  ".globl "
+                                  symbol
+                                  "\n"
+                                  (if fpo-ok
+                                    (if (> push-count 0)
+                                      (compiler-backend-emit-function-entry-fpo-push
+                                        symbol
+                                        frame
+                                        push-regs
+                                        push-count)
+                                      (compiler-backend-emit-function-entry-fpo
+                                        symbol
+                                        frame))
+                                    (compiler-backend-emit-function-entry
+                                      target
                                       symbol
                                       frame))
-                                  (compiler-backend-emit-function-entry
-                                    target
-                                    symbol
-                                    frame))
-                                ""
-                                ""
-                                (if fpo-ok
-                                  rebased
-                                  (if fpo-attempt
-                                    ;; FPO audit failed with no %rbp in the
-                                    ;; plan: keep-rbp exactly as stage 1 (the
-                                    ;; stage-1 pass may still rebase locals or
-                                    ;; return the text byte-identical).
-                                    (compiler-backend-rsp-rebase
-                                      post-prologue
-                                      frame
-                                      false)
-                                    rebased))
-                                (compiler-backend-emit-windows-seh-endproc
-                                  target)
-                                "\n")))))]
+                                  ""
+                                  ""
+                                  (if fpo-ok
+                                    rebased
+                                    (if fpo-attempt
+                                      ;; FPO audit failed with no %rbp in the
+                                      ;; plan: keep-rbp exactly as stage 1 (the
+                                      ;; stage-1 pass may still rebase locals or
+                                      ;; return the text byte-identical).
+                                      (compiler-backend-rsp-rebase
+                                        post-prologue
+                                        frame
+                                        false)
+                                      rebased))
+                                  (compiler-backend-emit-windows-seh-endproc
+                                    target)
+                                  "\n"))))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -34783,7 +36226,8 @@
                               compiler-backend-identity-tail-forwarder-active
                               false)
                             (compiler-backend-addr-of-forwarding-disable!)
-                            (compiler-backend-fuse-need-disable!))]
+                            (compiler-backend-fuse-need-disable!)
+                            (compiler-backend-gep-fold-disable!))]
                         (ResultCompilerBackend.Err message))]))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))))]))
@@ -34805,6 +36249,7 @@
       0)
     (compiler-backend-addr-of-forwarding-disable!)
     (compiler-backend-fuse-need-disable!)
+    (compiler-backend-gep-fold-disable!)
     (set! compiler-backend-current-phi-targets BackendStringList.Nil)
     (set! compiler-backend-current-phi-target-count 0)
     (set! compiler-backend-emit-instr-post-base 0)
@@ -43314,7 +44759,165 @@ tl_memchr:
       (compiler-backend-peephole-self-move-operands? src dst)]
     [(CompilerBackendPeepholeMove.NoMove) false]))
 
+;; Zext dedup: the 64-bit destination register of a `movzbq`/`movzbl` line over
+;; [start,end), or "" when the line is not a byte zero-extend into a tracked GP
+;; register. Both forms leave the full 64-bit destination holding a value in
+;; [0,255] (32-bit writes zero the upper half), so a following
+;; `movzbq %<dst-low-byte>, %<dst>` re-extend is an identity.
+(define (compiler-backend-peephole-zext-line-dst
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : String
+  (let
+    [ms : i64 start]
+    (begin
+      (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
+        (set! ms (+ ms 1)))
+      (let
+        [me : i64 ms]
+        (begin
+          (while (and
+            (< me end)
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data me)]
+              (and (>= b 97) (<= b 122))))
+            (set! me (+ me 1)))
+          (if (or
+            (compiler-backend-peephole-range-eq? data ms me "movzbq")
+            (compiler-backend-peephole-range-eq? data ms me "movzbl"))
+            (compiler-backend-peephole-last-operand-reg data ms end)
+            ""))))))
+
+;; True when the line [ns,ne) is exactly `movzbq %B, R` with %B the low-byte
+;; sub-register of R. Paired with a pending byte zero-extend into R, this
+;; re-extend is an identity and is dropped (pair-action 2). The source token
+;; must be a byte register ('l'/'b' suffix); 16/32-bit sub-register tokens and
+;; memory operands never match.
+(define (compiler-backend-peephole-redundant-zext-next?
+  [data : (Ptr u8)]
+  [ns : i64]
+  [ne : i64]
+  [reg : String]) : bool
+  (let
+    [ms : i64 ns]
+    (begin
+      (while (and (< ms ne) (= (compiler-backend-peephole-byte-at data ms) 32))
+        (set! ms (+ ms 1)))
+      (let
+        [me : i64 ms]
+        (begin
+          (while (and
+            (< me ne)
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data me)]
+              (and (>= b 97) (<= b 122))))
+            (set! me (+ me 1)))
+          (if (not (compiler-backend-peephole-range-eq? data ms me "movzbq"))
+            false
+            (let
+              [ts : i64 me]
+              (begin
+                (while (and
+                  (< ts ne)
+                  (= (compiler-backend-peephole-byte-at data ts) 32))
+                  (set! ts (+ ts 1)))
+                (let
+                  [te : i64 ts]
+                  (begin
+                    (while (and
+                      (< te ne)
+                      (let
+                        [b : i64 (compiler-backend-peephole-byte-at data te)]
+                        (or
+                          (= b 37)
+                          (and (>= b 97) (<= b 122))
+                          (and (>= b 48) (<= b 57)))))
+                      (set! te (+ te 1)))
+                    (if (or
+                      (= ts te)
+                      (not (= (compiler-backend-peephole-byte-at data ts) 37)))
+                      false
+                      (let
+                        [last : i64
+                          (compiler-backend-peephole-byte-at data (- te 1))]
+                        (if (not (or (= last 108) (= last 98)))
+                          false
+                          (and
+                            (string.eq
+                              (compiler-backend-peephole-subreg-to-reg
+                                data
+                                ts
+                                te)
+                              reg)
+                            (string.eq
+                              (compiler-backend-peephole-last-operand-reg
+                                data
+                                ms
+                                ne)
+                              reg)))))))))))))))
+
+;; True when pending is a byte zero-extend into register R and next is the
+;; identity re-extend `movzbq %<R-low-byte>, R`.
+(define (compiler-backend-peephole-redundant-zext-pair?
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : bool
+  (let
+    [dst : String
+      (if pending-owned?
+        (let
+          [pdata : (Ptr u8)
+            (unsafe
+              (string-data pending-line))]
+          (compiler-backend-peephole-zext-line-dst
+            pdata
+            0
+            (string.string-length pending-line)))
+        (compiler-backend-peephole-zext-line-dst
+          asm-data
+          pending-start
+          pending-end))]
+    (if (string.eq dst "")
+      false
+      (compiler-backend-peephole-redundant-zext-next?
+        asm-data
+        next-start
+        next-end
+        dst))))
+
 (define (compiler-backend-peephole-pair-action-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : i64
+  (if (compiler-backend-peephole-redundant-zext-pair?
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?
+    next-start
+    next-end)
+    2
+    (compiler-backend-peephole-pair-action-range-movq
+      asm
+      asm-data
+      pending-start
+      pending-end
+      pending-line
+      pending-owned?
+      next-start
+      next-end)))
+
+(define (compiler-backend-peephole-pair-action-range-movq
   [asm : String]
   [asm-data : (Ptr u8)]
   [pending-start : i64]

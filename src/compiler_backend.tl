@@ -35136,8 +35136,9 @@
 ;; The post-emission peephole recognizes both slot spellings
 ;; (compiler-backend-peephole-stack-slot-operand?). Within any owner-map
 ;; lifetime every %rsp-mutating line (pushq/popq/subq/addq/leave/movq-to-rsp/
-;; leaq-to-rsp/call/ret) conservatively clears the map, so equal operand
-;; strings imply equal addresses in both worlds and the elision behavior
+;; leaq-to-rsp/ret) conservatively clears the map; a returned call restores
+;; %rsp and keeps only callee-saved stack-slot owners. Equal operand strings
+;; therefore imply equal addresses in both worlds and the elision behavior
 ;; carries over 1:1.
 (define compiler-backend-rsp-rebase-ok-count : i64
   0)
@@ -46341,10 +46342,12 @@ tl_memchr:
 ;; survive in needs-rbp functions and at positive incoming-stack-arg offsets.
 ;; Recognizing `(%rsp)` operands as slots is sound with the same argument as
 ;; rbp: every %rsp-mutating line (pushq/popq/subq/addq/leave/leaq-to-rsp/
-;; movq-to-rsp/call/ret) is a non-movq/movq-to-untracked line that clears the
-;; whole owner map, so within any owner-map lifetime %rsp is constant and equal
-;; operand strings imply equal addresses (and distinct strings, distinct
-;; addresses). Indexed forms contain "(%rsp," / "(%rbp," and stay excluded.
+;; movq-to-rsp/ret) is a non-movq/movq-to-untracked line that clears the whole
+;; owner map; a returned call restores %rsp and keeps only callee-saved
+;; stack-slot owners. Within any owner-map lifetime %rsp is therefore constant
+;; for a tracked owner, and equal operand strings imply equal addresses (and
+;; distinct strings, distinct addresses). Indexed forms contain "(%rsp," /
+;; "(%rbp," and stay excluded.
 (define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
   (or
     (compiler-backend-string-contains? operand "(%rbp)")
@@ -46365,10 +46368,12 @@ tl_memchr:
 ;; stack slots AND SYM(%rip) globals. Both are stable addresses whose contents
 ;; change only via a store to that exact operand: a store to a slot clears just
 ;; that slot's mirrors (movq-owners-transfer stack-slot arm); a store to a global
-;; or through any pointer, and every call, clears the whole map (the else arm /
-;; line-clobber-owners). Since a stack store cannot alias a global and vice
-;; versa, keeping a global mirror across a stack store (and a slot mirror across
-;; a global store's whole-map clear is moot) is sound.
+;; or through any pointer clears the whole map (the else arm /
+;; line-clobber-owners). Calls clear all global mirrors and caller-saved stack
+;; mirrors, while preserving only callee-saved stack-slot mirrors. Since a stack
+;; store cannot alias a global and vice versa, keeping a global mirror across a
+;; stack store (and a slot mirror across a global store's whole-map clear is
+;; moot) is sound.
 (define (compiler-backend-peephole-trackable-mem-operand? [operand : String]) : bool
   (or
     (compiler-backend-peephole-stack-slot-operand? operand)
@@ -47087,6 +47092,35 @@ tl_memchr:
       ""
       (struct-get owners r15))))
 
+;; Owner string that can survive a normal call. Calls may mutate globals, so a
+;; callee-saved register keeps only stack-slot ownership across the boundary.
+(define (compiler-backend-peephole-call-preserved-owner [owner : String]) : String
+  (if (compiler-backend-peephole-stack-slot-operand? owner)
+    owner
+    ""))
+
+;; Owner map after a normal call returns. Preserve only stack-slot owners in the
+;; tracked registers whose values are guaranteed across both SysV and Win64
+;; calls; Win64 also preserves %rsi/%rdi, but SysV does not, and %rbp is
+;; intentionally untracked.
+(define (compiler-backend-peephole-owners-clear-call-clobbers
+  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners
+    ""
+    ""
+    ""
+    (compiler-backend-peephole-call-preserved-owner (struct-get owners rbx))
+    ""
+    ""
+    ""
+    ""
+    ""
+    ""
+    (compiler-backend-peephole-call-preserved-owner (struct-get owners r12))
+    (compiler-backend-peephole-call-preserved-owner (struct-get owners r13))
+    (compiler-backend-peephole-call-preserved-owner (struct-get owners r14))
+    (compiler-backend-peephole-call-preserved-owner (struct-get owners r15))))
+
 ;; Owner-map transfer for a recognized `movq SRC, DST` line.
 ;;  * DST is a clean rbp-relative stack slot (a store): SRC's value is written to
 ;;    the slot. Every OTHER register that mirrored the slot becomes stale and is
@@ -47267,8 +47301,9 @@ tl_memchr:
       (compiler-backend-peephole-range-contains-substr? data start end "_fail"))))
 
 ;; Owner-map transfer for a non-movq line (everything `line-movq` does not parse
-;; as a clean two-operand movq). Returns true when the line must conservatively
-;; clear the whole owner map. The line is classified from its raw bytes:
+;; as a clean two-operand movq). `line-clears-owners?` returns true when the line
+;; needs conservative owner invalidation. The line is classified from its raw
+;; bytes:
 ;;  * blank / whitespace-only -> no effect.
 ;;  * a label (ends in ':') -> a control-flow merge target; arbitrary predecessors
 ;;    can reach it with different register contents -> clear all.
@@ -47280,7 +47315,7 @@ tl_memchr:
 ;;  * cmp / test -> flags only -> no clear.
 ;;  * everything else (call, ret, leave, syscall, every arithmetic/vector op, any
 ;;    store through a pointer/index/segment, and any unrecognized mnemonic) may
-;;    write a GP register or alias a frame slot -> clear all (conservative).
+;;    write a GP register or alias a frame slot -> invalidate conservatively.
 (define (compiler-backend-peephole-line-clears-owners?
   [data : (Ptr u8)]
   [start : i64]
@@ -47297,6 +47332,17 @@ tl_memchr:
         [(= (compiler-backend-peephole-byte-at data i) 106) false]
         [(compiler-backend-peephole-cmp-or-test? data i end) false]
         [else true]))))
+
+;; True iff the mnemonic token is a call instruction (`call` or `callq`).
+(define (compiler-backend-peephole-mnemonic-call?
+  [data : (Ptr u8)]
+  [i : i64]
+  [mlen : i64]) : bool
+  (let
+    [e : i64 (+ i mlen)]
+    (or
+      (compiler-backend-peephole-range-eq? data i e "call")
+      (compiler-backend-peephole-range-eq? data i e "callq"))))
 
 ;; True iff the byte range [s,e) of `data` equals the literal `lit` exactly.
 (define (compiler-backend-peephole-range-eq?
@@ -47571,6 +47617,8 @@ tl_memchr:
 ;;    label reached immediately after a noreturn abort (`prev-abort?`): its only
 ;;    live predecessor is the guard's conditional jump, across which the register
 ;;    map is identical to the map carried through the abort, so the map is valid.
+;;  * A normal call: preserve callee-saved register owners, clear caller-saved
+;;    owners.
 ;;  * A whitelisted single-GP-dest q-op whose last operand is a tracked register:
 ;;    clear only that register's owner (everything else's reg<->slot mirror
 ;;    survives).
@@ -47604,14 +47652,17 @@ tl_memchr:
             (set! i (+ i 1)))
           (let
             [mlen : i64 (compiler-backend-peephole-token-len data i end)]
-            (if (compiler-backend-peephole-mnemonic-single-dest? data i mlen)
-              (let
-                [dreg : String
-                  (compiler-backend-peephole-last-operand-reg data start end)]
-                (if (string.eq dreg "")
-                  (compiler-backend-peephole-owners-empty)
-                  (compiler-backend-peephole-owners-set-reg owners dreg "")))
-              (compiler-backend-peephole-owners-empty)))))]))
+            (cond
+              [(compiler-backend-peephole-mnemonic-call? data i mlen)
+                (compiler-backend-peephole-owners-clear-call-clobbers owners)]
+              [(compiler-backend-peephole-mnemonic-single-dest? data i mlen)
+                (let
+                  [dreg : String
+                    (compiler-backend-peephole-last-operand-reg data start end)]
+                  (if (string.eq dreg "")
+                    (compiler-backend-peephole-owners-empty)
+                    (compiler-backend-peephole-owners-set-reg owners dreg "")))]
+              [else (compiler-backend-peephole-owners-empty)]))))]))
 
 (define (compiler-backend-peephole-emit-pending-line
   [out : text_buf.TextBuf]

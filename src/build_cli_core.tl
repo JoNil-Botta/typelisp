@@ -11,6 +11,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
+(import (hashmap String i64) as build_string_i64_map)
 (import stdlib.vector as svec)
 (import "host_plan.tl")
 (import "build_run_core.tl")
@@ -89,7 +90,7 @@
   (order BuildPackageGraphNodeVec))
 
 (defstruct BuildPackageGraphState
-  (seen hashmap.StringI64Map)
+  (seen build_string_i64_map.Map)
   (order BuildPackageGraphNodeVec))
 
 (defenum ResultBuildPackageGraph
@@ -199,7 +200,7 @@
   (len i64))
 
 (defstruct BuildPackageSchedulePass
-  (scheduled hashmap.StringI64Map)
+  (scheduled build_string_i64_map.Map)
   (workers BuildPackageGraphWorkerVec))
 
 (defenum ResultBuildPackageSchedulePass
@@ -207,7 +208,7 @@
   (Err String))
 
 (defenum ResultBuildPackageWait
-  (Ok hashmap.StringI64Map)
+  (Ok build_string_i64_map.Map)
   (Err i64))
 
 (defenum BuildProfile
@@ -240,6 +241,16 @@
   0)
 (define build-status-already-exists : i64
   17)
+
+(define (build-string-i64-map-put
+  [map : build_string_i64_map.Map]
+  [key : String]
+  [value : i64]) : build_string_i64_map.Map
+  (let
+    [out : build_string_i64_map.Map map]
+    (begin
+      (build_string_i64_map.insert (&mut out) key value)
+      out)))
 
 (define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String
   (str_cat.str-cat
@@ -2302,7 +2313,7 @@
   [manifest-path : String]
   [mark : i64]) : BuildPackageGraphState
   (BuildPackageGraphState
-    (hashmap.string-i64-map-put (struct-get state seen) manifest-path mark)
+    (build-string-i64-map-put (struct-get state seen) manifest-path mark)
     (struct-get state order)))
 
 (define (build-package-graph-state-add-order
@@ -2357,13 +2368,13 @@
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (let
     [manifest-path : String (struct-get node manifest-path)]
-    (match (hashmap.string-i64-map-get (struct-get state seen) manifest-path)
-      [(hashmap.StringI64MapFound mark)
+    (match (build_string_i64_map.get (& (struct-get state seen)) manifest-path)
+      [(build_string_i64_map.LookupFound mark)
         (if (= mark build-package-visit-visiting)
           (ResultBuildPackageGraphState.Err
             (build-package-cycle-message stack manifest-path))
           (ResultBuildPackageGraphState.Ok state))]
-      [(hashmap.StringI64MapMissing)
+      [(build_string_i64_map.LookupMissing)
         (let
           [visiting : BuildPackageGraphState
             (build-package-graph-state-mark
@@ -2424,8 +2435,8 @@
     [root-dir : String (compiler-load-dirname root-path)]
     [initial : BuildPackageGraphState
       (BuildPackageGraphState
-        (hashmap.string-i64-map-put
-          (hashmap.string-i64-map-with-capacity 32)
+        (build-string-i64-map-put
+          (build_string_i64_map.with-capacity 32)
           root-path
           build-package-visit-visiting)
         (build-package-graph-node-vec-new))]
@@ -2979,8 +2990,8 @@
         node)]
     (match (build-package-schedule-pass
       nodes
-      (hashmap.string-i64-map-with-capacity 4)
-      (hashmap.string-i64-map-with-capacity 4)
+      (build_string_i64_map.with-capacity 4)
+      (build_string_i64_map.with-capacity 4)
       (CompilerBackendTarget.Linux)
       0
       (BuildProfile.Release)
@@ -3838,21 +3849,21 @@
 (define (build-package-deps-built?
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
-  [built : hashmap.StringI64Map]) : bool
+  [built : build_string_i64_map.Map]) : bool
   (match deps
     [(CompilerPkgDepNil) true]
     [(CompilerPkgDepCons dep rest)
       (let
         [dep-manifest-path : String
           (build-package-dep-manifest-path manifest-dir dep)]
-        (match (hashmap.string-i64-map-get built dep-manifest-path)
-          [(hashmap.StringI64MapFound _)
+        (match (build_string_i64_map.get (& built) dep-manifest-path)
+          [(build_string_i64_map.LookupFound _)
             (build-package-deps-built? manifest-dir (box-get rest) built)]
-          [(hashmap.StringI64MapMissing) false]))]))
+          [(build_string_i64_map.LookupMissing) false]))]))
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
-  [built : hashmap.StringI64Map]) : bool
+  [built : build_string_i64_map.Map]) : bool
   (let
     [manifest-path : String (struct-get node manifest-path)]
     [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -3863,11 +3874,11 @@
       built)))
 
 (define (build-package-node-scheduled?
-  [scheduled : hashmap.StringI64Map]
+  [scheduled : build_string_i64_map.Map]
   [manifest-path : String]) : bool
-  (match (hashmap.string-i64-map-get scheduled manifest-path)
-    [(hashmap.StringI64MapFound _) true]
-    [(hashmap.StringI64MapMissing) false]))
+  (match (build_string_i64_map.get (& scheduled) manifest-path)
+    [(build_string_i64_map.LookupFound _) true]
+    [(build_string_i64_map.LookupMissing) false]))
 
 (define (build-package-graph-worker-vec-len [v : BuildPackageGraphWorkerVec]) : i64
   (struct-get v len))
@@ -3975,8 +3986,8 @@
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
-  [scheduled : hashmap.StringI64Map]
-  [built : hashmap.StringI64Map]
+  [scheduled : build_string_i64_map.Map]
+  [built : build_string_i64_map.Map]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -3987,7 +3998,7 @@
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
-    [next-scheduled : hashmap.StringI64Map scheduled]
+    [next-scheduled : build_string_i64_map.Map scheduled]
     [next-workers : BuildPackageGraphWorkerVec workers]
     [ok : bool true]
     [error-message : String ""]
@@ -4017,7 +4028,7 @@
                     (begin
                       (set!
                         next-scheduled
-                        (hashmap.string-i64-map-put
+                        (build-string-i64-map-put
                           next-scheduled
                           manifest-path
                           1))
@@ -4035,7 +4046,7 @@
 
 (define (build-package-all-built?
   [nodes : BuildPackageGraphNodeVec]
-  [built : hashmap.StringI64Map]) : bool
+  [built : build_string_i64_map.Map]) : bool
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -4047,9 +4058,9 @@
             (build-package-graph-node-vec-at nodes index)]
           [manifest-path : String (struct-get node manifest-path)]
           (begin
-            (match (hashmap.string-i64-map-get built manifest-path)
-              [(hashmap.StringI64MapFound _) unit]
-              [(hashmap.StringI64MapMissing) (set! all-built false)])
+            (match (build_string_i64_map.get (& built) manifest-path)
+              [(build_string_i64_map.LookupFound _) unit]
+              [(build_string_i64_map.LookupMissing) (set! all-built false)])
             (set! index (+ index 1)))))
       all-built)))
 
@@ -4060,12 +4071,12 @@
 
 (define (build-package-wait-workers-with
   [workers : BuildPackageGraphWorkerVec]
-  [built : hashmap.StringI64Map]
+  [built : build_string_i64_map.Map]
   [failed-status : i64]) : ResultBuildPackageWait
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-worker-vec-len workers)]
-    [next-built : hashmap.StringI64Map built]
+    [next-built : build_string_i64_map.Map built]
     [next-failed-status : i64 failed-status]
     (begin
       (while (< index count)
@@ -4119,7 +4130,7 @@
                                   1)))
                             (set!
                               next-built
-                              (hashmap.string-i64-map-put
+                              (build-string-i64-map-put
                                 next-built
                                 manifest-path
                                 1))))))
@@ -4155,7 +4166,7 @@
 
 (define (build-package-wait-workers
   [workers : BuildPackageGraphWorkerVec]
-  [built : hashmap.StringI64Map]) : ResultBuildPackageWait
+  [built : build_string_i64_map.Map]) : ResultBuildPackageWait
   (build-package-wait-workers-with workers built 0))
 
 (define (build-package-emit-graph-nodes-parallel-loop
@@ -4166,8 +4177,8 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : svec.StringVec]
-  [scheduled : hashmap.StringI64Map]
-  [built : hashmap.StringI64Map]) : i64
+  [scheduled : build_string_i64_map.Map]
+  [built : build_string_i64_map.Map]) : i64
   (if (build-package-all-built? nodes built)
     0
     (match (build-package-schedule-pass
@@ -4224,8 +4235,8 @@
     mode
     lock-policy
     stdlib-roots
-    (hashmap.string-i64-map-with-capacity 32)
-    (hashmap.string-i64-map-with-capacity 32)))
+    (build_string_i64_map.with-capacity 32)
+    (build_string_i64_map.with-capacity 32)))
 
 (define (build-package-emit-graph-nodes-serial
   [nodes : BuildPackageGraphNodeVec]

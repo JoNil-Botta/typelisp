@@ -1227,6 +1227,84 @@
       [(not (= off-by-one 1)) 8]
       [else 42])))
 
+(define (smoke-heavy-pass-large-label [index : i64]) : String
+  (string.append "b" (string.int->string index)))
+
+(define (smoke-heavy-pass-large-jump-block [index : i64] [next : String]) : CompilerIrBlock
+  (compiler-ir-block
+    (smoke-heavy-pass-large-label index)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Jump next)
+      (CompilerIrInstrList.Nil))))
+
+(define (smoke-heavy-pass-large-exit-block) : CompilerIrBlock
+  (compiler-ir-block
+    "exit"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        3
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+        (CompilerIrInstrList.Nil)))))
+
+(define (smoke-heavy-pass-large-tail-blocks [index : i64] [last : i64]) : CompilerIrBlockList
+  (if (> index last)
+    (compiler-ir-block-cons
+      (smoke-heavy-pass-large-exit-block)
+      (CompilerIrBlockList.Nil))
+    (compiler-ir-block-cons
+      (smoke-heavy-pass-large-jump-block
+        index
+        (if (= index last)
+          "exit"
+          (smoke-heavy-pass-large-label (+ index 1))))
+      (smoke-heavy-pass-large-tail-blocks (+ index 1) last))))
+
+(define (smoke-heavy-pass-large-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (smoke-heavy-pass-large-label 1))
+          (CompilerIrInstrList.Nil))))
+    (smoke-heavy-pass-large-tail-blocks 1 1024)))
+
+(define (smoke-heavy-pass-large-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "heavy_pass_large"
+    (opt-gvn-test-params)
+    (AstType.I64)
+    4
+    (smoke-heavy-pass-large-blocks)))
+
+(define (smoke-heavy-pass-large-gvn-self-test) : i64
+  (let
+    [blocks : CompilerIrBlockList (smoke-heavy-pass-large-blocks)]
+    [optimized : CompilerIrFunction
+      (optimize-function-once (smoke-heavy-pass-large-function))]
+    (begin
+      (unless (> (compiler-ir-block-list-count blocks) 1024) (return 1))
+      (unless
+        (<= (compiler-ir-block-list-count blocks) (opt-heavy-pass-block-limit))
+        (return 2))
+      (match optimized
+        [(CompilerIrFunction.Function _ _ _ _ optimized-blocks)
+          (if (= (opt-gvn-count-binops-blocks optimized-blocks) 1)
+            42
+            3)]))))
+
 (define (main) : i64
   (begin
     (unless (= (compiler-optimize-self-test) 42) (return 1))
@@ -1277,6 +1355,7 @@
     (unless (= (compiler-optimize-aggregate-sroa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-spans-self-test) 42) (return 1))
     (unless (= (compiler-optimize-gvn-self-test) 42) (return 1))
+    (unless (= (smoke-heavy-pass-large-gvn-self-test) 42) (return 1))
     (unless (= (compiler-optimize-load-cse-self-test) 42) (return 1))
     (unless (= (compiler-optimize-scratch-region-self-test) 42) (return 1))
     (compiler-optimize-alias-self-test)))

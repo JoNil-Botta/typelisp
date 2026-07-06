@@ -40983,6 +40983,7 @@ tl_alloc:
 .L_tl_alloc_root_ready:
     movq %r10, 40(%rax)
     movq $0, 48(%rax)
+    movq %rax, 56(%r10)
     movq %rax, 56(%rax)
     leaq 64(%rax), %r8
     movq %r8, 8(%rax)
@@ -41267,7 +41268,7 @@ tl_boot_pool:
 ;; `tl_arena_destroy` releases an arena's whole active chain plus any retired
 ;; overflow chunks held by the chain root. Arena header is the same 64-byte
 ;; record as tl_alloc {0:prev, 8:base, 16:bump, 24:end, 32:retired, 40:root,
-;; 48:kind/lock, 56:atomic-current}.
+;; 48:kind/lock, 56:root-current}.
 ;; System V (mmap=9 / munmap=11) flavor.
 ;; These mmap/munmap calls are part of the checked backend-core page boundary,
 ;; not stdlib-owned OS helpers.
@@ -41399,9 +41400,11 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
-    testq $1, 48(%r12)
-    jz .L_tl_arena_destroy_retired_ready
     movq 56(%r12), %rbx
+    testq %rbx, %rbx
+    jnz .L_tl_arena_destroy_head_ready
+    movq %r12, %rbx
+.L_tl_arena_destroy_head_ready:
 .L_tl_arena_destroy_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:
@@ -41571,9 +41574,11 @@ tl_arena_destroy:
     movq 40(%rsi), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_win_loop
-    testq $1, 48(%r12)
-    jz .L_tl_arena_destroy_win_retired_ready
     movq 56(%r12), %rsi
+    testq %rsi, %rsi
+    jnz .L_tl_arena_destroy_win_head_ready
+    movq %r12, %rsi
+.L_tl_arena_destroy_win_head_ready:
 .L_tl_arena_destroy_win_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_win_loop:
@@ -41684,10 +41689,7 @@ tl_region_reset:
     rep stosb
 .L_tl_region_reset_restore_set:
     movq %rbx, 16(%r8)
-    testq $1, 48(%r12)
-    jz .L_tl_region_reset_restore_current_ready
     movq %r8, 56(%r12)
-.L_tl_region_reset_restore_current_ready:
     movq %r8, %fs:tl_current_arena@tpoff
     pop %r12
     pop %rbx
@@ -41701,9 +41703,11 @@ tl_region_reset:
     movq 40(%r8), %r10
     testq %r10, %r10
     jz .L_tl_region_reset_all_loop
-    testq $1, 48(%r10)
-    jz .L_tl_region_reset_all_retired_ready
     movq 56(%r10), %r8
+    testq %r8, %r8
+    jnz .L_tl_region_reset_all_head_ready
+    movq %r10, %r8
+.L_tl_region_reset_all_head_ready:
 .L_tl_region_reset_all_retired_ready:
     movq 32(%r10), %rbx
 .L_tl_region_reset_all_loop:
@@ -41959,6 +41963,7 @@ tl_alloc:
 .L_tl_alloc_win_root_ready:
     movq %r10, 40(%rax)
     movq $0, 48(%rax)
+    movq %rax, 56(%r10)
     movq %rax, 56(%rax)
     leaq 64(%rax), %r8
     movq %r8, 8(%rax)
@@ -42019,7 +42024,7 @@ tl_alloc:
 
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
-;; 32=retired list link/head, 40=root, 48=kind/lock, 56=atomic-current; the arena header sits at the VirtualAlloc
+;; 32=retired list link/head, 40=root, 48=kind/lock, 56=root-current; the arena header sits at the VirtualAlloc
 ;; base). Nonzero reset retires newer chunks; reset-all releases chunks with
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
@@ -42087,10 +42092,7 @@ tl_region_reset:
             profile)
           (string.append
             "    movq %r12, 16(%r13)
-    testq $1, 48(%r11)
-    jz .L_tl_region_reset_win_restore_current_ready
     movq %r13, 56(%r11)
-.L_tl_region_reset_win_restore_current_ready:
     movq %r13, %gs:0x28
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
@@ -42102,9 +42104,11 @@ tl_region_reset:
     movq 40(%r14), %r12
     testq %r12, %r12
     jz .L_tl_region_reset_win_all_drop
-    testq $1, 48(%r12)
-    jz .L_tl_region_reset_win_all_retired_ready
     movq 56(%r12), %r14
+    testq %r14, %r14
+    jnz .L_tl_region_reset_win_all_head_ready
+    movq %r12, %r14
+.L_tl_region_reset_win_all_head_ready:
 .L_tl_region_reset_win_all_retired_ready:
     movq 32(%r12), %r12
 .L_tl_region_reset_win_all_drop:

@@ -213,11 +213,9 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (let
-      ;; The pool arena grew past its first 64 MiB segment during the compile;
-      ;; its live chain is reachable only from the newest segment (tracked by the
-      ;; installed pool's base-arena), not the make() root handle. Destroying the
-      ;; root leaves the overflow segments mapped, which accumulates across batch
-      ;; entries (the allocator frees a chain only from its newest link).
+      ;; The pool arena may grow past its first 64 MiB segment during a compile.
+      ;; Destroy the installed head we just retired; the runtime root also tracks
+      ;; that newest live segment so either head or root handle reclaims the chain.
       [old-newest : i64
         (ast-node-pool-context-base-arena
           (compiler-driver-state-pool-context state))]

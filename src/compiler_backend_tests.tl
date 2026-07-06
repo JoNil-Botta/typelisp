@@ -10483,6 +10483,51 @@
     (compiler-backend-runtime-page-call-inventory-linux-ok?)
     (compiler-backend-runtime-page-call-inventory-windows-ok?)))
 
+(define (compiler-backend-runtime-arena-root-current-linux-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Linux)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (compiler-backend-string-contains?
+        asm
+        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    leaq 64(%rax), %r8\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n    movq %r8, %fs:tl_current_arena@tpoff\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
+
+(define (compiler-backend-runtime-arena-root-current-windows-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Windows)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (compiler-backend-string-contains?
+        asm
+        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    leaq 64(%rax), %r8\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n    movq %r13, %gs:0x28\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq 56(%r12), %r14\n    testq %r14, %r14\n    jnz .L_tl_region_reset_win_all_head_ready\n    movq %r12, %r14\n.L_tl_region_reset_win_all_head_ready:\n.L_tl_region_reset_win_all_retired_ready:\n    movq 32(%r12), %r12\n"))))
+
+(define (compiler-backend-runtime-arena-root-current-ok?) : bool
+  (and
+    (compiler-backend-runtime-arena-root-current-linux-ok?)
+    (compiler-backend-runtime-arena-root-current-windows-ok?)))
+
 (define (compiler-backend-memory-op-ok?) : bool
   (and
     (compiler-backend-instr-contains?
@@ -18738,6 +18783,7 @@
         (compiler-backend-runtime-tls-wrapper-asm-ok?)
         (compiler-backend-runtime-global-inventory-ok?)
         (compiler-backend-runtime-page-call-inventory-ok?)
+        (compiler-backend-runtime-arena-root-current-ok?)
         (compiler-backend-profile-runtime-split-ok?))
       (compiler-backend-alloc-runtime-arena-ok?)
       (compiler-backend-region-ok?)

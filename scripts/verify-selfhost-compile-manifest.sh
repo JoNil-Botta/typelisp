@@ -29,11 +29,13 @@ EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # commit surfaces as an access violation, exit 139). Linux keeps the 16-case
 # stress chunk; Windows CI runners have tighter commit headroom, so split the
 # same manifest coverage into smaller default chunks unless explicitly
-# overridden.
+# overridden. As the compiler grows, two heavy entries in one Windows batch can
+# trip the freestanding allocator after the first compile has emitted assembly,
+# so keep the default at one manifest entry per process on Windows.
 if [ -n "${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-}" ]; then
     BATCH_CHUNK_SIZE=$TYPELISP_COMPILE_MANIFEST_BATCH_SIZE
 elif [ "$HOST_OS" = windows ]; then
-    BATCH_CHUNK_SIZE=2
+    BATCH_CHUNK_SIZE=1
 else
     BATCH_CHUNK_SIZE=16
 fi

@@ -304,7 +304,7 @@ end
 # Main-less; compiled transitively through the selfhost_main case, so they get a
 # decision row rather than a direct compile case.
 decision|src/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
-decision|src/cli_string_vec_bridge.tl|CLI generated String vector bridge (#4502): converts CLI-owned generated stdlib-root buffers at legacy driver/test boundaries; main-less, imported by migrated CLI command cores and exercised through the selfhost_main case
+decision|src/cli_string_vec_bridge.tl|CLI generated String vector bridge (#4502/#4504): converts CLI-owned generated stdlib-root buffers and legacy root buffers at driver/test/LSP boundaries; main-less, imported by migrated CLI command cores and exercised through the selfhost_main case
 decision|src/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by src/main.tl and exercised through the selfhost_main case

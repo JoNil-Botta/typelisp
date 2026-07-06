@@ -1696,113 +1696,176 @@
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
 ;; alias in the importer.
-(define (compiler-symbols-remove-module-macro-aliases-list
-  [symbols : CompilerSymbols]
-  [decls : AstDeclList]
-  [target-module-id : i64]
-  [index : i64]
-  [module-id : i64]) : CompilerSymbols
+;; Real (non-Import/Module/Test) decls grouped by their enclosing module, built
+;; once so alias installation touches only a module's own decls instead of
+;; rescanning every decl in the program per import. Installing aliases for M
+;; imported modules over a program of N decls was O(M*N) per symbol-table build
+;; (and the table is rebuilt many times across a self-compile); the index makes
+;; it O(N) to build plus O(decls-in-target-module) per import.
+;;
+;; Fields: mod-ids[slot] and mod-head[slot] are a small module-id -> head-entry
+;; association (module counts are tiny, so a linear probe beats a hashmap here);
+;; num-modules is its length. Per-module entries chain forward in decl order via
+;; ent-next (-1 terminates); ent-pos[k] is the decl's index in `decls` and
+;; ent-ridx[k] is the global real-decl ordinal the alias handles are keyed by --
+;; both identical to the ordinals the previous whole-program scans produced.
+(defenum ModuleDeclIndex
+  (ModuleDeclIndex
+    (Array i64)
+    (Array i64)
+    i64
+    (Array i64)
+    (Array i64)
+    (Array i64)))
+
+;; Linear probe for `module-id` in the first `num-modules` slots of `mod-ids`;
+;; returns its slot or -1. Extracted from the index builder so that hot loop
+;; keeps fewer values live at once.
+(define (compiler-module-index-find-slot
+  [mod-ids : (Array i64)]
+  [num-modules : i64]
+  [module-id : i64]) : i64
   (let
-    [cur-symbols : CompilerSymbols symbols]
-    [cur-index : i64 index]
-    [cur-module : i64 module-id]
-    [position : i64 0]
+    [i : i64 0]
+    [slot : i64 -1]
+    (begin
+      (while (< i num-modules)
+        (if (= (array-ref mod-ids i) module-id)
+          (begin
+            (set! slot i)
+            (set! i num-modules))
+          (set! i (+ i 1))))
+      slot)))
+
+(define (compiler-symbols-build-module-decl-index [decls : AstDeclList]) : ModuleDeclIndex
+  (let
     [decl-count : i64 (ast-decl-list-len (& decls))]
+    [cap : i64
+      (if (> decl-count 0)
+        decl-count
+        1)]
     [decl-offset : i64 (struct-get decls offset)]
+    [slots : (Array AstDecl) (struct-get decls slots)]
+    [mod-ids : (Array i64) (make-array i64 cap)]
+    [mod-head : (Array i64) (make-array i64 cap)]
+    [mod-tail : (Array i64) (make-array i64 cap)]
+    [ent-pos : (Array i64) (make-array i64 cap)]
+    [ent-ridx : (Array i64) (make-array i64 cap)]
+    [ent-next : (Array i64) (make-array i64 cap)]
+    [num-modules : i64 0]
+    [num-entries : i64 0]
+    [real-index : i64 0]
+    [cur-module : i64 (intern "")]
+    [position : i64 0]
     (begin
       (while (< position decl-count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset position))]
-          (begin
-            (match decl
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Module next-module) (set! cur-module next-module)]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (let
-                  [in-target : bool (= cur-module target-module-id)]
-                  [next-symbols : CompilerSymbols
-                    (if in-target
-                      (compiler-symbols-remove-decl-macro-alias
-                        cur-symbols
-                        decl
-                        cur-index)
-                      cur-symbols)]
-                  (begin
-                    (set! cur-symbols next-symbols)
-                    (set! cur-index (+ cur-index 1))))])
-            (set! position (+ position 1)))))
-      cur-symbols)))
+        (begin
+          (match (array-ref slots (+ decl-offset position))
+            [(AstDecl.Import _) unit]
+            [(AstDecl.IncludeStr _ _) unit]
+            [(AstDecl.IncludeBin _ _) unit]
+            [(AstDecl.Module next-module) (set! cur-module next-module)]
+            [(AstDecl.Test _ _ _) unit]
+            [_
+              (let
+                [slot : i64
+                  (compiler-module-index-find-slot
+                    mod-ids
+                    num-modules
+                    cur-module)]
+                (begin
+                  (if (< slot 0)
+                    (begin
+                      (set! slot num-modules)
+                      (array-set! mod-ids num-modules cur-module)
+                      (array-set! mod-head num-modules -1)
+                      (array-set! mod-tail num-modules -1)
+                      (set! num-modules (+ num-modules 1)))
+                    unit)
+                  (array-set! ent-pos num-entries position)
+                  (array-set! ent-ridx num-entries real-index)
+                  (array-set! ent-next num-entries -1)
+                  (if (< (array-ref mod-head slot) 0)
+                    (begin
+                      (array-set! mod-head slot num-entries)
+                      (array-set! mod-tail slot num-entries))
+                    (begin
+                      (array-set!
+                        ent-next
+                        (array-ref mod-tail slot)
+                        num-entries)
+                      (array-set! mod-tail slot num-entries)))
+                  (set! num-entries (+ num-entries 1))
+                  (set! real-index (+ real-index 1))))])
+          (set! position (+ position 1))))
+      (ModuleDeclIndex mod-ids mod-head num-modules ent-pos ent-ridx ent-next))))
 
-(define (compiler-symbols-remove-module-macro-aliases
+(define (compiler-module-decl-index-head
+  [index : ModuleDeclIndex]
+  [module-id : i64]) : i64
+  (match index
+    [(ModuleDeclIndex mod-ids mod-head num-modules _ _ _)
+      (let
+        [i : i64 0]
+        [head : i64 -1]
+        (begin
+          (while (< i num-modules)
+            (if (= (array-ref mod-ids i) module-id)
+              (begin
+                (set! head (array-ref mod-head i))
+                (set! i num-modules))
+              (set! i (+ i 1))))
+          head))]))
+
+(define (compiler-symbols-remove-module-macro-aliases-indexed
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
-  [target-module : String]) : CompilerSymbols
-  (compiler-symbols-remove-module-macro-aliases-list
-    symbols
-    decls
-    (intern target-module)
-    0
-    (intern "")))
+  [index : ModuleDeclIndex]
+  [target-module-id : i64]) : CompilerSymbols
+  (match index
+    [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
+      (let
+        [decl-offset : i64 (struct-get decls offset)]
+        [slots : (Array AstDecl) (struct-get decls slots)]
+        [cur-symbols : CompilerSymbols symbols]
+        [k : i64 (compiler-module-decl-index-head index target-module-id)]
+        (begin
+          (while (>= k 0)
+            (begin
+              (set!
+                cur-symbols
+                (compiler-symbols-remove-decl-macro-alias
+                  cur-symbols
+                  (array-ref slots (+ decl-offset (array-ref ent-pos k)))
+                  (array-ref ent-ridx k)))
+              (set! k (array-ref ent-next k))))
+          cur-symbols))]))
 
-(define (compiler-symbols-add-module-aliases-list
+(define (compiler-symbols-add-module-aliases-indexed
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
+  [index : ModuleDeclIndex]
   [target-module-id : i64]
-  [alias : String]
-  [index : i64]
-  [module-id : i64]) : CompilerSymbols
-  (let
-    [cur-symbols : CompilerSymbols symbols]
-    [cur-index : i64 index]
-    [cur-module : i64 module-id]
-    [position : i64 0]
-    [decl-count : i64 (ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    (begin
-      (while (< position decl-count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset position))]
-          (begin
-            (match decl
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Module next-module) (set! cur-module next-module)]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (let
-                  [in-target : bool (= cur-module target-module-id)]
-                  [next-symbols : CompilerSymbols
-                    (if in-target
-                      (compiler-symbols-add-decl-alias-in-module
-                        cur-symbols
-                        alias
-                        decl
-                        cur-index)
-                      cur-symbols)]
-                  (begin
-                    (set! cur-symbols next-symbols)
-                    (set! cur-index (+ cur-index 1))))])
-            (set! position (+ position 1)))))
-      cur-symbols)))
-
-(define (compiler-symbols-add-module-aliases
-  [symbols : CompilerSymbols]
-  [decls : AstDeclList]
-  [target-module : String]
   [alias : String]) : CompilerSymbols
-  (compiler-symbols-add-module-aliases-list
-    symbols
-    decls
-    (intern target-module)
-    alias
-    0
-    (intern "")))
+  (match index
+    [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
+      (let
+        [decl-offset : i64 (struct-get decls offset)]
+        [slots : (Array AstDecl) (struct-get decls slots)]
+        [cur-symbols : CompilerSymbols symbols]
+        [k : i64 (compiler-module-decl-index-head index target-module-id)]
+        (begin
+          (while (>= k 0)
+            (begin
+              (set!
+                cur-symbols
+                (compiler-symbols-add-decl-alias-in-module
+                  cur-symbols
+                  alias
+                  (array-ref slots (+ decl-offset (array-ref ent-pos k)))
+                  (array-ref ent-ridx k)))
+              (set! k (array-ref ent-next k))))
+          cur-symbols))]))
 
 (define (compiler-symbols-import-alias-key
   [importer-module : String]
@@ -1823,6 +1886,8 @@
     [index : i64 0]
     [decl-count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
+    [decl-index : ModuleDeclIndex
+      (compiler-symbols-build-module-decl-index all-decls)]
     (begin
       (while (< index decl-count)
         (let
@@ -1838,22 +1903,25 @@
                     (AstMaybeImportAlias.Some alias)
                     _))
                 (let
+                  [target-module-id : i64 (intern target-module)]
                   [target-has-macros : bool
                     (sym_i64_env.sym-i64-contains-id
                       macro-modules
-                      (intern target-module))]
+                      target-module-id)]
                   [without-bare-macros : CompilerSymbols
                     (if target-has-macros
-                      (compiler-symbols-remove-module-macro-aliases
+                      (compiler-symbols-remove-module-macro-aliases-indexed
                         cur-symbols
                         all-decls
-                        target-module)
+                        decl-index
+                        target-module-id)
                       cur-symbols)]
                   (if (string.eq alias "")
-                    (compiler-symbols-add-module-aliases
+                    (compiler-symbols-add-module-aliases-indexed
                       without-bare-macros
                       all-decls
-                      target-module
+                      decl-index
+                      target-module-id
                       (compiler-symbols-import-alias-key cur-module alias))
                     without-bare-macros))]
               [_ cur-symbols])]

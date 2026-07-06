@@ -50818,6 +50818,58 @@
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-result-fast-arity-error call-expr)))
 
+;; Avoid recursive `core-and-from`/`core-or-from` CTFE for the hot prelude macros.
+(define (macro-core-bool-lit [value : bool]) : i64
+  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
+
+(define (macro-core-and-chain [args : (& args AstExprList)] [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    (macro-core-bool-lit true)
+    (ast-expr-if
+      (ast-expr-list-get args index 0)
+      (macro-core-and-chain args (+ index 1))
+      (macro-core-bool-lit false))))
+
+(define (macro-core-or-chain [args : (& args AstExprList)] [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    (macro-core-bool-lit false)
+    (ast-expr-if
+      (ast-expr-list-get args index 0)
+      (macro-core-bool-lit true)
+      (macro-core-or-chain args (+ index 1)))))
+
+(define (macro-core-boolean-macro?
+  [macro-name : String]
+  [definition-module : String]
+  [base : String]) : bool
+  (and
+    (string.eq definition-module "stdlib.core_macros")
+    (tc-name-base-eq? macro-name base)))
+
+(define (macro-core-boolean-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [_macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [is-or : bool]) : ResultMacroExpr
+  (match (macro-expand-exprs ctx type-env decls depth args)
+    [(ResultMacroExprList.Ok expanded-args)
+      (begin
+        (cfg compile-profile (compiler-tc-macro-profile-start))
+        (let
+          [expanded : i64
+            (if is-or
+              (macro-core-or-chain (& expanded-args) 0)
+              (macro-core-and-chain (& expanded-args) 0))]
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-macro-profile-finish _macro-name expanded-args))
+            (ResultMacroExpr.Ok expanded))))]
+    [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)]))
+
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -50844,46 +50896,66 @@
           (ctfe-diagnostic-at-expr
             call-expr
             "typecheck: Decls macro can only be used at module scope")))
-      (match (macro-eval-transformer
-        ctx
-        type-env
-        decls
-        definition-module
-        macro-name
-        params
-        body
-        args
-        depth
-        call-expr)
-        [(ResultMacroValue.Ok value)
-          (match value
-            [(CompilerCtfeValue.Expr expanded produced)
-              (if (tc-macro-produced-type-compatible? ctx ret produced)
-                (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  (+ depth 1)
-                  (ast-node-get
-                    (macro-hygiene-expr
-                      (ast-node-get expanded)
-                      MacroHygieneEnv.Nil
-                      (macro-hygiene-context-macro-name
-                        macro-name
-                        definition-module)
-                      (+ depth 1))))
-                (ResultMacroExpr.Err
-                  (box
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "typecheck: macro expansion produced type does not match declaration"))))]
-            [_
-              (ResultMacroExpr.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "macro transformer did not produce an Expr")))])]
-        [(ResultMacroValue.Err diag) (ResultMacroExpr.Err diag)]))))
+      (cond
+        [(macro-core-boolean-macro? macro-name definition-module "and")
+          (macro-core-boolean-fast-expand
+            ctx
+            type-env
+            decls
+            macro-name
+            args
+            depth
+            false)]
+        [(macro-core-boolean-macro? macro-name definition-module "or")
+          (macro-core-boolean-fast-expand
+            ctx
+            type-env
+            decls
+            macro-name
+            args
+            depth
+            true)]
+        [else
+          (match (macro-eval-transformer
+            ctx
+            type-env
+            decls
+            definition-module
+            macro-name
+            params
+            body
+            args
+            depth
+            call-expr)
+            [(ResultMacroValue.Ok value)
+              (match value
+                [(CompilerCtfeValue.Expr expanded produced)
+                  (if (tc-macro-produced-type-compatible? ctx ret produced)
+                    (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      (+ depth 1)
+                      (ast-node-get
+                        (macro-hygiene-expr
+                          (ast-node-get expanded)
+                          MacroHygieneEnv.Nil
+                          (macro-hygiene-context-macro-name
+                            macro-name
+                            definition-module)
+                          (+ depth 1))))
+                    (ResultMacroExpr.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: macro expansion produced type does not match declaration"))))]
+                [_
+                  (ResultMacroExpr.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "macro transformer did not produce an Expr")))])]
+            [(ResultMacroValue.Err diag) (ResultMacroExpr.Err diag)])]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]

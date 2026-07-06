@@ -1718,6 +1718,25 @@
     (Array i64)
     (Array i64)))
 
+;; Linear probe for `module-id` in the first `num-modules` slots of `mod-ids`;
+;; returns its slot or -1. Extracted from the index builder so that hot loop
+;; keeps fewer values live at once.
+(define (compiler-module-index-find-slot
+  [mod-ids : (Array i64)]
+  [num-modules : i64]
+  [module-id : i64]) : i64
+  (let
+    [i : i64 0]
+    [slot : i64 -1]
+    (begin
+      (while (< i num-modules)
+        (if (= (array-ref mod-ids i) module-id)
+          (begin
+            (set! slot i)
+            (set! i num-modules))
+          (set! i (+ i 1))))
+      slot)))
+
 (define (compiler-symbols-build-module-decl-index [decls : AstDeclList]) : ModuleDeclIndex
   (let
     [decl-count : i64 (ast-decl-list-len (& decls))]
@@ -1749,15 +1768,12 @@
             [(AstDecl.Test _ _ _) unit]
             [_
               (let
-                [slot : i64 -1]
-                [i : i64 0]
+                [slot : i64
+                  (compiler-module-index-find-slot
+                    mod-ids
+                    num-modules
+                    cur-module)]
                 (begin
-                  (while (< i num-modules)
-                    (if (= (array-ref mod-ids i) cur-module)
-                      (begin
-                        (set! slot i)
-                        (set! i num-modules))
-                      (set! i (+ i 1))))
                   (if (< slot 0)
                     (begin
                       (set! slot num-modules)

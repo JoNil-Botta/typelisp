@@ -366,12 +366,84 @@
 ;: Eight bytes are folded per step with a wrapping multiply; the byte tail is
 ;: assembled into one final word. Overflow wraps in i64; the result may be
 ;: negative, which is fine -- the bucket mask keeps only the low bits.
+;; --- compile-profile interning instrumentation ---
+;; Deterministic per (compiler, input) counters that drive the redundant-
+;; interning elimination work: hash-words counts every string hash (the real
+;; cost), and the entry counters attribute those hashes to intern/intern-slice/
+;; intern-lookup. `compiler_intern` is import-free, so it only exposes reset and
+;; value accessors; the driver (which owns `io`) prints them at compile end.
+(cfg
+  compile-profile
+  (define intern-profile-hash-words-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-intern-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-slice-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-lookup-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (intern-profile-reset!) : unit
+    (begin
+      (set! intern-profile-hash-words-count 0)
+      (set! intern-profile-intern-count 0)
+      (set! intern-profile-slice-count 0)
+      (set! intern-profile-lookup-count 0))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-hash-words-value) : i64
+    intern-profile-hash-words-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-intern-value) : i64
+    intern-profile-intern-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-value) : i64
+    intern-profile-slice-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-lookup-value) : i64
+    intern-profile-lookup-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-intern) : unit
+    (set! intern-profile-intern-count (+ intern-profile-intern-count 1))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-slice) : unit
+    (set! intern-profile-slice-count (+ intern-profile-slice-count 1))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-lookup) : unit
+    (set! intern-profile-lookup-count (+ intern-profile-lookup-count 1))))
+
 (define (intern-hash-words [src : (Ptr u8)] [start : i64] [len : i64]) : i64
   (let
     [h : i64 (+ 5381 len)]
     [i : i64 0]
     [words : i64 (- len 7)]
     (begin
+      (cfg
+        compile-profile
+        (set!
+          intern-profile-hash-words-count
+          (+ intern-profile-hash-words-count 1)))
       (while (< i words)
         (begin
           (set!
@@ -696,6 +768,7 @@
     (if intern-map-ready
       unit
       (intern-reset!))
+    (cfg compile-profile (intern-profile-note-intern))
     (let
       [capacity : i64 (array-length intern-map-slots)]
       [hash : i64 (intern-hash name)]
@@ -743,6 +816,7 @@
     (if intern-map-ready
       unit
       (intern-reset!))
+    (cfg compile-profile (intern-profile-note-slice))
     (let
       [cached : i64 (intern-slice-cache-lookup text start len)]
       (if (>= cached 0)
@@ -795,33 +869,35 @@
 ;: probe strings as a side effect.
 (define (intern-lookup [name : String]) : InternLookup
   (if intern-map-ready
-    (let
-      [capacity : i64 (array-length intern-map-slots)]
-      [hash : i64 (intern-hash name)]
-      [cursor : i64 (intern-bucket hash capacity)]
-      [steps : i64 0]
-      [out : InternLookup InternLookupMissing]
-      [done : bool false]
-      (begin
-        (while (if done
-          false
-          (< steps capacity))
-          (match (array-ref intern-map-slots cursor)
-            [(InternEmpty)
-              (begin
-                (set! out (InternLookupMissing))
-                (set! done true))]
-            [(InternUsed slot-key slot-id slot-hash)
-              (if (if (= slot-hash hash)
-                (intern-private-string-eq-places slot-key name)
-                false)
+    (begin
+      (cfg compile-profile (intern-profile-note-lookup))
+      (let
+        [capacity : i64 (array-length intern-map-slots)]
+        [hash : i64 (intern-hash name)]
+        [cursor : i64 (intern-bucket hash capacity)]
+        [steps : i64 0]
+        [out : InternLookup InternLookupMissing]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps capacity))
+            (match (array-ref intern-map-slots cursor)
+              [(InternEmpty)
                 (begin
-                  (set! out (InternLookupFound slot-id))
-                  (set! done true))
-                (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))]))
-        out))
+                  (set! out (InternLookupMissing))
+                  (set! done true))]
+              [(InternUsed slot-key slot-id slot-hash)
+                (if (if (= slot-hash hash)
+                  (intern-private-string-eq-places slot-key name)
+                  false)
+                  (begin
+                    (set! out (InternLookupFound slot-id))
+                    (set! done true))
+                  (begin
+                    (set! cursor (intern-bucket (+ cursor 1) capacity))
+                    (set! steps (+ steps 1))))]))
+          out)))
     (InternLookupMissing)))
 
 ;: Recover the original String for an interned id.

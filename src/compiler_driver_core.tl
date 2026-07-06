@@ -536,20 +536,44 @@
       (set! compiler-driver-profile-total-start-total (profile.alloc-total))
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
       (set! compiler-driver-profile-best-peak 0)
+      (ci.intern-profile-reset!)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
       (compiler-driver-profile-start-phase))))
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-finish-total) : unit
+  (define (compiler-driver-profile-intern-line [name : String] [value : i64]) : unit
     (io.print-error
-      (compiler-driver-profile-line
-        "total"
-        (- (profile.now-ms) compiler-driver-profile-total-start-ms)
-        (- (profile.alloc-total) compiler-driver-profile-total-start-total)
-        (- (profile.alloc-live) compiler-driver-profile-total-start-live)
-        compiler-driver-profile-best-peak))))
+      (string.append
+        "compile-profile|intern."
+        (string.append
+          name
+          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-finish-total) : unit
+    (begin
+      (io.print-error
+        (compiler-driver-profile-line
+          "total"
+          (- (profile.now-ms) compiler-driver-profile-total-start-ms)
+          (- (profile.alloc-total) compiler-driver-profile-total-start-total)
+          (- (profile.alloc-live) compiler-driver-profile-total-start-live)
+          compiler-driver-profile-best-peak))
+      (compiler-driver-profile-intern-line
+        "hash_words"
+        (ci.intern-profile-hash-words-value))
+      (compiler-driver-profile-intern-line
+        "intern_calls"
+        (ci.intern-profile-intern-value))
+      (compiler-driver-profile-intern-line
+        "slice_calls"
+        (ci.intern-profile-slice-value))
+      (compiler-driver-profile-intern-line
+        "lookup_calls"
+        (ci.intern-profile-lookup-value)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

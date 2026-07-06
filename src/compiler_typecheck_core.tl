@@ -10266,13 +10266,15 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [source-name : String]) : String
-  (if (tc-name-qualified? source-name)
-    source-name
-    (if (>= (tc-name-first-dot source-name) 0)
-      (match (tc-source-name-lookup-key ctx env source-name)
-        [(ResultTcString.Ok lookup-name) lookup-name]
-        [(ResultTcString.Err _) source-name])
-      source-name)))
+  (let
+    [source-id : i64 (intern source-name)]
+    (if (tc-name-qualified-id? source-id)
+      source-name
+      (if (>= (intern-first-dot source-id) 0)
+        (match (tc-source-name-lookup-key ctx env source-name)
+          [(ResultTcString.Ok lookup-name) lookup-name]
+          [(ResultTcString.Err _) source-name])
+        source-name))))
 
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
@@ -31361,7 +31363,7 @@
   (let
     [registries : CompilerRegistries (tc-context-registries ctx)]
     [variant-name-id : i64 (tc-name-id variant-name)]
-    (if (tc-name-qualified? variant-name)
+    (if (tc-name-qualified-id? variant-name-id)
       (compiler-registries-lookup-variant-id-or
         registries
         variant-name-id
@@ -31415,28 +31417,30 @@
   [variant-name : String]) : bool
   (if (string.eq pattern-name variant-name)
     true
-    (if (and
-      (< (tc-name-first-dot pattern-name) 0)
-      (not (tc-name-qualified? pattern-name)))
-      false
-      (let
-        [pattern-handle : i64
-          (tc-source-variant-handle-for-enum-or
-            ctx
-            enum-name
-            pattern-name
-            (compiler-symbols-missing-handle))]
-        [candidate-handle : i64
-          (tc-source-variant-handle-for-enum-or
-            ctx
-            enum-name
-            variant-name
-            (compiler-symbols-missing-handle))]
-        (if (and
-          (compiler-symbols-handle-found? pattern-handle)
-          (compiler-symbols-handle-found? candidate-handle))
-          (= pattern-handle candidate-handle)
-          false)))))
+    (let
+      [pattern-id : i64 (intern pattern-name)]
+      (if (and
+        (< (intern-first-dot pattern-id) 0)
+        (not (tc-name-qualified-id? pattern-id)))
+        false
+        (let
+          [pattern-handle : i64
+            (tc-source-variant-handle-for-enum-or
+              ctx
+              enum-name
+              pattern-name
+              (compiler-symbols-missing-handle))]
+          [candidate-handle : i64
+            (tc-source-variant-handle-for-enum-or
+              ctx
+              enum-name
+              variant-name
+              (compiler-symbols-missing-handle))]
+          (if (and
+            (compiler-symbols-handle-found? pattern-handle)
+            (compiler-symbols-handle-found? candidate-handle))
+            (= pattern-handle candidate-handle)
+            false))))))
 
 (define (tc-expr-pattern-enum-name) : String
   (tc-stdlib-comptime-type-key "Expr"))
@@ -48729,22 +48733,24 @@
   [definition-module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if (and
-    (>= (tc-name-first-dot lookup-name) 0)
-    (not (tc-name-qualified? lookup-name))
-    (not (tc-source-slash-qualified? lookup-name)))
-    (macro-call-decl-from-source-name
-      ctx
-      decls
-      definition-module
-      lookup-name
-      call-expr)
-    (macro-call-decl-from-name
-      ctx
-      decls
-      definition-module
-      lookup-name
-      call-expr)))
+  (let
+    [lookup-id : i64 (intern lookup-name)]
+    (if (and
+      (>= (intern-first-dot lookup-id) 0)
+      (not (tc-name-qualified-id? lookup-id))
+      (not (tc-source-slash-qualified? lookup-name)))
+      (macro-call-decl-from-source-name
+        ctx
+        decls
+        definition-module
+        lookup-name
+        call-expr)
+      (macro-call-decl-from-name
+        ctx
+        decls
+        definition-module
+        lookup-name
+        call-expr))))
 
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
 ;; are module-scope visible regardless of source order; qualified macro calls
@@ -48805,8 +48811,8 @@
                 [lookup-name : String (intern-str name)]
                 (if (or
                   (tc-hygiene-global-name? lookup-name)
-                  (tc-name-qualified? lookup-name)
-                  (>= (tc-name-first-dot lookup-name) 0))
+                  (tc-name-qualified-id? name)
+                  (>= (intern-first-dot name) 0))
                   (ResultMacroCallDecl.Ok maybe-decl)
                   (macro-alias-self-call-decl
                     ctx
@@ -49824,10 +49830,11 @@
     [(AstExpr.Var name)
       (let
         [lookup-name : String (macro-output-source-name (intern-str name))]
+        [lookup-id : i64 (intern lookup-name)]
         (if (or
-          (tc-name-qualified? lookup-name)
+          (tc-name-qualified-id? lookup-id)
           (tc-source-slash-qualified? lookup-name)
-          (>= (tc-name-first-dot lookup-name) 0))
+          (>= (intern-first-dot lookup-id) 0))
           fallback
           (match (macro-import-alias-target-cached
             decls

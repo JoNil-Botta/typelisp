@@ -314,6 +314,7 @@ decision|src/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewri
 decision|src/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/doc_expand.tl|expansion-aware generated module doc extraction helper; main-less, imported by src/doc_cli_core.tl and exercised through the selfhost_main case and doc_expand smoke
+decision|src/doc_site_doc_bridge.tl|doc-site tool bridge for dotted imports over the legacy doc renderer stack; main-less, imported by tools/doc-site and exercised through the doc-site smokes/build path
 decision|src/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by src/main.tl and exercised through the selfhost_main case and public command-surface smoke
 decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/main.tl and exercised through the selfhost_main case

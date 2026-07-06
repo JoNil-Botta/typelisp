@@ -86,7 +86,7 @@ compile_linux_binary() {
     _out="$WORK/.$_label.compile.out"
     _err="$WORK/.$_label.compile.err"
 
-    if ! "$COMPILER" compile "$_source" --stdlib-root stdlib -o "$_asm" >"$_out" 2>"$_err"; then
+    if ! "$COMPILER" compile "$_source" --stdlib-root stdlib --stdlib-root src -o "$_asm" >"$_out" 2>"$_err"; then
         echo "$_label compile failed:" >&2
         sed 's/^/  /' "$_err" >&2 || true
         fail "$_source did not compile"
@@ -116,7 +116,7 @@ if [ "$HOST_OS" = linux ]; then
         fail "tools/doc-site/doc_site.tl did not build the site"
     fi
 else
-    if ! "$COMPILER" run tools/doc-site/doc_site.tl -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
+    if ! "$COMPILER" run tools/doc-site/doc_site.tl --stdlib-root stdlib --stdlib-root src -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
         sed 's/^/  /' "$WORK/.build.err" >&2 || true
         fail "tools/doc-site/doc_site.tl did not build the site"
@@ -133,7 +133,7 @@ if [ "$HOST_OS" = linux ]; then
         fail "tools/doc-site/doc_site_expand_pages.tl did not update the site"
     fi
 else
-    if ! "$COMPILER" run tools/doc-site/doc_site_expand_pages.tl -- "$SITE" >"$WORK/.expand.out" 2>"$WORK/.expand.err"; then
+    if ! "$COMPILER" run tools/doc-site/doc_site_expand_pages.tl --stdlib-root stdlib --stdlib-root src -- "$SITE" >"$WORK/.expand.out" 2>"$WORK/.expand.err"; then
         echo "site generated-module expansion failed:" >&2
         sed 's/^/  /' "$WORK/.expand.err" >&2 || true
         fail "tools/doc-site/doc_site_expand_pages.tl did not update the site"
@@ -147,7 +147,7 @@ if [ "$HOST_OS" = linux ]; then
     compile_linux_binary doc-site-smoke tools/doc-site/doc_site_smoke.tl "$SITE_SMOKE"
     "$SITE_SMOKE" >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 else
-    "$COMPILER" run tools/doc-site/doc_site_smoke.tl -- >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
+    "$COMPILER" run tools/doc-site/doc_site_smoke.tl --stdlib-root stdlib --stdlib-root src -- >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 fi
 smoke_code=$?
 set -e
@@ -163,7 +163,7 @@ if [ "$HOST_OS" = linux ]; then
     compile_linux_binary doc-site-expand-smoke tools/doc-site/doc_site_expand_smoke.tl "$SITE_EXPAND_SMOKE"
     "$SITE_EXPAND_SMOKE" >"$WORK/.expand_smoke.out" 2>"$WORK/.expand_smoke.err"
 else
-    "$COMPILER" run tools/doc-site/doc_site_expand_smoke.tl -- >"$WORK/.expand_smoke.out" 2>"$WORK/.expand_smoke.err"
+    "$COMPILER" run tools/doc-site/doc_site_expand_smoke.tl --stdlib-root stdlib --stdlib-root src -- >"$WORK/.expand_smoke.out" 2>"$WORK/.expand_smoke.err"
 fi
 expand_smoke_code=$?
 set -e
@@ -179,7 +179,7 @@ if [ "$HOST_OS" = linux ]; then
     compile_linux_binary doc-md-smoke tools/doc-site/doc_md_smoke.tl "$MD_SMOKE"
     "$MD_SMOKE" >"$WORK/.md_smoke.out" 2>"$WORK/.md_smoke.err"
 else
-    "$COMPILER" run tools/doc-site/doc_md_smoke.tl -- >"$WORK/.md_smoke.out" 2>"$WORK/.md_smoke.err"
+    "$COMPILER" run tools/doc-site/doc_md_smoke.tl --stdlib-root stdlib --stdlib-root src -- >"$WORK/.md_smoke.out" 2>"$WORK/.md_smoke.err"
 fi
 md_smoke_code=$?
 set -e

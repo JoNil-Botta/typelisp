@@ -7423,7 +7423,7 @@
   (if tc-unqualified-import-has-ambiguity
     (let
       [name : String (intern-str name-id)]
-      (if (tc-name-qualified? name)
+      (if (tc-name-qualified-id? name-id)
         (TcMaybeString.No)
         (let
           [module : String (tc-context-module ctx)]
@@ -7450,7 +7450,7 @@
             [module : String (tc-context-module ctx)]
             (if (and
               (> (string.string-length module) 0)
-              (not (tc-name-qualified? name)))
+              (not (tc-name-qualified-id? name-id)))
               (match (tc-lookup-id
                 env
                 (tc-name-id (compiler-symbol-module-key module name)))
@@ -9013,8 +9013,18 @@
     [(AstType.Var _) true]
     [_ false]))
 
+;; id-keyed variant: reads the O(1) precomputed "contains-'/'" metadata slot
+;; instead of re-hashing the name. The hygiene check needs the string, which
+;; intern-str recovers in O(1). `tc-name-qualified? name` ==
+;; `tc-name-qualified-id? (intern name)`, so threading the already-interned id
+;; from callers is semantics-preserving and skips the hash. Refs #4427.
+(define (tc-name-qualified-id? [name-id : i64]) : bool
+  (and
+    (not (tc-hygiene-local-name? (intern-str name-id)))
+    (intern-qualified? name-id)))
+
 (define (tc-name-qualified? [name : String]) : bool
-  (and (not (tc-hygiene-local-name? name)) (intern-name-qualified? name)))
+  (tc-name-qualified-id? (intern name)))
 
 (define (tc-name-first-char [name : String] [needle : char]) : i64
   (let
@@ -10256,13 +10266,15 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [source-name : String]) : String
-  (if (tc-name-qualified? source-name)
-    source-name
-    (if (>= (tc-name-first-dot source-name) 0)
-      (match (tc-source-name-lookup-key ctx env source-name)
-        [(ResultTcString.Ok lookup-name) lookup-name]
-        [(ResultTcString.Err _) source-name])
-      source-name)))
+  (let
+    [source-id : i64 (intern source-name)]
+    (if (tc-name-qualified-id? source-id)
+      source-name
+      (if (>= (intern-first-dot source-id) 0)
+        (match (tc-source-name-lookup-key ctx env source-name)
+          [(ResultTcString.Ok lookup-name) lookup-name]
+          [(ResultTcString.Err _) source-name])
+        source-name))))
 
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
@@ -10849,11 +10861,14 @@
 (define (tc-qualified-lookup-owner-name
   [lookup-name : String]
   [owner-name : String]) : String
-  (if (and
-    (or (tc-name-qualified? lookup-name) (>= (tc-name-first-dot lookup-name) 0))
-    (not (tc-name-qualified? owner-name)))
-    lookup-name
-    owner-name))
+  ;; Intern `lookup-name` once and read both id-keyed slots. Refs #4427.
+  (let
+    [lookup-id : i64 (intern lookup-name)]
+    (if (and
+      (or (tc-name-qualified-id? lookup-id) (>= (intern-first-dot lookup-id) 0))
+      (not (tc-name-qualified? owner-name)))
+      lookup-name
+      owner-name)))
 
 (define tc-nominal-owner-cache-handle : i64
   0)
@@ -22941,7 +22956,7 @@
           [(tc-spmd-env-has-local? spmd-env raw-text) (ResultTcString.Err "")]
           [(tc-hygiene-global-name? raw-text)
             (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
-          [(tc-name-qualified? raw-text) (ResultTcString.Ok raw-text)]
+          [(tc-name-qualified-id? raw-name) (ResultTcString.Ok raw-text)]
           [else (tc-source-name-lookup-key ctx env raw-text)]))]
     [_ (ResultTcString.Err "")]))
 
@@ -31302,30 +31317,33 @@
   [ctx : TcContext]
   [enum-name : String]
   [variant-name : String]) : String
-  (if (tc-name-qualified? variant-name)
-    variant-name
-    (if (>= (tc-name-first-dot variant-name) 0)
-      (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
-        [(ResultTcString.Ok lookup-name) lookup-name]
-        [(ResultTcString.Err _)
-          (match (tc-dotted-type-name-lookup-key ctx variant-name)
-            [(ResultTcString.Ok lookup-name) lookup-name]
-            [(ResultTcString.Err _) variant-name])])
-      (let
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            (tc-context-registries ctx)
-            variant-name
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? handle)
-          (match (tc-variant-owner-name ctx handle)
-            [(ResultTcString.Ok owner)
-              (if (string.eq owner enum-name)
-                variant-name
-                (tc-qualified-variant-name enum-name variant-name))]
-            [(ResultTcString.Err _)
-              (tc-qualified-variant-name enum-name variant-name)])
-          (tc-qualified-variant-name enum-name variant-name))))))
+  ;; Intern variant-name once; read both id-keyed slots. Refs #4427.
+  (let
+    [variant-id : i64 (intern variant-name)]
+    (if (tc-name-qualified-id? variant-id)
+      variant-name
+      (if (>= (intern-first-dot variant-id) 0)
+        (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
+          [(ResultTcString.Ok lookup-name) lookup-name]
+          [(ResultTcString.Err _)
+            (match (tc-dotted-type-name-lookup-key ctx variant-name)
+              [(ResultTcString.Ok lookup-name) lookup-name]
+              [(ResultTcString.Err _) variant-name])])
+        (let
+          [handle : i64
+            (compiler-registries-lookup-variant-or
+              (tc-context-registries ctx)
+              variant-name
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (match (tc-variant-owner-name ctx handle)
+              [(ResultTcString.Ok owner)
+                (if (string.eq owner enum-name)
+                  variant-name
+                  (tc-qualified-variant-name enum-name variant-name))]
+              [(ResultTcString.Err _)
+                (tc-qualified-variant-name enum-name variant-name)])
+            (tc-qualified-variant-name enum-name variant-name)))))))
 
 (define (tc-qualified-variant-handle-for-enum-or
   [ctx : TcContext]
@@ -31345,7 +31363,7 @@
   (let
     [registries : CompilerRegistries (tc-context-registries ctx)]
     [variant-name-id : i64 (tc-name-id variant-name)]
-    (if (tc-name-qualified? variant-name)
+    (if (tc-name-qualified-id? variant-name-id)
       (compiler-registries-lookup-variant-id-or
         registries
         variant-name-id
@@ -31399,28 +31417,30 @@
   [variant-name : String]) : bool
   (if (string.eq pattern-name variant-name)
     true
-    (if (and
-      (< (tc-name-first-dot pattern-name) 0)
-      (not (tc-name-qualified? pattern-name)))
-      false
-      (let
-        [pattern-handle : i64
-          (tc-source-variant-handle-for-enum-or
-            ctx
-            enum-name
-            pattern-name
-            (compiler-symbols-missing-handle))]
-        [candidate-handle : i64
-          (tc-source-variant-handle-for-enum-or
-            ctx
-            enum-name
-            variant-name
-            (compiler-symbols-missing-handle))]
-        (if (and
-          (compiler-symbols-handle-found? pattern-handle)
-          (compiler-symbols-handle-found? candidate-handle))
-          (= pattern-handle candidate-handle)
-          false)))))
+    (let
+      [pattern-id : i64 (intern pattern-name)]
+      (if (and
+        (< (intern-first-dot pattern-id) 0)
+        (not (tc-name-qualified-id? pattern-id)))
+        false
+        (let
+          [pattern-handle : i64
+            (tc-source-variant-handle-for-enum-or
+              ctx
+              enum-name
+              pattern-name
+              (compiler-symbols-missing-handle))]
+          [candidate-handle : i64
+            (tc-source-variant-handle-for-enum-or
+              ctx
+              enum-name
+              variant-name
+              (compiler-symbols-missing-handle))]
+          (if (and
+            (compiler-symbols-handle-found? pattern-handle)
+            (compiler-symbols-handle-found? candidate-handle))
+            (= pattern-handle candidate-handle)
+            false))))))
 
 (define (tc-expr-pattern-enum-name) : String
   (tc-stdlib-comptime-type-key "Expr"))
@@ -48713,22 +48733,24 @@
   [definition-module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if (and
-    (>= (tc-name-first-dot lookup-name) 0)
-    (not (tc-name-qualified? lookup-name))
-    (not (tc-source-slash-qualified? lookup-name)))
-    (macro-call-decl-from-source-name
-      ctx
-      decls
-      definition-module
-      lookup-name
-      call-expr)
-    (macro-call-decl-from-name
-      ctx
-      decls
-      definition-module
-      lookup-name
-      call-expr)))
+  (let
+    [lookup-id : i64 (intern lookup-name)]
+    (if (and
+      (>= (intern-first-dot lookup-id) 0)
+      (not (tc-name-qualified-id? lookup-id))
+      (not (tc-source-slash-qualified? lookup-name)))
+      (macro-call-decl-from-source-name
+        ctx
+        decls
+        definition-module
+        lookup-name
+        call-expr)
+      (macro-call-decl-from-name
+        ctx
+        decls
+        definition-module
+        lookup-name
+        call-expr))))
 
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
 ;; are module-scope visible regardless of source order; qualified macro calls
@@ -48789,8 +48811,8 @@
                 [lookup-name : String (intern-str name)]
                 (if (or
                   (tc-hygiene-global-name? lookup-name)
-                  (tc-name-qualified? lookup-name)
-                  (>= (tc-name-first-dot lookup-name) 0))
+                  (tc-name-qualified-id? name)
+                  (>= (intern-first-dot name) 0))
                   (ResultMacroCallDecl.Ok maybe-decl)
                   (macro-alias-self-call-decl
                     ctx
@@ -48881,7 +48903,7 @@
     [module : String (tc-context-module ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (tc-name-qualified? name-str))
+      (not (tc-name-qualified-id? name))
       (not (tc-source-slash-qualified? name-str)))
       (str_cat.str-cat (tc-name-slashes-to-dots module) "." name-str)
       name-str)))
@@ -49808,10 +49830,11 @@
     [(AstExpr.Var name)
       (let
         [lookup-name : String (macro-output-source-name (intern-str name))]
+        [lookup-id : i64 (intern lookup-name)]
         (if (or
-          (tc-name-qualified? lookup-name)
+          (tc-name-qualified-id? lookup-id)
           (tc-source-slash-qualified? lookup-name)
-          (>= (tc-name-first-dot lookup-name) 0))
+          (>= (intern-first-dot lookup-id) 0))
           fallback
           (match (macro-import-alias-target-cached
             decls
@@ -54934,7 +54957,7 @@
     (if (tc-source-slash-qualified-id? cleanup-str cleanup-name)
       (tc-cleanup-source-slash-alias-helper-name ctx cleanup-str cleanup-name)
       (intern
-        (if (tc-name-qualified? cleanup-str)
+        (if (tc-name-qualified-id? cleanup-name)
           cleanup-str
           (compiler-symbol-module-key
             (tc-qualified-name-module owner-name)
@@ -55600,7 +55623,7 @@
     [module : String (tc-context-module ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (tc-name-qualified? text)))
+      (not (tc-name-qualified-id? name)))
       (compiler-symbol-module-key module text)
       text)))
 

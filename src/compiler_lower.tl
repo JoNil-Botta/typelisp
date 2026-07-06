@@ -1307,16 +1307,19 @@
   [type-env : TcTypeEnv]
   [module : String]
   [lookup-name : String]) : String
-  (if (tc-name-qualified? lookup-name)
-    lookup-name
-    (if (>= (tc-name-first-dot lookup-name) 0)
-      (match (tc-source-name-lookup-key
-        (tc-context-with-module ctx module)
-        type-env
-        lookup-name)
-        [(ResultTcString.Ok resolved-name) resolved-name]
-        [(ResultTcString.Err _) (compiler-symbol-module-key module lookup-name)])
-      (compiler-symbol-module-key module lookup-name))))
+  (let
+    [lookup-name-id : i64 (intern lookup-name)]
+    (if (tc-name-qualified-id? lookup-name-id)
+      lookup-name
+      (if (>= (intern-first-dot lookup-name-id) 0)
+        (match (tc-source-name-lookup-key
+          (tc-context-with-module ctx module)
+          type-env
+          lookup-name)
+          [(ResultTcString.Ok resolved-name) resolved-name]
+          [(ResultTcString.Err _)
+            (compiler-symbol-module-key module lookup-name)])
+        (compiler-symbol-module-key module lookup-name)))))
 
 (define (lower-hygiene-source-name-in-context
   [ctx : TcContext]
@@ -4749,11 +4752,17 @@
       state)))
 
 (define (lower-reach-used-type-name-add-source! [source : String] [name : i64]) : unit
-  (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
-    (set!
-      lower-reach-active-body-used-types
-      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
-    unit))
+  ;; Intern `source` once and read both id-keyed metadata slots, instead of
+  ;; hashing it twice (qualified? + first-dot). Refs #4427.
+  (let
+    [source-id : i64 (intern source)]
+    (if (or
+      (tc-name-qualified-id? source-id)
+      (>= (intern-first-dot source-id) 0))
+      (set!
+        lower-reach-active-body-used-types
+        (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+      unit)))
 
 (define (lower-reach-used-types-add-pattern-roots! [pattern : AstPattern]) : unit
   (match pattern
@@ -6588,7 +6597,7 @@
                 (let
                   [cleanup-str : String (intern-str cleanup-name)]
                   [logical-name : String
-                    (if (tc-name-qualified? cleanup-str)
+                    (if (tc-name-qualified-id? cleanup-name)
                       (lower-name-cache-resolve-hygiene names cleanup-str)
                       (lower-decl-logical-name
                         entry-path
@@ -7258,7 +7267,9 @@
   (let
     [source : String (intern-str name)]
     [with-source : hashmap.I64I64Map (hashmap.i64-i64-map-put used name 1)]
-    (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+    ;; `name` is already the interned id of `source`, so read the id-keyed
+    ;; metadata slots directly instead of re-hashing `source`. Refs #4427.
+    (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
       (let
         [leaf : String (lower-used-type-name-leaf source)]
         (if (string.eq leaf source)
@@ -7274,7 +7285,8 @@
     true
     (let
       [source : String (intern-str name)]
-      (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+      ;; `name` is already the interned id of `source`. Refs #4427.
+      (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
         (let
           [leaf : String (lower-used-type-name-leaf source)]
           (if (string.eq leaf source)
@@ -7473,11 +7485,10 @@
     [(AstPattern.Binding _) used]
     [(AstPattern.Variant name patterns-box)
       (let
-        [name-str : String (intern-str name)]
+        ;; `name` is already the interned id; read the id-keyed metadata slots
+        ;; directly instead of re-hashing `(intern-str name)` twice.
         [with-head : hashmap.I64I64Map
-          (if (or
-            (tc-name-qualified? name-str)
-            (>= (tc-name-first-dot name-str) 0))
+          (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
             (lower-used-type-name-add used module name)
             used)]
         (lower-used-types-add-pattern-list

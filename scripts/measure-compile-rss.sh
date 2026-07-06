@@ -165,9 +165,15 @@ CHUNK_NUMBER=$(printf '%s\n' "$CHUNK_ID" | sed 's/^0*//')
 [ -n "$CHUNK_NUMBER" ] || CHUNK_NUMBER=0
 CHUNK_ID_PADDED=$(printf '%04d' "$CHUNK_NUMBER")
 
+# With no explicit compiler, build an opt2 stage2 from the seed (unless
+# TYPELISP_IR_SELF_STAGE2=0) so max-RSS numbers reflect the same
+# register-allocated self-hosted compiler CI measures, not the older seed.
+SELF_STAGE2=${TYPELISP_IR_SELF_STAGE2:-1}
+BUILD_STAGE2_FROM_SEED=0
 if [ -z "$COMPILER" ]; then
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+    [ "$SELF_STAGE2" = 1 ] && BUILD_STAGE2_FROM_SEED=1
 fi
 case "$COMPILER" in
     /* | [A-Za-z]:[/\\]*) ;;
@@ -184,6 +190,15 @@ fi
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+
+if [ "$BUILD_STAGE2_FROM_SEED" -eq 1 ]; then
+    echo "[compile-rss] building opt2 stage2 from seed to match the CI self-compile compiler" >&2
+    echo "[compile-rss]   (set TYPELISP_IR_SELF_STAGE2=0 to measure the raw seed instead)" >&2
+    build_selfhost_stage2 "$ROOT" "$COMPILER" "$WORKDIR/stage2-compiler" || exit 1
+    COMPILER=$(selfhost_stage2_path "$WORKDIR/stage2-compiler")
+    [ -x "$COMPILER" ] || fail "stage2 compiler not executable after build: $COMPILER"
+fi
+
 MEASUREMENTS="$WORKDIR/measurements.tsv"
 printf 'workload\tinput\tchunk_id\tchunk_ordinal\tchunk_count\tbatch_size\tentry_count\texit_code\telapsed_ms\tmax_rss_kb\tstdout\tstderr\ttime_log\targv_log\n' > "$MEASUREMENTS"
 

@@ -1,7 +1,14 @@
 param(
     [string]$BenchmarkDir = $(Join-Path $PSScriptRoot "..\target\compile-cli-benchmark"),
     [string]$OutDir = $(Join-Path $PSScriptRoot "..\target\superluminal"),
+    # OptLevel is the compile workload the profiled stage2 runs (opt1 = the
+    # self_compile/compile_cli_opt1 metric CI gates). BuildOptLevel is the opt
+    # level the profiled stage2 binary itself is built at; it defaults to 2 so
+    # the captured hot functions come from the same register-allocated compiler
+    # CI measures, not an opt1-built stage2. Keep them equal only to profile a
+    # matched build (e.g. -OptLevel 2 -BuildOptLevel 2).
     [int]$OptLevel = 1,
+    [int]$BuildOptLevel = 2,
     [int]$FrequencyHz = 8190,
     [switch]$SkipBenchmark,
     [switch]$SkipCapture,
@@ -153,17 +160,17 @@ function Find-WindowsSdkLibRoot {
 
 function Invoke-Benchmark {
     param(
-        [int]$OptLevel,
+        [string]$OptLevels,
         [string]$BenchmarkDir
     )
 
     $bash = Resolve-BenchmarkBash
-    Write-Host "[superluminal] running scripts/benchmark-compile-cli.sh"
+    Write-Host "[superluminal] running scripts/benchmark-compile-cli.sh (opt levels: $OptLevels)"
     $oldOut = ${env:TYPELISP_COMPILE_BENCH_OUT}
     $oldOptLevels = ${env:TYPELISP_COMPILE_BENCH_OPT_LEVELS}
     try {
         $env:TYPELISP_COMPILE_BENCH_OUT = $BenchmarkDir
-        $env:TYPELISP_COMPILE_BENCH_OPT_LEVELS = "$OptLevel"
+        $env:TYPELISP_COMPILE_BENCH_OPT_LEVELS = $OptLevels
         & $bash "scripts/benchmark-compile-cli.sh"
         if ($LASTEXITCODE -ne 0) {
             throw "benchmark-compile-cli.sh failed with exit code $LASTEXITCODE"
@@ -809,8 +816,10 @@ $OutDir = Resolve-FullPath $OutDir
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$BenchmarkOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
-$stage2Asm = Join-Path $BenchmarkOutputDir "stage2.s"
+# The profiled binary is the opt$BuildOptLevel-built stage2; it runs the
+# opt$OptLevel compile workload during capture.
+$BuildOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $BuildOptLevel
+$stage2Asm = Join-Path $BuildOutputDir "stage2.s"
 $profileAsm = Join-Path $OutDir "stage2-profile.s"
 $profileObj = Join-Path $OutDir "stage2-profile.obj"
 $stage2Exe = Join-Path $OutDir "stage2-profile.exe"
@@ -826,19 +835,29 @@ if ($CaptureOnly) {
 }
 
 if (-not $SkipBenchmark) {
-    Invoke-Benchmark $OptLevel $BenchmarkDir
-    $BenchmarkOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
-    $stage2Asm = Join-Path $BenchmarkOutputDir "stage2.s"
+    # Build the opt$BuildOptLevel stage2 that is profiled; also build the
+    # opt$OptLevel stage2 (unless they are the same) so its assembly is the
+    # cross-fixpoint reference for the captured opt$OptLevel compile.
+    $benchLevels = if ($BuildOptLevel -eq $OptLevel) { "$OptLevel" } else { "$OptLevel $BuildOptLevel" }
+    Invoke-Benchmark $benchLevels $BenchmarkDir
+    $BuildOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $BuildOptLevel
+    $stage2Asm = Join-Path $BuildOutputDir "stage2.s"
 }
 
-Require-File $stage2Asm "benchmark stage2 assembly"
+Require-File $stage2Asm "benchmark stage2 assembly (opt$BuildOptLevel-built compiler)"
 Write-SemanticProfileAssembly $stage2Asm $profileAsm $symbolMap
 Invoke-ProfileAssemble $profileAsm $profileObj
 Invoke-DebugRelink $profileObj $stage2Exe $stage2Pdb
 
 if (-not $SkipCapture) {
     Invoke-ElevatedCapture $BenchmarkDir $OutDir $OptLevel $FrequencyHz
-    Assert-ProfileOutputMatchesBenchmark $stage2Asm $capturedStage3
+    # The captured compile runs at opt$OptLevel, so its output equals the
+    # opt$OptLevel stage2.s (an opt$BuildOptLevel-built stage2 compiling at
+    # opt$OptLevel emits the opt$OptLevel program -- the cross-fixpoint), not
+    # the opt$BuildOptLevel stage2.s the profiled binary was built from.
+    $referenceOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
+    $referenceStage2Asm = Join-Path $referenceOutputDir "stage2.s"
+    Assert-ProfileOutputMatchesBenchmark $referenceStage2Asm $capturedStage3
     Invoke-XperfProfileExport $OutDir $symbolMap
 }
 

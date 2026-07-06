@@ -57,27 +57,38 @@ resolve_stage0_compiler() {
     printf '%s\n' "$_ls0_bin"
 }
 
+# selfhost_stage2_path OUT_DIR
+#   Echo the stage2 compiler path build_selfhost_stage2 produces under OUT_DIR.
+#   Pure string construction so callers recover the path without capturing build
+#   output (build-stage0.sh's heartbeat runs in the background and can write to
+#   the original stdout, so a command-substituted build is not a safe way to
+#   read the path back).
+selfhost_stage2_path() {
+    printf '%s\n' "$1/stage2/typelisp$(stage0_host_exe_suffix)"
+}
+
 # build_selfhost_stage2 ROOT SEED OUT_DIR
-#   Build the fixpoint opt2 stage2 compiler from SEED and echo its path. Runs
+#   Build the fixpoint opt2 stage2 compiler from SEED under OUT_DIR. Runs
 #   scripts/build-stage0.sh twice (SEED -> stage1 -> stage2); that script
 #   compiles src/main.tl at --opt-level 2, so the result is the same
 #   register-allocated, self-hosted compiler that the published stage0 and the
 #   check-instruction-counts.sh CI gate measure. Local self-compile measurement
 #   and profiling must run this compiler, not the raw seed: the seed is an older
 #   build whose per-function codegen differs, so measuring it does not reflect
-#   the metric CI ratchets (self_compile/compile_cli_opt1). Progress goes to
-#   stderr so the stage2 path stays the only value on stdout.
+#   the metric CI ratchets (self_compile/compile_cli_opt1). All build output goes
+#   to stderr; recover the resulting compiler path with selfhost_stage2_path.
 build_selfhost_stage2() {
     _bss_root=$1
     _bss_seed=$2
     _bss_dir=$3
     _bss_suffix=$(stage0_host_exe_suffix)
     _bss_stage1="$_bss_dir/stage1/typelisp$_bss_suffix"
-    _bss_stage2="$_bss_dir/stage2/typelisp$_bss_suffix"
+    _bss_stage2=$(selfhost_stage2_path "$_bss_dir")
     mkdir -p "$_bss_dir/stage1" "$_bss_dir/stage2" || return 1
-    echo "[stage2-build] seed -> stage1: $_bss_stage1" >&2
-    "$_bss_root/scripts/build-stage0.sh" "$_bss_seed" "$_bss_stage1" >&2 || return 1
-    echo "[stage2-build] stage1 -> stage2 (opt2): $_bss_stage2" >&2
-    "$_bss_root/scripts/build-stage0.sh" "$_bss_stage1" "$_bss_stage2" >&2 || return 1
-    printf '%s\n' "$_bss_stage2"
+    {
+        echo "[stage2-build] seed -> stage1: $_bss_stage1"
+        "$_bss_root/scripts/build-stage0.sh" "$_bss_seed" "$_bss_stage1" || return 1
+        echo "[stage2-build] stage1 -> stage2 (opt2): $_bss_stage2"
+        "$_bss_root/scripts/build-stage0.sh" "$_bss_stage1" "$_bss_stage2" || return 1
+    } >&2
 }

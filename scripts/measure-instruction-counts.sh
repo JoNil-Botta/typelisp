@@ -259,7 +259,8 @@ mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"
 if [ "$BUILD_STAGE2_FROM_SEED" -eq 1 ]; then
     echo "[ir-count] building opt2 stage2 from seed to match the CI self-compile metric" >&2
     echo "[ir-count]   (set TYPELISP_IR_SELF_STAGE2=0 to measure the raw seed instead)" >&2
-    COMPILER=$(build_selfhost_stage2 "$ROOT" "$COMPILER" "$WORKDIR/stage2-compiler") || exit 1
+    build_selfhost_stage2 "$ROOT" "$COMPILER" "$WORKDIR/stage2-compiler" || exit 1
+    COMPILER=$(selfhost_stage2_path "$WORKDIR/stage2-compiler")
     [ -x "$COMPILER" ] || {
         echo "stage2 compiler not executable after build: $COMPILER" >&2
         exit 1
